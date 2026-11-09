@@ -244,6 +244,46 @@ conteneur `harness` et lance `omp-harness-check`. Les autres réglages (modèles
 plafonds) se font dans `config.json`, sous `OMP_HARNESS_ROOT`, puis en redémarrant
 `harness`.
 
+Deux services y pilotent le navigateur headless Obscura, jamais publiés : `obscura`,
+éphémère, pour les outils `browser_*` ; `obscura-poste`, persistant (stockage dans
+`$OMP_HARNESS_SECRETS/obscura-poste/storage`), joignable par `harness` seul. L'image
+est l'officielle `h4ckf0r0day/obscura`, épinglée par digest, plus un shell
+(`omp-harness/deploy/container/Dockerfile.obscura`). `setup` génère leurs jetons CDP
+dans `$OMP_HARNESS_SECRETS/obscura/obscura.env` et
+`$OMP_HARNESS_SECRETS/obscura-poste/obscura.env` (0600, uid 65532) : il doit donc
+tourner en root pour poser ce propriétaire. Les réseaux `omp-obscura` et
+`omp-obscura-poste`, internes, ne sont partagés qu'avec `harness` ; les réseaux de
+sortie `omp-obscura-sortie` et `omp-obscura-poste-sortie` n'ont que le navigateur
+pour membre. Le déploiement de `harness.sh` (`compose.yaml`) n'a pas Obscura :
+`browser_*` y répondent « navigateur non configuré ».
+
+#### Couper l'hôte du navigateur
+
+Un conteneur d'un réseau bridge non internal joint l'hôte par son adresse PUBLIQUE
+sans passer par le pare-feu de l'hébergeur : par la chaîne INPUT de l'hôte, ou par
+FORWARD/DOCKER-USER après DNAT vers un port publié sur 0.0.0.0 (Portainer, par
+exemple). Aucune garde SSRF ne le voit, l'adresse étant publique. Les ponts se
+nomment `omp-obs-sortie` (`obscura`) et `omp-obsp-sort` (`obscura-poste`) ; pose une
+fois sur l'hôte, POUR CHACUN des deux :
+
+```sh
+iptables -I INPUT -i omp-obs-sortie -j DROP
+ip6tables -I INPUT -i omp-obs-sortie -j DROP
+iptables -I DOCKER-USER -i omp-obs-sortie -m conntrack --ctstate DNAT -j DROP
+iptables -I INPUT -i omp-obsp-sort -j DROP
+ip6tables -I INPUT -i omp-obsp-sort -j DROP
+iptables -I DOCKER-USER -i omp-obsp-sort -m conntrack --ctstate DNAT -j DROP
+```
+
+Rends-les persistantes (`netfilter-persistent` ou équivalent) : les règles iptables
+ne survivent pas à un redémarrage. Une règle `-i` sur une interface absente est
+acceptée ; la sortie vers Internet (FORWARD sans DNAT) reste ouverte.
+
+Vérification : `docker exec` dans le conteneur `obscura`, puis
+`/busybox wget -T 3 -qO- http://<adresse publique de l'hôte>:<port d'un service de l'hôte>/`
+échoue avec les règles et aboutit sans. Limite : sans ces règles, une page peut faire
+joindre à `obscura` un service de l'hôte en écoute sur son adresse publique.
+
 Cette pile et `harness.sh up` ne cohabitent pas sur le même hôte : elles prennent les
 mêmes images, le même réseau et les mêmes ports. Le mode tout en local sur oMLX et la
 connexion des runners à un compte OMP (`harness.sh login`) restent propres à
@@ -566,6 +606,7 @@ canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `syste
 | `intake.tier` | `"standard"` | le niveau de modèle de la session qui classe une Demande (§ « Les demandes en langage libre ») |
 | `repos[].tests.pattern` | `null` | le glob des fichiers de test (`test/**/*.test.ts`) qui filtre `{files}` de `tests.touched` ; aucun fichier retenu ⇒ « aucun test touché », réussi |
 | `repos[].checks` | `{}` | des commandes nommées (`{ "lint": "bash scripts/lint.sh" }`) que l'agent lance par `run_tests {scope: "check", check: "lint"}` |
+| `repos[].preview` | absente | `{ "command", "port", "path"?, "readyTimeoutSec"? }` : la prévisualisation du worktree pour la QA de `/review` (§ « La QA de `/review` par Obscura »). `command` est lancée par `bash -c` dans un conteneur de l'image des tests, sans réseau, en isolation `container` ; `port` (1–65535, pas 9222) est celui qu'elle écoute ; `path` (défaut `/`) sa page d'accueil, capturée d'office ; `readyTimeoutSec` (1–600, défaut 60) le temps pour répondre. Une valeur mal formée refuse la configuration en nommant le champ |
 | `runner.slots`, `heavy.slots` | `5`, `2` | agents et jobs de tests simultanés |
 | `runner.memoryMax`, `heavy.memoryMax` | `1G`, `4G` | le plafond mémoire de chacun |
 | `heavy.timeoutSec` | `1800` | la durée maximale d'un job de tests |
@@ -608,6 +649,7 @@ canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `syste
 | `workstation.allowedHosts` | `[]` | les hôtes où l'on navigue sans approbation (`open`, `navigate`), sous-domaines compris (`exemple.fr` couvre `crm.exemple.fr`) ; vide : tout hôte, hors sites exclus par l'extension. Une adresse hors de la liste attend l'approbateur, quelle que soit l'origine de l'action |
 | `workstation.exfiltrationGuard` | `true` | la garde anti-exfiltration de l'agent 24/24 : une adresse vers un hôte jamais observé ni listé dans `allowedHosts`, ou dont la query (ou le fragment `#a=b`) porte une valeur de plus de 100 caractères ou un jeton opaque (≥ 24 caractères alphanumériques mêlant lettres et chiffres), attend l'approbateur ; `false` la coupe |
 | `workstation.captureRetentionHours` | `24` | les captures d'écran gardées par action (le JPEG tel que capturé, table `workstation_captures`), effacées passé ce délai (à chaque tour) |
+| `workstation.vps` | `{url: null, token: null}` | le navigateur du poste sur le VPS (`obscura-poste`, `browserId: "vps"`) : URL `http://hôte:port` et jeton CDP (32 caractères au moins), repris de `OBSCURA_POSTE_CDP_URL` / `OBSCURA_POSTE_CDP_TOKEN` (posés par `setup` dans `harness.env`) quand le fichier ne les donne pas ; `url` null : l'exécuteur `vps` ne démarre pas |
 | `workstation.channelReadEveryMin` | `5` | le repos entre deux passages de lecture des canaux corpo (Gmail, Agenda, Slack ; § « Lire les canaux ») : hors pause du poste et poste désactivé, sans runner ; minutes ≥ 1 |
 | `workstation.watch.intervalMinutes` | `5` | le repos entre deux passages de la veille proactive (job `poste-veille`, § « La veille proactive ») ; entier de 1 à 15, sinon le harness refuse de démarrer |
 | `workstation.watch.days` | `["mon", "tue", "wed", "thu", "fri"]` | les jours ouvrés de la veille (`sun` à `sat`, liste non vide) |
@@ -618,6 +660,13 @@ canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `syste
 | `issues.pollSec` | `900` | la relève automatique : toutes les 15 min, les issues ouvertes du label de chaque dépôt qui a un distant (`repos[].remote`) partent en run, sans appel MCP ; entier ≥ 60, ou `null` : seulement à la demande |
 | `schedules.timezone` | `Europe/Paris` | le fuseau IANA dans lequel se lisent les expressions cron des planifications (§ « Les planifications ») ; un fuseau inconnu refuse la configuration |
 | `schedules.catchUpMin` | `60` | le rattrapage après un arrêt du service : la plus récente échéance passée de moins de N minutes part une fois, les plus vieilles sont notées manquées (`missed`) ; entier de 1 à 10080 |
+| `browser.url` | `null` | l'URL (`http:` ou `ws:`) du navigateur Obscura, posée par l'environnement `OBSCURA_CDP_URL` ; `null` : les outils `browser_*` répondent « navigateur non configuré » |
+| `browser.token` | `null` | le jeton CDP du navigateur, 32 caractères au moins ; défaut : `OBSCURA_CDP_TOKEN` |
+| `browser.allowPrivateNetwork` | `false` | développement seulement : lève la boucle locale, RFC 1918, link-local et ULA pour le pré-contrôle du harness, jamais le tailnet ; la garde d'Obscura reste active tant que le service n'est pas lancé avec `--allow-private-network` |
+| `browser.maxContextsPerClient` | `3` | les contextes de navigateur ouverts par un client au plus (1 à 20) |
+| `browser.maxContexts` | `12` | les contextes ouverts en tout (de `maxContextsPerClient` à 64) |
+| `browser.idleSec` | `600` | un contexte est fermé après cette inactivité, en secondes (1 à 86400) |
+| `browser.callTimeoutSec` | `30` | le délai d'un appel au navigateur, en secondes (1 à 300) |
 | `clientsFile` | à côté de `tokenFile` | les clients nommés (empreintes de jetons, rôles, dépôts), relu à chaque changement ; illisible (JSON cassé à la main), le dernier jeu lu reste en vigueur, l'erreur est journalisée une fois et `add`/`revoke` refusent de l'écraser |
 | `channelsFile` | à côté de `tokenFile` | les canaux corpo (§ « Les canaux du poste ») : identifiants des clients OAuth, jetons Gmail, Agenda et Slack ; 0600, écrit de façon atomique par le seul service, jamais en base ni dans l'environnement. Illisible, les trois canaux sont « en erreur » et aucune écriture ne l'écrase |
 
@@ -832,6 +881,57 @@ des runs vivants est gardé jusqu'à leur fin. Une configuration invalide est re
   gardé avec la révision traitée : une attente ne se pilote qu'une fois. Seul un
   `defer` notifie. Un refus du pilote n'entre pas dans l'oracle comme une correction
   humaine.
+
+### La QA de `/review` par Obscura (`repos[].preview`)
+
+Un dépôt qui déclare `preview` laisse la revue **voir l'application tourner** : le service lance la
+prévisualisation du worktree du run (côté APRÈS seulement) et un navigateur Obscura qui n'a accès qu'à
+elle. Sans `preview`, rien ne change.
+
+```json
+{ "repos": [{ "name": "boutique", "path": "/srv/boutique.git",
+  "preview": { "command": "npm run preview -- --host 127.0.0.1 --port 4173", "port": 4173,
+               "path": "/", "readyTimeoutSec": 60 } }] }
+```
+
+- **Ce qui tourne.** Deux conteneurs frères par revue, nommés `omp-qa-<run>-<étape>-preview` et
+  `omp-qa-<run>-<étape>-browser`. La prévisualisation est un conteneur de l'image des tests du dépôt,
+  **sans réseau** (`--network=none`, comme un job heavy), le worktree monté en lecture seule (la commande
+  écrit dans `/tmp`, `HOME=/tmp`, `PORT` est posé) ; elle ne démarre qu'en isolation `container`
+  (`heavy.isolation`). Le navigateur est l'instance Obscura de l'image épinglée
+  `omp-harness-obscura:local` (la même que la pile), lancée par le service pour CETTE revue avec
+  `--allow-private-network`, jointe à l'espace réseau de la prévisualisation (`--network=container:…`) et
+  à aucun autre : ni le harness, ni les runners, ni `harness:8790`, `mem0:8321`, `obscura-poste`, ni
+  l'hôte, ni la prévisualisation d'une autre revue. Le service `obscura` de la pile n'y sert pas. Les
+  deux conteneurs sont retirés ensemble (`docker rm --force`) à la fin de l'étape, quelle qu'en soit
+  l'issue, et au redémarrage du service pour une revue interrompue.
+- **Le canal CDP.** Aucun réseau n'est partagé avec le service : chaque connexion passe par
+  `docker exec -i <navigateur> nc 127.0.0.1 9222` (stdin/stdout du CLI), avec un jeton CDP de 32 octets
+  tiré pour la revue et jamais écrit dans une ligne de commande. Le code de la prévisualisation, qui partage
+  la boucle locale avec Obscura, ne peut donc pas le piloter.
+- **Capture d'office.** Dès que la prévisualisation répond (2xx sur `preview.path`, au plus
+  `readyTimeoutSec` secondes), le service ouvre sa propre connexion, charge la page d'accueil et verse la
+  capture aux preuves du run (`screenshot`, étape `review`, côté `after`) — sans attendre l'agent. Son
+  titre porte la mention « rendu Obscura, fidélité visuelle non garantie » : Obscura n'est pas un
+  navigateur grand public. Ces preuves sont informatives, jamais dans la décision d'auto-merge, et suivent
+  les bornes habituelles (50 par run, 8 Mio par preuve, 64 Mio par run).
+- **Les outils `qa_*`** (en `/review` seulement, quand la QA tourne ; l'agent ne donne jamais d'URL, le
+  service compose `http://127.0.0.1:<port>` + un chemin) :
+
+  | Outil | Effet |
+  |---|---|
+  | `qa_open` `{path?}` | ouvre un chemin de la prévisualisation (défaut `preview.path`), rend le snapshot |
+  | `qa_snapshot` | le snapshot de la page courante (rôles, libellés, références `[eN]`) |
+  | `qa_click` `{ref}`, `qa_fill` `{ref, text}`, `qa_key` `{key, ref?}` | un geste, puis le nouveau snapshot |
+  | `qa_screenshot` | garde une capture en mémoire (`c1`, `c2`…) ; ce n'est PAS une preuve |
+  | `qa_record_proof` `{kind: "screenshot", capture, title, acRef?}` | joint la capture à la revue ; la mention ci-dessus est ajoutée au titre ; seul le côté `after` existe |
+
+  Le contenu d'une page est une donnée non fiable (snapshots enveloppés comme les `browser_*`) ; toute
+  navigation, redirection ou geste qui sort de la prévisualisation est refusé et ferme la session.
+  Hors `/review`, ou sans `preview`, un outil `qa_*` répond par un refus explicite.
+- **Si ça ne démarre pas.** La revue continue : une preuve `log` « QA de /review indisponible » dit pourquoi
+  (conteneur refusé, prévisualisation arrêtée avec la fin de ses logs, délai, isolation `none`/`systemd`).
+  Hors périmètre : la QA en isolation `none`/`systemd`, le côté AVANT, les vidéos, `obscura-poste`.
 
 ## La mémoire du projet
 
@@ -1489,6 +1589,61 @@ répertoire de travail est `<worktreesDir>/workstation/_poste`, la forme
 `<dépôt>/<feature>` qu'exige le lanceur. La scope mémoire est `workstation` : l'agent
 ne touche à la mémoire d'aucun projet.
 
+### Le navigateur du serveur (`vps`)
+
+Le service `obscura-poste` de la pile (Obscura avec profil persistant, joignable du seul
+harness) est un navigateur du poste à part entière : `browserId: "vps"`, libellé « VPS
+(Obscura) ». L'exécuteur (`browser/vps.ts`) loue la file comme une extension
+(`Workstation.next`, le même cantonnement aux onglets de l'agent, la même pause, les mêmes
+hôtes permis) et exécute chaque action par CDP dans `obscura-poste`. Il est **en ligne**
+seulement si `obscura-poste` répond ; tombé, il passe hors ligne tout de suite et une action
+qui le cible est refusée (409) comme pour une extension hors ligne. L'approbateur le choisit
+par défaut par `PUT …/settings {defaultBrowser: "vps"}` ; un identifiant `vps` ne peut pas
+être pris par une extension (400). Sans choix, il n'est jamais le navigateur d'une extension
+ancienne sans identifiant.
+
+**Les mêmes gardes que l'extension, d'une seule source.** Le côté page d'omp-chrome
+(`omp-chrome/src/page/agent.ts` et `lib/` : snapshot, gestes, `classifyOutbound`,
+`inspectGesture`, empreinte) est évalué dans la page d'Obscura (`browser/agent-bundle.ts` :
+types effacés par `stripTypeScriptTypes`, modules assemblés, sans étape de build) ;
+`Dockerfile.harness` copie `omp-chrome/src/lib` et `omp-chrome/src/page` dans l'image, et
+rien n'en est recopié dans `omp-harness/`. Un envoi détecté (clic sur Envoyer, saisie avec
+envoi, Entrée) rend `needs_approval` avec résumé, destinataires, aperçu et empreinte ; un envoi
+approuvé ne part que si l'empreinte recalculée est identique, sinon l'action repasse
+`awaiting_approval`. Les gestes passent par les événements DOM de la page (pas de clic de
+confiance). Un geste qu'Obscura ne sait pas faire rend `failed` avec la limite nommée
+(`download` : pas de téléchargement ; `upload` : pas de `DataTransfer` ; `back`/`forward` :
+seulement si le moteur rejoue l'historique). L'arrêt d'urgence (`POST …/stop`) et l'annulation
+d'une action coupent l'exécution en cours ; l'issue tardive n'écrase pas l'annulation.
+
+**Connecter les comptes (une fois).** Seuls `slack.com` et `google.com` (et leurs
+sous-domaines) : (a) *import de cookies* — l'approbateur ouvre un import pour UN domaine
+(`POST /v1/workstation/vps/cookie-import {domain}`, valable 2 min) ; l'extension (jeton
+ordinaire, `GET` du même chemin, au tick de 30 s) lit les cookies du domaine par
+`chrome.cookies` et les envoie UNE fois (`POST /v1/workstation/vps/cookies {domain, cookies}`) :
+tout domaine ou cookie hors du domaine de l'import, sans import ouvert ou expiré → 4xx, rien n'est
+posé. Les cookies vont de l'extension au harness (TLS du tailnet) puis à `obscura-poste`
+(`Network.setCookies`) ; ils ne sont écrits ni en base, ni au journal, ni dans un événement, une
+réponse d'API ou la mémoire. (b) *connexion interactive* si la session importée est refusée (Google
+lie ses sessions à l'appareil) : `POST /v1/workstation/vps/login {url}` (départ sur un domaine
+de compte), `GET …/login/frame` (une image PNG de la page, 1280×720), `POST …/login/input`
+`{type: click|text|key|scroll, …}`, `DELETE …/login` ; l'approbateur seulement (403 sinon). La
+navigation reste sur les domaines de compte et les hôtes de `workstation.allowedHosts` (l'IdP de
+l'entreprise), contrôlée APRÈS chaque navigation (Obscura n'offre aucune barrière avant la
+requête) : un autre hôte vide la page et refuse la connexion (409).
+
+**État des comptes.** `GET /v1/workstation` : `browsers[vps].accounts` = pour chaque domaine
+`{domain, state: disconnected | connected | expired | blocked, changedAt}`, jamais un cookie. Après
+un import ou une connexion, la page d'accueil du compte est ouverte dans un onglet jetable : une
+page de connexion donne `blocked` (import) ou `disconnected` (connexion), sinon `connected`. Une
+session `connected` qui renvoie ensuite vers une page de connexion passe `expired` (action ou relecture
+toutes les 30 min) : événement `workstation_account` et une seule notification ntfy par passage.
+
+**Limites.** Obscura ne fusionne les cookies dans `--storage-dir` qu'à la fermeture de la connexion
+et une connexion neuve repart de l'instantané du démarrage : l'exécuteur garde UNE connexion ouverte ;
+si elle tombe (redémarrage d'`obscura-poste`), les cookies posés depuis le démarrage sont à réimporter.
+L'adresse publique du VPS reste coupée par les règles pare-feu de § « Couper l'hôte du navigateur ».
+
 ### Les canaux du poste (Gmail, Agenda, Slack)
 
 Le serveur lit Gmail, l'Agenda et Slack par API, côté serveur (les données ne sortent
@@ -1740,6 +1895,13 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 | `intake` `{id?, text?, source?, repo?}` | operator | Pose une demande en une phrase libre (`text` requis, `source` : `cli` par défaut) ou, avec `id`, la lit : `POST /v1/intake`, `GET /v1/intake/{id}`. Rend `{intake}` ; relis-la tant que `state` est `classifying`. |
 | `intake_confirm` `{id, plan?}` | operator | Confirme le plan d'une demande (`plan` le corrige) : crée l'objet du plan, rend `{intake}` avec `created` ; une demande déjà confirmée est une erreur (409) : `POST /v1/intake/{id}/confirm`. |
 | `intake_answer` `{id, text}` | operator | Répond à la question de clarification d'une demande ; la même demande est reclassée : `POST /v1/intake/{id}/answer`. |
+| `browser_open` `{url}` | viewer | Ouvre `url` dans un contexte neuf du navigateur ; rend `{context, page}` (`context` : `bx_` + 16 hexadécimaux ; `page` : un texte enveloppé comme contenu non fiable). |
+| `browser_snapshot` `{context}` | viewer | Le texte de la page et ses éléments adressables (`ref`) : `{context, page}`. |
+| `browser_click` `{context, ref}` | operator | Clique l'élément `ref` : `{context, page}`. |
+| `browser_fill` `{context, ref, text}` | operator | Saisit `text` dans le champ `ref` : `{context, page}`. |
+| `browser_key` `{context, key, ref?}` | operator | Envoie la touche `key`, à l'élément `ref` s'il est donné : `{context, page}`. |
+| `browser_screenshot` `{context}` | viewer | Une capture de la page, rendue comme image PNG. |
+| `browser_close` `{context}` | viewer | Ferme le contexte : `{context, closed: true}`. |
 
 - **Un dépôt déclaré seulement.** `repo` est le nom d'une entrée de `repos`, ou son
   projet sur sa forge (`owner/name`, `groupe/projet`, retrouvé par le distant des
@@ -1782,6 +1944,19 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 - Une erreur d'outil (dépôt non déclaré ou sans forge, rôle insuffisant, issue fermée, `gh` ou `glab` en
   échec, run inconnu ou terminal) est un résultat `isError` ; une erreur de protocole,
   une erreur JSON-RPC.
+- **Navigateur (`browser_*`).** Les sept outils pilotent le navigateur `obscura` de
+  la pile (§ « Avec Portainer ») ; sans `browser.url`, ils répondent « navigateur non
+  configuré ». Un contexte est réservé au client qui l'a ouvert : un contexte d'autrui,
+  inconnu ou expiré rend le même message « contexte inconnu ». Chaque client en a
+  `browser.maxContextsPerClient` au plus, le service `browser.maxContexts` en tout ;
+  un contexte est fermé après `browser.idleSec` secondes d'inactivité. Aucun outil
+  n'atteint `obscura-poste`. Garde réseau : celle d'Obscura fait autorité pour chaque
+  requête de la page, au moment de la connexion, tailnet et réseau privé compris ; le
+  harness pré-contrôle l'adresse demandée et l'URL finale d'une navigation. L'adresse
+  publique de l'hôte ne dépend que de la règle pare-feu de « Couper l'hôte du
+  navigateur ». Les erreurs qui citent la page ou Obscura arrivent enveloppées comme
+  contenu non fiable. Mode d'emploi : `DEVELOPPEMENT.md` § « Naviguer sans le Chrome
+  du Mac (Obscura) ».
 
 ## Les demandes en langage libre
 
@@ -2046,6 +2221,8 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/workstation/actions/{n}/result` `{outcome, result?, image?, error?, approval?, agentTabs?}` | operator | Le résultat de l'extension pour une action `running` (409 sinon, une action annulée comprise) : `done`, `failed`, ou `needs_approval` `{summary, recipients, preview, fingerprint?}` → `queued` approuvée par « soi » si tous les destinataires sont l'utilisateur, sinon `awaiting_approval` (`workstation_approval`, ntfy). `agentTabs` : les onglets de la fenêtre de l'agent, après l'action. |
 | `POST /v1/workstation/actions/{n}/approve` · `POST /v1/workstation/actions/{n}/refuse` `{reason?}` | operator (approbateur) | Le geste humain sur une action `awaiting_approval` (409 sinon), par le seul client `approver` (403 sinon) : `queued` avec `approved: true`, ou `refused`. `approve` exige `If-Match: "<updatedAt>"` (absent 428, périmé 412) ; `refuse` l'accepte facultatif (périmé 412). |
 | `POST /v1/workstation/actions/{n}/cancel` | operator | Annule une action `queued`, `running` ou `awaiting_approval` → `refused`, `error` « annulée par <client> » ; 409 si elle a déjà abouti. |
+| `POST /v1/workstation/vps/cookie-import` `{domain}` · `GET /v1/workstation/vps/cookie-import` · `POST /v1/workstation/vps/cookies` `{domain, cookies}` | operator (ouvrir : approbateur) | L'import de cookies d'UN domaine (`slack.com`, `google.com`) vers `obscura-poste` : l'approbateur l'ouvre (201, 403 sinon, 400 hors liste), l'extension lit `{open: {domain, expiresAt} \| null}` puis envoie une fois les cookies (`{imported, state}` ; 409 sans import ouvert ou expiré, 400 domaine ou cookie hors du domaine). |
+| `POST /v1/workstation/vps/login` `{url}` · `GET /v1/workstation/vps/login` · `GET …/login/frame` · `POST …/login/input` · `DELETE …/login` | operator (approbateur) | La connexion interactive d'un compte dans `obscura-poste` (§ « Le navigateur du serveur »), 403 pour tout autre client ; 409 si une connexion est déjà ouverte ou si la page est sortie des hôtes permis. |
 | `POST /v1/workstation/stop` | viewer | L'arrêt d'urgence : pause, actions en attente annulées, service de l'agent coupé → `{status, cancelled: [seq…]}` ; événement `workstation_stop`. La reprise : `PUT …/settings` `paused: false` par l'approbateur. |
 | `GET /v1/workstation/session?job=profil\|digest\|service&since=&before=&limit=` | viewer | La session du job, sous la forme de `GET /v1/runs/{id}/session` (`runId` et `auditId` nuls, `job`) ; `since` : seulement les entrées de `seq` plus grande. `job` inconnu ou `since` illisible → 400. |
 | `GET /v1/workstation/profile` · `POST /v1/workstation/profile/rebuild` | viewer · operator | Le dernier profil (`null` avant le premier) et les statistiques (`observedSeconds`, `since`, `topSites`, `activeHours`, `sequences`) ; demander une synthèse tout de suite (202 `{queued: true}`). |

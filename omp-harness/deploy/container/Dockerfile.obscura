@@ -1,0 +1,14 @@
+# Le navigateur Obscura de la pile (services `obscura` et `obscura-poste`).
+# L'image officielle est distroless : aucun shell, et Obscura ne lit son jeton CDP que dans
+# la variable OBSCURA_CDP_TOKEN, alors que `setup` l'écrit dans un fichier des secrets.
+# Cette image mince ajoute un busybox statique (épinglé) et une entrée qui source le
+# fichier puis lance `obscura serve`. L'utilisateur 65532 de l'image amont reste.
+# Contexte de build : la racine du dépôt.
+ARG OBSCURA_IMAGE=docker.io/h4ckf0r0day/obscura:0.2.6@sha256:76522dd288b0c0186b360fd6e6133ef55908e1fc3b9c4b7ad6240bf8682d998c
+ARG BUSYBOX_IMAGE=docker.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478
+FROM ${BUSYBOX_IMAGE} AS busybox
+FROM ${OBSCURA_IMAGE}
+COPY --from=busybox /bin/busybox /busybox
+COPY omp-harness/deploy/container/obscura-entrypoint /obscura-entrypoint
+ENTRYPOINT ["/busybox", "sh", "/obscura-entrypoint"]
+CMD []

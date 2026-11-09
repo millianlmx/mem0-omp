@@ -38,10 +38,12 @@ public struct WorkstationBrowser: Codable, Equatable, Sendable, Identifiable {
     public var extensionVersion: String?
     /// Il reçoit les actions, demandes et automatisations qui n'en ciblent aucun.
     public var isDefault: Bool
+    /// Les comptes du navigateur du serveur (`id == "vps"`) : leur état ; vide pour tout autre navigateur.
+    public var accounts: [ServerBrowserAccount]
 
     public init(
         id: String, label: String? = nil, online: Bool = false, lastSeenAt: Double = 0, firstSeenAt: Double = 0,
-        extensionVersion: String? = nil, isDefault: Bool = false
+        extensionVersion: String? = nil, isDefault: Bool = false, accounts: [ServerBrowserAccount] = []
     ) {
         self.id = id
         self.label = label
@@ -50,10 +52,11 @@ public struct WorkstationBrowser: Codable, Equatable, Sendable, Identifiable {
         self.firstSeenAt = firstSeenAt
         self.extensionVersion = extensionVersion
         self.isDefault = isDefault
+        self.accounts = accounts
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, label, online, lastSeenAt, firstSeenAt, extensionVersion, isDefault
+        case id, label, online, lastSeenAt, firstSeenAt, extensionVersion, isDefault, accounts
     }
 
     public init(from decoder: Decoder) throws {
@@ -65,6 +68,7 @@ public struct WorkstationBrowser: Codable, Equatable, Sendable, Identifiable {
         firstSeenAt = try container.decodeIfPresent(Double.self, forKey: .firstSeenAt) ?? lastSeenAt
         extensionVersion = try container.decodeIfPresent(String.self, forKey: .extensionVersion)
         isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+        accounts = try container.decodeIfPresent([ServerBrowserAccount].self, forKey: .accounts) ?? []
     }
 
     /// Le nom montré : son libellé, sinon son identifiant.

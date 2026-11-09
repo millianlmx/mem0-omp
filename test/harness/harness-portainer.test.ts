@@ -73,6 +73,12 @@ echo "ssh-ed25519 AAAA$(od -An -N8 -tx1 /dev/urandom | tr -d ' \\n') omp-harness
 }
 
 const read = (file: string) => fs.readFileSync(file, "utf8");
+
+/** Les quatre lignes Obscura de harness.env (adresses fixes de la pile, jetons lus dans les secrets). */
+function obscuraLines(secrets: string): string {
+  const cdp = (name: string) => /^OBSCURA_CDP_TOKEN=(.+)$/m.exec(read(path.join(secrets, name, "obscura.env")))?.[1];
+  return `OBSCURA_CDP_URL=http://obscura:9222\nOBSCURA_CDP_TOKEN=${cdp("obscura")}\nOBSCURA_POSTE_CDP_URL=http://obscura-poste:9222\nOBSCURA_POSTE_CDP_TOKEN=${cdp("obscura-poste")}\n`;
+}
 const mode = (file: string) => fs.statSync(file).mode & 0o777;
 
 test("harness-portainer/AC-1 : la pile racine se monte seule — chaque image se construit ou se tire, rien n'est lu avant `setup`, les clés LLM restent hors du service", () => {
@@ -139,10 +145,14 @@ test("harness-portainer/AC-2 : `setup` crée tout au premier démarrage, puis ne
 
   const token = /^MEM0_HTTP_TOKEN=([0-9a-f]{64})$/m.exec(read(path.join(secrets, "mem0", "mem0.env")))?.[1];
   assert.ok(token, "jeton de la mémoire absent");
+  const cdp = (name: string) =>
+    /^OBSCURA_CDP_TOKEN=([0-9a-f]{64})$/m.exec(read(path.join(secrets, name, "obscura.env")))?.[1];
+  const [t1, t2] = [cdp("obscura"), cdp("obscura-poste")];
+  assert.ok(t1 && t2, "jetons CDP absents");
   assert.equal(
     read(path.join(secrets, "harness", "harness.env")),
-    `MEM0_HTTP_TOKEN=${token}\n`,
-    "le service n'a que le jeton",
+    `MEM0_HTTP_TOKEN=${token}\nOBSCURA_CDP_URL=http://obscura:9222\nOBSCURA_CDP_TOKEN=${t1}\nOBSCURA_POSTE_CDP_URL=http://obscura-poste:9222\nOBSCURA_POSTE_CDP_TOKEN=${t2}\n`,
+    "le service n'a que ses jetons",
   );
   assert.equal(read(path.join(secrets, "runner.env")), `MEM0_HTTP_TOKEN=${token}\nANTHROPIC_API_KEY=sk-ant-test_1\n`);
   assert.match(read(path.join(secrets, "mem0", "mem0.env")), /^OMLX_BASE_URL=http:\/\/embeddings:11434\/v1$/m);
@@ -472,7 +482,7 @@ test("harness-portainer/AC-32 : `init` écrit GH_TOKEN dans harness.env (0600) �
     assert.equal(result.status, 0, result.stderr);
     const token = /^MEM0_HTTP_TOKEN=([0-9a-f]{64})$/m.exec(read(path.join(secrets, "mem0", "mem0.env")))?.[1];
     assert.ok(token);
-    assert.equal(read(harnessEnv), `MEM0_HTTP_TOKEN=${token}\nGH_TOKEN=ghp_Ab1-x_2\n`);
+    assert.equal(read(harnessEnv), `MEM0_HTTP_TOKEN=${token}\n${obscuraLines(secrets)}GH_TOKEN=ghp_Ab1-x_2\n`);
     assert.equal(mode(harnessEnv), 0o600);
     for (const file of ["runner.env", "mem0/mem0.env"])
       assert.doesNotMatch(read(path.join(secrets, file)), /GH_TOKEN|ghp_/, file);
@@ -480,9 +490,10 @@ test("harness-portainer/AC-32 : `init` écrit GH_TOKEN dans harness.env (0600) �
   for (const empty of [{}, { GH_TOKEN: "" }] as Record<string, string>[]) {
     const result = run(SETUP, ["init"], { ...env, ...empty });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(
+    const token = /^MEM0_HTTP_TOKEN=([0-9a-f]{64})$/m.exec(read(path.join(secrets, "mem0", "mem0.env")))?.[1];
+    assert.equal(
       read(harnessEnv),
-      /^MEM0_HTTP_TOKEN=[0-9a-f]{64}\n$/,
+      `MEM0_HTTP_TOKEN=${token}\n${obscuraLines(secrets)}`,
       "la ligne disparaît avec la variable, sans ligne vide",
     );
   }

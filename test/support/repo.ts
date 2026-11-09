@@ -55,6 +55,7 @@ const EXCLUDED_SEGMENTS: Record<string, true> = {
   node_modules: true,
   ".typecheck": true,
   ".lint": true,
+  ".obscura": true,
   qdrant_storage: true,
   build: true,
   target: true,
