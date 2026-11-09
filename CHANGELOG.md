@@ -1,5 +1,13 @@
 # Journal des versions
 
+## omp-harness 1.34.0 — 2026-11-09
+
+- feat(poste): mirroir continu du profil Chrome vers obscura-poste, fin des connecteurs (#430) (9913310)
+
+## omp-chrome 0.7.0 — 2026-11-09
+
+- feat(poste): mirroir continu du profil Chrome vers obscura-poste, fin des connecteurs (#430) (9913310)
+
 ## omp-harness 1.33.0 — 2026-11-09
 
 - fix(harness): la vigie rend les traces des runners à leur run et ne réserve que des fichiers précis (#425) (281a139)
