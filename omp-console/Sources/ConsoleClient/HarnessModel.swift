@@ -96,6 +96,20 @@ public final class HarnessModel: ObservableObject {
     public private(set) lazy var issues = HarnessIssues(harness: self)
     /// L'autonomie par paliers, en lecture : règles, validations prises seules, propositions.
     public private(set) lazy var autonomy = HarnessAutonomy(harness: self)
+    /// « Tout suspendre » : la pause globale du serveur (`/v1/pause`).
+    public private(set) lazy var pause = HarnessPauseModel(harness: self, reloadDelay: refreshDelay)
+    /// Les consignes permanentes de l'humain (`/v1/rules`).
+    public private(set) lazy var rules = HarnessStandingRulesModel(harness: self, reloadDelay: refreshDelay)
+    /// Les espaces : un client, ses dépôts, son budget, son autonomie (`/v1/spaces`).
+    public private(set) lazy var spaces = HarnessSpacesModel(harness: self, reloadDelay: refreshDelay)
+    /// Le brief « pendant votre absence » (`/v1/brief`).
+    public private(set) lazy var brief = HarnessBriefModel(harness: self, reloadDelay: refreshDelay)
+    /// Les chiffres : les trois indicateurs de la boucle (`/v1/scoreboard`).
+    public private(set) lazy var scoreboard = HarnessScoreboardModel(harness: self)
+    /// Les propositions : le travail que l'OS a trouvé seul (`/v1/proposals`).
+    public private(set) lazy var proposals = HarnessProposalsModel(harness: self, reloadDelay: refreshDelay)
+    /// Les sessions omp locales rapportées au serveur (`/v1/local-sessions`).
+    public private(set) lazy var localSessions = HarnessLocalSessionsModel(harness: self, reloadDelay: refreshDelay)
     /// La remontée bornée des erreurs de l'app (contrat C2).
     var reporter: HarnessErrorReporter
     /// Les événements complets du flux, à qui en veut le détail (les notifications
@@ -104,6 +118,9 @@ public final class HarnessModel: ObservableObject {
     /// Le jeton APNs de cet appareil, enregistré au serveur relié (`registerDevice`) : il
     /// suit l'app d'un serveur à l'autre, et quitte le serveur oublié.
     private var pushDevice: HarnessPushDevice?
+    /// Le jeton push-to-start des Live Activities de cet appareil (`registerActivityStart`) :
+    /// il suit l'app d'un serveur à l'autre, comme le jeton de l'appareil.
+    private var activityStart: HarnessPushDevice?
 
     let transport: any HarnessTransport
     private let preferences: any ClientPreferences
@@ -119,6 +136,9 @@ public final class HarnessModel: ObservableObject {
     /// Un code d'appairage accepté (Mac : écrit pour les plugins d'omp et la mémoire).
     private let onPaired: @Sendable (HarnessPairing) -> Void
     private(set) var server: HarnessServer?
+    /// Le rang du serveur relié : +1 à chaque changement ou oubli. Une lecture partie pour un
+    /// serveur et rendue après ne remplit pas les modèles du suivant (`readBound`).
+    private(set) var serverEpoch = 0
     private var liveTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     /// Un écran a demandé le catalogue : le flux le relit avec la boîte.
@@ -243,7 +263,10 @@ public final class HarnessModel: ObservableObject {
             preferences.set(normalized, forKey: Self.addressKey)
             // L'appareil quitte l'ancien serveur (ou l'ancien client) avant de rejoindre le nouveau.
             let previous = server
-            if let previous, previous != candidate { await unregisterDevice(on: previous) }
+            if let previous, previous != candidate {
+                await unregisterDevice(on: previous)
+                await unregisterActivityStart(on: previous)
+            }
             server = candidate
             address = normalized
             inbox = fetched
@@ -254,6 +277,7 @@ public final class HarnessModel: ObservableObject {
             if let pairing { onPaired(pairing) }
             await readClient()
             if let pushDevice { await register(pushDevice) }
+            if let activityStart { await register(start: activityStart) }
             return true
         } catch {
             failure = Self.failure(of: error)
@@ -263,7 +287,10 @@ public final class HarnessModel: ObservableObject {
 
     /// Oublie le serveur : adresse, jeton et boîte ; l'appareil n'y reçoit plus d'alertes.
     public func forget() async {
-        if let server { await unregisterDevice(on: server) }
+        if let server {
+            await unregisterDevice(on: server)
+            await unregisterActivityStart(on: server)
+        }
         stopLive()
         server = nil
         address = nil
@@ -288,6 +315,7 @@ public final class HarnessModel: ObservableObject {
 
     /// Ce qui appartient au serveur relié : poste, historique, services, remontée.
     private func resetServerState() {
+        serverEpoch += 1
         workstation.reset()
         serverBrowser.reset()
         signals.reset()
@@ -299,6 +327,13 @@ public final class HarnessModel: ObservableObject {
         admin.reset()
         issues.reset()
         autonomy.reset()
+        pause.reset()
+        rules.reset()
+        spaces.reset()
+        brief.reset()
+        scoreboard.reset()
+        proposals.reset()
+        localSessions.reset()
         reporter.reset()
         health = nil
         healthReached = false
@@ -407,6 +442,12 @@ public final class HarnessModel: ObservableObject {
                         vigie.receive(names)
                         schedules.receive(names)
                         autonomy.receive(names)
+                        pause.receive(names)
+                        rules.receive(names)
+                        spaces.receive(names)
+                        brief.receive(names)
+                        proposals.receive(names)
+                        localSessions.receive(names)
                         streamObserver?(events)
                     }
                 }
@@ -667,6 +708,37 @@ public final class HarnessModel: ObservableObject {
         let _: HarnessAck? = try? await perform(HarnessCall(method: "DELETE", path: "/v1/push/devices/\(id)"), on: server)
     }
 
+    /// Enregistre le jeton push-to-start des Live Activities (en hexadécimal) : le serveur
+    /// DÉMARRE lui-même l'activité d'une feature qui se met au travail ou attend l'humain,
+    /// app fermée. Rend `true` si le serveur pousse (APNs configuré), comme `registerDevice`.
+    /// Le jeton est retenu pour le serveur suivant, et retiré de celui qu'on oublie.
+    @discardableResult
+    public func registerActivityStart(token: String, environment: HarnessPushEnvironment) async -> Bool {
+        // Le système renouvelle parfois ce jeton : l'ancien quitte le serveur avant le nouveau.
+        if let server, let known = activityStart, known.token != token { await unregisterActivityStart(on: server) }
+        return await register(start: HarnessPushDevice(token: token, environment: environment))
+    }
+
+    /// Retire le jeton push-to-start du serveur relié et l'oublie : plus d'activité démarrée à distance.
+    public func unregisterActivityStart() async {
+        if let server { await unregisterActivityStart(on: server) }
+        activityStart = nil
+    }
+
+    @discardableResult
+    private func register(start device: HarnessPushDevice) async -> Bool {
+        activityStart = device
+        guard let server else { return false }
+        let body = try? JSONEncoder().encode(ActivityStartBody(token: device.token, environment: device.environment.apnsName))
+        let reply: ActivityStartReply? = try? await perform(HarnessCall(method: "POST", path: "/v1/push/activities/start", body: body), on: server)
+        return reply?.pushes ?? false
+    }
+
+    private func unregisterActivityStart(on server: HarnessServer) async {
+        guard let activityStart, let id = activityStart.token.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return }
+        let _: HarnessAck? = try? await perform(HarnessCall(method: "DELETE", path: "/v1/push/activities/start/\(id)"), on: server)
+    }
+
     /// Une lecture sans effet sur `failure` : les écrans du monitoring disent eux-mêmes qu'ils n'ont rien.
     private func read<T: Decodable>(_ path: String) async -> T? {
         guard let server else { return nil }
@@ -696,13 +768,17 @@ public final class HarnessModel: ObservableObject {
 
     /// Répond à TOUTES les escalades ouvertes d'un run (identifiant → réponse, et la raison
     /// facultative de chaque réponse) : le run reprend son étape quand la dernière est répondue.
+    /// `always` : les questions dont la réponse devient une consigne permanente du dépôt.
+    /// `rev` : la révision vue ailleurs (une notification) ; absente, celle de la boîte.
     @discardableResult
-    public func answer(runId: String, answers: [Int: String], reasons: [Int: String] = [:]) async -> Bool {
+    public func answer(
+        runId: String, answers: [Int: String], reasons: [Int: String] = [:], always: Set<Int> = [], rev: Int? = nil
+    ) async -> Bool {
         let items = answers.keys.sorted().map { id in
             let reason = reasons[id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return AnswerBody.Item(id: id, answer: answers[id] ?? "", reason: reason.isEmpty ? nil : reason)
+            return AnswerBody.Item(id: id, answer: answers[id] ?? "", reason: reason.isEmpty ? nil : reason, always: always.contains(id) ? true : nil)
         }
-        return await gesture(runId, method: "POST", path: "/escalations", body: AnswerBody(answers: items))
+        return await gesture(runId, method: "POST", path: "/escalations", body: AnswerBody(answers: items), rev: rev)
     }
 
     /// Relance une feature en échec, ou arrêtée sur une attente : elle repart de son étape,
@@ -757,15 +833,54 @@ public final class HarnessModel: ObservableObject {
 
     /// Valide un verdict (fusion) ou le refuse (correction, raison dans la mémoire du projet).
     /// `rev` : la révision vue ailleurs (une notification) ; absente, celle de la boîte.
+    /// `always` : la raison d'un refus devient une consigne permanente du dépôt.
     @discardableResult
-    public func validate(runId: String, approve: Bool, reason: String, rev: Int? = nil) async -> Bool {
-        await gesture(runId, method: "POST", path: "/validate", body: ValidateBody(approve: approve, reason: reason), rev: rev)
+    public func validate(runId: String, approve: Bool, reason: String, rev: Int? = nil, always: Bool = false) async -> Bool {
+        await gesture(runId, method: "POST", path: "/validate", body: ValidateBody(approve: approve, reason: reason, always: always ? true : nil), rev: rev)
     }
 
-    /// Annule une feature (sa branche reste).
+    /// Annule une feature (sa branche reste). `cause` : le motif, que le serveur garde ; avec
+    /// une note, « à côté » et « trop gros » corrigent la mémoire du dépôt. Sans motif ni
+    /// note, le corps est celui d'avant.
     @discardableResult
-    public func cancel(runId: String) async -> Bool {
-        await gesture(runId, method: "POST", path: "/cancel", body: EmptyBody())
+    public func cancel(runId: String, cause: HarnessCancelCause? = nil, note: String = "") async -> Bool {
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        return await gesture(runId, method: "POST", path: "/cancel", body: CancelBody(cause: cause?.rawValue, note: trimmed.isEmpty ? nil : trimmed))
+    }
+
+    /// Corrige une feature là où elle est, au lieu de l'annuler : specs ou verdict refusés
+    /// avec le texte, feature en échec relancée, consigne passée à celle qui travaille. Rend
+    /// la voie prise ; `nil` : refusée (texte vide, feature fusionnée ou annulée).
+    /// `always` : la correction devient une consigne permanente du dépôt.
+    @discardableResult
+    public func amend(runId: String, text: String, always: Bool = false) async -> HarnessAmendVia? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let reply: HarnessAmendReply? = await gestureReply(runId, method: "POST", path: "/amend", body: AmendBody(text: trimmed, always: always ? true : nil))
+        return reply.map { HarnessAmendVia(rawValue: $0.via) ?? .instruction }
+    }
+
+    /// Restreint les modules d'une feature (chemins relatifs du dépôt, rognés, sans doublon) :
+    /// l'admission la rejuge aussitôt. Une liste vide ne part pas.
+    @discardableResult
+    public func setModules(runId: String, modules: [String]) async -> Bool {
+        var seen = Set<String>()
+        let cleaned = modules.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && seen.insert($0).inserted }
+        guard !cleaned.isEmpty else { return false }
+        return await gesture(runId, method: "POST", path: "/modules", body: ModulesBody(modules: cleaned))
+    }
+
+    /// Pose le curseur d'autonomie d'une feature ; `nil` revient aux règles du dépôt.
+    @discardableResult
+    public func setAutonomy(runId: String, level: HarnessRunAutonomy?) async -> Bool {
+        await gesture(runId, method: "POST", path: "/autonomy", body: AutonomyLevelBody(level: level))
+    }
+
+    /// « Refaire » : le gabarit d'une feature — sa demande d'origine et ses options, à
+    /// relancer par `launchRun`. `nil` : feature inconnue, ou serveur antérieur.
+    public func runTemplate(runId: String) async -> HarnessRunTemplate? {
+        let reply: HarnessRunTemplateReply? = await read("/v1/runs/\(Self.encoded(runId))/template")
+        return reply?.template
     }
 
     /// Change la priorité d'une feature (plus grand = admise plus tôt, de -1000 à 1000).
@@ -790,19 +905,23 @@ public final class HarnessModel: ObservableObject {
             req: options.req,
             budgetUsd: options.budgetUsd,
             kind: options.kind?.rawValue,
-            labels: options.labels.isEmpty ? nil : options.labels
+            labels: options.labels.isEmpty ? nil : options.labels,
+            autonomy: options.autonomy?.rawValue
         )
         let reply: HarnessRunReply? = await launch("/v1/runs", body: body)
         return reply?.run
     }
 
-    /// Lance un projet : ses features tournent en parallèle quand leurs modules sont disjoints.
+    /// `autonomy` : le curseur de toutes ses features ; `nil` : celui de l'espace, sinon les règles du dépôt.
     @discardableResult
-    public func launchProject(repo: String, title: String, features: [HarnessFeatureDraft], priority: Int? = nil) async -> String? {
+    public func launchProject(
+        repo: String, title: String, features: [HarnessFeatureDraft], priority: Int? = nil, autonomy: HarnessRunAutonomy? = nil
+    ) async -> String? {
         let body = ProjectBody(
             repo: repo,
             title: title,
             priority: priority,
+            autonomy: autonomy?.rawValue,
             features: features.map { ProjectBody.Feature(title: $0.title, request: $0.request, modules: $0.moduleList.isEmpty ? nil : $0.moduleList) }
         )
         let reply: HarnessProjectReply? = await launch("/v1/projects", body: body)
@@ -1137,6 +1256,8 @@ private struct AnswerBody: Encodable {
         var id: Int
         var answer: String
         var reason: String?
+        /// `true` : la réponse devient une consigne permanente ; absent sinon.
+        var always: Bool?
     }
 
     var answers: [Item]
@@ -1150,6 +1271,46 @@ private struct ReverseBody: Encodable {
 private struct ValidateBody: Encodable {
     var approve: Bool
     var reason: String
+    /// `true` avec un refus : sa raison devient une consigne permanente ; absent sinon.
+    var always: Bool?
+}
+
+/// `cause` et `note` absents du JSON quand ils sont `nil` : une annulation sans motif garde le corps d'avant.
+private struct CancelBody: Encodable {
+    var cause: String?
+    var note: String?
+}
+
+private struct AmendBody: Encodable {
+    var text: String
+    var always: Bool?
+}
+
+private struct ModulesBody: Encodable {
+    var modules: [String]
+}
+
+/// `level: null` part tel quel : il ramène la feature aux règles du dépôt.
+private struct AutonomyLevelBody: Encodable {
+    var level: HarnessRunAutonomy?
+
+    private enum CodingKeys: String, CodingKey { case level }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(level?.rawValue, forKey: .level)
+    }
+}
+
+/// `POST /v1/push/activities/start` : le jeton push-to-start et sa passerelle.
+private struct ActivityStartBody: Encodable {
+    var token: String
+    var environment: String
+}
+
+/// `{registered: true, pushes}` : le jeton est pris ; `pushes` dit si le serveur démarrera vraiment l'activité.
+private struct ActivityStartReply: Decodable {
+    var pushes: Bool
 }
 
 private struct ActivityTokenBody: Encodable {
@@ -1184,6 +1345,7 @@ private struct RunBody: Encodable {
     var budgetUsd: Double?
     var kind: String?
     var labels: [String]?
+    var autonomy: String?
 }
 
 private struct ProjectBody: Encodable {
@@ -1196,6 +1358,7 @@ private struct ProjectBody: Encodable {
     var repo: String
     var title: String
     var priority: Int?
+    var autonomy: String?
     var features: [Feature]
 }
 

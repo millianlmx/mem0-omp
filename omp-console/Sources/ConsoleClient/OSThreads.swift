@@ -1,11 +1,11 @@
-// PROTOTYPE « OS agentique » (branche proto/os-fils) : les FILS. Un fil est une
-// intention, de la demande au résultat : il réunit les features d'un même projet,
-// d'une même chaîne de suites (`afterRun`, « Suite de « … » »), d'une même issue
-// relancée, la demande au poste ou l'audit qui en est l'origine. Le regroupement se
-// fait ici, côté client, à partir de ce que le serveur sert déjà ; le serveur pourra
-// le servir lui-même (`GET /v1/threads`) une fois le paradigme validé.
+// « OS agentique » : les FILS. Un fil est une intention, de la demande au résultat : il
+// réunit les features d'un même projet, d'une même chaîne de suites (`afterRun`,
+// « Suite de « … » »), d'une même issue relancée, la demande au poste ou l'audit qui en
+// est l'origine, et la session omp locale qui y travaille sur une machine de l'humain.
+// Le regroupement se fait ici, côté client, à partir de ce que le serveur sert déjà ; le
+// serveur pourra le servir lui-même (`GET /v1/threads`) une fois le paradigme validé.
 //
-// Pur : aucune vue, aucun réseau. Les écrans du prototype lisent `OSThreads.build`.
+// Pur : aucune vue, aucun réseau. Les écrans lisent `OSThreads.build`.
 
 import Foundation
 
@@ -31,6 +31,8 @@ public enum OSOrigin: Equatable, Sendable {
     case audit(String)
     /// Le pilote de l'usine.
     case factory
+    /// Une session omp locale, sur cette machine de l'humain.
+    case local(String)
 }
 
 /// Un fil : une intention et tout ce que l'OS a fait pour elle.
@@ -47,6 +49,8 @@ public struct OSThread: Identifiable, Equatable, Sendable {
     public var audit: HarnessAudit?
     /// La Demande qui a ouvert le fil, si le serveur l'a gardée.
     public var intake: HarnessIntake?
+    /// La session omp locale du fil : seule, ou reprise par une feature (passage de relais).
+    public var localSession: HarnessLocalSession? = nil
     public var phase: OSPhase
     /// Ce qui attend l'humain dans ce fil (questions, specs, verdicts, propositions).
     public var pending: Int
@@ -140,6 +144,31 @@ public enum OSThreads {
         }
     }
 
+    /// La phase d'une session locale : au travail tant que l'agent agit, en attente (grise)
+    /// quand il a rendu la main, finie une fois la session fermée.
+    public static func phase(of session: HarnessLocalSession) -> OSPhase {
+        switch session.phase {
+        case .working, nil: .working
+        case .idle: .queued
+        case .ended: .done
+        }
+    }
+
+    // MARK: Espaces
+
+    /// L'espace d'un dépôt : celui qui le compte parmi les siens (un dépôt n'en a qu'un).
+    public static func space(ofRepo repo: String?, spaces: [HarnessSpace]) -> HarnessSpace? {
+        guard let repo else { return nil }
+        return spaces.first { $0.repos.contains(repo) }
+    }
+
+    /// L'espace d'un fil, déduit de son dépôt ; une demande au poste (sans dépôt) va à
+    /// l'espace qui porte le poste. `nil` : hors de tout espace.
+    public static func space(of thread: OSThread, spaces: [HarnessSpace]) -> HarnessSpace? {
+        if let space = space(ofRepo: thread.repo, spaces: spaces) { return space }
+        return thread.repo == nil && !thread.requests.isEmpty ? spaces.first(where: \.poste) : nil
+    }
+
     // MARK: Regroupement
 
     /// Les fils, de ce qui vous attend à ce qui est fini, les plus récents d'abord.
@@ -150,7 +179,8 @@ public enum OSThreads {
         audits: [HarnessAudit] = [],
         intakes: [HarnessIntake] = [],
         requests: [WorkstationRequest] = [],
-        incidents: [VigieIncident] = []
+        incidents: [VigieIncident] = [],
+        localSessions: [HarnessLocalSession] = []
     ) -> [OSThread] {
         // Les features vivantes de la boîte priment : elles sont plus fraîches que l'historique.
         var byId: [String: HarnessRun] = [:]
@@ -256,6 +286,25 @@ public enum OSThreads {
                 origin: .audit(audit.focus), runs: [], requests: [], audit: audit, intake: nil,
                 phase: audit.isProposed ? .yours : .working, pending: audit.isProposed ? 1 : 0, autonomous: 0, cost: 0,
                 createdAt: audit.createdAt, updatedAt: audit.createdAt
+            ))
+        }
+
+        // Une session omp locale est un fil : celui de la feature qui a repris son travail
+        // (passage de relais), sinon le sien.
+        for session in localSessions.sorted(by: { $0.startedAt < $1.startedAt }) {
+            if let runId = session.runId, let index = threads.firstIndex(where: { thread in thread.runs.contains { $0.id == runId } }) {
+                threads[index].localSession = session
+                threads[index].origin = .local(session.host)
+                threads[index].createdAt = min(threads[index].createdAt, session.startedAt)
+                threads[index].cost += session.cost ?? 0
+                continue
+            }
+            let title = clean(session.title).title
+            threads.append(OSThread(
+                id: "l:" + session.id, title: title.isEmpty ? (session.cwd as NSString).lastPathComponent : title, repo: session.repo,
+                origin: .local(session.host), runs: [], requests: [], audit: nil, intake: nil, localSession: session,
+                phase: phase(of: session), pending: 0, autonomous: 0, cost: session.cost ?? 0,
+                createdAt: session.startedAt, updatedAt: session.updatedAt
             ))
         }
 

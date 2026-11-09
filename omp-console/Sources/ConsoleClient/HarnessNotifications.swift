@@ -6,12 +6,13 @@
 //
 // Le contrat vient du serveur (omp-harness/push-alerts.ts) : catégories `omp.validate`
 // (specs, verdict : Valider / Refuser), `omp.approve` (envoi du poste : Approuver /
-// Refuser), `omp.open` ; `rev` est l'If-Match du geste.
-// Valider, refuser ou approuver écrivent : l'appareil doit être déverrouillé
+// Refuser), `omp.answer` (une seule question ouverte, avec sa recommandation : la
+// prendre, ou répondre autre chose), `omp.open` ; `rev` est l'If-Match du geste.
+// Valider, refuser, approuver ou répondre écrivent : l'appareil doit être déverrouillé
 // (`authenticationRequired`). Approuver ou refuser un envoi exige le jeton APPROBATEUR
 // déjà au trousseau ; sans lui, ces actions ouvrent le Poste au lieu d'agir. Un refus de
 // specs ou de verdict porte sa raison (le serveur l'exige) : sans texte saisi, l'action
-// ouvre l'app.
+// ouvre l'app ; de même une réponse sans texte.
 
 import ConsoleCore
 import Foundation
@@ -20,6 +21,8 @@ import Foundation
 public enum HarnessNotificationCategory: String, CaseIterable, Sendable {
     case validate = "omp.validate"
     case approve = "omp.approve"
+    /// Une question ouverte, une seule, avec sa recommandation : on y répond depuis la notification.
+    case answer = "omp.answer"
     case open = "omp.open"
 }
 
@@ -29,6 +32,10 @@ public enum HarnessNotificationAction: String, CaseIterable, Sendable {
     case refuse = "omp.action.refuse"
     case approve = "omp.action.approve"
     case refuseSend = "omp.action.refuseSend"
+    /// Répondre à la question par l'option que l'agent recommande.
+    case takeRecommended = "omp.action.takeRecommended"
+    /// Répondre à la question par un texte saisi.
+    case answer = "omp.action.answer"
     case open = "omp.action.open"
 }
 
@@ -36,13 +43,31 @@ public enum HarnessNotificationAction: String, CaseIterable, Sendable {
 public struct HarnessNotificationActionSpec: Equatable, Sendable {
     public var action: HarnessNotificationAction
     public var title: String
-    /// L'action demande un texte (la raison d'un refus).
+    /// L'action demande un texte (la raison d'un refus, une réponse).
     public var textInput: Bool
     /// L'appareil est déverrouillé avant d'agir : un geste d'écriture.
     public var authenticationRequired: Bool
     /// L'action ouvre l'app au lieu d'agir en arrière-plan.
     public var foreground: Bool
     public var destructive: Bool
+    /// L'invite du champ d'une action à texte ; `nil` sans champ.
+    public var placeholder: String? = nil
+}
+
+/// La question qu'une alerte `omp.answer` porte : de quoi y répondre sans ouvrir l'app.
+public struct HarnessPushQuestion: Equatable, Sendable {
+    /// L'identifiant de l'escalade.
+    public var id: Int
+    /// L'option que l'agent recommande.
+    public var recommended: String
+    /// Les options proposées (quatre au plus).
+    public var options: [String]
+
+    public init(id: Int, recommended: String, options: [String] = []) {
+        self.id = id
+        self.recommended = recommended
+        self.options = options
+    }
 }
 
 /// La sorte d'une alerte (`omp.kind`, `AlertKind` du serveur).
@@ -67,12 +92,15 @@ public struct HarnessPushAlert: Equatable, Sendable {
     public var rev: Int?
     /// Le numéro de l'action du poste.
     public var seq: Int?
+    /// La question d'une alerte `omp.answer` ; `nil` pour toute autre.
+    public var question: HarnessPushQuestion?
 
-    public init(kind: HarnessPushKind, runId: String? = nil, rev: Int? = nil, seq: Int? = nil) {
+    public init(kind: HarnessPushKind, runId: String? = nil, rev: Int? = nil, seq: Int? = nil, question: HarnessPushQuestion? = nil) {
         self.kind = kind
         self.runId = runId
         self.rev = rev
         self.seq = seq
+        self.question = question
     }
 
     /// La charge `omp` d'une notification (APNs ou locale) ; `nil` si elle n'en porte pas.
@@ -80,11 +108,17 @@ public struct HarnessPushAlert: Equatable, Sendable {
         guard let omp = userInfo["omp"] as? [String: Any], let raw = omp["kind"] as? String,
               let kind = HarnessPushKind(rawValue: raw)
         else { return nil }
+        var question: HarnessPushQuestion?
+        if let raw = omp["question"] as? [String: Any], let id = (raw["id"] as? NSNumber)?.intValue,
+           let recommended = raw["recommended"] as? String {
+            question = HarnessPushQuestion(id: id, recommended: recommended, options: raw["options"] as? [String] ?? [])
+        }
         self.init(
             kind: kind,
             runId: omp["runId"] as? String,
             rev: (omp["rev"] as? NSNumber)?.intValue,
-            seq: (omp["seq"] as? NSNumber)?.intValue
+            seq: (omp["seq"] as? NSNumber)?.intValue,
+            question: question
         )
     }
 
@@ -94,6 +128,9 @@ public struct HarnessPushAlert: Equatable, Sendable {
         if let runId { omp["runId"] = runId }
         if let rev { omp["rev"] = rev }
         if let seq { omp["seq"] = seq }
+        if let question {
+            omp["question"] = ["id": question.id, "recommended": question.recommended, "options": question.options] as [String: Any]
+        }
         return ["omp": omp]
     }
 
@@ -121,6 +158,8 @@ public enum HarnessNotificationGesture: Equatable, Sendable {
     /// Approuver l'envoi du poste à cette révision ; absente : celle de la liste relue.
     case approveSend(seq: Int, revision: Int?)
     case refuseSend(seq: Int, revision: Int?)
+    /// Répondre à la seule question ouverte d'une feature (la recommandation, ou un texte saisi).
+    case answer(runId: String, rev: Int?, question: Int, answer: String)
     /// Ouvrir l'app à cet endroit.
     case open(HarnessPaletteCommand)
 }
@@ -193,18 +232,18 @@ public enum HarnessNotificationRouting {
     /// Les actions d'une catégorie ; `approver` : ce jeton approuve les envois du poste.
     public static func actions(for category: HarnessNotificationCategory, approver: Bool) -> [HarnessNotificationActionSpec] {
         let open = HarnessNotificationActionSpec(
-            action: .open, title: NotificationText.open, textInput: false, authenticationRequired: false, foreground: true, destructive: false
+            action: .open, title: HarnessNotificationAction.open.title, textInput: false, authenticationRequired: false, foreground: true, destructive: false
         )
         switch category {
         case .validate:
             return [
                 HarnessNotificationActionSpec(
-                    action: .validate, title: NotificationText.validate, textInput: false,
+                    action: .validate, title: HarnessNotificationAction.validate.title, textInput: false,
                     authenticationRequired: true, foreground: false, destructive: false
                 ),
                 HarnessNotificationActionSpec(
-                    action: .refuse, title: NotificationText.refuse, textInput: true,
-                    authenticationRequired: true, foreground: false, destructive: true
+                    action: .refuse, title: HarnessNotificationAction.refuse.title, textInput: true,
+                    authenticationRequired: true, foreground: false, destructive: true, placeholder: NotificationText.refusePlaceholder
                 ),
                 open,
             ]
@@ -212,12 +251,24 @@ public enum HarnessNotificationRouting {
             // Sans le jeton approbateur, le serveur refuserait (403) : les actions ouvrent l'app.
             return [
                 HarnessNotificationActionSpec(
-                    action: .approve, title: NotificationText.approve, textInput: false,
+                    action: .approve, title: HarnessNotificationAction.approve.title, textInput: false,
                     authenticationRequired: approver, foreground: !approver, destructive: false
                 ),
                 HarnessNotificationActionSpec(
-                    action: .refuseSend, title: NotificationText.refuse, textInput: false,
+                    action: .refuseSend, title: HarnessNotificationAction.refuseSend.title, textInput: false,
                     authenticationRequired: approver, foreground: !approver, destructive: true
+                ),
+                open,
+            ]
+        case .answer:
+            return [
+                HarnessNotificationActionSpec(
+                    action: .takeRecommended, title: HarnessNotificationAction.takeRecommended.title, textInput: false,
+                    authenticationRequired: true, foreground: false, destructive: false
+                ),
+                HarnessNotificationActionSpec(
+                    action: .answer, title: HarnessNotificationAction.answer.title, textInput: true,
+                    authenticationRequired: true, foreground: false, destructive: false, placeholder: PipelineServerText.answerPlaceholder
                 ),
                 open,
             ]
@@ -229,7 +280,7 @@ public enum HarnessNotificationRouting {
     /// Le geste d'une action sur une notification. `action` absent : un toucher sur la
     /// notification. `text` : la saisie d'une action à texte. Une action que la
     /// notification ne permet pas (catégorie, charge incomplète, jeton non approbateur,
-    /// refus sans raison) ouvre l'app là où le geste se fait.
+    /// refus sans raison, réponse vide) ouvre l'app là où le geste se fait.
     public static func gesture(
         category: String, action: HarnessNotificationAction?, alert: HarnessPushAlert?, text: String?, approver: Bool
     ) -> HarnessNotificationGesture {
@@ -238,6 +289,7 @@ public enum HarnessNotificationRouting {
         let reason = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let validates = category == HarnessNotificationCategory.validate.rawValue && (alert.kind == .specs || alert.kind == .verdict)
         let approves = category == HarnessNotificationCategory.approve.rawValue && alert.kind == .approval && approver
+        let answers = category == HarnessNotificationCategory.answer.rawValue && alert.kind == .escalation
         switch action {
         case .validate:
             guard validates, let runId = alert.runId else { return .open(destination) }
@@ -251,6 +303,12 @@ public enum HarnessNotificationRouting {
         case .refuseSend:
             guard approves, let seq = alert.seq else { return .open(destination) }
             return .refuseSend(seq: seq, revision: alert.rev)
+        case .takeRecommended:
+            guard answers, let runId = alert.runId, let question = alert.question, !question.recommended.isEmpty else { return .open(destination) }
+            return .answer(runId: runId, rev: alert.rev, question: question.id, answer: question.recommended)
+        case .answer:
+            guard answers, let runId = alert.runId, let question = alert.question, !reason.isEmpty else { return .open(destination) }
+            return .answer(runId: runId, rev: alert.rev, question: question.id, answer: reason)
         case .open:
             return .open(destination)
         }
@@ -311,6 +369,22 @@ public enum HarnessNotificationRouting {
     }
 }
 
+extension HarnessNotificationAction {
+    /// Le libellé du bouton, pris au vocabulaire partagé. `takeRecommended` emprunte
+    /// « Accepter les recommandations » de la boîte : le seul point à changer le jour où la
+    /// couche des textes lui donne un libellé propre.
+    public var title: String {
+        switch self {
+        case .validate: NotificationText.validate
+        case .refuse, .refuseSend: NotificationText.refuse
+        case .approve: NotificationText.approve
+        case .takeRecommended: PipelineServerText.acceptRecommended
+        case .answer: PipelineServerText.answer
+        case .open: NotificationText.open
+        }
+    }
+}
+
 /// Un événement du flux tel que le serveur l'écrit (`data:` d'une trame SSE).
 private struct StreamRow: Decodable {
     struct Payload: Decodable {
@@ -339,6 +413,10 @@ private struct StreamRow: Decodable {
 /// TestFlight et l'App Store.
 public enum HarnessPushEnvironment: String, Sendable {
     case sandbox, production
+
+    /// Le nom de la passerelle pour le push-to-start des Live Activities
+    /// (`POST /v1/push/activities/start`) : `development` ou `production`.
+    public var apnsName: String { self == .sandbox ? "development" : "production" }
 
     /// La passerelle de l'app qui tourne : celle de son profil embarqué
     /// (`embedded.mobileprovision`, absent d'une app de l'App Store).
@@ -387,6 +465,8 @@ extension HarnessModel {
             await workstation.decideFromNotification(seq: seq, revision: revision, approve: true)
         case let .refuseSend(seq, revision):
             await workstation.decideFromNotification(seq: seq, revision: revision, approve: false)
+        case let .answer(runId, rev, question, answer):
+            await self.answer(runId: runId, answers: [question: answer], rev: rev)
         case .open:
             false
         }

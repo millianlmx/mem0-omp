@@ -1,11 +1,12 @@
 // L'AUTONOMIE PAR PALIERS vue du client (omp-harness/autonomy-rules.ts, autonomy-gates.ts,
 // autonomy-learning.ts) : le type de travail d'un lancement, la validation prise seule
-// portée par une décision (`decision.autonomy`) et la page Système › Autonomie, en
-// lecture seule (`GET /v1/autonomy` : règles par dépôt, validations prises seules,
-// propositions de palier avec la modification de configuration suggérée).
+// portée par une décision (`decision.autonomy`) et la page Système › Autonomie
+// (`GET /v1/autonomy` : règles par dépôt, validations prises seules, propositions de
+// palier avec la modification de configuration suggérée).
 //
 // Un serveur antérieur ne sert pas la route (404) : `availability == .absent`, et la
-// page quitte le hub Système. Aucune route n'écrit une règle : l'app n'en propose pas.
+// page quitte le hub Système. Une seule écriture : le mode d'une porte pour un type de
+// travail (`POST /v1/autonomy/rules`, admin) — « toujours valider seul ce type ».
 
 import Combine
 import ConsoleCore
@@ -20,6 +21,30 @@ public enum HarnessWorkKind: String, CaseIterable, Identifiable, Sendable {
     case test
 
     public var id: String { rawValue }
+}
+
+/// Une porte d'un run : la validation des specs, ou celle de la revue.
+public enum HarnessAutonomyGate: String, CaseIterable, Identifiable, Sendable {
+    case specs
+    case review
+
+    public var id: String { rawValue }
+}
+
+/// Le mode d'une porte : l'humain valide, ou le serveur valide seul sur preuves.
+public enum HarnessAutonomyMode: String, CaseIterable, Identifiable, Sendable {
+    case human
+    case auto
+
+    public var id: String { rawValue }
+}
+
+/// Le corps de `POST /v1/autonomy/rules`.
+private struct AutonomyRuleBody: Encodable {
+    var repo: String
+    var kind: String
+    var gate: String
+    var mode: String
 }
 
 // MARK: - Contrat
@@ -329,6 +354,8 @@ public final class HarnessAutonomy: ObservableObject {
     @Published public private(set) var view: HarnessAutonomyView?
     @Published public private(set) var failure: HarnessFailure?
     @Published public private(set) var isLoading = false
+    /// L'écriture d'une règle de palier attend la réponse du serveur.
+    @Published public private(set) var isSaving = false
 
     private unowned let harness: HarnessModel
 
@@ -359,9 +386,32 @@ public final class HarnessAutonomy: ObservableObject {
         }
     }
 
-    /// Les événements du flux : une validation (humaine ou prise seule) change les comptes.
+    /// Écrit le mode d'une porte pour un type de travail d'un dépôt (admin) : la règle du
+    /// type change de porte, ou une règle prudente est ajoutée. Les règles du dépôt telles
+    /// que le serveur les tient désormais remplacent celles de la page.
+    @discardableResult
+    public func setRule(repo: String, kind: HarnessWorkKind, gate: HarnessAutonomyGate, mode: HarnessAutonomyMode) async -> Bool {
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let written: HarnessAutonomyRepo = try await harness.write(
+                "POST", "/v1/autonomy/rules", body: AutonomyRuleBody(repo: repo, kind: kind.rawValue, gate: gate.rawValue, mode: mode.rawValue)
+            )
+            if let index = view?.repos.firstIndex(where: { $0.repo == written.repo }) { view?.repos[index] = written }
+            failure = nil
+            // Une proposition de palier appliquée disparaît : la page entière est relue.
+            await refresh()
+            return true
+        } catch {
+            failure = HarnessModel.failure(of: error)
+            return false
+        }
+    }
+
+    /// Les événements du flux : une validation (humaine ou prise seule) change les comptes,
+    /// une règle écrite (ici ou ailleurs) change les règles.
     func receive(_ names: [String]) {
-        guard availability == .available, names.contains(where: { $0 == "autonomy" || $0 == "validation" }) else { return }
+        guard availability == .available, names.contains(where: { $0 == "autonomy" || $0 == "validation" || $0 == "autonomy_rule" }) else { return }
         Task { await refresh() }
     }
 

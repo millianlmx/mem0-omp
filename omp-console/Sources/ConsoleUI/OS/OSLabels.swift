@@ -33,6 +33,8 @@ extension OSOrigin {
         case let .vigie(number): number.map { OSText.originVigie(issue: $0) } ?? OSText.vigie
         case .audit: OSText.originAudit
         case .factory: OSText.originFactory
+        // Une session omp locale : le nom de la machine où elle tourne.
+        case let .local(host): host
         }
     }
 
@@ -43,6 +45,7 @@ extension OSOrigin {
         case .vigie: "binoculars.fill"
         case .audit: "magnifyingglass"
         case .factory: "gearshape.2.fill"
+        case .local: "laptopcomputer"
         }
     }
 }

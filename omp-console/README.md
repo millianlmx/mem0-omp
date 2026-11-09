@@ -745,6 +745,52 @@ au routeur du serveur (rôle compris), chaque champ décodé au JSON réel, et v
 leur câblage dans les deux apps ; `test/console/autonomie-console.test.ts` fait de même
 pour l'autonomie.
 
+### OS agentique : la couche client
+
+`ConsoleClient` porte les routes de l'OS agentique d'`omp-harness` (capacités `os-loop`,
+`pause`, `os-autonomy`, `spaces`, `brief`, `scoreboard`, `proposals`, `local-sessions`,
+`push-answer`, `push-start`, `intake-context`). Aucune vue ni aucun texte n'y vit : les
+écrans lisent ces modèles. Chacun est paresseux, remis à zéro avec le serveur, relu sur
+son événement du flux une fois lu, et se dit `.absent` sur un serveur qui ne sert pas
+sa route (404) — rien ne s'affiche alors, sans échec.
+
+| Modèle (`HarnessModel`) | Routes | Événement |
+|---|---|---|
+| `server.pause` (`HarnessPauseModel`, `setPause(paused:reason:now:)`) | `GET`/`POST /v1/pause` (`now` : interrompre tout de suite) | `pause` |
+| `server.rules` (`HarnessStandingRulesModel`) | `GET`/`POST /v1/rules`, `PUT`/`DELETE /v1/rules/{id}` | `standing_rule` |
+| `server.autonomy.setRule` | `POST /v1/autonomy/rules` | `autonomy_rule` |
+| `server.spaces` (`HarnessSpacesModel`) | `GET`/`POST /v1/spaces`, `PUT` (`If-Match`)/`DELETE /v1/spaces/{id}`, `GET …/report` | `space` |
+| `server.brief` (`HarnessBriefModel`) | `GET /v1/brief`, `POST /v1/brief/seen` | `run_state`, `merged`, `decision`, `decision_auto_timeout`, `proposals` |
+| `server.scoreboard` (`HarnessScoreboardModel`) | `GET /v1/scoreboard?days=` | — |
+| `server.proposals` (`HarnessProposalsModel`) | `GET /v1/proposals`, `POST …/{id}/accept`, `POST …/{id}/dismiss` | `proposals` |
+| `server.localSessions` (`HarnessLocalSessionsModel`) | `GET /v1/local-sessions`, `POST …/{id}/handoff`, `DELETE …/{id}` | `local_session` |
+
+- **Gestes d'une feature** (`HarnessModel`, `If-Match` de la révision lue) : `cancel(runId:cause:note:)`
+  (motif `HarnessCancelCause` ; sans motif, le corps d'avant), `amend(runId:text:always:)` (corriger au
+  lieu d'annuler, rend la voie prise `HarnessAmendVia`), `setModules`, `setAutonomy` (`null` : les règles
+  du dépôt), `runTemplate(runId:)` (« refaire » : `GET /v1/runs/{id}/template`, dont `options` relance la
+  feature par `launchRun`). `answer(…, always:)`, `validate(…, always:)` et `amend(…, always:)` font de la
+  réponse, du refus ou de la correction une consigne permanente. `HarnessLaunchOptions.autonomy`,
+  `launchProject(…, autonomy:)` et `intakes.confirm(_, autonomy:)` posent le curseur au lancement.
+- **Champs lus** : `HarnessRun.autonomy`, `cancelCause`, `blockedBy` (ce qui retient une feature en
+  file), `waitUntil` ; `HarnessEscalation.autoAt` et `autoAnswer` (l'instant où la recommandation
+  s'appliquera seule) ; `HarnessStatus.paused` ; `HarnessIntake.context` (page d'origine d'une Demande,
+  envoyée par `intakes.submit(…, context:)`).
+- **Notifications** : la catégorie `omp.answer` (une seule question ouverte, avec sa recommandation)
+  offre « prendre la recommandation » et « répondre » (saisie) ; `HarnessPushAlert.question` porte
+  `omp.question {id, recommended, options}`, et `HarnessNotificationRouting.gesture` en fait la réponse à
+  l'escalade, envoyée par `HarnessModel.execute` à la révision de la notification.
+- **Live Activities** : `registerActivityStart(token:environment:)` enregistre le jeton push-to-start
+  (`POST /v1/push/activities/start`) — le serveur démarre lui-même l'activité d'une feature ; le jeton
+  suit l'app d'un serveur à l'autre, `unregisterActivityStart()` le retire.
+- **Fils** (`OSThreads`, `OSDecisions`, `OSPulse`) : une session omp locale est un fil (origine
+  `.local(hôte)`, `OSThread.localSession`) ou rejoint celui de la feature qui a repris son travail ;
+  `OSThreads.space(of:spaces:)` range un fil dans l'espace de son dépôt ; `OSDecisions.lots` regroupe
+  les décisions de même sorte ; le pouls garde l'activité d'une session locale (`.localSession(id)`).
+
+Tests : `Tests/ConsoleClientTests/` — `HarnessLoopTests`, `HarnessStandingRulesTests`,
+`HarnessSpacesTests`, `HarnessProposalsTests`, `HarnessRemoteTests`, `OSThreadsTests`.
+
 ## Lire les fichiers et les diffs d'une cible
 
 La section **Fichiers** est une visionneuse **strictement en lecture** de l'arbre
