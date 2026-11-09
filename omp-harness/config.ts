@@ -475,6 +475,8 @@ export type HarnessConfig = {
    * `gh`, la cadence de relecture de la PR après `gh pr merge --auto` et l'attente
    * maximale de sa fusion (les checks requis de la branche protégée). `crossProvider` :
    * la revue tourne de préférence chez un autre fournisseur que celui qui a implémenté.
+   * `cardReader` : le relecteur « humain pressé » (tier `fast`) relit chaque carte d'escalade
+   * avant qu'elle parte, au plus `cardReaderSec` secondes ; `false` le coupe, son échec ne bloque jamais.
    */
   review: {
     fixCap: number;
@@ -487,6 +489,8 @@ export type HarnessConfig = {
     mergePollSec: number;
     mergeWaitSec: number;
     crossProvider: boolean;
+    cardReader: boolean;
+    cardReaderSec: number;
   };
   /**
    * Le contradicteur : en fin de /req et de /specs, un agent neuf (autre contexte, autre
@@ -700,6 +704,8 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       mergePollSec: 60,
       mergeWaitSec: 7200,
       crossProvider: true,
+      cardReader: true,
+      cardReaderSec: 45,
     },
     challenge: { steps: [...CHALLENGE_STEPS], tier: "heavy" },
     notify: { url: null, targets: [], events: [...DEFAULT_NOTIFY_EVENTS], digestHour: 8, dedupMin: 30 },
@@ -1056,6 +1062,8 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!(config.review.mergePollSec > 0)) fail("review.mergePollSec : secondes > 0");
   if (!(config.review.mergeWaitSec > 0)) fail("review.mergeWaitSec : secondes > 0");
   if (typeof config.review.crossProvider !== "boolean") fail("review.crossProvider : booléen");
+  if (typeof config.review.cardReader !== "boolean") fail("review.cardReader : booléen");
+  if (!(config.review.cardReaderSec > 0)) fail("review.cardReaderSec : secondes > 0");
   if (
     !Array.isArray(config.challenge.steps) ||
     config.challenge.steps.some((step) => !(CHALLENGE_STEPS as readonly string[]).includes(step))
