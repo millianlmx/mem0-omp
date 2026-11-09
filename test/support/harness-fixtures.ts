@@ -160,6 +160,8 @@ export function fakeWorld(
     patch?: (config: HarnessConfig) => void;
     exec?: Exec;
     memAvailableMiB?: () => number | null;
+    /** Les doublures de Google et Slack des canaux corpo (aucun réseau) ; absent : `fetch` de la plateforme. */
+    fetch?: OrchestratorDeps["fetch"];
     /** Le journal du SERVICE (`deps.log`), lu par les tests qui prouvent qu'une donnée n'y figure pas. */
     harnessLog?: LogLine;
   } = {},
@@ -206,6 +208,7 @@ export function fakeWorld(
     spawn: spawnFake,
     exec,
     tickMs: 25,
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     ...(options.harnessLog ? { log: options.harnessLog } : {}),
   };
   const orchestrator = new Orchestrator(deps);

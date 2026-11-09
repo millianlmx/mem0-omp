@@ -361,6 +361,13 @@ export function afterSpecsValidation(
   return to("queued", "specs", cursor, { reason: `specs refusées par ${who} : ${reason}` });
 }
 
+/** Une validation de specs prise seule par l'autonomie est renversée avant le merge : les specs reviennent à l'humain. */
+export function specsBackToHuman(cursor: RunCursor, seq: number): Transition {
+  return to("awaiting_human", "specs", cursor, {
+    reason: `${WAIT_REASON.specs} : validation de l'autonomie (#${seq}) renversée par l'humain`,
+  });
+}
+
 /**
  * Les specs sont-elles ACCEPTÉES par cette transition ? Le passage de /specs à /impl : sans
  * porte (`nextAfter`), ou validées par l'humain ou le pilote (`afterSpecsValidation`). Leur
@@ -410,14 +417,16 @@ export function isTerminal(state: RunState): boolean {
  * du service passe par `assertTransition` ; une transition absente d'ici est un bug.
  */
 export const TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = {
-  queued: ["queued", "running", "cancelled", "failed"],
+  // → awaiting_human depuis queued, escalated, awaiting_human et failed : le renversement, avant le
+  // merge, d'une validation de specs prise seule rend les specs à l'humain (`specsBackToHuman`).
+  queued: ["queued", "running", "awaiting_human", "cancelled", "failed"],
   running: ["running", "queued", "escalated", "awaiting_human", "merging", "failed", "cancelled"],
-  escalated: ["queued", "cancelled", "failed"],
-  awaiting_human: ["queued", "merging", "cancelled", "failed"],
+  escalated: ["queued", "awaiting_human", "cancelled", "failed"],
+  awaiting_human: ["queued", "awaiting_human", "merging", "cancelled", "failed"],
   merging: ["merged", "queued", "awaiting_human", "failed"],
   merged: [],
   // Un run échoué peut être rouvert (décision renversée) ou annulé.
-  failed: ["queued", "cancelled"],
+  failed: ["queued", "awaiting_human", "cancelled"],
   cancelled: [],
 };
 

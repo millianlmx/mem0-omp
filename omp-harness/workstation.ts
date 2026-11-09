@@ -17,6 +17,7 @@
 // du client ou l'arrêt du service. Rien ne bloque les autres requêtes.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { Client } from "./auth.ts";
 import { isRecord } from "./config.ts";
 import type { HarnessConfig } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
@@ -257,6 +258,24 @@ export const REQUEST_CANCELLED = "demande annulée";
 /** Le refus d'un geste d'approbateur (approuver, refuser, régler le poste) à tout autre client. */
 export const APPROVER_ONLY =
   "seul l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut approuver, refuser ou régler le poste";
+
+/** Le poste de travail est au propriétaire : un client restreint à des dépôts n'y a pas accès. */
+export function workstationFor(workstation: Workstation, client: Client): Workstation {
+  if (client.repos !== "*") throw new HarnessError(403, "le poste est réservé au propriétaire");
+  if (!workstation.enabled) throw new HarnessError(404, "le poste de travail est désactivé (workstation.enabled)");
+  return workstation;
+}
+
+/**
+ * Approuver, refuser ou régler le poste : l'appareil approbateur seulement. Le jeton du
+ * code ordinaire vit dans `~/.omp/harness.json` et l'extension : une session omp qui le
+ * lit ne doit pas pouvoir trancher ses propres envois.
+ */
+export function approverFor(workstation: Workstation, client: Client): Workstation {
+  const owned = workstationFor(workstation, client);
+  if (!client.approver) throw new HarnessError(403, APPROVER_ONLY);
+  return owned;
+}
 
 const LEASE_LOST = "l'extension n'a pas rendu le résultat";
 const APPROVAL_EXPIRED = "approbation non donnée à temps : vaut refus";

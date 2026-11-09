@@ -7,7 +7,7 @@ groupes, raccourcis ⌘1…⌘7, et un panneau de détail :
 | Groupe | Section | Ce qu'elle montre |
 |---|---|---|
 | Travail | **À traiter** | La file unique de ce qui attend l'humain (questions, specs et revues à valider, envois du poste à approuver, alertes, audits à trier, décisions à relire), la plus vieille attente d'abord, sous une ligne de pouls (direct, en cours, en file, coût de la semaine). Vide : « Rien ne vous attend ». |
-| Travail | **Features** | Une ligne dense par feature, groupée « À vous », « En cours », « En file », « Terminées » ; la choisir ouvre sa **page** (en-tête, jalons Besoins → Specs → Implémentation → Revue → Fusion, onglets Aperçu, Direct, Fichiers, Tests, Frise, consigne à l'agent en pied). Portées : Features, Projets, Audits, Issues. |
+| Travail | **Features** | Une ligne dense par feature, groupée « À vous », « En cours », « En file », « Terminées » ; la choisir ouvre sa **page** (en-tête, jalons Besoins → Specs → Implémentation → Revue → Fusion, onglets Aperçu, Preuves, Direct, Fichiers, Tests, Frise, consigne à l'agent en pied). Portées : Features, Projets, Audits, Issues. |
 | Travail | **Poste** | Le poste de travail (extension Chrome et agent 24/24) : état, arrêt d'urgence, envois à approuver, demandes ; réglages, automatisations, profil, réunions et journal en sous-pages. |
 | Outils | **Mémoire**, **Terminal**, **Fichiers** | Locaux au Mac : la mémoire du projet, le terminal intégré, la visionneuse de fichiers et de différences. |
 | Système | **Système** | Ce qui se règle rarement, en sous-pages : Vigie, Planifications, Statistiques et santé, Administration (jeton admin seulement), Serveur. |
@@ -361,7 +361,8 @@ elle-même.
 - **À traiter** — la file unique de ce qui vous attend (`GET /v1/inbox`), sans
   tuile ni graphique : en tête une seule **ligne de pouls** (`inbox.pulse` : direct
   ou hors ligne, features en cours, en file, coût sur 7 jours), le bandeau d'une
-  vigie muette s'il y a lieu, puis les envois du poste à approuver, puis chaque
+  vigie muette s'il y a lieu, puis les envois du poste à approuver, puis les
+  propositions nées des signalements de collègues, puis chaque
   élément de la boîte dans sa propre section, la plus vieille attente d'abord, sous
   un en-tête `genre · dépôt · il y a …`. Rien de vide n'est affiché ; une file vide
   dit « Rien ne vous attend », avec la ligne de pouls et « Nouvelle feature »
@@ -393,7 +394,21 @@ elle-même.
     `auto_timeout` (tranchée par le serveur à l'échéance d'une escalade) est
     marquée « Tranchée à l’échéance » ;
   - **Alertes** de la veille (agent muet, étape lente, boucle de corrections, budget
-    dépassé) et **audits à trier** (`inbox.audit.open`).
+    dépassé) et **audits à trier** (`inbox.audit.open`) ;
+  - **Signalements de collègues** (pont corpo ↔ usine, `GET /v1/signals?state=proposed`,
+    `SignalProposalsSection`) : chaque proposition « Ouvrir une issue et lancer un
+    correctif dans <dépôt> », avec son canal, la personne, l'extrait caviardé, comptée
+    au badge d'À traiter et relue à chaque événement `signal`. « Relire et confirmer »
+    (`signal.review.<id>`) ouvre sa feuille : le message du collègue, le dépôt
+    (modifiable parmi ceux du serveur), le titre et la description, puis **ce qui
+    partira à la forge**, relu par `POST /v1/signals/{id}/preview` après chaque
+    modification (politique `issues.corporate` appliquée et sa note). « Confirmer »
+    (`POST …/confirm {repo, title, body}`) crée l'issue et lance la feature liée ;
+    « Écarter la proposition » (`POST …/dismiss`, raison facultative) ne la repropose
+    jamais. Seul l'appareil approbateur confirme ou écarte : le refus du serveur est dit
+    dans la feuille, pas dans le bandeau de tête. Les signalements sont au
+    propriétaire : un jeton restreint à des dépôts (403) n'en voit rien, sans erreur.
+    Le serveur ne sert pas encore les brouillons de réponse au collègue : l'app n'en montre aucun.
 - **Features** — un sélecteur de portée en tête (`RunsScope`) :
   - **Features** : une ligne dense par feature (`RunListRow` : point d'état, animé
     si elle tourne, titre, `dépôt · étape · âge`, coût si connu), groupée « À vous »,
@@ -421,15 +436,33 @@ elle-même.
   entier ; `POST /v1/audits`). Aucun formulaire n'est posé en tête d'un écran.
 - **La page d'une feature** (Mac `RunPageView.swift`, iOS `IOSRunScreen.swift`) : un
   en-tête fixe (`RunDetailHeader` : titre, pastille d'état, `dépôt · créée il y a …`,
-  jalons Besoins → Specs → Implémentation → Revue → Fusion), puis cinq onglets
+  jalons Besoins → Specs → Implémentation → Revue → Fusion), puis six onglets
   segmentés (`run.tabs`) — **Aperçu** (ce que la feature attend de vous, en place,
-  la demande d'origine repliée, les specs et le verdict lisibles), **Direct**,
-  **Fichiers**, **Tests**, **Frise** — et, en pied, le champ de consigne à l'agent
-  quand elle en accepte une. Elle s'ouvre sur l'Aperçu quand elle vous attend, sur le
-  Direct quand elle tourne, sur l'Aperçu sinon. Tous ses gestes sont dans un seul
-  menu « … » (`run.actions`, le même que le menu contextuel d'une ligne) :
-  consigne, budget, priorité, relancer, arrêter, annuler la fusion, PR, suivre sur
-  l'écran verrouillé (iPhone). Les onglets :
+  la demande d'origine repliée, les specs et le verdict lisibles, et la section
+  **Origine** d'une feature lancée depuis un signalement de collègue : canal,
+  personne telle que reçue, lien du fil, extrait caviardé, issue et confirmation, lus
+  par `GET /v1/runs/{id}/origin` ; rien sans origine ni pour un jeton restreint),
+  **Preuves**, **Direct**, **Fichiers**, **Tests**, **Frise** — et, en pied, le champ
+  de consigne à l'agent quand elle en accepte une. Elle s'ouvre sur les Preuves quand
+  elle attend la validation de sa revue, sur l'Aperçu quand elle vous attend
+  autrement, sur le Direct quand elle tourne, sur l'Aperçu sinon
+  (`HarnessRunOpening`). Tous ses gestes sont dans un seul menu « … » (`run.actions`,
+  le même que le menu contextuel d'une ligne) : consigne, budget, priorité, relancer,
+  arrêter, annuler la fusion, PR, suivre sur l'écran verrouillé (iPhone). Les onglets :
+  - **Preuves** : ce que la revue joint (`GET /v1/runs/{id}/proofs`, contenu par
+    `/proofs/{n}` lu à l'affichage), partagé Mac/iOS (`RunProofsSections`,
+    ConsoleUI). Le tour de revue courant d'abord — les preuves créées depuis le
+    début de la dernière étape /impl ou /impl --fix de la frise : l'avant et
+    l'après de chaque critère côte à côte (captures de même `acRef`, `side`
+    `before`/`after`), les autres captures en vignettes (agrandies d'un toucher),
+    les rapports de tests par critère (`<slug>/AC-n` ou `AC-n`, réussis et échoués,
+    « Rapport incomplet » quand il vient d'un résultat en cache), les journaux
+    repliés et les vidéos. Les tours précédents sont repliés sous « Tours
+    précédents », jamais mêlés. Un serveur qui ne sert pas les preuves (404) n'a
+    pas d'onglet, sans message ; une réponse illisible ou une panne s'affiche dans
+    l'onglet. La notification locale « Verdict à valider » finit par le nombre de
+    preuves du tour (`proofs` de l'événement `verdict`) : « aucune preuve »,
+    « 1 preuve », « 3 preuves » ;
   - **Direct** : la session OMP de l'agent du serveur en temps réel — ses
     paragraphes (rendus en Markdown), son raisonnement (replié), chaque outil avec
     son intention, sa commande, son état, sa durée et la fin de son résultat
@@ -562,11 +595,29 @@ approuver seulement s'il y en a, « Demander au poste » (un champ, le navigateu
 l'envoi ; les demandes en cours et la plus récente terminée, « Toutes les
 demandes »), les cinq dernières décisions (« Tout le journal »), puis une rangée
 par sous-page (`WorkstationPage`, `workstation.page.<page>`) : **Réglages**
-(autonomie, adresses et pseudos, navigateurs, navigation gardée),
-**Automatisations**, **Commander le navigateur**, **Profil**, **Réunions**,
-**Journal**, **Sessions** des jobs du poste, **Demandes**. Ce que ces pages
-montrent :
+(autonomie, adresses et pseudos, navigateurs, navigation gardée), **Canaux**
+(seulement si le serveur les sert à ce jeton), **Automatisations**, **Commander
+le navigateur**, **Profil**, **Réunions**, **Journal**, **Sessions** des jobs du
+poste, **Demandes**. Ce que ces pages montrent :
 
+- **Canaux** (`server.channels`, `GET /v1/workstation/channels`) : Gmail, Agenda et
+  Slack, chacun avec son état (non connecté, connecté, à reconnecter, bloqué par
+  l'administrateur, en erreur), son compte, sa dernière lecture et la phrase du
+  serveur (blocage, scope manquant, refus du fournisseur) ; la rangée compte les
+  canaux à reconnecter ou en erreur. En tête, une connexion en cours : « Ouvrir la
+  page d'autorisation » (l'URL que rend le serveur), un champ où recoller l'adresse
+  de retour, le code ou le texte d'erreur affiché (`POST …/{id}/login/answer
+  {value}`), et « L'administrateur bloque l'app » (`{blocked: true}`, ou un seul
+  canal Google : `channels: ["gmail"]` ou `["calendar"]`). Puis une section par
+  connexion : le client OAuth et « Configurer le client… » (feuille : JSON du
+  client « Application de bureau » ou identifiant et secret pour Google,
+  identifiant seul pour Slack, `PUT …/{id}/client`), et « Connecter » (Google :
+  Gmail et l'Agenda, Gmail seul ou l'Agenda seul, `POST …/{id}/login {channels?}`).
+  Le secret ne vit que dans la feuille, vidé à l'envoi : l'app ne le réaffiche ni
+  ne le garde. Les gestes n'existent que pour l'appareil approbateur (seul à
+  recevoir l'URL d'autorisation) ; un refus du serveur revient au geste. L'écran
+  est relu à chaque événement `workstation_channel` ; sur un serveur sans la route
+  (404) ou pour un jeton restreint (403), il n'existe pas.
 - **Extension et agent 24/24** (`GET /v1/workstation`) : extension en ligne ou
   hors ligne et son dernier contact, sa version, les heures observées sur le seuil
   (barre de progression), le dernier et le prochain passage de l'agent.
@@ -667,6 +718,15 @@ une portée de **Features**. Un serveur qui ne sert pas une fonction le dit
   désactiver (`PUT`, `If-Match`), « Déclencher maintenant » (`POST …/run`), supprimer
   (confirmé). Le serveur ne rend que la prochaine échéance : elle s'affiche dès la
   création.
+- **Autonomie** (`AutonomyViews.swift`, `server.autonomy`) : en lecture seule, les
+  règles de chaque dépôt visible, les validations prises seules de la fenêtre
+  d'apprentissage et les propositions de palier avec la modification de configuration
+  suggérée (`changes`), lues par `GET /v1/autonomy`. Un serveur qui ne sert pas la
+  route (404) retire la page du hub et de la palette. La feuille « Nouvelle feature »
+  envoie le type de travail et les labels (`POST /v1/runs {kind?, labels?}`), et la
+  carte d'une décision prise seule par l'autonomie (`decision.autonomy`) montre la
+  porte franchie, la règle (rang, `match`, exigences, portes) et chaque preuve avec sa
+  valeur, à la place du contexte de l'agent.
 - **Administration** (admin seulement, masquée sinon) : clients (`/v1/clients` : créer
   avec rôle et dépôts — le jeton n'est montré qu'une fois —, révoquer, confirmé), dépôts
   (`POST /v1/repos` : la clé de déploiement à poser et le lien de la page des clés),
@@ -678,7 +738,8 @@ une portée de **Features**. Un serveur qui ne sert pas une fonction le dit
 
 La garde `test/console/tour-de-controle.test.ts` confronte chaque route de ces écrans
 au routeur du serveur (rôle compris), chaque champ décodé au JSON réel, et vérifie
-leur câblage dans les deux apps.
+leur câblage dans les deux apps ; `test/console/autonomie-console.test.ts` fait de même
+pour l'autonomie.
 
 ## Lire les fichiers et les diffs d'une cible
 
@@ -967,6 +1028,23 @@ sombre, teintée) dans `omp-console/ios/OMPConsoleIOS/Assets.xcassets/AppIcon.ap
 Tout est écrit dans un dossier temporaire, puis déplacé ; aucun fichier n'est
 remplacé à moitié. Codes de sortie : 0 les quatre fichiers écrits, 1 échec, 2 non
 exécuté hors macOS.
+
+### Capture de l'onglet « Preuves »
+
+```bash
+bash scripts/recette/mac-shots.sh
+```
+
+Le script construit l'app (`swift-app.sh --no-tests`), démarre un serveur de
+démonstration (`scripts/recette/mac-shots-serveur.ts` : le vrai gestionnaire HTTP
+d'omp-harness sur un monde de test, avec une feature qui attend la validation de sa
+revue et ses preuves sur deux tours), puis ouvre une COPIE de l'app
+(`com.omp.console.recette`) sur cette feature et capture sa fenêtre :
+`omp-console/build/mac-shots/preuves.png` (dossier ignoré par git). La copie lit un
+dossier personnel et une racine de support jetables (`CFFIXED_USER_HOME`,
+`OMP_CONSOLE_SUPPORT_ROOT`, recette de préparation `succes`) : ni les préférences, ni
+le trousseau, ni le `~/.omp` de l'utilisateur ne sont touchés. Codes de sortie :
+0 image produite, 1 échec, 2 non exécuté hors macOS.
 
 ### Liste attendue des intents Siri
 
@@ -1764,7 +1842,7 @@ omp-console/
 │   ├── ProjectRoot.swift          le projet choisi de l'app (`session.projectRoot`)
 │   ├── Server/                    les écrans servis par le serveur de pipelines
 │   │   ├── HarnessSectionViews.swift  cadre commun (sans barre d'outils répétée), À traiter, Features
-│   │   ├── RunPageView.swift      la page d'une feature (en-tête, onglets Aperçu, Direct, Fichiers, Tests, Frise, consigne)
+│   │   ├── RunPageView.swift      la page d'une feature (en-tête, onglets Aperçu, Preuves, Direct, Fichiers, Tests, Frise, consigne)
 │   │   ├── HarnessSessionView.swift   le contenu de session partagé par la page et la feuille (audits, jobs du poste)
 │   │   ├── HarnessMonitoringViews.swift fichiers et différences, tests en direct, frise, alertes, statistiques du monitoring
 │   │   ├── HarnessStatsCharts.swift   les indicateurs et graphiques de Système › Statistiques et santé
@@ -1795,6 +1873,7 @@ omp-console/
 │   ├── HarnessLiveActivity.swift  l'état d'une Live Activity, la forme exacte que pousse le serveur
 │   ├── WorkstationWire.swift      le contrat JSON du poste de travail (`/v1/workstation*`)
 │   ├── WorkstationModel.swift     le client du poste de travail, porté par `HarnessModel` (même transport, même flux)
+│   ├── CorporateSignals.swift     les signalements de collègues (propositions, aperçu, confirmation) et l'origine d'une feature
 │   ├── HarnessNotifications.swift les notifications : charge du serveur, catégories, routage d'une action vers un geste
 │   ├── HarnessNotificationCenter.swift  le pont vers UserNotifications (permission, actions, notifications locales du Mac)
 │   └── HarnessDrafts.swift        les brouillons de lancement et de geste
@@ -1847,7 +1926,7 @@ Features suit la feature ouverte (`drafts.openedRun`), celle de Système la page
 montrée (`drafts.systemPage`) ; la palette, les notifications et le widget y
 poussent donc leur page. Toucher une ligne de feature ouvre sa **page**
 (`IOSRunScreen.swift`, `ios.screen.run`) : en-tête et jalons, onglets Aperçu,
-Direct, Fichiers, Tests, Frise (`ios.run.tabs`), consigne en pied, gestes dans le
+Preuves, Direct, Fichiers, Tests, Frise (`ios.run.tabs`), consigne en pied, gestes dans le
 menu « … ». Créer passe par le « + » de la barre (`ios.inbox.new` sur À traiter,
 menu Nouvelle feature / Nouveau projet / Nouvel audit sur Features,
 `ios.schedules.new` sur Planifications), qui ouvre une feuille. Aucun bouton

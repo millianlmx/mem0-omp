@@ -35,14 +35,16 @@ import {
   stringList,
   text,
 } from "./input.ts";
+import { intakeView, parseIntakeStates, visibleIntake } from "./intake.ts";
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import type { ModelChains, ProviderInput } from "./providers.ts";
 import { PROOF_MIMES } from "./proofs.ts";
 import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS, OAUTH } from "./providers.ts";
-import { escalationBatches, projectsOf } from "./queries.ts";
+import { autonomyValidations, escalationBatches, projectsOf } from "./queries.ts";
 import type { ConfigAdmin } from "./repos.ts";
 import { computeStats } from "./stats.ts";
+import { autonomyProposals } from "./autonomy-learning.ts";
 import { HARNESS_COMMIT } from "./build-info.ts";
 import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
 import type { LogLine } from "./logger.ts";
@@ -53,12 +55,13 @@ import type { VigieStatus } from "./db.ts";
 import { VIGIE_STATUSES } from "./db.ts";
 import { handleMcp } from "./mcp.ts";
 import {
-  APPROVER_ONLY,
   MAX_WAIT_SEC,
   SESSION_JOBS,
+  approverFor,
   parseActionInput,
   parseBrowserHello,
   parseRequestStates,
+  workstationFor,
 } from "./workstation.ts";
 
 export const API_VERSION = 1;
@@ -95,6 +98,7 @@ export const API_FEATURES = [
   "workstation-session",
   "workstation-captures",
   "workstation-files",
+  "workstation-channels",
   "mcp",
   "digest",
   "instructions",
@@ -105,7 +109,9 @@ export const API_FEATURES = [
   "prometheus",
   "vigie",
   "push-alerts",
+  "autonomy",
   "corporate-signals",
+  "intake",
   "proofs",
 ] as const;
 
@@ -347,13 +353,8 @@ export function apiRoutes(
       apis: COMPATIBLE_APIS,
     };
   };
-  /** Le poste de travail est au propriétaire : un client restreint à des dépôts n'y a pas accès. */
-  const workstationOf = (call: Call): Workstation => {
-    if (call.repos !== null) throw new HarnessError(403, OWNER_ONLY);
-    if (!orchestrator.workstation.enabled)
-      throw new HarnessError(404, "le poste de travail est désactivé (workstation.enabled)");
-    return orchestrator.workstation;
-  };
+  /** Le poste de travail est au propriétaire (workstation.ts `workstationFor`). */
+  const workstationOf = (call: Call): Workstation => workstationFor(orchestrator.workstation, call.client);
   /**
    * Les signalements des collègues et l'origine d'un run sont au propriétaire, comme tout le poste : un
    * client restreint (403) ou pilote (403, la vigie est un agent) n'y a pas accès. Sans le 404 « poste
@@ -365,16 +366,8 @@ export function apiRoutes(
   };
   const READS_SIGNALS = "réservé à l'humain — un client pilote ne lit pas les signalements";
   const ACTS_ON_SIGNALS = "geste réservé à l'humain — un client pilote ne confirme pas de signalement";
-  /**
-   * Approuver, refuser ou régler le poste : l'appareil approbateur seulement. Le jeton du
-   * code ordinaire vit dans `~/.omp/harness.json` et l'extension : une session omp qui le
-   * lit ne doit pas pouvoir trancher ses propres envois.
-   */
-  const approverOf = (call: Call): Workstation => {
-    const workstation = workstationOf(call);
-    if (!call.client.approver) throw new HarnessError(403, APPROVER_ONLY);
-    return workstation;
-  };
+  /** Approuver, refuser ou régler le poste : l'appareil approbateur seulement (`approverFor`). */
+  const approverOf = (call: Call): Workstation => approverFor(orchestrator.workstation, call.client);
   /** La présentation de l'extension appelante : son navigateur (`X-OMP-Browser`), son libellé et sa version. */
   const helloOf = (call: Call): BrowserHello =>
     parseBrowserHello(
@@ -460,7 +453,7 @@ export function apiRoutes(
     }),
     route("POST", "/v1/runs", "operator", async (call) => {
       const body = await readBody(call.req);
-      const run = orchestrator.createRun(newRunInput(body, call.client), call.actor);
+      const run = orchestrator.createRun(newRunInput(body, call.client, { typed: true }), call.actor);
       send(call.res, 201, { run }, { ETag: `"${run.rev}"` });
     }),
     route("GET", "/v1/runs/{id}", "viewer", (call) => {
@@ -710,6 +703,43 @@ export function apiRoutes(
         audit: await orchestrator.audits.cancel(visibleAudit(call, call.match[1] as string).id, call.actor),
       }),
     ),
+    // Les Demandes (intake.ts) : une phrase libre, classée en plan ; rien n'est créé avant `confirm`.
+    route("GET", "/v1/intake", "viewer", (call) =>
+      send(call.res, 200, {
+        intakes: store
+          .listIntakes({
+            states: parseIntakeStates(call.url.searchParams.get("state")),
+            viewer: { repos: call.repos, name: call.client.name },
+            limit: limitOf(call.url, 50, 200),
+          })
+          .map(intakeView),
+      }),
+    ),
+    route("POST", "/v1/intake", "operator", async (call) => {
+      const intake = orchestrator.intake.create(await readBody(call.req), call.client, call.actor);
+      void orchestrator.tick();
+      send(call.res, 201, { intake: intakeView(intake) });
+    }),
+    route("GET", "/v1/intake/{id}", "viewer", (call) =>
+      send(call.res, 200, { intake: intakeView(visibleIntake(store, call.client, call.match[1] as string)) }),
+    ),
+    route("POST", "/v1/intake/{id}/confirm", "operator", async (call) => {
+      const body = await readBody(call.req);
+      const intake = orchestrator.intake.confirm(call.match[1] as string, call.client, call.actor, body);
+      void orchestrator.tick();
+      send(call.res, 201, { intake: intakeView(intake) });
+    }),
+    route("POST", "/v1/intake/{id}/cancel", "operator", async (call) =>
+      send(call.res, 200, {
+        intake: intakeView(await orchestrator.intake.cancel(call.match[1] as string, call.client, call.actor)),
+      }),
+    ),
+    route("POST", "/v1/intake/{id}/answer", "operator", async (call) => {
+      const body = await readBody(call.req);
+      const intake = orchestrator.intake.answer(call.match[1] as string, call.client, call.actor, body);
+      void orchestrator.tick();
+      send(call.res, 200, { intake: intakeView(intake) });
+    }),
     // Le jeton push d'une Live Activity de l'app iOS, pour un run que le client voit.
     route("POST", "/v1/push/activities", "viewer", async (call) => {
       const body = await readBody(call.req);
@@ -791,6 +821,19 @@ export function apiRoutes(
         scheduler: orchestrator.status(call.repos).scheduler,
       }),
     ),
+    // L'autonomie par paliers, en lecture seule : les règles de chaque dépôt visible, ce qui a été validé seul
+    // (avec sa règle et ses preuves) et les propositions de palier. Aucune route n'écrit une règle.
+    route("GET", "/v1/autonomy", "viewer", (call) => {
+      const now = Date.now();
+      const { config } = orchestrator;
+      send(call.res, 200, {
+        repos: config.repos
+          .filter((repo) => call.repos === null || call.repos.includes(repo.name))
+          .map((repo) => ({ repo: repo.name, rules: repo.autonomy?.rules ?? [] })),
+        validations: autonomyValidations(store, config.autonomyLearning.windowDays, now, call.repos),
+        proposals: autonomyProposals(store, config, now, call.repos),
+      });
+    }),
     // Le rapport du matin : ce qui s'est fait seul depuis `since` (epoch ms ; défaut : 24 h).
     route("GET", "/v1/digest", "viewer", (call) => {
       const now = Date.now();
@@ -1008,6 +1051,25 @@ export function apiRoutes(
       orchestrator.schedules.unlinkAutomation(removed);
       send(call.res, 200, { removed });
     }),
+    // Les canaux corpo (Gmail, Agenda, Slack) : l'état se lit (propriétaire), la connexion se mène
+    // depuis l'appareil approbateur seul (client OAuth, URL d'autorisation, URL de retour recollée).
+    route("GET", "/v1/workstation/channels", "viewer", (call) => {
+      workstationOf(call);
+      send(call.res, 200, orchestrator.channels.view(call.client.approver));
+    }),
+    route("PUT", "/v1/workstation/channels/{id}/client", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(call.res, 200, orchestrator.channels.setClient(call.match[1] as string, body, call.actor.by));
+    }),
+    route("POST", "/v1/workstation/channels/{id}/login", "operator", async (call) => {
+      approverOf(call);
+      send(call.res, 201, orchestrator.channels.startLogin(call.match[1] as string, await readBody(call.req)));
+    }),
+    route("POST", "/v1/workstation/channels/{id}/login/answer", "operator", async (call) => {
+      approverOf(call);
+      send(call.res, 200, await orchestrator.channels.answer(call.match[1] as string, await readBody(call.req)));
+    }),
     // La vigie (vigie/) : ses réglages (admin), son battement de cœur et ses incidents (son client pilote).
     route("GET", "/v1/vigie", "viewer", (call) => send(call.res, 200, orchestrator.vigie.view(call.repos, Date.now()))),
     route("PUT", "/v1/vigie", "admin", async (call) =>
@@ -1186,10 +1248,17 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     // Les en-têtes partent tout de suite : le client sait son flux ouvert avant le premier événement.
     res.flushHeaders();
     stats.sseClients++;
+    // Un `intake_state` sans dépôt (demande pas encore classée sur un dépôt) va aussi à son
+    // auteur : la règle de lecture de `GET /v1/intake`, au direct comme au rejeu.
+    const authorOf = (event: EventRow): boolean =>
+      event.type === "intake_state" &&
+      event.repo === null &&
+      typeof event.payload.intakeId === "string" &&
+      store.getIntake(event.payload.intakeId)?.createdBy === client.name;
     const visible = (event: EventRow): boolean =>
       (runId === null || event.runId === runId) &&
       (auditId === null || event.payload.auditId === auditId) &&
-      (repos === null || (event.repo !== null && repos.includes(event.repo)));
+      (repos === null || (event.repo !== null && repos.includes(event.repo)) || authorOf(event));
     let closed = false;
     let ping: NodeJS.Timeout | undefined;
     let unsubscribe = (): void => {};

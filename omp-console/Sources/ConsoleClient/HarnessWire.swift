@@ -81,6 +81,11 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
     public var lastFailCause: String?
     /// Le projet de la feature, ou `nil` pour une feature lancée seule.
     public var projectId: String?
+    /// Le type de travail déclaré au lancement (`bug`, `feature`, `docs`, `deps`, `test`),
+    /// ou `nil` : aucune règle d'autonomie ne s'applique alors à la feature.
+    public var kind: String?
+    /// Les labels déclarés au lancement (vides avec un serveur antérieur).
+    public var labels: [String]
     public var createdAt: Double
     public var updatedAt: Double
 
@@ -89,7 +94,8 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         fixes: Int = 0, modules: [String] = [], verdict: HarnessVerdict? = nil, mergeSha: String? = nil,
         prUrl: String? = nil, reason: String? = nil, model: String? = nil, rev: Int? = nil, priority: Int? = nil,
         createdBy: String? = nil, mergeRetries: Int = 0, notBefore: Date? = nil, lastFailCause: String? = nil,
-        projectId: String? = nil, createdAt: Double = 0, updatedAt: Double = 0, waitCause: String? = nil
+        projectId: String? = nil, createdAt: Double = 0, updatedAt: Double = 0, waitCause: String? = nil,
+        kind: String? = nil, labels: [String] = []
     ) {
         self.id = id
         self.repo = repo
@@ -115,15 +121,17 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.waitCause = waitCause
+        self.kind = kind
+        self.labels = labels
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, repo, slug, title, request, state, step, fixes, modules, verdict, mergeSha, prUrl, reason, model
-        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, projectId, createdAt, updatedAt, waitCause
+        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, projectId, createdAt, updatedAt, waitCause, kind, labels
     }
 
-    /// Un serveur antérieur n'écrit ni `mergeRetries`, ni `notBefore`, ni `lastFailCause` :
-    /// 0 et `nil`. `notBefore` est un instant en millisecondes.
+    /// Un serveur antérieur n'écrit ni `mergeRetries`, ni `notBefore`, ni `lastFailCause`,
+    /// ni `kind`, ni `labels` : 0, `nil` et vide. `notBefore` est un instant en millisecondes.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
@@ -150,6 +158,8 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         createdAt = try container.decode(Double.self, forKey: .createdAt)
         updatedAt = try container.decode(Double.self, forKey: .updatedAt)
         waitCause = try container.decodeIfPresent(String.self, forKey: .waitCause)
+        kind = try container.decodeIfPresent(String.self, forKey: .kind)
+        labels = try container.decodeIfPresent([String].self, forKey: .labels) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -178,6 +188,8 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encodeIfPresent(waitCause, forKey: .waitCause)
+        try container.encodeIfPresent(kind, forKey: .kind)
+        try container.encode(labels, forKey: .labels)
     }
 
     /// L'état connu, ou `nil` pour un état apparu après cette version de l'app.
@@ -211,8 +223,11 @@ public struct HarnessDecision: Codable, Equatable, Sendable, Identifiable {
     public var category: String
     public var status: String
     public var createdAt: Double
+    /// Une validation prise seule par l'autonomie par paliers : la porte franchie, la règle
+    /// et les preuves constatées ; `nil` pour une décision d'agent ou d'un serveur antérieur.
+    public var autonomy: HarnessAutonomyProof?
 
-    public init(id: Int, runId: String, seq: Int, question: String, options: [String], chosen: String, rationale: String, context: String? = nil, impacts: [String] = [], step: String? = nil, category: String = "reversible", status: String = "auto", createdAt: Double = 0) {
+    public init(id: Int, runId: String, seq: Int, question: String, options: [String], chosen: String, rationale: String, context: String? = nil, impacts: [String] = [], step: String? = nil, category: String = "reversible", status: String = "auto", createdAt: Double = 0, autonomy: HarnessAutonomyProof? = nil) {
         self.id = id
         self.runId = runId
         self.seq = seq
@@ -226,13 +241,14 @@ public struct HarnessDecision: Codable, Equatable, Sendable, Identifiable {
         self.category = category
         self.status = status
         self.createdAt = createdAt
+        self.autonomy = autonomy
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runId, seq, question, options, chosen, rationale, context, impacts, step, category, status, createdAt
+        case id, runId, seq, question, options, chosen, rationale, context, impacts, step, category, status, createdAt, autonomy
     }
 
-    /// Un serveur antérieur n'écrit ni `context`, ni `impacts`, ni `step` : `nil` et vide.
+    /// Un serveur antérieur n'écrit ni `context`, ni `impacts`, ni `step`, ni `autonomy` : `nil` et vide.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(Int.self, forKey: .id)
@@ -248,6 +264,7 @@ public struct HarnessDecision: Codable, Equatable, Sendable, Identifiable {
         category = try container.decode(String.self, forKey: .category)
         status = try container.decode(String.self, forKey: .status)
         createdAt = try container.decode(Double.self, forKey: .createdAt)
+        autonomy = try container.decodeIfPresent(HarnessAutonomyProof.self, forKey: .autonomy)
     }
 
     /// Le contexte donné par l'agent, s'il en a donné un.
@@ -758,6 +775,65 @@ public struct HarnessProofs: Codable, Equatable, Sendable {
     public init(runId: String, proofs: [HarnessProof] = []) {
         self.runId = runId
         self.proofs = proofs
+    }
+}
+
+/// Le contenu d'une preuve `test_report` (omp-harness/test-report.ts) : le décompte
+/// des tests par critère des specs du run, lu dans toute la sortie des tests.
+public struct HarnessTestReport: Codable, Equatable, Sendable {
+    /// `impl` ou `fix`.
+    public var step: String
+    /// `touched` ou `full`.
+    public var scope: String
+    /// `pass`, `fail`, `oom`, `timeout`, `error` ou `aborted`.
+    public var outcome: String
+    /// Vrai : le rapport vient d'un résultat servi par le cache, compté sur la fin
+    /// gardée de la sortie ; des critères peuvent manquer.
+    public var truncated: Bool
+    public var criteria: [HarnessTestCriterion]
+    /// Les tests hors des critères du run (autre slug, critère absent des specs, sans id).
+    public var other: HarnessTestCount
+
+    public init(step: String, scope: String = "touched", outcome: String = "pass", truncated: Bool = false, criteria: [HarnessTestCriterion] = [], other: HarnessTestCount = HarnessTestCount()) {
+        self.step = step
+        self.scope = scope
+        self.outcome = outcome
+        self.truncated = truncated
+        self.criteria = criteria
+        self.other = other
+    }
+}
+
+/// Le décompte d'un critère d'un rapport de tests.
+public struct HarnessTestCriterion: Codable, Equatable, Sendable, Identifiable {
+    /// `<slug>/AC-n`, ou `AC-n` quand `slug` est nul.
+    public var id: String
+    public var slug: String?
+    public var ac: String
+    public var tests: Int
+    public var passed: Int
+    public var failed: Int
+
+    public init(id: String, slug: String? = nil, ac: String, tests: Int = 0, passed: Int = 0, failed: Int = 0) {
+        self.id = id
+        self.slug = slug
+        self.ac = ac
+        self.tests = tests
+        self.passed = passed
+        self.failed = failed
+    }
+}
+
+/// Un décompte de tests.
+public struct HarnessTestCount: Codable, Equatable, Sendable {
+    public var tests: Int
+    public var passed: Int
+    public var failed: Int
+
+    public init(tests: Int = 0, passed: Int = 0, failed: Int = 0) {
+        self.tests = tests
+        self.passed = passed
+        self.failed = failed
     }
 }
 

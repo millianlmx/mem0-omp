@@ -157,6 +157,7 @@ struct IOSInboxScreen: View {
     var body: some View {
         IOSHarnessScreen(server: server, drafts: drafts, section: .inbox, catalog: true, reloadAlso: {
             await server.workstation.refresh()
+            await server.signals.refresh()
             await server.vigie.refresh()
         }) {
             InboxFeed(server: server, drafts: drafts, inbox: server.inbox ?? HarnessInbox())
@@ -291,10 +292,12 @@ struct IOSSystemScreen: View {
         .padding(.vertical, 4)
     }
 
-    /// Les résumés des rangées : le mode de la vigie, les planifications actives.
+    /// Les résumés des rangées : le mode de la vigie, les planifications actives, les
+    /// propositions de palier (et l'Autonomie masquée sur un serveur qui ne la sert pas).
     private func reloadSummaries() async {
         await server.vigie.refresh()
         await server.schedules.refresh()
+        await server.autonomy.refresh()
     }
 }
 
@@ -308,6 +311,7 @@ struct IOSSystemPageScreen: View {
         switch page {
         case .vigie: IOSVigieScreen(server: server, drafts: drafts)
         case .schedules: IOSSchedulesScreen(server: server, drafts: drafts)
+        case .autonomy: IOSAutonomyScreen(server: server, drafts: drafts)
         case .stats: IOSStatsScreen(server: server, drafts: drafts)
         case .admin: IOSAdminScreen(server: server, drafts: drafts)
         // La rangée Serveur ouvre la feuille de connexion : jamais poussée (`RootView`
@@ -352,6 +356,20 @@ struct IOSSchedulesScreen: View {
             }
         }
         .task { await server.schedules.refresh() }
+    }
+}
+
+/// L'autonomie par paliers, en lecture seule : règles par dépôt, validations prises seules
+/// et propositions de palier (contenu partagé, ConsoleUI).
+struct IOSAutonomyScreen: View {
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var drafts: HarnessDrafts
+
+    var body: some View {
+        IOSHarnessScreen(server: server, drafts: drafts, page: .autonomy, reloadAlso: { await server.autonomy.refresh() }) {
+            AutonomySections(server: server, drafts: drafts)
+        }
+        .task { await server.autonomy.refresh() }
     }
 }
 

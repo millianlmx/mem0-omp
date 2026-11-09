@@ -34,6 +34,7 @@ import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import { escalationBatches } from "./queries.ts";
 import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
+import { intakeView, visibleIntake } from "./intake.ts";
 import { TARGET_KINDS, scheduleInput } from "./schedules.ts";
 
 /** Les versions du protocole comprises, la plus récente d'abord. */
@@ -703,6 +704,77 @@ export const MCP_TOOLS: readonly Tool[] = [
       return { repo: repo.name, ...outcome };
     },
   },
+  {
+    name: "intake",
+    title: "Poser ou lire une demande",
+    description:
+      "Confie une demande en langage libre à l'OS (`POST /v1/intake`) : un job la classe (feature, bug, audit, tâche du poste, planification ou question) et rend un PLAN lisible, ou une question de clarification. Rien n'est créé avant `intake_confirm`. Avec `id`, lit la demande (état, plan, question, réponse, objet créé). Relis-la tant que son état est `classifying`.",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      id: { type: "string", description: "Facultatif : lit cette demande au lieu d'en poser une." },
+      text: { type: "string", description: "La demande, en une phrase libre (4000 caractères au plus)." },
+      source: {
+        type: "string",
+        enum: ["console", "ios", "voice", "slack", "cli", "chrome"],
+        description: "Facultatif : d'où vient la demande (défaut : cli).",
+      },
+      repo: { type: "string", description: "Facultatif : impose ce dépôt au plan." },
+    },
+    required: [],
+    run: async (call, args) => {
+      const id = optionalText(args, "id");
+      if (id !== undefined) return { intake: intakeView(visibleIntake(call.orchestrator.store, call.client, id)) };
+      const row = call.orchestrator.intake.create(
+        { text: args.text, source: optionalText(args, "source") ?? "cli", repo: optionalText(args, "repo") },
+        call.client,
+        { by: call.actor.by },
+      );
+      void call.orchestrator.tick();
+      return { intake: intakeView(row) };
+    },
+  },
+  {
+    name: "intake_confirm",
+    title: "Confirmer le plan d'une demande",
+    description:
+      "Confirme le plan d'une demande (`POST /v1/intake/{id}/confirm`) : crée l'objet du plan (run, audit, planification ou demande au poste) par le chemin existant. `plan` corrige des champs du plan (kind, repo, title, statement, focus, schedule). Une demande déjà confirmée est refusée (409) : rien n'est créé deux fois.",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      id: { type: "string", description: "L'id de la demande." },
+      plan: { type: "object", description: "Facultatif : les champs du plan à corriger." },
+    },
+    required: ["id"],
+    run: async (call, args) => {
+      const row = call.orchestrator.intake.confirm(
+        text(args, "id"),
+        call.client,
+        { by: call.actor.by },
+        { plan: args.plan ?? undefined },
+      );
+      void call.orchestrator.tick();
+      return { intake: intakeView(row) };
+    },
+  },
+  {
+    name: "intake_answer",
+    title: "Répondre à une clarification",
+    description:
+      "Répond à la question de clarification d'une demande (`POST /v1/intake/{id}/answer`) : la même demande est reclassée. Refusé (409) si elle n'attend pas de réponse.",
+    role: "operator",
+    readOnly: false,
+    properties: {
+      id: { type: "string", description: "L'id de la demande." },
+      text: { type: "string", description: "La réponse de l'humain." },
+    },
+    required: ["id", "text"],
+    run: async (call, args) => {
+      const row = call.orchestrator.intake.answer(text(args, "id"), call.client, { by: call.actor.by }, args);
+      void call.orchestrator.tick();
+      return { intake: intakeView(row) };
+    },
+  },
 ];
 
 function rpcError(id: JsonRpcId, code: number, message: string): Record<string, unknown> {
@@ -771,7 +843,7 @@ export async function handleMcp(message: unknown, call: McpCall): Promise<Record
             capabilities: { tools: { listChanged: false } },
             serverInfo: { name: "omp-harness", title: "OMP harness", version: call.version },
             instructions:
-              "Lis les issues (GitHub ou GitLab) d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority, run_budget, et run_instructions pour lui parler pendant qu'il tourne). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list, et ce qui s'est fait seul (la nuit) avec digest. Planifie un travail récurrent (un run, un audit, la relève des issues d'un label) avec schedule_create, liste-les avec schedules_list, retire-les avec schedule_delete. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer.",
+              "Lis les issues (GitHub ou GitLab) d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority, run_budget, et run_instructions pour lui parler pendant qu'il tourne). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list, et ce qui s'est fait seul (la nuit) avec digest. Planifie un travail récurrent (un run, un audit, la relève des issues d'un label) avec schedule_create, liste-les avec schedules_list, retire-les avec schedule_delete. Confie une demande en une phrase libre avec intake (elle est classée en un plan, rien n'est créé), réponds à sa question de clarification avec intake_answer et confirme son plan avec intake_confirm. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer.",
           },
         };
       }

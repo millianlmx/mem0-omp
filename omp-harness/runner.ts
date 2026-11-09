@@ -147,6 +147,8 @@ export type RunnerSpec = {
   memoryEnvFile?: string | null;
   /** Le dépôt est `local-only` : aucune clé de fournisseur distant chez le runner. */
   localOnly?: boolean;
+  /** `false` : aucun plugin mémoire — le classement des Demandes (intake.ts). */
+  memory?: false;
 };
 
 /** Le runner en conteneur frère : ses seuls montages sont son worktree, le clone en lecture, l'overlay, son HOME et ses clés. */
@@ -217,7 +219,10 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
     "--cwd",
     spec.cwd,
     ...(spec.model ? ["--model", `${spec.model.provider}/${spec.model.model}`] : []),
-    ...runnerExtensions(config).flatMap((extension) => ["-e", extension]),
+    ...(spec.memory === false
+      ? config.runner.extensions.filter((extension) => !isMemoryExtension(extension))
+      : runnerExtensions(config)
+    ).flatMap((extension) => ["-e", extension]),
   ];
   if (config.runner.isolation === "none") return { command: omp[0] as string, args: omp.slice(1) };
   if (config.runner.isolation === "container") return containerRunnerArgv(config, spec, omp);
@@ -694,6 +699,31 @@ export type WorkstationJob = "poste-profil" | "poste-digest" | "poste-service" |
 
 const NULLABLE_STRING = { type: ["string", "null"] } as const;
 
+/** Le rendu du classement d'une Demande (intake.ts) : tout est jugé par le serveur après la session. */
+const INTAKE_TOOL: HostToolDefinition = {
+  name: "intake_classify",
+  label: "Harness — classement de la demande",
+  description:
+    "Rend le classement de la demande, UNE fois : `clarification` seule si la demande est ambiguë ; sinon `kind` et les champs du plan, ou `answer` pour une `question`.",
+  parameters: {
+    type: "object",
+    properties: {
+      kind: { type: "string", enum: ["feature", "bug", "audit", "workstation_request", "schedule", "question"] },
+      clarification: { ...NULLABLE_STRING, description: "La question à poser, seule, si la demande est ambiguë." },
+      answer: { ...NULLABLE_STRING, description: "La réponse directe d'une `question`." },
+      repo: { ...NULLABLE_STRING, description: "Le dépôt déclaré ; null pour une workstation_request." },
+      title: { ...NULLABLE_STRING, description: "Le titre court du plan." },
+      statement: { ...NULLABLE_STRING, description: "La demande reformulée, autoportante." },
+      focus: { ...NULLABLE_STRING, description: "Le focus d'un audit, ou d'une planification d'audit." },
+      cron: { ...NULLABLE_STRING, description: "La planification cron à 5 champs d'une `schedule`." },
+      target: { ...NULLABLE_STRING, description: "La cible d'une `schedule` : run, audit ou issues." },
+      label: { ...NULLABLE_STRING, description: "Le label des issues d'une `schedule` de cible issues." },
+    },
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 const WORKSTATION_ACT_TOOL: HostToolDefinition = {
   name: "workstation_act",
   label: "Poste — action dans le navigateur",
@@ -943,8 +973,9 @@ const WORKSTATION_SIGNAL_IGNORE_TOOL: HostToolDefinition = {
  * `review_verdict` et `qa_record_proof` en revue seulement.
  */
 export function hostToolsFor(
-  step: StepKind | "audit" | "pilot" | "challenge" | "dream" | WorkstationJob,
+  step: StepKind | "audit" | "intake" | "pilot" | "challenge" | "dream" | WorkstationJob,
 ): HostToolDefinition[] {
+  if (step === "intake") return [PROGRESS_TOOL, INTAKE_TOOL];
   if (step === "audit") return [PROGRESS_TOOL, RECALL_TOOL, AUDIT_TOOL];
   if (step === "pilot") return [PROGRESS_TOOL, RECALL_TOOL, PILOT_TOOL];
   if (step === "dream") return [PROGRESS_TOOL, RECALL_TOOL, DREAM_TOOL];

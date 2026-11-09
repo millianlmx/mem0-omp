@@ -491,4 +491,14 @@ public enum NotificationText {
 
     /// « demo · Panier » : le dépôt d'abord, l'humain suit plusieurs projets.
     public static func runLine(repo: String, title: String) -> String { "\(repo) · \(title)" }
+
+    /// « aucune preuve », « 1 preuve », « 3 preuves » : les mots du serveur
+    /// (`proofCountText` d'omp-harness/proofs.ts), en fin du corps d'un verdict.
+    public static func proofs(_ count: Int) -> String {
+        switch count {
+        case ...0: L10n.text("aucune preuve")
+        case 1: L10n.text("1 preuve")
+        default: L10n.format("%lld preuves", count)
+        }
+    }
 }

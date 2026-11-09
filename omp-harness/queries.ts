@@ -75,6 +75,17 @@ export function runView(store: Store, run: RunRow, live: boolean): Record<string
   };
 }
 
+/** Les validations prises seules par l'autonomie des dépôts visibles, créées dans la fenêtre : les plus récentes d'abord, 100 au plus. */
+export function autonomyValidations(store: Store, windowDays: number, now: number, repos: RepoFilter = null) {
+  const since = now - windowDays * 86_400_000;
+  const decisions = store
+    .listDecisions({ repos })
+    .filter((decision) => decision.autonomy !== null && decision.createdAt >= since)
+    .sort((a, b) => b.createdAt - a.createdAt || b.seq - a.seq)
+    .slice(0, 100);
+  return withStep(store, decisions);
+}
+
 /** Chaque projet avec le décompte de ses runs par état (la liste des apps). */
 export function projectsOf(store: Store, repos: RepoFilter = null): Record<string, unknown>[] {
   const runs = store.listRuns({ repos });
