@@ -31,6 +31,7 @@ import {
 import type { ChallengeStep } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { RunRow, StepRow } from "./db.ts";
+import type { AtlassianDesk } from "./atlassian/desk.ts";
 import { featureLine } from "./card.ts";
 import { detectIrreversible } from "./decisions.ts";
 import { ARTIFACTS_DIR, isArtifactPath, isTestFile } from "./git.ts";
@@ -82,10 +83,12 @@ type ChallengeEnd =
   | { kind: "missing"; reason: string }
   | { kind: "interrupted"; result: PromptResult };
 
-/** Ce que l'orchestrateur prête aux étapes : créer du travail (découpage). */
+/** Ce que l'orchestrateur prête aux étapes : créer du travail (découpage), lire Atlassian. */
 export type StepHooks = {
   /** `split_feature` en /impl : un projet des sous-features AUTRES que celle que le run continue, en attente de son merge (split.ts). */
   split: (run: RunRow, features: SplitFeature[], step: StepKind) => { projectId: string; runs: RunRow[] };
+  /** Le connecteur Atlassian : ses lectures et `corpo_recall` pour un dépôt `atlassian: true` (host-tools.ts). */
+  atlassian: AtlassianDesk;
 };
 
 /** L'état vivant d'un run conduit par ce process. */
@@ -320,6 +323,15 @@ export class StepExecutor {
     return live.session;
   }
 
+  /**
+   * Les lectures Atlassian offertes aux étapes du run : le dépôt les déclare (`atlassian: true`,
+   * jamais sur un dépôt public) ET le connecteur est branché. La visibilité de la forge ne se lit
+   * qu'en asynchrone (`Forge.visibility()`) : la déclaration du dépôt fait foi.
+   */
+  #atlassianFor(run: RunRow): boolean {
+    return this.#ctx.repo(run.repo).atlassian === true && this.#hooks.atlassian.connected();
+  }
+
   /** Le worktree du run, sur une branche neuve à partir de `main`. */
   async provision(run: RunRow): Promise<RunRow> {
     const { git, config, store } = this.#ctx;
@@ -399,7 +411,9 @@ export class StepExecutor {
         // La revue relit chez un autre fournisseur que l'implémenteur : pas les mêmes angles morts.
         step === "review" && config.review.crossProvider ? { avoidProvider: this.#implementerProvider(run.id) } : {},
       );
-      await session.setHostTools(hostToolsFor(step, { qa: live.qa?.offersTools === true }));
+      await session.setHostTools(
+        hostToolsFor(step, { qa: live.qa?.offersTools === true, atlassian: this.#atlassianFor(run) }),
+      );
 
       const repo = this.#ctx.repo(run.repo);
       const prompt = stepPrompt({
@@ -551,7 +565,7 @@ export class StepExecutor {
         `${runnerUnit(run.id, stepRow.id)}-reponse`,
         live.abort.signal,
       );
-      await session.setHostTools(hostToolsFor(step));
+      await session.setHostTools(hostToolsFor(step, { atlassian: this.#atlassianFor(run) }));
       const missingAnswer = async (): Promise<string | null> => {
         const broken = await this.#missingOutput(live, run, headBefore, dirtyBefore);
         if (broken !== null) return broken;

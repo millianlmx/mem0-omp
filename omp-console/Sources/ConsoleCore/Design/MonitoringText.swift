@@ -499,6 +499,10 @@ public enum NotificationText {
     public static let vigieSilentBody = L10n.text("La vigie ne donne plus signe de vie.")
     public static let backupFailed = L10n.text("Sauvegarde échouée")
     public static let backupFailedBody = L10n.text("Une sauvegarde de la base a échoué.")
+    public static let atlassianComment = L10n.text("Commentaire Jira à valider")
+    public static let atlassianCommentBody = L10n.text("Rien n’est publié sans votre accord.")
+    public static let plan = L10n.text("Plan du jour prêt")
+    public static let planBody = L10n.text("Le plan du jour vous attend dans le Poste.")
     /// Un geste fait depuis une notification que le serveur a refusé (révision périmée, droits).
     public static let gestureFailed = L10n.text("Geste non abouti")
     public static let gestureFailedBody = L10n.text("Ouvrez l’app pour voir où en est la demande.")

@@ -79,6 +79,9 @@ public final class HarnessModel: ObservableObject {
     /// Les signalements des collègues devenus propositions, et l'origine d'une feature
     /// (pont corpo ↔ usine) : même échange, même flux.
     public private(set) lazy var signals = CorporateSignalsModel(harness: self, reloadDelay: refreshDelay)
+    /// Atlassian (Jira, Confluence) : connexion OAuth du serveur, plan du jour, savoir de la
+    /// boîte et commentaires Jira proposés par l'agent : même échange, même flux.
+    public private(set) lazy var atlassian = AtlassianModel(harness: self, reloadDelay: refreshDelay)
     /// La Demande : une phrase libre classée en plan par le serveur (`/v1/intake*`).
     public private(set) lazy var intakes = HarnessIntakes(harness: self, reloadDelay: refreshDelay)
     /// L'historique des features (`GET /v1/runs`), terminées comprises.
@@ -288,6 +291,7 @@ public final class HarnessModel: ObservableObject {
         workstation.reset()
         serverBrowser.reset()
         signals.reset()
+        atlassian.reset()
         intakes.reset()
         history.reset()
         vigie.reset()
@@ -398,6 +402,7 @@ public final class HarnessModel: ObservableObject {
                         scheduleRefresh()
                         workstation.receive(names)
                         signals.receive(names)
+                        atlassian.receive(names)
                         intakes.receive(names)
                         vigie.receive(names)
                         schedules.receive(names)

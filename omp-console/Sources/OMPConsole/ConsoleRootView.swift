@@ -42,6 +42,8 @@ struct ConsoleRootView: View {
     @ObservedObject var workstation: WorkstationModel
     /// Les propositions des signalements de collègues (`server.signals`) : badge d'« À traiter ».
     @ObservedObject var signals: CorporateSignalsModel
+    /// Les commentaires Jira proposés par l'agent (`server.atlassian`) : badge d'« À traiter ».
+    @ObservedObject var atlassian: AtlassianModel
     @ObservedObject var filesModel: FilesModel
     /// Le déroulé de la sortie (porté par le délégué) : le bouton « Quitter » de
     /// la feuille de préparation bloquante y passe, comme ⌘Q.
@@ -91,7 +93,7 @@ struct ConsoleRootView: View {
     /// la vigie muette sur Système.
     private func badge(for section: ConsoleSection) -> Int {
         switch section {
-        case .inbox: (server.inbox?.pendingCount ?? 0) + workstation.pendingCount + signals.pendingCount
+        case .inbox: (server.inbox?.pendingCount ?? 0) + workstation.pendingCount + signals.pendingCount + atlassian.pendingCount
         case .workstation: workstation.pendingCount
         case .system: server.vigie.isSilent ? 1 : 0
         default: 0
@@ -207,6 +209,7 @@ struct ConsoleRootView: View {
         .task(id: server.address) {
             await workstation.refresh()
             await signals.refresh()
+            await atlassian.refresh()
             await server.intakes.refresh()
             await server.vigie.refresh()
             if server.isConfigured { _ = await notifications.requestAuthorization() }

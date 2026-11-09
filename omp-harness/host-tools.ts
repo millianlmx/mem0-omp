@@ -1,7 +1,9 @@
 // Les outils hôtes d'un run : ce que le runner appelle et que le SERVICE exécute
 // (`progress`, `oracle_recall`, `decision`, `save_checkpoint`, `set_modules`, `split_feature`,
-// `run_tests`, `review_verdict`, `qa_record_proof`, et en revue, avec une prévisualisation, les outils de
-// navigation `qa_*` de browser/qa.ts). Le runner n'a ni la base ni le jeton de l'API : tout passe par ici.
+// `run_tests`, `review_verdict`, `qa_record_proof`, en revue, avec une prévisualisation, les outils de
+// navigation `qa_*` de browser/qa.ts, et pour un dépôt `atlassian: true` les lectures Atlassian et
+// `corpo_recall`, jamais d'écriture). Le runner n'a ni la base ni le jeton de l'API : tout passe par ici.
+import { isAtlassianTool } from "./atlassian/desk.ts";
 import { baselineSummary } from "./baseline.ts";
 import type { QaPreview } from "./browser/qa.ts";
 import { isQaTool } from "./browser/qa-tools.ts";
@@ -88,6 +90,11 @@ export async function runHostTool(
     if (state.qa === null)
       return { text: `${name} : aucune prévisualisation déclarée pour ce dépôt (preview)`, isError: true };
     return state.qa.tool(name, args);
+  }
+  // Les lectures Atlassian : seulement pour un dépôt qui le déclare ; une écriture est refusée par le desk.
+  if (isAtlassianTool(name)) {
+    if (ctx.repo(run.repo).atlassian !== true) return { text: `outil inconnu : ${name}`, isError: true };
+    return hooks.atlassian.runTool(name, args, { by: `run:${run.id}`, writes: false }, signal);
   }
   switch (name) {
     case "progress": {

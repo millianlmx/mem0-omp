@@ -21,8 +21,11 @@ struct WorkstationView: View {
 
     var body: some View {
         NavigationStack {
-            HarnessSection(server: server, drafts: drafts, catalog: false, reload: { await workstation.load() }) {
-                WorkstationSections(workstation: workstation, drafts: drafts)
+            HarnessSection(server: server, drafts: drafts, catalog: false, reload: {
+                await workstation.load()
+                await server.atlassian.refresh()
+            }) {
+                WorkstationSections(workstation: workstation, atlassian: server.atlassian, drafts: drafts)
                 ServerBrowserSection(workstation: workstation, model: server.serverBrowser, loginShown: $serverLoginShown)
             }
             .navigationTitle(ConsoleSection.workstation.title)
@@ -32,7 +35,10 @@ struct WorkstationView: View {
         .sheet(isPresented: $serverLoginShown) {
             ServerBrowserLoginSheet(model: server.serverBrowser, isPresented: $serverLoginShown)
         }
-        .task { await workstation.load() }
+        .task {
+            await workstation.load()
+            await server.atlassian.refresh()
+        }
         .accessibilityIdentifier("workstation.harness")
     }
 }

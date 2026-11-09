@@ -266,8 +266,8 @@ export class VigieStore extends ObservabilityStore {
   /**
    * Les textes du poste de travail gardés depuis `since` (ms) : adresses et titres des
    * pages observées et de leurs cibles, meetings et leurs segments, paramètres, résultats
-   * et erreurs des actions, profil et identités de l'utilisateur. Tout ce qui fait au
-   * moins POSTE_TEXT_MIN caractères.
+   * et erreurs des actions, profil et identités de l'utilisateur, écritures Jira et plans du
+   * jour du connecteur Atlassian. Tout ce qui fait au moins POSTE_TEXT_MIN caractères.
    */
   workstationTexts(since: number): string[] {
     const texts = new Set<string>();
@@ -306,6 +306,20 @@ export class VigieStore extends ObservabilityStore {
       add(parsed(row.profile));
     const settings = this.selectOne("SELECT value FROM settings WHERE key = 'workstation'");
     if (settings) add((parsed(settings.value) as { selfIdentities?: unknown } | null)?.selfIdentities);
+    // Le connecteur Atlassian : textes des écritures Jira, résumés et éléments des plans du jour
+    // (sans le dépôt ni la source d'un élément : ce sont des mots de l'usine, pas de la boîte).
+    for (const row of this.selectAll("SELECT body, why FROM atlassian_writes WHERE created_at >= ?", since))
+      add([row.body, row.why]);
+    for (const row of this.selectAll("SELECT summary, items FROM atlassian_plans WHERE created_at >= ?", since)) {
+      add(row.summary);
+      const items = parsed(row.items);
+      if (Array.isArray(items))
+        for (const item of items)
+          if (item !== null && typeof item === "object") {
+            const { title, why, next, key, url, request } = item as Record<string, unknown>;
+            add([title, why, next, key, url, request]);
+          }
+    }
     return [...texts];
   }
 }

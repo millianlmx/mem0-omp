@@ -358,4 +358,30 @@ export const MIGRATIONS_SUITE: readonly string[] = [
    DROP TABLE slack_conversations;
    DROP TABLE slack_users;
    DELETE FROM settings WHERE key = 'workstation.channels';`,
+  // Le connecteur Atlassian (atlassian/desk.ts, db/atlassian.ts) : les écritures Jira des agents
+  // (transition faite seule, commentaire proposé à l'approbateur, `body` = texte ou nom de la
+  // transition) et les plans du jour (`items` en JSON). Données de la boîte : jamais publiées.
+  `CREATE TABLE atlassian_writes (
+     id TEXT PRIMARY KEY,
+     kind TEXT NOT NULL,
+     issue_key TEXT NOT NULL,
+     body TEXT NOT NULL,
+     why TEXT NOT NULL,
+     state TEXT NOT NULL,
+     created_by TEXT NOT NULL,
+     error TEXT,
+     decided_by TEXT,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE INDEX atlassian_writes_state ON atlassian_writes (state, created_at);
+   CREATE TABLE atlassian_plans (
+     id TEXT PRIMARY KEY,
+     created_at INTEGER NOT NULL,
+     plan_trigger TEXT NOT NULL,
+     created_by TEXT NOT NULL,
+     summary TEXT NOT NULL,
+     items TEXT NOT NULL
+   );
+   CREATE INDEX atlassian_plans_created ON atlassian_plans (created_at);`,
 ];

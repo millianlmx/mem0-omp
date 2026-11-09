@@ -53,6 +53,10 @@ public enum HarnessPushKind: String, CaseIterable, Sendable {
     case dailyBudget = "daily_budget"
     case vigieSilent = "vigie_silent"
     case backupFailed = "backup_failed"
+    /// Un commentaire Jira proposé par l'agent attend l'approbateur.
+    case atlassianComment = "atlassian_comment"
+    /// Le plan du jour est prêt.
+    case plan
 }
 
 /// Ce qu'une notification porte : des identifiants, jamais de contenu.
@@ -100,7 +104,7 @@ public struct HarnessPushAlert: Equatable, Sendable {
         case .specs: .inbox(.specs)
         case .verdict: .inbox(.verdicts)
         case .escalation: .inbox(.toDecide)
-        case .approval: .section(.workstation)
+        case .approval, .atlassianComment, .plan: .section(.workstation)
         case .runFailed, .stalled, .budget: runId.map(HarnessPaletteCommand.run) ?? .section(.inbox)
         case .dailyBudget: .section(.inbox)
         case .vigieSilent, .backupFailed: .system(.vigie)
@@ -151,6 +155,8 @@ public struct HarnessLocalAlert: Equatable, Sendable {
         case .dailyBudget: NotificationText.dailyBudget
         case .vigieSilent: NotificationText.vigieSilent
         case .backupFailed: NotificationText.backupFailed
+        case .atlassianComment: NotificationText.atlassianComment
+        case .plan: NotificationText.plan
         }
     }
 
@@ -163,6 +169,8 @@ public struct HarnessLocalAlert: Equatable, Sendable {
         case .dailyBudget: NotificationText.dailyBudgetBody
         case .vigieSilent: NotificationText.vigieSilentBody
         case .backupFailed: NotificationText.backupFailedBody
+        case .atlassianComment: NotificationText.atlassianCommentBody
+        case .plan: NotificationText.planBody
         case .verdict:
             NotificationText.runLine(repo: repo ?? "", title: runTitle ?? alert.runId ?? "")
                 + (proofs.map { " · " + NotificationText.proofs($0) } ?? "")
@@ -174,6 +182,7 @@ public struct HarnessLocalAlert: Equatable, Sendable {
     public var thread: String {
         switch alert.kind {
         case .approval: "workstation"
+        case .atlassianComment, .plan: "atlassian"
         case .dailyBudget, .vigieSilent, .backupFailed: "server"
         default: alert.runId ?? "server"
         }
@@ -276,6 +285,10 @@ public enum HarnessNotificationRouting {
         case "daily_budget_reached": kind = .dailyBudget
         case "vigie_silent": kind = .vigieSilent
         case "backup_failed": kind = .backupFailed
+        case "atlassian_write":
+            guard approver, row.payload?.state == "proposed", row.payload?.kind == "comment" else { return nil }
+            kind = .atlassianComment
+        case "atlassian_plan": kind = .plan
         default: return nil
         }
         let category: HarnessNotificationCategory = switch kind {
@@ -310,6 +323,9 @@ private struct StreamRow: Decodable {
         var items: [Item]?
         /// Les preuves du tour de revue courant (événement `verdict`).
         var proofs: Int?
+        /// L'état et la sorte d'une écriture Atlassian (événement `atlassian_write`).
+        var state: String?
+        var kind: String?
     }
 
     var id: Int?

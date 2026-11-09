@@ -12,13 +12,14 @@
 //   core → runs → journal → steps → decisions → heavy → projects → providers
 //        → sessions → usage → push → push-devices → workstation → workstation-meetings
 //        → workstation-captures → workstation-browsers → workstation-requests
-//        → issues → schedules → observability → vigie → corporate-signals → intakes → Store
+//        → issues → schedules → observability → vigie → corporate-signals → intakes → atlassian
+//        → Store
 //
 // Ainsi `Store` garde l'API d'un seul objet pour tous ses appelants, et une couche
 // qui a besoin d'une autre (le journal lit le dépôt d'un run) la trouve en dessous.
-import { IntakeStore } from "./db/intakes.ts";
+import { AtlassianStore } from "./db/atlassian.ts";
 
-export class Store extends IntakeStore {}
+export class Store extends AtlassianStore {}
 
 export { MIGRATIONS } from "./db/schema.ts";
 export type { RepoFilter } from "./db/sql.ts";
@@ -35,6 +36,18 @@ export type {
   IntakeState,
   NewIntake,
 } from "./db/intakes.ts";
+export { ATLASSIAN_WRITE_STATES, PLAN_SOURCES } from "./db/atlassian.ts";
+export type {
+  AtlassianPlan,
+  AtlassianWrite,
+  AtlassianWriteKind,
+  AtlassianWritePatch,
+  AtlassianWriteState,
+  NewAtlassianWrite,
+  PlanItem,
+  PlanSource,
+  PlanTrigger,
+} from "./db/atlassian.ts";
 export type { EventRow } from "./db/journal.ts";
 export type { StepRow, StepStatus } from "./db/steps.ts";
 export type { DecisionRow, DecisionStatus, EscalationRow } from "./db/decisions.ts";

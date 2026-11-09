@@ -14,6 +14,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ATLASSIAN_READ_TOOLS, ATLASSIAN_WRITE_TOOLS } from "./atlassian/desk.ts";
 import { QA_TOOLS } from "./browser/qa-tools.ts";
 import { FINDING_KINDS, MAX_FINDINGS, SEVERITIES } from "./challenge.ts";
 import { launch } from "./config.ts";
@@ -765,7 +766,14 @@ const CHALLENGE_TOOL: HostToolDefinition = {
 };
 
 /** Les jobs du poste de travail menés par un runner (workstation-agent.ts) : le nom est l'en-tête de leur prompt. */
-export type WorkstationJob = "poste-profil" | "poste-digest" | "poste-service" | "poste-demande" | "poste-signal";
+export type WorkstationJob =
+  | "poste-profil"
+  | "poste-digest"
+  | "poste-service"
+  | "poste-demande"
+  | "poste-signal"
+  | "poste-plan"
+  | "poste-savoir";
 
 const NULLABLE_STRING = { type: ["string", "null"] } as const;
 
@@ -1061,17 +1069,84 @@ const WORKSTATION_SIGNAL_IGNORE_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+/** Les sources d'un élément du plan du jour (db/atlassian.ts `PlanSource`). */
+const PLAN_SOURCES = ["jira", "mail", "agenda", "confluence", "autre"] as const;
+
+/** Le rendu du plan du jour (`poste-plan`) : validé puis rangé par le desk Atlassian. */
+const ATLASSIAN_PLAN_TOOL: HostToolDefinition = {
+  name: "atlassian_plan_write",
+  label: "Poste — plan du jour",
+  description:
+    "Rend le plan du jour de l'utilisateur, UNE fois, à la fin : un résumé et au plus 10 éléments ordonnés (le plus important d'abord). " +
+    "`repo` et `request` seulement quand un dépôt DÉCLARÉ est clairement concerné ; `null` sinon. Le service refuse un plan non conforme et dit quoi corriger.",
+  parameters: {
+    type: "object",
+    properties: {
+      summary: { type: "string", description: "La journée en quelques phrases : priorités, échéances, réunions." },
+      items: {
+        type: "array",
+        maxItems: 30,
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Ce qu'il y a à faire, une ligne (200 caractères au plus)." },
+            why: { type: "string", description: "Pourquoi aujourd'hui (500 caractères au plus)." },
+            next: { type: "string", description: "La prochaine action concrète (500 caractères au plus)." },
+            source: { type: "string", enum: PLAN_SOURCES },
+            key: { ...NULLABLE_STRING, description: "La clé du ticket Jira (PROJ-123)." },
+            url: { ...NULLABLE_STRING, description: "Le lien http(s) de l'élément." },
+            repo: { ...NULLABLE_STRING, description: "Le nom d'un dépôt déclaré concerné." },
+            request: {
+              ...NULLABLE_STRING,
+              description: "La demande de run proposée pour ce dépôt (4000 caractères au plus).",
+            },
+          },
+          required: ["title", "why", "next", "source", "key", "url", "repo", "request"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["summary", "items"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+/** Le compte rendu de la passe de savoir (`poste-savoir`), rangé par le desk Atlassian. */
+const ATLASSIAN_KNOWLEDGE_TOOL: HostToolDefinition = {
+  name: "atlassian_knowledge_report",
+  label: "Poste — compte rendu du savoir",
+  description:
+    "Rend le compte rendu de la passe de savoir, une fois, à la fin : ce qui a été lu (projets, espaces), combien de faits retenus et sur quels thèmes, ce qui reste à lire.",
+  parameters: {
+    type: "object",
+    properties: {
+      summary: { type: "string", description: "Le compte rendu pour l'humain, en français, quelques phrases." },
+    },
+    required: ["summary"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 /**
  * Les outils hôtes d'une étape (ou de l'audit, du contradicteur et du rêve, qui ne
  * décident ni ne testent rien, ou d'un job du poste de travail) : `save_checkpoint` et
  * `set_modules` partout, `split_feature` en specs et impl, `run_tests` dès /impl,
  * `review_verdict` et `qa_record_proof` en revue seulement, plus les outils de navigation `qa_*`
  * quand la revue a une prévisualisation (`options.qa`, browser/qa.ts).
+ *
+ * `options.atlassian` : Atlassian est branché (et, pour une étape de pipeline, le dépôt le
+ * déclare, `atlassian: true`). Une étape y gagne les lectures et `corpo_recall`, jamais
+ * d'écriture ; `poste-demande` et `poste-service`, les lectures et les écritures (transition
+ * d'un ticket à soi, commentaire proposé). Faux, aucune liste ne change.
  */
 export function hostToolsFor(
   step: StepKind | "audit" | "intake" | "pilot" | "challenge" | "dream" | "carte" | WorkstationJob,
-  options: { qa?: boolean } = {},
+  options: { qa?: boolean; atlassian?: boolean } = {},
 ): HostToolDefinition[] {
+  const atlassian = options.atlassian === true;
+  const readWrite = atlassian ? [...ATLASSIAN_READ_TOOLS, ...ATLASSIAN_WRITE_TOOLS] : [];
   if (step === "intake") return [PROGRESS_TOOL, INTAKE_TOOL];
   if (step === "carte") return [CARD_REVIEW_TOOL];
   if (step === "audit") return [PROGRESS_TOOL, RECALL_TOOL, AUDIT_TOOL];
@@ -1088,6 +1163,7 @@ export function hostToolsFor(
       WORKSTATION_DECISION_TOOL,
       WORKSTATION_SIGNAL_TOOL,
       WORKSTATION_REQUEST_REPORT_TOOL,
+      ...readWrite,
     ];
   if (step === "poste-service")
     return [
@@ -1097,10 +1173,30 @@ export function hostToolsFor(
       WORKSTATION_SIGNAL_TOOL,
       WORKSTATION_ACTIVITY_TOOL,
       WORKSTATION_MEETINGS_TOOL,
+      ...readWrite,
+    ];
+  // Le plan et le savoir n'ont de sens qu'avec Atlassian : le job ne part pas sans lui.
+  if (step === "poste-plan")
+    return [
+      PROGRESS_TOOL,
+      WORKSTATION_ACT_TOOL,
+      WORKSTATION_DECISION_TOOL,
+      WORKSTATION_MEETINGS_TOOL,
+      ...ATLASSIAN_READ_TOOLS,
+      ...ATLASSIAN_WRITE_TOOLS,
+      ATLASSIAN_PLAN_TOOL,
+    ];
+  // Sans `corpo_recall` : la mémoire de la passe de savoir EST `corpo` (`mem0_search`).
+  if (step === "poste-savoir")
+    return [
+      PROGRESS_TOOL,
+      ...ATLASSIAN_READ_TOOLS.filter((tool) => tool.name !== "corpo_recall"),
+      ATLASSIAN_KNOWLEDGE_TOOL,
     ];
   const tools = [DECISION_TOOL, PROGRESS_TOOL, RECALL_TOOL, CHECKPOINT_TOOL, SET_MODULES_TOOL];
   if (step === "specs" || step === "impl") tools.push(SPLIT_TOOL);
   if (step === "impl" || step === "fix" || step === "review") tools.push(runTestsTool(step));
   if (step === "review") tools.push(VERDICT_TOOL, RECORD_PROOF_TOOL, ...(options.qa ? QA_TOOLS : []));
+  if (atlassian) tools.push(...ATLASSIAN_READ_TOOLS);
   return tools;
 }

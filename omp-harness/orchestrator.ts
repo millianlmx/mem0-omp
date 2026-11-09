@@ -12,6 +12,7 @@
 // - `digest.ts`       le rapport du matin, posté chaque jour ;
 // - `schedules.ts`    les planifications récurrentes (runs, audits, relèves d'issues) ;
 // - `vigie/desk.ts`   la vigie : ses réglages, ses incidents et ses gardes ;
+// - `atlassian/desk.ts` le connecteur Atlassian (Jira, Confluence, plan du jour, savoir corpo) ;
 // - `queries.ts`      les lectures de l'API.
 //
 // Un seul process, un seul écrivain : toute mutation passe par `Store`, toute
@@ -79,6 +80,8 @@ import { WorkstationAgent } from "./workstation-agent.ts";
 import { VigieDesk } from "./vigie/desk.ts";
 import { BrowserDesk } from "./browser/desk.ts";
 import { VpsBrowser } from "./browser/vps.ts";
+import { AtlassianDesk } from "./atlassian/desk.ts";
+import type { AtlassianFetch } from "./atlassian/desk.ts";
 
 export { HarnessError } from "./errors.ts";
 export type { Actor, SpawnRunner } from "./context.ts";
@@ -198,6 +201,8 @@ export class Orchestrator {
   readonly intake: Intaker;
   /** La vigie : réglages, battement de cœur, incidents, publications et corrections gardées. */
   readonly vigie: VigieDesk;
+  /** Le connecteur Atlassian : Jira et Confluence (serveur Rovo MCP), plan du jour, savoir de la boîte. */
+  readonly atlassian: AtlassianDesk;
   /** L'autonomie par paliers : lève seule certaines attentes humaines, selon les règles du dépôt. */
   readonly #autonomy: AutonomyGates;
   #stopMetrics: (() => void) | null = null;
@@ -216,8 +221,12 @@ export class Orchestrator {
       openProject: (input, parent) => this.#openProject(input, SERVICE, { afterRun: parent }),
     });
     this.#briefings = new Briefings(this.#ctx);
+    this.atlassian = new AtlassianDesk(this.#ctx, {
+      fetch: deps.atlassianFetch ?? (globalThis.fetch as unknown as AtlassianFetch),
+    });
     this.#steps = new StepExecutor(this.#ctx, {
       split: (run, features, step) => this.#splits.launch(run, features, step, "runner"),
+      atlassian: this.atlassian,
     });
     this.#merger = new Merger(this.#ctx, {
       onDone: () => this.#kick(),
@@ -253,7 +262,7 @@ export class Orchestrator {
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
     this.signals = new SignalDesk(this.#ctx, { workstation: this.workstation, issues: this.issues });
-    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation, this.signals);
+    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation, this.signals, this.atlassian);
     this.vps = new VpsBrowser(this.workstation, {
       config: () => this.#ctx.config.workstation.vps,
       log: this.#ctx.log,

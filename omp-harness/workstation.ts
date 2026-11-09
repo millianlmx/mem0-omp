@@ -171,7 +171,13 @@ export const ORPHAN_MEETING_MS = 30 * 60 * 1000;
 /** L'empreinte d'envoi : SHA-256 en hexadécimal (64 caractères). */
 const FINGERPRINT = /^[0-9a-f]{64}$/i;
 /** Les jobs du poste dont la session se lit (`GET /v1/workstation/session?job=`). */
-export const SESSION_JOBS = { profil: "poste-profil", digest: "poste-digest", service: "poste-service" } as const;
+export const SESSION_JOBS = {
+  profil: "poste-profil",
+  digest: "poste-digest",
+  service: "poste-service",
+  plan: "poste-plan",
+  savoir: "poste-savoir",
+} as const;
 export type SessionJob = keyof typeof SESSION_JOBS;
 /** Deux visites espacées de plus de 30 min appartiennent à deux enchaînements distincts. */
 const SEQUENCE_GAP_MS = 30 * 60 * 1000;
