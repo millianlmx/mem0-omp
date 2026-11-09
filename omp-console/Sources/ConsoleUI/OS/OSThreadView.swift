@@ -1,4 +1,4 @@
-// PROTOTYPE « OS agentique » (branche proto/os-fils) : la page d'un FIL. Pas
+// L'« OS agentique » : la page d'un FIL, partagée par le Mac et l'iPhone/iPad. Pas
 // d'onglets : un récit en cartes, de l'origine au résultat — ce qui l'a ouvert, le
 // plan quand il a plusieurs tâches, l'agent au travail (son pouls), ce qui vous attend,
 // ce que l'agent a décidé seul, le résultat. En pied, une seule zone : une consigne
@@ -6,10 +6,9 @@
 
 import ConsoleClient
 import ConsoleCore
-import ConsoleUI
 import SwiftUI
 
-struct OSThreadView: View {
+public struct OSThreadView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var intakes: HarnessIntakes
@@ -19,6 +18,20 @@ struct OSThreadView: View {
     /// Le nom de chaque navigateur du poste, par identifiant.
     let browsers: [String: String]
 
+    /// `browsers` : le nom de chaque navigateur du poste, par identifiant.
+    public init(
+        server: HarnessModel, workstation: WorkstationModel, intakes: HarnessIntakes, pulse: OSPulse, workspace: OSWorkspace,
+        thread: OSThread, browsers: [String: String]
+    ) {
+        self.server = server
+        self.workstation = workstation
+        self.intakes = intakes
+        self.pulse = pulse
+        self.workspace = workspace
+        self.thread = thread
+        self.browsers = browsers
+    }
+
     @State private var draft = ""
     @State private var sending = false
     @State private var sent: String?
@@ -26,7 +39,7 @@ struct OSThreadView: View {
 
     private var inbox: HarnessInbox? { server.inbox }
 
-    var body: some View {
+    public var body: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -67,15 +80,15 @@ struct OSThreadView: View {
                 OSPhaseMark(phase: thread.phase, size: 18)
                 Text(thread.title)
                     .font(.title2.weight(.bold))
-                    .textSelection(.enabled)
+                    .osSelectable()
             }
             HStack(spacing: 8) {
-                OSTag(text: OSText.origin(thread.origin), symbol: OSText.originSymbol(thread.origin))
-                OSTag(text: OSText.state(thread.phase), tint: thread.phase.color)
+                OSTag(text: thread.origin.label, symbol: thread.origin.symbol)
+                OSTag(text: thread.phase.label, tint: thread.phase.color)
                 if thread.cost > 0 {
-                    OSTag(text: thread.cost.formatted(.currency(code: "USD")), symbol: "dollarsign.circle")
+                    OSTag(text: MonitoringText.cost(thread.cost), symbol: "dollarsign.circle")
                 }
-                Text(thread.createdAt.osDate.formatted(.relative(presentation: .named)))
+                Text(thread.createdAt.osRelative)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -92,16 +105,16 @@ struct OSThreadView: View {
     @ViewBuilder
     private var originCard: some View {
         if let intake = thread.intake {
-            quote(intake.text, who: OSText.origin(.person(intake.by)))
+            quote(intake.text, who: OSOrigin.person(intake.by).label)
         } else if let request = thread.request {
-            quote(request.instruction, who: OSText.origin(.person(request.by)))
+            quote(request.instruction, who: OSOrigin.person(request.by).label)
         } else if let first = thread.runs.first, !first.request.isEmpty {
             DisclosureGroup {
                 ConsoleMarkdown(markdown: first.request)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 6)
             } label: {
-                Label(OSThreads.gist(first.request), systemImage: OSText.originSymbol(thread.origin))
+                Label(OSThreads.gist(first.request), systemImage: thread.origin.symbol)
                     .lineLimit(1)
                     .foregroundStyle(.secondary)
             }
@@ -115,7 +128,7 @@ struct OSThreadView: View {
                 .foregroundStyle(Color.accentColor)
             VStack(alignment: .leading, spacing: 2) {
                 Text(who).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Text(text).textSelection(.enabled)
+                Text(text).osSelectable()
             }
         }
     }
@@ -138,8 +151,8 @@ struct OSThreadView: View {
                                 .lineLimit(1)
                                 .foregroundStyle(run.phase == .cancelled ? .secondary : .primary)
                             Spacer()
-                            Text(OSText.runState(run)).font(.caption).foregroundStyle(.secondary)
-                            Text(run.updatedAt.osDate.formatted(.relative(presentation: .named)))
+                            Text(run.osState).font(.caption).foregroundStyle(.secondary)
+                            Text(run.updatedAt.osRelative)
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                                 .frame(width: 110, alignment: .trailing)
@@ -168,8 +181,8 @@ struct OSThreadView: View {
                             Text(OSThreads.firstLine(reason)).foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer()
-                        Text(OSText.state(phase)).font(.caption).foregroundStyle(.secondary)
-                        Text(request.updatedAt.osDate.formatted(date: .omitted, time: .shortened))
+                        Text(phase.label).font(.caption).foregroundStyle(.secondary)
+                        Text(ConsoleFormat.time(ms: request.updatedAt))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.tertiary)
                     }
@@ -182,7 +195,7 @@ struct OSThreadView: View {
     private func taskTitle(_ run: HarnessRun, index: Int) -> String {
         let clean = OSThreads.clean(run.title)
         if clean.title.lowercased() != thread.title.lowercased() { return clean.title }
-        if let issue = clean.issue { return "Issue #\(issue)" }
+        if let issue = clean.issue { return OSText.originIssue(issue) }
         return OSText.attempt(index + 1)
     }
 
@@ -209,7 +222,7 @@ struct OSThreadView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
                         OSPhaseMark(phase: phase, size: 14)
-                        Text(run.repo + " · " + OSText.runState(run))
+                        Text(run.repo + " · " + run.osState)
                             .font(.headline)
                         Spacer()
                         OSStepDots(run: run)
@@ -228,9 +241,9 @@ struct OSThreadView: View {
                         Text("↳ " + OSThreads.firstLine(reason)).foregroundStyle(.secondary).lineLimit(2)
                     }
                     HStack {
-                        Text(run.createdAt.osDate.formatted(.relative(presentation: .named)))
+                        Text(run.createdAt.osRelative)
                         if run.fixes > 0 { Text("· " + OSText.fixes(run.fixes)) }
-                        if let cost = inbox?.costs[run.id], cost > 0 { Text("· " + cost.formatted(.currency(code: "USD"))) }
+                        if let cost = inbox?.costs[run.id], cost > 0 { Text("· " + MonitoringText.cost(cost)) }
                         Spacer()
                         Button(OSText.understand + " ›") { workspace.understand(runId: run.id, level: .raw) }
                             .buttonStyle(.borderless)
@@ -260,7 +273,7 @@ struct OSThreadView: View {
                                 Text(OSThreads.firstLine(decision.question)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
                             Spacer()
-                            Button(OSText.accept) { Task { await server.accept(runId: run.id, seq: decision.seq) } }
+                            Button(OSText.keep) { Task { await server.accept(runId: run.id, seq: decision.seq) } }
                             Button(OSText.revisit) { workspace.understand(runId: run.id, level: .summary) }
                         }
                     }
@@ -276,9 +289,9 @@ struct OSThreadView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     OSPhaseMark(phase: OSThreads.phase(of: run, inbox: nil), size: 14)
-                    Text(merged ? OSText.merged : OSText.runState(run).capitalized)
+                    Text(merged ? OSText.merged : run.osState.capitalized)
                         .font(.headline)
-                    if let verdict = run.verdict { OSTag(text: OSText.risk(verdict), tint: verdict.isLowRisk ? .green : .orange) }
+                    if let verdict = run.verdict { OSTag(text: PipelineServerText.risk(verdict.risk), tint: verdict.isLowRisk ? .green : .orange) }
                     if run.fixes > 0 { OSTag(text: OSText.fixes(run.fixes)) }
                     Spacer()
                     if let pr = run.prUrl, let url = URL(string: pr) {
@@ -307,7 +320,7 @@ struct OSThreadView: View {
                     HStack(spacing: 8) {
                         OSPhaseMark(phase: phase, size: 14)
                         Text(OSText.poste).font(.headline)
-                        Text("↳ " + (pulse.workstation(now: context.date)?.activity.line ?? OSText.state(phase)))
+                        Text("↳ " + (pulse.workstation(now: context.date)?.activity.line ?? phase.label))
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
@@ -321,13 +334,13 @@ struct OSThreadView: View {
                         OSPhaseMark(phase: phase, size: 14)
                         Text(OSText.reportTitle).font(.headline)
                         Spacer()
-                        Button(reportExpanded ? OSText.less : OSText.readAll) { reportExpanded.toggle() }
+                        Button(reportExpanded ? OSText.collapse : OSText.readAll) { reportExpanded.toggle() }
                             .buttonStyle(.borderless)
                     }
                     if reportExpanded {
                         ConsoleMarkdown(markdown: report)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
+                            .osSelectable()
                     } else {
                         Text(MarkdownDocument.inline(OSThreads.preview(report, lines: 4)))
                             .lineLimit(5)
@@ -351,7 +364,7 @@ struct OSThreadView: View {
                 OSCard(tint: .accentColor, emphasized: true) {
                     HStack(spacing: 8) {
                         OSPhaseMark(phase: .working, size: 14)
-                        Text(OSText.origin(.audit(audit.focus))).font(.headline)
+                        Text(OSOrigin.audit(audit.focus).label).font(.headline)
                         Text("↳ " + (pulse.current(.audit(audit.id))?.line ?? audit.state)).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
@@ -392,8 +405,10 @@ struct OSThreadView: View {
                     sent = "✓"
                 }
             } else {
+                // Une phrase du PROTOCOLE, pas un texte d'écran : le serveur titre ses suites
+                // ainsi et `OSThreads.clean` la reconnaît, en français quelle que soit la langue.
                 let ask = "Suite de « \(thread.title) » : \(text)"
-                if (try? await intakes.submit(text: ask, source: "console", repo: thread.repo)) != nil {
+                if (try? await intakes.submit(text: ask, source: intakeSource, repo: thread.repo)) != nil {
                     draft = ""
                     sent = "✓"
                 }

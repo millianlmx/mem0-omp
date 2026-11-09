@@ -332,9 +332,10 @@ struct WorkstationRequestRow: View {
             if let report = request.report, !report.isEmpty {
                 Text(ControlText.requestReport)
                     .font(.caption.weight(.semibold))
-                Text(report)
+                // Le compte rendu de l'agent est du Markdown (titres, gras, listes) : rendu, pas cité.
+                ConsoleMarkdown(markdown: report)
                     .font(.callout)
-                    .consoleReadable()
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             if request.state == .queued || request.state == .running {
                 Button(ControlText.requestCancel, role: .destructive) {

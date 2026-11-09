@@ -1,4 +1,4 @@
-// PROTOTYPE « OS agentique » (branche proto/os-fils) : MAINTENANT, l'accueil. Cinq
+// L'« OS agentique » : MAINTENANT, l'accueil, partagé par le Mac et l'iPhone/iPad. Cinq
 // chiffres (ce qui vous attend, les agents au travail, et les dernières 24 h du rapport
 // du matin), les agents au travail avec ce qu'ils font, puis ce qui a été livré
 // aujourd'hui. Chaque ligne ouvre son fil.
@@ -7,14 +7,23 @@ import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-struct OSHomeView: View {
+public struct OSHomeView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var pulse: OSPulse
     @ObservedObject var workspace: OSWorkspace
     let threads: [OSThread]
     let decisions: Int
 
-    var body: some View {
+    /// `decisions` : le nombre de décisions qui attendent (`OSDecision.all`).
+    public init(server: HarnessModel, pulse: OSPulse, workspace: OSWorkspace, threads: [OSThread], decisions: Int) {
+        self.server = server
+        self.pulse = pulse
+        self.workspace = workspace
+        self.threads = threads
+        self.decisions = decisions
+    }
+
+    public var body: some View {
         let working = threads.filter { $0.phase == .working }
         let today = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000
         let delivered = threads.filter { $0.phase == .done && $0.updatedAt >= today }
@@ -22,10 +31,10 @@ struct OSHomeView: View {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(OSText.now).font(.largeTitle.weight(.bold))
-                    Text(Date().formatted(date: .complete, time: .omitted)).foregroundStyle(.secondary)
+                    Text(Date().formatted(Date.FormatStyle(date: .complete, time: .omitted).locale(ConsoleFormat.locale))).foregroundStyle(.secondary)
                 }
                 HStack(spacing: 10) {
-                    tile(decisions, OSText.yoursTile, tint: decisions > 0 ? .orange : .secondary) { workspace.triage = decisions > 0 }
+                    tile(decisions, OSText.yours, tint: decisions > 0 ? .orange : .secondary) { workspace.triage = decisions > 0 }
                     tile(working.count, OSText.atWork, tint: .accentColor, action: nil)
                     if let counts = server.digest?.counts {
                         tile(counts.merged, OSText.mergedTile, tint: .green, action: nil)
@@ -55,7 +64,7 @@ struct OSHomeView: View {
                                     OSPhaseMark(phase: .done, size: 12)
                                     Text(thread.title).lineLimit(1)
                                     Spacer()
-                                    Text(thread.updatedAt.osDate.formatted(date: .omitted, time: .shortened))
+                                    Text(ConsoleFormat.time(ms: thread.updatedAt))
                                         .font(.caption.monospacedDigit())
                                         .foregroundStyle(.secondary)
                                 }
@@ -101,7 +110,7 @@ struct OSHomeView: View {
 
     private func workingRow(_ thread: OSThread, now: Date) -> some View {
         let run = thread.runs.last { $0.phase == .running || $0.phase == .merging || $0.phase == .queued } ?? thread.focusRun
-        let line = run.flatMap { pulse.current(.run($0.id), now: now)?.line } ?? run.map(OSText.runState) ?? ""
+        let line = run.flatMap { pulse.current(.run($0.id), now: now)?.line } ?? run?.osState ?? ""
         return Button {
             workspace.open(thread.id)
         } label: {

@@ -1,13 +1,15 @@
-// PROTOTYPE « OS agentique » (branche proto/os-fils) : la colonne des FILS. En tête,
+// L'« OS agentique » : la liste des FILS, partagée par le Mac et l'iPhone/iPad. En tête,
 // la seule entrée (⌘L) : ce qu'on y tape filtre les fils, et ⏎ le demande à l'OS (la
-// Demande du serveur). Puis « Maintenant », le bac des décisions (« Trier », ⌘T) et
-// les fils, de ce qui vous attend à ce qui est fini ; les fils arrêtés restent repliés.
+// Demande du serveur). Puis le lieu, « Maintenant », les automatismes, le bac des
+// décisions (« Trier », ⌘T) et les fils, de ce qui vous attend à ce qui est fini ; les
+// fils arrêtés restent repliés. Le style de la liste (barre latérale sur le Mac) est
+// posé par la coque.
 
 import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-struct OSSidebar: View {
+public struct OSThreadList: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var intakes: HarnessIntakes
     @ObservedObject var pulse: OSPulse
@@ -22,7 +24,23 @@ struct OSSidebar: View {
     @State private var draft = ""
     @State private var sending = false
     @State private var showsStopped = false
-    @FocusState private var composing: Bool
+
+    /// `threads` : les fils du lieu retenu. `places` : les dépôts, puis le Poste
+    /// (`OSWorkspace.postePlace`). `browsers` : le nom de chaque navigateur du poste, par
+    /// identifiant. `decisions` : le nombre de décisions qui attendent.
+    public init(
+        server: HarnessModel, intakes: HarnessIntakes, pulse: OSPulse, workspace: OSWorkspace,
+        threads: [OSThread], places: [String], browsers: [String: String], decisions: Int
+    ) {
+        self.server = server
+        self.intakes = intakes
+        self.pulse = pulse
+        self.workspace = workspace
+        self.threads = threads
+        self.places = places
+        self.browsers = browsers
+        self.decisions = decisions
+    }
 
     private var shown: [OSThread] {
         let words = draft.split(whereSeparator: \.isWhitespace).map { $0.lowercased() }
@@ -33,9 +51,9 @@ struct OSSidebar: View {
         }
     }
 
-    var body: some View {
+    public var body: some View {
         VStack(spacing: 0) {
-            composer
+            OSAskComposer(intakes: intakes, draft: $draft, sending: $sending)
                 .padding(.horizontal, 10)
                 .padding(.top, 10)
             placePicker
@@ -48,7 +66,9 @@ struct OSSidebar: View {
                     Label(OSText.automations, systemImage: "gearshape.arrow.triangle.2.circlepath")
                         .tag(OSWorkspace.automations)
                     if !draft.trimmingCharacters(in: .whitespaces).isEmpty {
-                        Button(action: send) {
+                        Button {
+                            OSAskComposer.send($draft, sending: $sending, intakes: intakes)
+                        } label: {
                             Label(OSText.askThis(draft), systemImage: "return")
                                 .lineLimit(2)
                                 .foregroundStyle(Color.accentColor)
@@ -76,7 +96,7 @@ struct OSSidebar: View {
                                 Image(systemName: "rectangle.stack.fill")
                                 Text(OSText.decisions(decisions)).fontWeight(.semibold)
                                 Spacer()
-                                Text(OSText.triage + " ⌘T").font(.caption).foregroundStyle(.secondary)
+                                Text(triageHint).font(.caption).foregroundStyle(.secondary)
                             }
                             .foregroundStyle(.orange)
                         }
@@ -89,17 +109,25 @@ struct OSSidebar: View {
                         Section(isExpanded: $showsStopped) {
                             rows(items)
                         } header: {
-                            Text(OSText.section(section) + " · \(items.count)")
+                            Text(section.title + " · \(items.count)")
                         }
                     } else {
-                        Section(OSText.section(section)) {
+                        Section(section.title) {
                             rows(items)
                         }
                     }
                 }
             }
-            .listStyle(.sidebar)
         }
+    }
+
+    /// « Trier ⌘T » sur le Mac, où le raccourci se lit ; « Trier » ailleurs.
+    private var triageHint: String {
+        #if os(macOS)
+        OSText.triage + " ⌘T"
+        #else
+        OSText.triage
+        #endif
     }
 
     private func rows(_ items: [OSThread]) -> some View {
@@ -126,8 +154,24 @@ struct OSSidebar: View {
         .labelsHidden()
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    private var composer: some View {
+/// Le composeur « Demander » : une ligne de saisie (⌘L y pose le curseur) ; ⏎ envoie la
+/// saisie au serveur comme une Demande. La saisie appartient à l'écran qui le pose : la
+/// liste des fils s'en sert aussi de filtre.
+public struct OSAskComposer: View {
+    @ObservedObject var intakes: HarnessIntakes
+    @Binding var draft: String
+    @Binding var sending: Bool
+    @FocusState private var composing: Bool
+
+    public init(intakes: HarnessIntakes, draft: Binding<String>, sending: Binding<Bool>) {
+        self.intakes = intakes
+        _draft = draft
+        _sending = sending
+    }
+
+    public var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "sparkles")
                 .foregroundStyle(Color.accentColor)
@@ -135,7 +179,7 @@ struct OSSidebar: View {
                 .textFieldStyle(.plain)
                 .lineLimit(1...5)
                 .focused($composing)
-                .onSubmit(send)
+                .onSubmit { Self.send($draft, sending: $sending, intakes: intakes) }
                 .disabled(sending)
             if sending { ProgressView().controlSize(.small) }
         }
@@ -150,24 +194,33 @@ struct OSSidebar: View {
         }
     }
 
-    private func send() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Envoie la saisie comme une Demande ; elle n'est vidée que si le serveur l'a prise.
+    @MainActor
+    public static func send(_ draft: Binding<String>, sending: Binding<Bool>, intakes: HarnessIntakes) {
+        let text = draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        sending = true
+        sending.wrappedValue = true
         Task {
-            if (try? await intakes.submit(text: text, source: "console")) != nil { draft = "" }
-            sending = false
+            if (try? await intakes.submit(text: text, source: intakeSource)) != nil { draft.wrappedValue = "" }
+            sending.wrappedValue = false
         }
     }
 }
 
 /// Une ligne de fil : son état, son titre, et ce qui s'y passe maintenant.
-struct OSThreadRow: View {
+public struct OSThreadRow: View {
     let thread: OSThread
     @ObservedObject var pulse: OSPulse
     let browsers: [String: String]
 
-    var body: some View {
+    /// `browsers` : le nom de chaque navigateur du poste, par identifiant.
+    public init(thread: OSThread, pulse: OSPulse, browsers: [String: String]) {
+        self.thread = thread
+        self.pulse = pulse
+        self.browsers = browsers
+    }
+
+    public var body: some View {
         HStack(alignment: .top, spacing: 8) {
             OSPhaseMark(phase: thread.phase, size: 13)
             VStack(alignment: .leading, spacing: 2) {
@@ -202,14 +255,14 @@ struct OSThreadRow: View {
                let activity = pulse.current(.run(run.id)) {
                 return place + " · ↳ " + activity.line
             }
-            if let run = thread.focusRun { return place + " · " + OSText.runState(run) }
+            if let run = thread.focusRun { return place + " · " + run.osState }
         }
         if thread.phase == .yours {
-            if thread.audit?.isProposed == true { return place + " · " + OSText.proposals }
-            if let run = thread.focusRun { return place + " · " + OSText.runState(run) }
+            if thread.audit?.isProposed == true { return place + " · " + OSText.kindProposals }
+            if let run = thread.focusRun { return place + " · " + run.osState }
         }
-        let date = thread.updatedAt.osDate.formatted(.relative(presentation: .named))
-        if let request = thread.request { return place + " · " + OSText.state(OSThreads.phase(of: request)) + " · " + date }
+        let date = thread.updatedAt.osRelative
+        if let request = thread.request { return place + " · " + OSThreads.phase(of: request).label + " · " + date }
         return place + " · " + date
     }
 }

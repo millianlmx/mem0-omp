@@ -1,15 +1,14 @@
-// PROTOTYPE « OS agentique » (branche proto/os-fils) : les AUTOMATISMES, tout ce que l'OS
-// lance seul, sur une page : les planifications (features, audits, relève d'issues, routines
-// du poste à heure fixe), les routines du poste, le service 24/24 du poste, Jira et
-// Confluence (plan du jour, savoir de la boîte) et la vigie. Chaque ligne dit où ça tourne,
-// quand, ce que ça a donné la dernière fois, et se lance tout de suite.
+// L'« OS agentique » : les AUTOMATISMES, tout ce que l'OS lance seul, sur une page
+// partagée par le Mac et l'iPhone/iPad : les planifications (features, audits, relève
+// d'issues, routines du poste à heure fixe), les routines du poste, le service 24/24 du
+// poste, Jira et Confluence (plan du jour, savoir de la boîte) et la vigie. Chaque ligne
+// dit où ça tourne, quand, ce que ça a donné la dernière fois, et se lance tout de suite.
 
 import ConsoleClient
 import ConsoleCore
-import ConsoleUI
 import SwiftUI
 
-struct OSAutomationsView: View {
+public struct OSAutomationsView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
     @ObservedObject var schedules: HarnessSchedules
@@ -17,7 +16,7 @@ struct OSAutomationsView: View {
     @ObservedObject var atlassian: AtlassianModel
     @ObservedObject var vigie: HarnessVigie
 
-    init(server: HarnessModel, drafts: HarnessDrafts) {
+    public init(server: HarnessModel, drafts: HarnessDrafts) {
         self.server = server
         self.drafts = drafts
         _schedules = ObservedObject(wrappedValue: server.schedules)
@@ -26,7 +25,8 @@ struct OSAutomationsView: View {
         _vigie = ObservedObject(wrappedValue: server.vigie)
     }
 
-    var body: some View {
+    public var body: some View {
+        let now = Date().timeIntervalSince1970 * 1000
         Form {
             Section {
                 if schedules.schedules.isEmpty {
@@ -36,9 +36,9 @@ struct OSAutomationsView: View {
                     row(
                         symbol: "calendar.badge.clock",
                         title: schedule.name,
-                        place: OSText.target(schedule.target),
-                        when: [schedule.cron, schedule.nextRunAt.map { OSText.next($0.osDate) }].compactMap { $0 }.joined(separator: " · "),
-                        last: schedule.lastOutcome.map { $0.status + " · " + OSText.last($0.at.osDate) },
+                        place: schedule.target.osPlace,
+                        when: [schedule.cron, schedule.nextRunAt.map { OSText.next(ms: $0, nowMs: now) }].compactMap { $0 }.joined(separator: " · "),
+                        last: schedule.lastOutcome.map { ControlText.outcome($0.status) + " · " + OSText.last(ms: $0.at, nowMs: now) },
                         enabled: Binding(get: { schedule.enabled }, set: { on in Task { await schedules.setEnabled(schedule, on) } })
                     ) {
                         Task { await schedules.runNow(schedule) }
@@ -59,9 +59,9 @@ struct OSAutomationsView: View {
                         row(
                             symbol: "infinity",
                             title: OSText.posteService,
-                            place: OSText.autonomy(status.autonomy.effective) + " · " + (status.online ? OSText.yourChrome : OSText.offline),
-                            when: status.nextShiftAt.map { OSText.next($0.osDate) } ?? "",
-                            last: status.lastShift.map { $0.outcome + " · \($0.actions) actions · " + OSText.last($0.at.osDate) },
+                            place: WorkstationText.autonomy(status.autonomy.effective) + " · " + (status.online ? OSText.yourChrome : OSText.offline),
+                            when: status.nextShiftAt.map { OSText.next(ms: $0, nowMs: now) } ?? "",
+                            last: status.lastShift.map { $0.outcome + " · " + OSText.actions($0.actions) + " · " + OSText.last(ms: $0.at, nowMs: now) },
                             enabled: nil,
                             run: nil
                         )
@@ -97,12 +97,12 @@ struct OSAutomationsView: View {
             }
 
             if let view = vigie.view {
-                Section(OSText.watch) {
+                Section(OSText.vigie) {
                     row(
                         symbol: "binoculars",
-                        title: OSText.vigieMode(view.settings.mode),
+                        title: ControlText.vigieMode(view.settings.mode),
                         place: view.settings.repos.isEmpty ? OSText.vps : view.settings.repos.joined(separator: ", "),
-                        when: view.heartbeat.map { OSText.last($0.at.osDate) } ?? "",
+                        when: view.heartbeat.map { OSText.last(ms: $0.at, nowMs: now) } ?? "",
                         last: OSText.incidents(view.incidents["new"] ?? 0),
                         enabled: nil,
                         run: nil
@@ -150,7 +150,7 @@ struct OSAutomationsView: View {
                 Toggle("", isOn: enabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
             if let run {
-                Button(OSText.runNow, systemImage: "play.fill", action: run)
+                Button(OSText.launch, systemImage: "play.fill", action: run)
                     .disabled(!server.canAct)
             }
         }

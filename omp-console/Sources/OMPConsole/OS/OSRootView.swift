@@ -1,8 +1,10 @@
-// PROTOTYPE « OS agentique » (branche proto/os-fils) : la racine du nouveau paradigme.
-// Le Radar en haut ; les fils à gauche (avec « Demander à l'OS… » en tête) ; le fil
-// choisi au centre ; « Comprendre » en inspecteur à droite ; le Tri des décisions en
-// feuille (⌘T). Activée par Présentation ▸ « Nouvelle interface (prototype) » (⌘⇧O),
-// préférence `ui.os`.
+// L'« OS agentique » sur le Mac : la COQUE du nouveau paradigme. Le Radar en haut ; les
+// fils à gauche (avec « Demander à l'OS… » en tête) ; le fil choisi au centre ;
+// « Comprendre » en inspecteur à droite ; le Tri des décisions en feuille (⌘T). Les
+// écrans eux-mêmes sont partagés avec l'iPhone/iPad (`ConsoleUI/OS/`) : ce fichier ne
+// porte que ce qui est propre au Mac — colonnes, inspecteur, barre d'outils, raccourcis,
+// direct d'une session, variables de recette. Activée par Présentation ▸ « Nouvelle
+// interface (prototype) » (⌘⇧O), préférence `ui.os`.
 
 import ConsoleClient
 import ConsoleCore
@@ -21,6 +23,10 @@ struct OSRootView: View {
     @AppStorage("ui.os") private var osMode = false
     /// Ouvre une section de l'interface classique (une commande de la palette qui n'a pas d'équivalent ici).
     let select: @MainActor (ConsoleSection) -> Void
+
+    /// Recette : `OMP_CONSOLE_OS_LEVEL` nomme un niveau de « Comprendre » par son mot
+    /// français, quelle que soit la langue de l'app (ou par son code : `summary`, `story`…).
+    private static let recipeLevels: [String: OSLevel] = ["Résumé": .summary, "Récit": .story, "Preuves": .proofs, "Brut": .raw]
 
     init(server: HarnessModel, drafts: HarnessDrafts, select: @escaping @MainActor (ConsoleSection) -> Void) {
         self.server = server
@@ -70,10 +76,11 @@ struct OSRootView: View {
             OSRadar(server: server, workstation: workstation, vigie: vigie, pulse: workspace.pulse, workspace: workspace, threads: threads)
             Divider()
             NavigationSplitView {
-                OSSidebar(
+                OSThreadList(
                     server: server, intakes: intakes, pulse: workspace.pulse, workspace: workspace,
                     threads: filtered(threads), places: places(threads), browsers: browserNames, decisions: decisions.count
                 )
+                .listStyle(.sidebar)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320)
             } detail: {
                 detail(threads, decisions: decisions.count)
@@ -113,17 +120,19 @@ struct OSRootView: View {
             select(section)
         }
         .sheet(isPresented: $workspace.triage) {
-            OSTriageSheet(server: server, workstation: workstation, intakes: intakes, workspace: workspace)
+            OSTriageView(server: server, workstation: workstation, intakes: intakes, workspace: workspace)
+                .frame(width: 620)
+                .frame(minHeight: 360)
         }
         .task(id: server.address) {
             guard server.isConfigured else { return }
             workspace.pulse.start()
-            // Recette du prototype : ouvrir un fil et « Comprendre » au lancement (captures).
+            // Recette : ouvrir un fil et « Comprendre » au lancement (captures).
             let environment = ProcessInfo.processInfo.environment
             if let thread = environment["OMP_CONSOLE_OS_THREAD"] { workspace.open(thread) }
             if let run = environment["OMP_CONSOLE_OS_RUN"] { drafts.openedRun = run }
             if environment["OMP_CONSOLE_OS_NEW"] != nil { drafts.launchSheetShown = true }
-            if let level = environment["OMP_CONSOLE_OS_LEVEL"].flatMap(OSText.Level.init(rawValue:)) {
+            if let level = environment["OMP_CONSOLE_OS_LEVEL"].flatMap({ Self.recipeLevels[$0] ?? OSLevel(rawValue: $0) }) {
                 workspace.level = level
                 workspace.understanding = true
             }
@@ -164,8 +173,11 @@ struct OSRootView: View {
         .inspector(isPresented: $workspace.understanding) {
             Group {
                 if let runId = workspace.focusRunId ?? thread?.focusRun?.id {
-                    OSUnderstandView(server: server, drafts: drafts, workspace: workspace, runId: runId)
-                        .id(runId)
+                    // Le direct d'une session est celui de la coque Mac (`HarnessSessionContent`).
+                    OSUnderstandView(server: server, drafts: drafts, workspace: workspace, runId: runId) { [server] runId, pane, followsEnd, focus in
+                        AnyView(HarnessSessionContent(server: server, target: .run(runId), pane: pane.macPane, followsEnd: followsEnd, focus: focus))
+                    }
+                    .id(runId)
                 } else {
                     ContentUnavailableView(OSText.noRun, systemImage: "questionmark.circle")
                 }
@@ -175,50 +187,14 @@ struct OSRootView: View {
     }
 }
 
-/// Le TRI : les décisions une à une, en grand ; ⏎ prend le geste principal, → passe.
-struct OSTriageSheet: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var workstation: WorkstationModel
-    @ObservedObject var intakes: HarnessIntakes
-    @ObservedObject var workspace: OSWorkspace
-    @Environment(\.dismiss) private var dismiss
-    @State private var skipped: Set<String> = []
-
-    var body: some View {
-        let all = OSDecision.all(server: server, workstation: workstation)
-        let queue = all.filter { !skipped.contains($0.id) }
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text(OSText.triage).font(.title2.weight(.bold))
-                Spacer()
-                Text(queue.isEmpty ? "" : "1 / \(queue.count)").foregroundStyle(.secondary).monospacedDigit()
-            }
-            if let current = queue.first {
-                OSDecisionCard(server: server, workstation: workstation, intakes: intakes, workspace: workspace, decision: current, large: true)
-                    .id(current.id)
-                HStack {
-                    Button("Passer →") { skipped.insert(current.id) }
-                        .keyboardShortcut(.rightArrow, modifiers: [])
-                    Spacer()
-                    if let runId = current.runId {
-                        Button(OSText.understand + " ↑") {
-                            dismiss()
-                            workspace.understand(runId: runId, level: .summary)
-                        }
-                        .keyboardShortcut(.upArrow, modifiers: [])
-                    }
-                }
-                .foregroundStyle(.secondary)
-            } else {
-                ContentUnavailableView(OSText.nothing, systemImage: "checkmark.circle")
-            }
-            HStack {
-                Spacer()
-                Button("OK") { dismiss() }.keyboardShortcut(.cancelAction)
-            }
+private extension OSSessionPane {
+    /// Le panneau du direct de la coque Mac.
+    var macPane: HarnessSessionPane {
+        switch self {
+        case .live: .live
+        case .files: .files
+        case .tests: .tests
+        case .timeline: .timeline
         }
-        .padding(24)
-        .frame(width: 620)
-        .frame(minHeight: 360)
     }
 }

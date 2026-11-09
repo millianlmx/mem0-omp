@@ -1,4 +1,4 @@
-// PROTOTYPE « OS agentique » (branche proto/os-fils) : le RADAR, toujours en haut.
+// L'« OS agentique » : le RADAR, toujours en haut, partagé par le Mac et l'iPhone/iPad.
 // Chaque agent est un symbole d'état et une ligne : ce qu'il fait maintenant (le pouls).
 // Les features au travail, le poste, la vigie, l'OS lui-même ; à droite le coût du
 // jour et « Tout suspendre ». Un clic sur un agent ouvre son fil.
@@ -7,13 +7,25 @@ import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-struct OSRadar: View {
+public struct OSRadar: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var vigie: HarnessVigie
     @ObservedObject var pulse: OSPulse
     @ObservedObject var workspace: OSWorkspace
     let threads: [OSThread]
+
+    public init(
+        server: HarnessModel, workstation: WorkstationModel, vigie: HarnessVigie, pulse: OSPulse, workspace: OSWorkspace,
+        threads: [OSThread]
+    ) {
+        self.server = server
+        self.workstation = workstation
+        self.vigie = vigie
+        self.pulse = pulse
+        self.workspace = workspace
+        self.threads = threads
+    }
 
     @State private var confirmStopPoste = false
     @State private var confirmStopRuns = false
@@ -25,7 +37,7 @@ struct OSRadar: View {
         }
     }
 
-    var body: some View {
+    public var body: some View {
         TimelineView(.periodic(from: .now, by: 5)) { context in
             HStack(spacing: 10) {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -34,7 +46,7 @@ struct OSRadar: View {
                             agent(
                                 phase: OSThreads.phase(of: run, inbox: server.inbox),
                                 name: OSThreads.clean(run.title).title,
-                                line: run.repo + " · " + (pulse.current(.run(run.id), now: context.date)?.line ?? OSText.runState(run))
+                                line: run.repo + " · " + (pulse.current(.run(run.id), now: context.date)?.line ?? run.osState)
                             ) {
                                 if let thread = threads.first(where: { $0.runs.contains { $0.id == run.id } }) { workspace.open(thread.id) }
                             }
@@ -56,7 +68,7 @@ struct OSRadar: View {
                 Circle()
                     .fill(pulse.isLive ? Color.green : Color.secondary.opacity(0.4))
                     .frame(width: 7, height: 7)
-                    .help(pulse.isLive ? "En direct" : "Reconnexion…")
+                    .help(pulse.isLive ? OSText.live : OSText.reconnecting)
                 suspendMenu
             }
             .padding(.horizontal, 12)

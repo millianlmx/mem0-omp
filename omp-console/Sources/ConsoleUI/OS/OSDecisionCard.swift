@@ -1,23 +1,36 @@
-// PROTOTYPE « OS agentique » (branche proto/os-fils) : une DÉCISION en carte compacte.
-// L'en-tête tient en une ligne, l'option recommandée est le bouton principal (⏎ dans
-// le tri), le reste se déplie à la demande ; « Lire » ouvre « Comprendre » au niveau
-// Résumé, où vivent les cartes complètes existantes. Chaque bouton est un vrai geste
-// du serveur.
+// L'« OS agentique » : une DÉCISION en carte compacte, partagée par le Mac et
+// l'iPhone/iPad. L'en-tête tient en une ligne, l'option recommandée est le bouton
+// principal (⏎ dans le tri), le reste se déplie à la demande ; « Lire » ouvre
+// « Comprendre » au niveau Résumé, où vivent les cartes complètes existantes. Chaque
+// bouton est un vrai geste du serveur.
 
 import ConsoleClient
 import ConsoleCore
-import ConsoleUI
 import SwiftUI
 
-struct OSDecisionCard: View {
+public struct OSDecisionCard: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var intakes: HarnessIntakes
     @ObservedObject var workspace: OSWorkspace
     let decision: OSDecision
     /// Le tri : la carte est seule à l'écran, plus grande, et ⏎ prend le geste principal.
-    var large = false
-    var done: (() -> Void)?
+    let large: Bool
+    let done: (() -> Void)?
+
+    /// `large` : la carte du tri. `done` : appelé quand le geste a réussi.
+    public init(
+        server: HarnessModel, workstation: WorkstationModel, intakes: HarnessIntakes, workspace: OSWorkspace,
+        decision: OSDecision, large: Bool = false, done: (() -> Void)? = nil
+    ) {
+        self.server = server
+        self.workstation = workstation
+        self.intakes = intakes
+        self.workspace = workspace
+        self.decision = decision
+        self.large = large
+        self.done = done
+    }
 
     @State private var choices: [Int: String] = [:]
     @State private var custom = ""
@@ -27,12 +40,12 @@ struct OSDecisionCard: View {
     @State private var failed = false
     @State private var working = false
 
-    var body: some View {
+    public var body: some View {
         OSCard(tint: .orange, emphasized: true) {
             VStack(alignment: .leading, spacing: large ? 14 : 10) {
                 HStack(spacing: 6) {
-                    Image(systemName: symbol)
-                    Text(kind.uppercased())
+                    Image(systemName: decision.symbol)
+                    Text(decision.kind.uppercased())
                     if let context { Text("·"); Text(context).lineLimit(1) }
                 }
                 .font(.caption2.weight(.bold))
@@ -49,30 +62,6 @@ struct OSDecisionCard: View {
     }
 
     // MARK: En-tête
-
-    private var kind: String {
-        switch decision {
-        case .questions: OSText.question
-        case .specs: OSText.specs
-        case .verdict: OSText.verdict
-        case .approval: OSText.send
-        case let .intake(intake): intake.isClarifying ? OSText.clarify : OSText.plan
-        case .audit: OSText.proposals
-        case .jira: OSText.jiraComment
-        }
-    }
-
-    private var symbol: String {
-        switch decision {
-        case .questions: "questionmark.bubble.fill"
-        case .specs: "doc.text.fill"
-        case .verdict: "checkmark.seal.fill"
-        case .approval: "paperplane.fill"
-        case .intake: "sparkles"
-        case .audit: "list.bullet.rectangle"
-        case .jira: "text.bubble.fill"
-        }
-    }
 
     /// Le fil d'où vient la décision, quand la carte est vue hors de son fil (le tri).
     private var context: String? {
@@ -95,7 +84,7 @@ struct OSDecisionCard: View {
         switch decision {
         case let .questions(batch): questions(batch)
         case let .specs(run): gate(run, headline: specsHeadline(run), detail: run.briefing?.cards.first?.headline, primary: OSText.validate)
-        case let .verdict(run): gate(run, headline: verdictHeadline(run), detail: run.verdict.map { OSText.risk($0) }, primary: OSText.merge)
+        case let .verdict(run): gate(run, headline: verdictHeadline(run), detail: run.verdict.map { PipelineServerText.risk($0.risk) }, primary: OSText.merge)
         case let .approval(action): approval(action)
         case let .intake(intake): intakeCard(intake)
         case let .audit(audit): auditCard(audit)
@@ -142,7 +131,7 @@ struct OSDecisionCard: View {
                 Button {
                     answer(batch, with: [item.id: recommended])
                 } label: {
-                    Label(OSText.take + " « " + recommended + " »", systemImage: "checkmark")
+                    Label(OSText.take(recommended), systemImage: "checkmark")
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(large ? .defaultAction : nil)
@@ -193,7 +182,7 @@ struct OSDecisionCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(choice.option).fontWeight(choice.isPreferred ? .semibold : .regular)
-                        if choice.isPreferred { OSTag(text: "recommandé", tint: .green) }
+                        if choice.isPreferred { OSTag(text: OSText.recommended, tint: .green) }
                     }
                     if let impact = choice.impact, !impact.isEmpty {
                         Text(impact).font(.caption).foregroundStyle(.secondary).lineLimit(large ? 3 : 1)
@@ -256,7 +245,7 @@ struct OSDecisionCard: View {
         if let preview = shown?.preview, !preview.isEmpty {
             Text(preview)
                 .font(.callout)
-                .textSelection(.enabled)
+                .osSelectable()
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
@@ -313,7 +302,7 @@ struct OSDecisionCard: View {
                 Button {
                     perform { (try? await intakes.confirm(intake)) != nil }
                 } label: {
-                    Label(OSText.confirm, systemImage: "play.fill")
+                    Label(OSText.launch, systemImage: "play.fill")
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(large ? .defaultAction : nil)
@@ -329,7 +318,7 @@ struct OSDecisionCard: View {
         Text(write.issueKey + " · " + OSThreads.firstLine(write.why)).font(headlineFont).lineLimit(2)
         Text(write.body)
             .font(.callout)
-            .textSelection(.enabled)
+            .osSelectable()
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
@@ -337,7 +326,7 @@ struct OSDecisionCard: View {
             Button {
                 perform { await server.atlassian.approve(write.id) }
             } label: {
-                Label(OSText.send2, systemImage: "paperplane")
+                Label(OSText.send, systemImage: "paperplane")
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(large ? .defaultAction : nil)

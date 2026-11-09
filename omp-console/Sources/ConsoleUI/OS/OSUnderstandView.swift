@@ -1,41 +1,56 @@
-// PROTOTYPE « OS agentique » (branche proto/os-fils) : COMPRENDRE, un zoom en quatre
-// niveaux sur une feature, à la place des sept onglets de sa page :
+// L'« OS agentique » : COMPRENDRE, un zoom en quatre niveaux sur une feature, à la place
+// des sept onglets de sa page, partagé par le Mac et l'iPhone/iPad :
 //   Résumé  — ce qu'elle attend de vous (les cartes complètes), son verdict, ses specs ;
 //   Récit   — la carte de session (ce que l'agent a lu, décidé, fait), sinon la frise ;
 //   Preuves — captures et rapports, fichiers touchés, tests ;
 //   Brut    — le direct de l'agent.
-// Chaque niveau réutilise les vues existantes de l'app.
+// Chaque niveau réutilise les vues existantes. Le direct d'une session (journal, fichiers
+// touchés, tests, frise) diffère d'une plateforme à l'autre : l'app le fournit (`session`).
 
 import ConsoleClient
 import ConsoleCore
-import ConsoleUI
 import SwiftUI
 
-struct OSUnderstandView: View {
+/// Ce que « Comprendre » demande au direct d'une feature.
+public enum OSSessionPane: Hashable, Sendable {
+    case live, files, tests, timeline
+}
+
+/// Le direct d'une feature, rendu par l'app : l'identifiant de la feature, le panneau,
+/// « suivre la fin », et l'entrée à montrer (remise à `nil` une fois montrée).
+public typealias OSSessionContent = @MainActor (_ runId: String, _ pane: OSSessionPane, _ followsEnd: Binding<Bool>, _ focus: Binding<Int?>) -> AnyView
+
+public struct OSUnderstandView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
     @ObservedObject var workspace: OSWorkspace
     let runId: String
+    let session: OSSessionContent
 
     @StateObject private var proofs: HarnessRunProofs
     @StateObject private var graph: HarnessRunGraph
     @State private var view: HarnessRunView?
-    @State private var proofPane: OSText.ProofPane = .captures
+    @State private var proofPane: OSProofPane = .captures
     @State private var followsEnd = true
     @State private var focus: Int?
 
-    init(server: HarnessModel, drafts: HarnessDrafts, workspace: OSWorkspace, runId: String) {
+    /// `session` : le direct de la feature tel que l'app le rend (voir `OSSessionContent`).
+    public init(
+        server: HarnessModel, drafts: HarnessDrafts, workspace: OSWorkspace, runId: String,
+        session: @escaping OSSessionContent
+    ) {
         self.server = server
         self.drafts = drafts
         self.workspace = workspace
         self.runId = runId
+        self.session = session
         _proofs = StateObject(wrappedValue: HarnessRunProofs(harness: server, runId: runId))
         _graph = StateObject(wrappedValue: HarnessRunGraph(harness: server, runId: runId))
     }
 
     private var run: HarnessRun? { server.knownRun(runId) ?? view?.run }
 
-    var body: some View {
+    public var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 if let run {
@@ -44,12 +59,12 @@ struct OSUnderstandView: View {
                         .lineLimit(2)
                     HStack {
                         OSStepDots(run: run)
-                        Text(OSText.runState(run)).font(.caption).foregroundStyle(.secondary)
+                        Text(run.osState).font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 Picker(OSText.understand, selection: $workspace.level) {
-                    ForEach(OSText.Level.allCases) { level in
-                        Text(level.rawValue).tag(level)
+                    ForEach(OSLevel.allCases) { level in
+                        Text(level.title).tag(level)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -82,9 +97,15 @@ struct OSUnderstandView: View {
     }
 
     private func zoom(_ step: Int) {
-        let all = OSText.Level.allCases
+        let all = OSLevel.allCases
         guard let index = all.firstIndex(of: workspace.level) else { return }
         workspace.level = all[max(0, min(all.count - 1, index + step))]
+    }
+
+    /// Le direct de la feature dans un panneau ; celui qui le pose l'ouvre (`followSession`).
+    private func live(_ run: HarnessRun, _ pane: OSSessionPane, focus: Binding<Int?> = .constant(nil)) -> some View {
+        session(run.id, pane, $followsEnd, focus)
+            .onAppear { server.followSession(.run(run.id)) }
     }
 
     @ViewBuilder
@@ -94,9 +115,7 @@ struct OSUnderstandView: View {
             case .summary: summary(run)
             case .story: story(run)
             case .proofs: proofsLevel(run)
-            case .raw:
-                HarnessSessionContent(server: server, target: .run(run.id), pane: .live, followsEnd: $followsEnd, focus: $focus)
-                    .onAppear { server.followSession(.run(run.id)) }
+            case .raw: live(run, .live, focus: $focus)
             }
         } else {
             ContentUnavailableView(OSText.noRun, systemImage: "questionmark.circle")
@@ -113,8 +132,8 @@ struct OSUnderstandView: View {
                 }
             }
             if !pending, let verdict = run.verdict {
-                Section(OSText.verdict) {
-                    Text(OSText.risk(verdict)).font(.caption.weight(.semibold)).foregroundStyle(verdict.isLowRisk ? .green : .orange)
+                Section(OSText.kindVerdict) {
+                    Text(PipelineServerText.risk(verdict.risk)).font(.caption.weight(.semibold)).foregroundStyle(verdict.isLowRisk ? .green : .orange)
                     ConsoleMarkdown(markdown: verdict.summary).frame(maxWidth: .infinity, alignment: .leading)
                     ForEach(verdict.blockers + verdict.risks, id: \.self) { item in
                         Label(item, systemImage: "exclamationmark.triangle").font(.callout)
@@ -159,15 +178,14 @@ struct OSUnderstandView: View {
             .formStyle(.grouped)
             .onAppear { server.followSession(.run(run.id)) }
         } else {
-            HarnessSessionContent(server: server, target: .run(run.id), pane: .timeline, followsEnd: $followsEnd)
-                .onAppear { server.followSession(.run(run.id)) }
+            live(run, .timeline)
         }
     }
 
     private func proofsLevel(_ run: HarnessRun) -> some View {
         VStack(spacing: 0) {
-            Picker(OSText.Level.proofs.rawValue, selection: $proofPane) {
-                ForEach(OSText.ProofPane.allCases) { pane in Text(pane.rawValue).tag(pane) }
+            Picker(OSLevel.proofs.title, selection: $proofPane) {
+                ForEach(OSProofPane.allCases) { pane in Text(pane.title).tag(pane) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -177,11 +195,9 @@ struct OSUnderstandView: View {
             case .captures:
                 Form { RunProofsSections(proofs: proofs) }.formStyle(.grouped)
             case .files:
-                HarnessSessionContent(server: server, target: .run(run.id), pane: .files, followsEnd: $followsEnd)
-                    .onAppear { server.followSession(.run(run.id)) }
+                live(run, .files)
             case .tests:
-                HarnessSessionContent(server: server, target: .run(run.id), pane: .tests, followsEnd: $followsEnd)
-                    .onAppear { server.followSession(.run(run.id)) }
+                live(run, .tests)
             }
         }
     }
