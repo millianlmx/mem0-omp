@@ -5,6 +5,7 @@
 // Un module est un chemin du dépôt (dossier ou fichier) ; deux ensembles se
 // chevauchent dès qu'un chemin de l'un est préfixe d'un chemin de l'autre. Une
 // feature aux modules INCONNUS chevauche tout : dans le doute, on sérialise.
+import { isArtifactPath } from "./git.ts";
 import type { Memory, Oracle } from "./oracle.ts";
 
 function normalize(module: string): string {
@@ -104,7 +105,7 @@ export async function modulesViaOracle(
   return { modules: modulesFromText(corpus, known), memories };
 }
 
-/** La section `## Modules` d'un artefact de specs : une entrée par puce. */
+/** La section `## Modules` d'un artefact de specs : une entrée par puce, sans chemin de `.harness/` (jamais un module). */
 export function parseModulesSection(markdown: string): string[] {
   const match = /^##\s+Modules\s*$([\s\S]*?)(?=^##\s|(?![\s\S]))/m.exec(markdown);
   if (!match) return [];
@@ -113,5 +114,5 @@ export function parseModulesSection(markdown: string): string[] {
     const item = /^\s*[-*]\s+`?([^`\s]+)`?/.exec(line);
     if (item) modules.push(normalize(item[1] as string));
   }
-  return [...new Set(modules.filter(Boolean))];
+  return [...new Set(modules.filter((module) => module !== "" && !isArtifactPath(module)))];
 }

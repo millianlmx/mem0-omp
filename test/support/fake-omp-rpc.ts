@@ -71,7 +71,7 @@ function stepOf(message: string): string | null {
   return match ? (match[1] as string) : null;
 }
 
-const waiting = new Map<string, (text: string) => void>();
+const waiting = new Map<string, (text: string, isError: boolean) => void>();
 type LoginScenario = { url?: string; instructions?: string; prompt?: string; code?: string; error?: string };
 /** La commande `login` en cours et la demande d'`input` qu'elle attend. */
 let login: { id: string; provider: string; inputId: string } | null = null;
@@ -128,10 +128,10 @@ log({
   ),
 });
 
-function callTool(name: string, args: Record<string, unknown>): Promise<string> {
+function callTool(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
   const id = `fake-tool-${++toolSeq}`;
   return new Promise((resolve) => {
-    waiting.set(id, resolve);
+    waiting.set(id, (text, isError) => resolve({ text, isError }));
     out({ type: "host_tool_call", id, toolCallId: id, toolName: name, arguments: args });
   });
 }
@@ -162,8 +162,11 @@ async function runPrompt(id: string, message: string): Promise<void> {
       fs.writeFileSync(action.write, action.content ?? "");
     }
     if (action.tool) {
-      const result = await callTool(action.tool, fill(action.args ?? {}, signalId) as Record<string, unknown>);
-      log({ kind: "tool", step: currentStep, tool: action.tool, result });
+      const { text, isError } = await callTool(
+        action.tool,
+        fill(action.args ?? {}, signalId) as Record<string, unknown>,
+      );
+      log({ kind: "tool", step: currentStep, tool: action.tool, result: text, ...(isError ? { isError: true } : {}) });
     }
     if (action.parallel) {
       const calls = action.parallel;
@@ -171,7 +174,7 @@ async function runPrompt(id: string, message: string): Promise<void> {
         calls.map((call) => callTool(call.tool, fill(call.args ?? {}, signalId) as Record<string, unknown>)),
       );
       for (const [i, call] of calls.entries()) {
-        log({ kind: "tool", step: currentStep, tool: call.tool, result: results[i] });
+        log({ kind: "tool", step: currentStep, tool: call.tool, result: results[i]?.text });
       }
     }
     if (action.error) {
@@ -212,6 +215,7 @@ lines.on("line", (line) => {
             part.type === "image" ? `[image ${part.mimeType} ${String(part.data?.length ?? 0)}]` : (part.text ?? ""),
           )
           .join("\n"),
+        frame.isError === true,
       );
       waiting.delete(id);
       return;

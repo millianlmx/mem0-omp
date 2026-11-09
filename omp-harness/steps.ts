@@ -31,7 +31,7 @@ import type { ChallengeStep } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { RunRow, StepRow } from "./db.ts";
 import { detectIrreversible } from "./decisions.ts";
-import { ARTIFACTS_DIR, isTestFile } from "./git.ts";
+import { ARTIFACTS_DIR, isArtifactPath, isTestFile } from "./git.ts";
 import type { HeavyResult } from "./heavy.ts";
 import { matchesGlob } from "./heavy.ts";
 import type { StepState } from "./host-tools.ts";
@@ -151,7 +151,7 @@ export function parseSplitSection(specsMd: string): SplitFeature[] {
       modules: modules
         .split(/[,;]/)
         .map((module) => module.trim().replace(/^`|`$/g, ""))
-        .filter((module) => module !== ""),
+        .filter((module) => module !== "" && !isArtifactPath(module.replace(/^\.\//, ""))),
     });
   }
   return features;
@@ -761,7 +761,7 @@ export class StepExecutor {
       if (!/^##\s+Crit[eè]res d'acceptation/m.test(specs))
         return "la section `## Critères d'acceptation` manque dans specs.md";
       if (parseModulesSection(specs).length === 0)
-        return "la section `## Modules` de specs.md est vide : une puce par chemin du dépôt que l'implémentation touchera";
+        return "la section `## Modules` de specs.md est vide : une puce par chemin du dépôt que l'implémentation touchera (les fichiers de `.harness/` ne comptent pas)";
       const gap = specsCoverageGap(store.getArtifact(run.id, "req.md") ?? "", specs);
       if (gap !== null) return gap;
     }
