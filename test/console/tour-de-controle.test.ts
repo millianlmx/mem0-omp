@@ -88,6 +88,11 @@ test("tour-de-controle/AC-1 : chaque route de la tour de contrôle appelée par 
     ['"POST", "/v1/reload"', "POST", "/v1/reload", "admin"],
     ['"/v1/client-errors?limit=', "GET", "/v1/client-errors", "viewer"],
     ['mcpPath = "/v1/mcp"', "POST", "/v1/mcp", "viewer"],
+    ['"/v1/signals?state=proposed&limit=', "GET", "/v1/signals", "viewer"],
+    ['"/v1/signals/\\(HarnessModel.pathComponent(signal.id))/preview"', "POST", "/v1/signals/s1/preview", "viewer"],
+    ['"/v1/signals/\\(HarnessModel.pathComponent(signal.id))/confirm"', "POST", "/v1/signals/s1/confirm", "operator"],
+    ['"/v1/signals/\\(HarnessModel.pathComponent(signal.id))/dismiss"', "POST", "/v1/signals/s1/dismiss", "operator"],
+    ['"/v1/runs/\\(HarnessModel.pathComponent(runId))/origin"', "GET", "/v1/runs/r1/origin", "viewer"],
   ];
   for (const [literal, method, sample, role] of calls) {
     assert.ok(sources.includes(literal), `le client n'appelle plus ${literal}`);

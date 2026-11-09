@@ -72,6 +72,7 @@ struct RunPageView: View {
         .task(id: runId + "|" + (server.knownRun(runId)?.state ?? "")) {
             view = await server.runView(runId)
             isLoaded = true
+            await server.signals.loadOrigin(runId: runId)
         }
         .onDisappear {
             if server.session?.target == .run(runId) { server.stopSession() }
@@ -145,6 +146,7 @@ struct RunPageView: View {
                     RunRequestDisclosure(run: run)
                 }
             }
+            RunOriginSection(signals: server.signals, runId: run.id)
             if !awaiting, let specs = view?.specs, !specs.isEmpty {
                 Section {
                     ConsoleMarkdown(markdown: specs)
