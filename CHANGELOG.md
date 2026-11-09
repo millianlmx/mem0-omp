@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.35.1 — 2026-11-09
+
+- fix(harness): config.json monté en écriture dans la pile, pour les routes d'administration de l'API (#436) (158218d)
+
 ## omp-harness 1.35.0 — 2026-11-09
 
 - feat(harness): usine autonome — file débloquée, pilote pour tous les runs, juge des tests par l'API (#432) (670ae98)
