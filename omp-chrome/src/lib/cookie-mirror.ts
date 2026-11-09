@@ -1,5 +1,5 @@
 // Le miroir des cookies : TOUT le profil Chrome de l'utilisateur (tous les domaines, sans
-// filtre) recopié en continu dans le navigateur du poste sur le VPS (obscura-poste), pour que
+// filtre) recopié en continu dans le navigateur du poste sur le VPS (moli-poste), pour que
 // l'agent y navigue avec les sessions de l'utilisateur. Sens unique Chrome → serveur, par le
 // harness (TLS du tailnet).
 //

@@ -1,15 +1,18 @@
 // La connexion interactive d'un compte (une fois, par l'appareil approbateur) : une page du
-// navigateur du poste (`obscura-poste`) dont l'app affiche des images et à laquelle elle renvoie
-// clics et frappes, 2FA comprise. La page vit dans le contexte persistant de l'exécuteur : les
-// cookies obtenus restent dans `obscura-poste`. Départ obligatoire sur un domaine de compte ;
+// navigateur du poste (`moli-poste`) dont l'app affiche des images et à laquelle elle renvoie
+// clics et frappes, 2FA comprise. La page vit dans le contexte par défaut de Moli, celui de
+// l'exécuteur : les cookies obtenus restent dans `moli-poste`. Elle survit à une connexion CDP
+// tombée (Moli garde ses pages) : elle est rattachée à la connexion suivante, et le balayage de
+// l'exécuteur l'épargne tant qu'elle est ouverte. Départ obligatoire sur un domaine de compte ;
 // pendant la connexion, la navigation reste sur ces domaines et sur les hôtes de `allowedHosts`
 // (l'IdP de l'entreprise) : une page qui mène ailleurs est vidée et la connexion est refusée.
-// L'adresse est contrôlée APRÈS chaque navigation (Obscura n'offre aucune barrière avant la
-// requête : les redirections sont suivies par le moteur).
+// Le harness n'intercepte aucune requête : l'adresse est contrôlée APRÈS chaque navigation (les
+// redirections sont suivies par le moteur).
 import { randomBytes } from "node:crypto";
 import type { LogLine } from "../logger.ts";
 import { HarnessError } from "../errors.ts";
 import { hostOf } from "../workstation-guards.ts";
+import { CdpError } from "./cdp.ts";
 import type { CdpConnection } from "./cdp.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { GuardVerdict } from "./guard.ts";
@@ -25,7 +28,10 @@ export type LoginInput =
   | { type: "key"; key: string }
   | { type: "scroll"; dy: number };
 
-/** La taille de la fenêtre d'Obscura : l'app y convertit ses clics. */
+/**
+ * La fenêtre de la page de connexion, posée par `Emulation.setDeviceMetricsOverride` (Moli
+ * ouvre ses pages en 1920 × 1080) : l'app y convertit ses clics.
+ */
 export const LOGIN_VIEWPORT = { width: 1280, height: 720 } as const;
 const MAX_TEXT = 1000;
 const SETTLE_MS = 300;
@@ -70,7 +76,7 @@ export type LoginDeps = {
   idleMs: number;
 };
 
-type Page = LoginView & { targetId: string; sessionId: string; timer: NodeJS.Timeout };
+type Page = LoginView & { targetId: string; sessionId: string; connection: CdpConnection; timer: NodeJS.Timeout };
 
 export class VpsLogin {
   readonly #deps: LoginDeps;
@@ -87,6 +93,11 @@ export class VpsLogin {
     return { id, domain, host, startedAt, error };
   }
 
+  /** La cible de la page ouverte, que le balayage de l'exécuteur ne ferme pas ; `null` sans connexion en cours. */
+  target(): string | null {
+    return this.#page?.targetId ?? null;
+  }
+
   start(rawUrl: unknown): Promise<LoginView> {
     return this.#guarded(() => this.#start(rawUrl));
   }
@@ -100,7 +111,7 @@ export class VpsLogin {
     return this.#guarded(() => this.#input(event));
   }
 
-  /** Une erreur CDP ou réseau devient une erreur du serveur, sans le texte d'Obscura. */
+  /** Une erreur CDP ou réseau devient une erreur du serveur, sans le texte de Moli. */
   async #guarded<T>(work: () => Promise<T>): Promise<T> {
     try {
       return await work();
@@ -125,6 +136,7 @@ export class VpsLogin {
       flatten: true,
     });
     await connection.send("Page.enable", {}, { sessionId });
+    await fit(connection, sessionId);
     const page: Page = {
       id: `lg_${randomBytes(6).toString("hex")}`,
       domain: domain as AccountDomain,
@@ -133,6 +145,7 @@ export class VpsLogin {
       error: null,
       targetId,
       sessionId,
+      connection,
       timer: setTimeout(() => void this.finish().catch(() => undefined), this.#deps.idleMs).unref(),
     };
     this.#page = page;
@@ -197,7 +210,7 @@ export class VpsLogin {
       const connection = await this.#deps.connection();
       await connection.send("Target.closeTarget", { targetId: page.targetId });
     } catch {
-      // La connexion a pu tomber : la page est partie avec elle.
+      // Moli injoignable : la page, sans propriétaire, sera fermée par le balayage de la reconnexion.
     }
     await this.#deps.finished(page.domain).catch((error: unknown) => {
       this.#deps.log(`poste : état du compte non relu (${error instanceof Error ? error.name : "erreur"})`);
@@ -210,7 +223,31 @@ export class VpsLogin {
     if (page === null) throw new HarnessError(404, "aucune connexion ouverte");
     if (page.error !== null) throw new HarnessError(409, page.error);
     page.timer.refresh();
-    return { connection: await this.#deps.connection(), page };
+    const connection = await this.#deps.connection();
+    if (page.connection !== connection) await this.#reattach(connection, page);
+    return { connection, page };
+  }
+
+  /**
+   * La page a survécu à la connexion tombée : une session sur la connexion neuve. Partie avec un
+   * redémarrage de Moli, la connexion interactive est perdue (409 jusqu'à `finish`).
+   */
+  async #reattach(connection: CdpConnection, page: Page): Promise<void> {
+    let sessionId: string;
+    try {
+      ({ sessionId } = await connection.send<{ sessionId: string }>("Target.attachToTarget", {
+        targetId: page.targetId,
+        flatten: true,
+      }));
+    } catch (error) {
+      if (!(error instanceof CdpError)) throw error;
+      page.error = "page de connexion perdue (navigateur du poste redémarré) : recommence la connexion";
+      throw new HarnessError(409, page.error);
+    }
+    await connection.send("Page.enable", {}, { sessionId });
+    await fit(connection, sessionId);
+    page.sessionId = sessionId;
+    page.connection = connection;
   }
 
   /** L'adresse actuelle doit rester dans les domaines permis ; sinon la page est vidée et la connexion refusée. */
@@ -231,4 +268,13 @@ export class VpsLogin {
       .catch(() => undefined);
     throw new HarnessError(409, page.error);
   }
+}
+
+/** Pose la fenêtre de la page de connexion (`LOGIN_VIEWPORT`), celle des images et des clics de l'app. */
+async function fit(connection: CdpConnection, sessionId: string): Promise<void> {
+  await connection.send(
+    "Emulation.setDeviceMetricsOverride",
+    { ...LOGIN_VIEWPORT, deviceScaleFactor: 1, mobile: false },
+    { sessionId },
+  );
 }

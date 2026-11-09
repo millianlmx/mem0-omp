@@ -1,7 +1,12 @@
-// Une session de navigation : UNE connexion CDP = UN contexte isolé d'Obscura (cookies, pages
-// et état propres, détruits à la fermeture). Les gestes passent par les références `eN` du
-// dernier snapshot. Obscura n'a ni DOM.getBoxModel ni getContentQuads : un clic se fait par
-// le centre de getBoundingClientRect puis Input.dispatchMouseEvent.
+// Une session de navigation : UN contexte de Moli (`Target.createBrowserContext` : cookies, pages
+// et état propres) sur UNE connexion CDP. Moli ne détruit rien quand une connexion se ferme : la
+// session supprime son contexte (`Target.disposeBrowserContext`, qui ferme ses pages) avant de
+// fermer la socket, et se reconnecte pour le faire si la connexion est déjà rompue. Avant le
+// premier contexte d'une URL CDP, le process supprime ceux qu'un process précédent a laissés (le
+// harness est le seul client de ce navigateur). Aucune page n'est ouverte dans le contexte par
+// défaut : avec Moli 1.1.22, le plus ancien contexte créé vivant partage son jar de cookies. Les
+// gestes passent par les références `eN` du dernier snapshot ; un clic vise le centre de
+// getBoundingClientRect par Input.dispatchMouseEvent.
 import { CdpConnection, CdpError, CdpTimeoutError } from "./cdp.ts";
 import { GuardRefusal, checkUrl } from "./guard.ts";
 import type { GuardVerdict, Lookup } from "./guard.ts";
@@ -58,6 +63,8 @@ export type SessionTarget = {
 };
 
 const GESTURE_PAUSE_MS = 300;
+/** La suppression d'un contexte à la fermeture : bornée, sans retenir la fermeture plus longtemps. */
+const DISPOSE_TIMEOUT_MS = 2000;
 const POLL_MS = 100;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const FIELD_ROLES = ["textbox", "searchbox", "combobox"];
@@ -95,20 +102,89 @@ type Evaluated = {
 
 const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 
+/** Le balayage des contextes restés, une fois par process et par URL CDP ; les ouvertures suivantes l'attendent. */
+const swept = new Map<string, Promise<void>>();
+
+function sweepLeftovers(url: string, connection: CdpConnection): Promise<void> {
+  const known = swept.get(url);
+  if (known !== undefined) return known;
+  const sweep = (async () => {
+    const { browserContextIds = [] } = await connection.send<{ browserContextIds?: string[] }>(
+      "Target.getBrowserContexts",
+    );
+    for (const browserContextId of browserContextIds)
+      await connection.send("Target.disposeBrowserContext", { browserContextId });
+  })();
+  swept.set(url, sweep);
+  // Un balayage manqué n'est pas acquis : l'ouverture suivante le refait.
+  sweep.catch(() => {
+    if (swept.get(url) === sweep) swept.delete(url);
+  });
+  return sweep;
+}
+
+/**
+ * Supprime le contexte puis ferme la connexion, sans jamais échouer (au pire, le balayage du
+ * process suivant le retrouve). Connexion rompue : une connexion neuve sert à le supprimer, sauf
+ * après un abandon (`signal`, QA de /review seulement : ses conteneurs sont retirés aussitôt).
+ */
+async function disposeContext(
+  connection: CdpConnection,
+  target: SessionTarget,
+  browserContextId: string,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  try {
+    if (!connection.closed)
+      await connection.send("Target.disposeBrowserContext", { browserContextId }, { timeoutMs: DISPOSE_TIMEOUT_MS });
+    else if (!signal?.aborted) {
+      const fresh = await CdpConnection.connect({
+        url: target.url,
+        token: target.token,
+        callTimeoutMs: DISPOSE_TIMEOUT_MS,
+        connectTimeoutMs: DISPOSE_TIMEOUT_MS,
+        ...(target.connect ? { connect: target.connect } : {}),
+      });
+      try {
+        await fresh.send("Target.disposeBrowserContext", { browserContextId });
+      } finally {
+        fresh.close();
+      }
+    }
+  } catch {
+    // Au mieux : la fermeture ne lève jamais.
+  } finally {
+    connection.close();
+  }
+}
+
 export class BrowserSession {
   readonly #connection: CdpConnection;
+  readonly #contextId: string;
   readonly #sessionId: string;
   readonly #target: SessionTarget;
+  readonly #signal: AbortSignal | undefined;
   readonly #book = new RefBook();
   #last: PageSnapshot | null = null;
+  #closing: Promise<void> | null = null;
 
-  constructor(connection: CdpConnection, sessionId: string, target: SessionTarget) {
+  constructor(
+    connection: CdpConnection,
+    ids: { contextId: string; sessionId: string },
+    target: SessionTarget,
+    signal: AbortSignal | undefined,
+  ) {
     this.#connection = connection;
-    this.#sessionId = sessionId;
+    this.#contextId = ids.contextId;
+    this.#sessionId = ids.sessionId;
     this.#target = target;
+    this.#signal = signal;
   }
 
-  /** Ouvre la connexion, une cible vide et son domaine Page ; une étape qui échoue ferme la connexion. */
+  /**
+   * Ouvre la connexion, son contexte, une cible vide dans ce contexte et son domaine Page ; une
+   * étape qui échoue supprime le contexte et ferme la connexion.
+   */
   static async open(target: SessionTarget, options: { signal?: AbortSignal } = {}): Promise<BrowserSession> {
     const connection = await CdpConnection.connect({
       url: target.url,
@@ -117,32 +193,46 @@ export class BrowserSession {
       ...(options.signal ? { signal: options.signal } : {}),
       ...(target.connect ? { connect: target.connect } : {}),
     });
+    let contextId: string | null = null;
     try {
-      const { targetId } = await connection.send<{ targetId: string }>("Target.createTarget", { url: "about:blank" });
+      await sweepLeftovers(target.url, connection);
+      ({ browserContextId: contextId } = await connection.send<{ browserContextId: string }>(
+        "Target.createBrowserContext",
+      ));
+      const { targetId } = await connection.send<{ targetId: string }>("Target.createTarget", {
+        url: "about:blank",
+        browserContextId: contextId,
+      });
       const { sessionId } = await connection.send<{ sessionId: string }>("Target.attachToTarget", {
         targetId,
         flatten: true,
       });
       await connection.send("Page.enable", {}, { sessionId });
-      return new BrowserSession(connection, sessionId, target);
+      return new BrowserSession(connection, { contextId, sessionId }, target, options.signal);
     } catch (error) {
-      connection.close();
+      if (contextId === null) connection.close();
+      else await disposeContext(connection, target, contextId, options.signal);
       throw error;
     }
   }
 
+  /** Vrai dès que la fermeture est demandée ou que la connexion est perdue. */
   get closed(): boolean {
-    return this.#connection.closed;
+    return this.#closing !== null || this.#connection.closed;
   }
 
-  close(): void {
-    this.#connection.close();
+  /** Supprime le contexte (ses pages et ses cookies) puis ferme la connexion. Idempotent, ne lève jamais. */
+  close(): Promise<void> {
+    this.#closing ??= disposeContext(this.#connection, this.#target, this.#contextId, this.#signal);
+    return this.#closing;
   }
 
   async navigate(url: string): Promise<void> {
     const verdict = await this.#verdict(url);
     if (!verdict.ok) throw new GuardRefusal(verdict.reason);
-    await this.#send("Page.navigate", { url });
+    // Moli rend l'échec d'une navigation (adresse bloquée, hôte injoignable) dans `errorText`, pas en erreur CDP.
+    const { errorText } = await this.#send<{ errorText?: string }>("Page.navigate", { url });
+    if (errorText) throw new CdpError("Page.navigate", errorText, { remote: true });
     await this.#verifyLocation();
   }
 
@@ -270,7 +360,7 @@ export class BrowserSession {
   async #verifyLocation(): Promise<void> {
     const verdict = await this.#verdict(String(await this.#evaluate("location.href")));
     if (verdict.ok) return;
-    this.close();
+    await this.close();
     throw new GuardRefusal(verdict.reason);
   }
 

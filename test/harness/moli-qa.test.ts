@@ -1,17 +1,19 @@
-// Feature « Obscura conteneurisé sur le VPS », sous-feature « QA de /review » (S-23 à S-29) : la politique `preview`
-// d'un dépôt, la prévisualisation du worktree et SON navigateur Obscura par revue, les outils hôtes `qa_*`, la
+// Feature « Moli conteneurisé sur le VPS », sous-feature « QA de /review » (S-23 à S-29) : la politique `preview`
+// d'un dépôt, la prévisualisation du worktree et SON navigateur Moli par revue, les outils hôtes `qa_*`, la
 // capture d'office de la page d'accueil et les preuves `screenshot`.
 //
 // Pas de vrai Docker : un faux moteur (test/support/fake-docker.ts) journalise chaque commande, exécute les jobs
-// heavy ici et lance un VRAI `obscura serve` (binaire épinglé) pour le navigateur de QA, joint par le vrai canal
-// de production (`docker exec -i … nc`, ici le faux CLI). L'espace réseau d'une prévisualisation y est MODÉLISÉ
-// (`--proxy` vers le seul serveur de test de SA prévisualisation) : l'isolement réel du noyau n'est pas prouvé ici
+// heavy ici et lance la VRAIE porte CDP de l'image devant un VRAI `moli serve` (binaire épinglé) pour le
+// navigateur de QA, joint par le vrai canal de production (`docker exec -i … nc`, ici le faux CLI). L'espace
+// réseau d'une prévisualisation y est MODÉLISÉ (`--http-proxy` vers le seul serveur de test de SA
+// prévisualisation) : l'isolement réel du noyau n'est pas prouvé ici
 // mais par construction (graphe réseau tiré des arguments `docker run` journalisés) et délégué au § Smoke de
 // DEVELOPPEMENT.md.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { CdpConnection } from "../../omp-harness/browser/cdp.ts";
 import { QA_CAPTION, QA_IMAGE, QaPreview, qaUnit } from "../../omp-harness/browser/qa.ts";
 import type { QaTarget } from "../../omp-harness/browser/qa.ts";
 import { defaultConfig, loadConfig, repoDefaults } from "../../omp-harness/config.ts";
@@ -23,7 +25,7 @@ import { hostToolsFor, runnerArgv } from "../../omp-harness/runner.ts";
 import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../omp-harness/workstation-guards.ts";
 import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { obscuraBin, pageServer } from "../support/obscura.ts";
+import { moliBin, pageServer } from "../support/moli.ts";
 import { fakeDocker, isAlive } from "../support/qa-doubles.ts";
 import type { FakeDocker, QaRun } from "../support/qa-doubles.ts";
 import { tmpdir } from "../support/repo.ts";
@@ -137,7 +139,7 @@ const NAVIGATION = ["qa_open", "qa_snapshot", "qa_click", "qa_fill", "qa_key", "
 
 // ── AC-30 ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-test("obscura-qa/AC-30 : une `preview` bien formée est acceptée et complétée, une `preview` mal formée est refusée par un message qui nomme le champ, un dépôt sans `preview` est inchangé", () => {
+test("moli-qa/AC-30 : une `preview` bien formée est acceptée et complétée, une `preview` mal formée est refusée par un message qui nomme le champ, un dépôt sans `preview` est inchangé", () => {
   const load = (repo: Record<string, unknown>): HarnessConfig => {
     const file = path.join(tmpdir("qa-config-"), "config.json");
     fs.writeFileSync(file, JSON.stringify({ repos: [{ name: "demo", path: "/srv/demo", ...repo }] }));
@@ -177,6 +179,7 @@ test("obscura-qa/AC-30 : une `preview` bien formée est acceptée et complétée
     [{ ...base, port: 3000.5 }, "repos.demo.preview.port"],
     [{ ...base, port: "3000" }, "repos.demo.preview.port"],
     [{ ...base, port: 9222 }, "repos.demo.preview.port"],
+    [{ ...base, port: 9223 }, "repos.demo.preview.port"],
     [{ ...base, path: "accueil" }, "repos.demo.preview.path"],
     [{ ...base, path: "//evil.example/" }, "repos.demo.preview.path"],
     [{ ...base, path: "/a b" }, "repos.demo.preview.path"],
@@ -211,8 +214,8 @@ test("obscura-qa/AC-30 : une `preview` bien formée est acceptée et complétée
 
 // ── AC-31 ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-test("obscura-qa/AC-31 : sans aucun qa_*, la revue porte la capture d'office de la page d'accueil (« rendu Obscura, fidélité visuelle non garantie ») ; une capture de l'agent jointe par qa_record_proof s'y ajoute", async (t) => {
-  const bin = obscuraBin(t);
+test("moli-qa/AC-31 : sans aucun qa_*, la revue porte la capture d'office de la page d'accueil (« rendu Moli, fidélité visuelle non garantie ») ; une capture de l'agent jointe par qa_record_proof s'y ajoute", async (t) => {
+  const bin = moliBin(t);
   if (!bin) return;
 
   // 1. L'agent n'appelle aucun outil qa_* : le harness a pris la page d'accueil seul.
@@ -235,7 +238,7 @@ test("obscura-qa/AC-31 : sans aucun qa_*, la revue porte la capture d'office de 
       assert.equal(shot.side, "after");
       assert.match(shot.title, /^Page d'accueil de la prévisualisation \(\/\)/);
       assert.ok(shot.title.includes(QA_CAPTION), shot.title);
-      assert.equal(QA_CAPTION, "rendu Obscura, fidélité visuelle non garantie");
+      assert.equal(QA_CAPTION, "rendu Moli, fidélité visuelle non garantie");
       assert.deepEqual([...readProof(world, runId, shot.n).data.subarray(0, 8)], [...PNG_SIGNATURE]);
       assert.ok(
         pages.requests().some((request) => request.path === "/"),
@@ -302,7 +305,7 @@ test("obscura-qa/AC-31 : sans aucun qa_*, la revue porte la capture d'office de 
 
 // ── AC-32 ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-test("obscura-qa/AC-32 : sans `preview`, aucune preuve screenshot, aucun conteneur de QA, aucun qa_* de navigation n'ouvre de page", async () => {
+test("moli-qa/AC-32 : sans `preview`, aucune preuve screenshot, aucun conteneur de QA, aucun qa_* de navigation n'ouvre de page", async () => {
   const docker = fakeDocker(null);
   const pages = await shop(3000, "Boutique");
   docker.control({ defaultNetns: pages.port });
@@ -377,7 +380,7 @@ function qaAlone(docker: FakeDocker, repoPreview: NonNullable<RepoConfig["previe
 
 const logProofs = (proofs: ProofStore, runId: string) => proofs.list(runId).filter((proof) => proof.kind === "log");
 
-test("obscura-qa/AC-33 : si la prévisualisation ou le navigateur ne démarrent pas (ou isolation sans conteneur), la revue continue et une preuve log dit pourquoi", async () => {
+test("moli-qa/AC-33 : si la prévisualisation ou le navigateur ne démarrent pas (ou isolation sans conteneur), la revue continue et une preuve log dit pourquoi", async () => {
   // 1. Le navigateur ne démarre pas : la revue rend son verdict, une preuve `log`, aucune capture, tout est nettoyé.
   const docker = fakeDocker(null);
   docker.control({ failRun: "browser" });
@@ -491,11 +494,11 @@ function networks(runs: { name: string; network: string | null }[]): Map<string,
   return members;
 }
 
-test("obscura-qa/AC-34 : hors /review qa_* est refusé ; la QA d'un run ne joint ni la prévisualisation d'un autre, ni la pile, ni obscura-poste ; un runner ne joint pas la prévisualisation ; la fin de la revue arrête l'Obscura de QA", async (t) => {
-  const bin = obscuraBin(t);
+test("moli-qa/AC-34 : hors /review qa_* est refusé ; la QA d'un run ne joint ni la prévisualisation d'un autre, ni la pile, ni moli-poste ; un runner ne joint pas la prévisualisation ; la fin de la revue arrête le Moli de QA", async (t) => {
+  const bin = moliBin(t);
   if (!bin) return;
 
-  // 1. Hors /review : refus avant tout accès au navigateur ; la revue arrête ensuite son Obscura de QA.
+  // 1. Hors /review : refus avant tout accès au navigateur ; la revue arrête ensuite son Moli de QA.
   const docker = fakeDocker(bin);
   const pages = await shop(3000, "Boutique");
   docker.control({ defaultNetns: pages.port });
@@ -520,10 +523,10 @@ test("obscura-qa/AC-34 : hors /review qa_* est refusé ; la QA d'un run ne joint
       assert.equal(docker.qaRuns().length, 2, "une prévisualisation et un navigateur : ceux de la revue, aucun avant");
       assert.ok(proofsOf(world, runId).some((proof) => proof.kind === "screenshot"));
     });
-    // Fin de revue : l'instance Obscura de QA est arrêtée avec la prévisualisation (un seul `rm --force`, les deux unités).
+    // Fin de revue : le Moli de QA est arrêté avec la prévisualisation (un seul `rm --force`, les deux unités).
     const [started] = docker.started();
-    assert.ok(started, "l'Obscura de QA a tourné pendant la revue");
-    assert.equal(isAlive(started.pid), false, "le process Obscura est arrêté");
+    assert.ok(started, "le Moli de QA a tourné pendant la revue");
+    assert.equal(isAlive(started.pid), false, "le navigateur de QA est arrêté");
     assert.deepEqual(docker.browsers(), []);
     const [previewRun, browserRun] = docker.qaRuns() as [QaRun, QaRun];
     assert.equal(started.name, browserRun.name);
@@ -544,7 +547,7 @@ test("obscura-qa/AC-34 : hors /review qa_* est refusé ; la QA d'un run ne joint
     "/vers-b": { status: 302, headers: { location: "http://127.0.0.1:3001/" } },
     "/vers-harness": { status: 302, headers: { location: "http://harness:8790/" } },
     "/vers-mem0": { status: 302, headers: { location: "http://mem0:8321/" } },
-    "/vers-poste": { status: 302, headers: { location: "http://obscura-poste:9222/" } },
+    "/vers-poste": { status: 302, headers: { location: "http://moli-poste:9222/" } },
   });
   const serverB = await shop(3001, "B-secret");
   const a = qaAlone(two, preview(3000), "run-a");
@@ -591,6 +594,36 @@ test("obscura-qa/AC-34 : hors /review qa_* est refusé ; la QA d'un run ne joint
       assert.match(back.text, /A-page/, `${route} : la QA de A reste utilisable`);
     }
     assert.equal(serverB.requests().length, baselineB, "rien de A n'a atteint la prévisualisation de B");
+    // Chaque session de la QA a eu son contexte, supprimé à sa fermeture (capture d'office, sessions refusées) :
+    // dans le Moli de A ne restent que la page vierge du contexte par défaut et le contexte de la session ouverte.
+    const browserA = two.browsers().find((browser) => browser.name === qaUnit("run-a", 1, "browser"));
+    const tokenA = two
+      .calls()
+      .find(
+        (call) => call.argv[0] === "run" && call.argv.includes(`--name=${qaUnit("run-a", 1, "browser")}`),
+      )?.tokenEnv;
+    assert.ok(browserA && tokenA);
+    const inspect = await CdpConnection.connect({
+      url: `http://127.0.0.1:${browserA.port}`,
+      token: tokenA,
+      callTimeoutMs: 5000,
+    });
+    try {
+      const { browserContextIds, defaultBrowserContextId } = await inspect.send<{
+        browserContextIds: string[];
+        defaultBrowserContextId: string;
+      }>("Target.getBrowserContexts");
+      assert.equal(browserContextIds.length, 1, "le seul contexte vivant est celui de la session de l'agent");
+      const { targetInfos } = await inspect.send<{ targetInfos: { browserContextId: string; url: string }[] }>(
+        "Target.getTargets",
+      );
+      assert.deepEqual(
+        targetInfos.map((info) => (info.browserContextId === defaultBrowserContextId ? info.url : "session")).sort(),
+        ["about:blank", "session"],
+      );
+    } finally {
+      inspect.close();
+    }
     const other = await qaB.tool("qa_open", { path: "/" });
     assert.match(other.text, /B-secret/, "B voit la sienne");
     assert.doesNotMatch(other.text, /A-page/);
@@ -617,13 +650,13 @@ test("obscura-qa/AC-34 : hors /review qa_* est refusé ; la QA d'un run ne joint
       );
       assert.deepEqual(members.get(`none:${previewName}`), [previewName, browserName]);
       assert.equal(browserArgs.image, QA_IMAGE);
-      assert.equal(browserArgs.argv.at(-1), "--allow-private-network");
+      assert.equal(browserArgs.argv.at(-1), QA_IMAGE, "aucun argument de Moli : réseau privé permis par défaut");
       assert.equal(
         browserArgs.argv[browserArgs.argv.indexOf(QA_IMAGE) - 1],
-        "OBSCURA_CDP_TOKEN",
+        "MOLI_CDP_TOKEN",
         "jeton lu dans l'environnement du CLI",
       );
-      assert.ok(browserArgs.argv.includes("OBSCURA_ENV_FILE=/dev/null"));
+      assert.ok(browserArgs.argv.includes("MOLI_ENV_FILE=/dev/null"));
       assert.ok(
         previewArgs.argv.includes(`${"/srv/worktrees/demo/x"}:${"/srv/worktrees/demo/x"}:ro`),
         "worktree en lecture seule",
@@ -681,7 +714,7 @@ test("obscura-qa/AC-34 : hors /review qa_* est refusé ; la QA d'un run ne joint
       "aucun espace réseau de prévisualisation ne contient le runner",
     );
 
-    // Arrêt de A : son Obscura part, celui de B reste utilisable.
+    // Arrêt de A : son Moli part, celui de B reste utilisable.
     const pidsBefore = two.browsers();
     assert.equal(pidsBefore.length, 2);
     await qaA.stop();
@@ -700,5 +733,5 @@ test("obscura-qa/AC-34 : hors /review qa_* est refusé ; la QA d'un run ne joint
     await Promise.all([qaA.stop(), qaB.stop()]);
     await Promise.all([serverA.stop(), serverB.stop()]);
   }
-  assert.deepEqual(two.browsers(), [], "les deux revues finies, aucun Obscura de QA ne reste");
+  assert.deepEqual(two.browsers(), [], "les deux revues finies, aucun Moli de QA ne reste");
 });

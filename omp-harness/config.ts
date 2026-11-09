@@ -190,8 +190,8 @@ export type WorkstationConfig = {
   /** Les captures d'écran gardées par action, en heures (JPEG tel que capturé). */
   captureRetentionHours: number;
   /**
-   * Le navigateur du poste sur le VPS (`obscura-poste`, browserId `vps`) : son URL et son jeton
-   * CDP, complétés depuis l'environnement (`OBSCURA_POSTE_CDP_URL`, `OBSCURA_POSTE_CDP_TOKEN`) quand
+   * Le navigateur du poste sur le VPS (`moli-poste`, browserId `vps`) : son URL et son jeton
+   * CDP, complétés depuis l'environnement (`MOLI_POSTE_CDP_URL`, `MOLI_POSTE_CDP_TOKEN`) quand
    * le fichier ne les donne pas. `url` null : l'exécuteur `vps` ne démarre pas.
    */
   vps: { url: string | null; token: string | null };
@@ -554,7 +554,7 @@ export type HarnessConfig = {
    */
   schedules: { timezone: string; catchUpMin: number };
   /**
-   * Le navigateur Obscura des outils MCP `browser_*` (omp-harness/browser/). `url` null :
+   * Le navigateur Moli des outils MCP `browser_*` (omp-harness/browser/). `url` null :
    * « navigateur non configuré » ; l'URL et le jeton viennent de l'environnement quand le
    * fichier ne les donne pas (`browserFromEnv`). `allowPrivateNetwork` : développement
    * seulement, il lève le pré-contrôle du harness sur la boucle locale, les réseaux
@@ -801,8 +801,10 @@ function checkPolicy(where: string, policy: ModelPolicy): void {
 
 const PREVIEW_KEYS = ["command", "port", "path", "readyTimeoutSec"];
 
-/** Le port du CDP du navigateur de QA dans l'espace réseau de la prévisualisation (browser/qa.ts). */
+/** Le port du CDP du navigateur de QA dans l'espace réseau de la prévisualisation (browser/qa.ts) : sa porte. */
 export const QA_CDP_PORT = 9222;
+/** Le port de Moli derrière sa porte, dans le même espace réseau (moli-gate.ts, MOLI_UPSTREAM_PORT). */
+const QA_MOLI_PORT = 9223;
 
 /**
  * Valide `repos.<nom>.preview` (la prévisualisation de la QA de /review) et complète ses défauts :
@@ -820,7 +822,8 @@ function checkPreview(repo: RepoConfig): void {
     fail(`${where}.command : commande non vide sur une ligne (lancée par bash -c dans le worktree)`);
   if (!(Number.isInteger(port) && (port as number) >= 1 && (port as number) <= 65_535))
     fail(`${where}.port : entier de 1 à 65535`);
-  if (port === QA_CDP_PORT) fail(`${where}.port : ${QA_CDP_PORT} est réservé au navigateur de QA`);
+  if (port === QA_CDP_PORT || port === QA_MOLI_PORT)
+    fail(`${where}.port : ${QA_CDP_PORT} et ${QA_MOLI_PORT} sont réservés au navigateur de QA`);
   if (
     typeof home !== "string" ||
     home.length > 512 ||
@@ -1141,7 +1144,7 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   return config;
 }
 
-/** L'adresse et le jeton d'un Obscura : refusés avec un message préfixé `<prefix>.url :` ou `<prefix>.token :`. */
+/** L'adresse et le jeton d'un Moli : refusés avec un message préfixé `<prefix>.url :` ou `<prefix>.token :`. */
 function checkCdpEndpoint(prefix: string, endpoint: { url: string | null; token: string | null }): void {
   const { url, token } = endpoint;
   if (url !== null) {
@@ -1161,7 +1164,7 @@ function checkCdpEndpoint(prefix: string, endpoint: { url: string | null; token:
     fail(`${prefix}.token : 32 caractères au moins, ou null`);
 }
 
-/** Les réglages du navigateur d'Obscura : refusés avec un message préfixé `browser.<clé> :`. */
+/** Les réglages du navigateur de Moli : refusés avec un message préfixé `browser.<clé> :`. */
 function validateBrowser(browser: HarnessConfig["browser"]): void {
   checkCdpEndpoint("browser", browser);
   if (typeof browser.allowPrivateNetwork !== "boolean") fail("browser.allowPrivateNetwork : booléen");
@@ -1180,20 +1183,20 @@ function validateBrowser(browser: HarnessConfig["browser"]): void {
 }
 
 /**
- * L'URL et le jeton du navigateur, complétés depuis l'environnement (`OBSCURA_CDP_URL`,
- * `OBSCURA_CDP_TOKEN`, posés par le service `setup`) quand le fichier ne les donne pas ;
+ * L'URL et le jeton du navigateur, complétés depuis l'environnement (`MOLI_CDP_URL`,
+ * `MOLI_CDP_TOKEN`, posés par le service `setup`) quand le fichier ne les donne pas ;
  * une valeur vide est ignorée. Les réglages sont revalidés.
  */
 export function browserFromEnv(
   config: HarnessConfig,
   env: Record<string, string | undefined> = process.env,
 ): HarnessConfig {
-  config.browser.url ??= env.OBSCURA_CDP_URL || null;
-  config.browser.token ??= env.OBSCURA_CDP_TOKEN || null;
+  config.browser.url ??= env.MOLI_CDP_URL || null;
+  config.browser.token ??= env.MOLI_CDP_TOKEN || null;
   validateBrowser(config.browser);
-  // Le navigateur du poste (`obscura-poste`) : lu seulement par l'exécuteur `vps`.
-  config.workstation.vps.url ??= env.OBSCURA_POSTE_CDP_URL || null;
-  config.workstation.vps.token ??= env.OBSCURA_POSTE_CDP_TOKEN || null;
+  // Le navigateur du poste (`moli-poste`) : lu seulement par l'exécuteur `vps`.
+  config.workstation.vps.url ??= env.MOLI_POSTE_CDP_URL || null;
+  config.workstation.vps.token ??= env.MOLI_POSTE_CDP_TOKEN || null;
   checkCdpEndpoint("workstation.vps", config.workstation.vps);
   return config;
 }

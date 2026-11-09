@@ -46,7 +46,7 @@ COPY --from=cli /usr/local/bin/docker /usr/local/bin/docker
 COPY omp-harness /opt/omp-harness/omp-harness
 COPY omp-mem0-memory /opt/omp-harness/omp-mem0-memory
 # Le côté page de l'extension (garde d'envoi, snapshot, gestes) : l'exécuteur `vps` l'évalue dans la
-# page d'Obscura (browser/agent-bundle.ts). Une seule source, celle d'omp-chrome : jamais recopiée dans omp-harness/.
+# page de Moli (browser/agent-bundle.ts). Une seule source, celle d'omp-chrome : jamais recopiée dans omp-harness/.
 COPY omp-chrome/src/lib /opt/omp-harness/omp-chrome/src/lib
 COPY omp-chrome/src/page /opt/omp-harness/omp-chrome/src/page
 COPY omp-harness/deploy/container/omp-harness-check /usr/local/bin/omp-harness-check

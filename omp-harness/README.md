@@ -244,18 +244,33 @@ conteneur `harness` et lance `omp-harness-check`. Les autres réglages (modèles
 plafonds) se font dans `config.json`, sous `OMP_HARNESS_ROOT`, puis en redémarrant
 `harness`.
 
-Deux services y pilotent le navigateur headless Obscura, jamais publiés : `obscura`,
-éphémère, pour les outils `browser_*` ; `obscura-poste`, persistant (stockage dans
-`$OMP_HARNESS_SECRETS/obscura-poste/storage`), joignable par `harness` seul. L'image
-est l'officielle `h4ckf0r0day/obscura`, épinglée par digest, plus un shell
-(`omp-harness/deploy/container/Dockerfile.obscura`). `setup` génère leurs jetons CDP
-dans `$OMP_HARNESS_SECRETS/obscura/obscura.env` et
-`$OMP_HARNESS_SECRETS/obscura-poste/obscura.env` (0600, uid 65532) : il doit donc
-tourner en root pour poser ce propriétaire. Les réseaux `omp-obscura` et
-`omp-obscura-poste`, internes, ne sont partagés qu'avec `harness` ; les réseaux de
-sortie `omp-obscura-sortie` et `omp-obscura-poste-sortie` n'ont que le navigateur
-pour membre. Le déploiement de `harness.sh` (`compose.yaml`) n'a pas Obscura :
+Deux services y pilotent le navigateur headless Moli (lexmount/moli v1.1.22, navigateur
+Rust sur V8, Apache-2.0/MIT), jamais publiés : `moli`, sans identité, pour les outils
+`browser_*` (un contexte de navigation par session, détruit à sa fermeture) ; `moli-poste`,
+persistant (profil dans `$OMP_HARNESS_SECRETS/moli-poste/profile`), joignable par `harness`
+seul. Moli n'a aucune authentification CDP : l'image `omp-harness-moli:local`
+(`omp-harness/deploy/container/Dockerfile.moli`, binaire épinglé par SHA-256) lance
+`moli serve --layout` sur la boucle locale derrière une porte (`moli-gate.ts`) qui écoute
+sur 9222 et refuse toute requête sans `Authorization: Bearer <jeton>`. `--layout` donne la
+mise en page dont dépendent les captures et les clics par coordonnées ; les deux services
+ajoutent `--block-private-networks` (boucle locale et tailnet refusés). `setup` génère leurs
+jetons CDP dans `$OMP_HARNESS_SECRETS/moli/moli.env` et
+`$OMP_HARNESS_SECRETS/moli-poste/moli.env` (0600, uid 65532) : il doit donc
+tourner en root pour poser ce propriétaire. Les réseaux `omp-moli` et
+`omp-moli-poste`, internes, ne sont partagés qu'avec `harness` ; les réseaux de
+sortie `omp-moli-sortie` et `omp-moli-poste-sortie` n'ont que le navigateur
+pour membre. Le déploiement de `harness.sh` (`compose.yaml`) n'a pas Moli :
 `browser_*` y répondent « navigateur non configuré ».
+
+**Mise à jour depuis le navigateur précédent.** Le redéploiement de la pile par Portainer
+crée les réseaux `omp-moli*` et laisse les quatre anciens réseaux du navigateur sans membre
+(`docker network ls --filter name=omp-ob` les liste). Si Docker refuse de créer les nouveaux
+faute de plage d'adresses (« all predefined address pools have been fully subnetted »),
+retire-les (`docker network prune`) puis redéploie. Les anciens dossiers de secrets du
+navigateur sous `$OMP_HARNESS_SECRETS` sont abandonnés : `setup` écrit de nouveaux jetons
+sous `moli` et `moli-poste`, et le profil du poste repart vide (le mirroir de Chrome le
+remplit à sa génération suivante). Remplace aussi les règles pare-feu ci-dessous : les ponts
+ont changé de nom.
 
 #### Couper l'hôte du navigateur
 
@@ -263,26 +278,26 @@ Un conteneur d'un réseau bridge non internal joint l'hôte par son adresse PUBL
 sans passer par le pare-feu de l'hébergeur : par la chaîne INPUT de l'hôte, ou par
 FORWARD/DOCKER-USER après DNAT vers un port publié sur 0.0.0.0 (Portainer, par
 exemple). Aucune garde SSRF ne le voit, l'adresse étant publique. Les ponts se
-nomment `omp-obs-sortie` (`obscura`) et `omp-obsp-sort` (`obscura-poste`) ; pose une
+nomment `omp-moli-sortie` (`moli`) et `omp-molp-sort` (`moli-poste`) ; pose une
 fois sur l'hôte, POUR CHACUN des deux :
 
 ```sh
-iptables -I INPUT -i omp-obs-sortie -j DROP
-ip6tables -I INPUT -i omp-obs-sortie -j DROP
-iptables -I DOCKER-USER -i omp-obs-sortie -m conntrack --ctstate DNAT -j DROP
-iptables -I INPUT -i omp-obsp-sort -j DROP
-ip6tables -I INPUT -i omp-obsp-sort -j DROP
-iptables -I DOCKER-USER -i omp-obsp-sort -m conntrack --ctstate DNAT -j DROP
+iptables -I INPUT -i omp-moli-sortie -j DROP
+ip6tables -I INPUT -i omp-moli-sortie -j DROP
+iptables -I DOCKER-USER -i omp-moli-sortie -m conntrack --ctstate DNAT -j DROP
+iptables -I INPUT -i omp-molp-sort -j DROP
+ip6tables -I INPUT -i omp-molp-sort -j DROP
+iptables -I DOCKER-USER -i omp-molp-sort -m conntrack --ctstate DNAT -j DROP
 ```
 
 Rends-les persistantes (`netfilter-persistent` ou équivalent) : les règles iptables
 ne survivent pas à un redémarrage. Une règle `-i` sur une interface absente est
 acceptée ; la sortie vers Internet (FORWARD sans DNAT) reste ouverte.
 
-Vérification : `docker exec` dans le conteneur `obscura`, puis
+Vérification : `docker exec` dans le conteneur `moli`, puis
 `/busybox wget -T 3 -qO- http://<adresse publique de l'hôte>:<port d'un service de l'hôte>/`
 échoue avec les règles et aboutit sans. Limite : sans ces règles, une page peut faire
-joindre à `obscura` un service de l'hôte en écoute sur son adresse publique.
+joindre à `moli` un service de l'hôte en écoute sur son adresse publique.
 
 Cette pile et `harness.sh up` ne cohabitent pas sur le même hôte : elles prennent les
 mêmes images, le même réseau et les mêmes ports. Le mode tout en local sur oMLX et la
@@ -605,7 +620,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `intake.tier` | `"standard"` | le niveau de modèle de la session qui classe une Demande (§ « Les demandes en langage libre ») |
 | `repos[].tests.pattern` | `null` | le glob des fichiers de test (`test/**/*.test.ts`) qui filtre `{files}` de `tests.touched` ; aucun fichier retenu ⇒ « aucun test touché », réussi |
 | `repos[].checks` | `{}` | des commandes nommées (`{ "lint": "bash scripts/lint.sh" }`) que l'agent lance par `run_tests {scope: "check", check: "lint"}` |
-| `repos[].preview` | absente | `{ "command", "port", "path"?, "readyTimeoutSec"? }` : la prévisualisation du worktree pour la QA de `/review` (§ « La QA de `/review` par Obscura »). `command` est lancée par `bash -c` dans un conteneur de l'image des tests, sans réseau, en isolation `container` ; `port` (1–65535, pas 9222) est celui qu'elle écoute ; `path` (défaut `/`) sa page d'accueil, capturée d'office ; `readyTimeoutSec` (1–600, défaut 60) le temps pour répondre. Une valeur mal formée refuse la configuration en nommant le champ |
+| `repos[].preview` | absente | `{ "command", "port", "path"?, "readyTimeoutSec"? }` : la prévisualisation du worktree pour la QA de `/review` (§ « La QA de `/review` par Moli »). `command` est lancée par `bash -c` dans un conteneur de l'image des tests, sans réseau, en isolation `container` ; `port` (1–65535, ni 9222 ni 9223) est celui qu'elle écoute ; `path` (défaut `/`) sa page d'accueil, capturée d'office ; `readyTimeoutSec` (1–600, défaut 60) le temps pour répondre. Une valeur mal formée refuse la configuration en nommant le champ |
 | `runner.slots`, `heavy.slots` | `5`, `2` | agents et jobs de tests simultanés |
 | `runner.memoryMax`, `heavy.memoryMax` | `1G`, `4G` | le plafond mémoire de chacun |
 | `heavy.timeoutSec` | `1800` | la durée maximale d'un job de tests |
@@ -648,15 +663,15 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `workstation.allowedHosts` | `[]` | les hôtes où l'on navigue sans approbation (`open`, `navigate`), sous-domaines compris (`exemple.fr` couvre `crm.exemple.fr`) ; vide : tout hôte, hors sites exclus par l'extension. Une adresse hors de la liste attend l'approbateur, quelle que soit l'origine de l'action |
 | `workstation.exfiltrationGuard` | `true` | la garde anti-exfiltration de l'agent 24/24 : une adresse vers un hôte jamais observé ni listé dans `allowedHosts`, ou dont la query (ou le fragment `#a=b`) porte une valeur de plus de 100 caractères ou un jeton opaque (≥ 24 caractères alphanumériques mêlant lettres et chiffres), attend l'approbateur ; `false` la coupe |
 | `workstation.captureRetentionHours` | `24` | les captures d'écran gardées par action (le JPEG tel que capturé, table `workstation_captures`), effacées passé ce délai (à chaque tour) |
-| `workstation.vps` | `{url: null, token: null}` | le navigateur du poste sur le VPS (`obscura-poste`, `browserId: "vps"`) : URL `http://hôte:port` et jeton CDP (32 caractères au moins), repris de `OBSCURA_POSTE_CDP_URL` / `OBSCURA_POSTE_CDP_TOKEN` (posés par `setup` dans `harness.env`) quand le fichier ne les donne pas ; `url` null : l'exécuteur `vps` ne démarre pas |
+| `workstation.vps` | `{url: null, token: null}` | le navigateur du poste sur le VPS (`moli-poste`, `browserId: "vps"`) : URL `http://hôte:port` et jeton CDP (32 caractères au moins), repris de `MOLI_POSTE_CDP_URL` / `MOLI_POSTE_CDP_TOKEN` (posés par `setup` dans `harness.env`) quand le fichier ne les donne pas ; `url` null : l'exécuteur `vps` ne démarre pas |
 | `issues.label` | `omp:fix` | le label des issues qu'`issues_fix_labeled` et la relève automatique lancent (§ « Les issues (MCP) ») |
 | `issues.maxLaunch` | `5` | les runs qu'un appel d'`issues_fix_labeled` (ou une relève, par dépôt) lance au plus ; le reste attend l'appel suivant |
 | `issues.pollSec` | `900` | la relève automatique : toutes les 15 min, les issues ouvertes du label de chaque dépôt qui a un distant (`repos[].remote`) partent en run, sans appel MCP ; entier ≥ 60, ou `null` : seulement à la demande |
 | `schedules.timezone` | `Europe/Paris` | le fuseau IANA dans lequel se lisent les expressions cron des planifications (§ « Les planifications ») ; un fuseau inconnu refuse la configuration |
 | `schedules.catchUpMin` | `60` | le rattrapage après un arrêt du service : la plus récente échéance passée de moins de N minutes part une fois, les plus vieilles sont notées manquées (`missed`) ; entier de 1 à 10080 |
-| `browser.url` | `null` | l'URL (`http:` ou `ws:`) du navigateur Obscura, posée par l'environnement `OBSCURA_CDP_URL` ; `null` : les outils `browser_*` répondent « navigateur non configuré » |
-| `browser.token` | `null` | le jeton CDP du navigateur, 32 caractères au moins ; défaut : `OBSCURA_CDP_TOKEN` |
-| `browser.allowPrivateNetwork` | `false` | développement seulement : lève la boucle locale, RFC 1918, link-local et ULA pour le pré-contrôle du harness, jamais le tailnet ; la garde d'Obscura reste active tant que le service n'est pas lancé avec `--allow-private-network` |
+| `browser.url` | `null` | l'URL (`http:` ou `ws:`) du navigateur Moli, posée par l'environnement `MOLI_CDP_URL` ; `null` : les outils `browser_*` répondent « navigateur non configuré » |
+| `browser.token` | `null` | le jeton CDP du navigateur, 32 caractères au moins ; défaut : `MOLI_CDP_TOKEN` |
+| `browser.allowPrivateNetwork` | `false` | développement seulement : lève la boucle locale, RFC 1918, link-local et ULA pour le pré-contrôle du harness, jamais le tailnet ; la garde de Moli reste active tant que le service est lancé avec `--block-private-networks` |
 | `browser.maxContextsPerClient` | `3` | les contextes de navigateur ouverts par un client au plus (1 à 20) |
 | `browser.maxContexts` | `12` | les contextes ouverts en tout (de `maxContextsPerClient` à 64) |
 | `browser.idleSec` | `600` | un contexte est fermé après cette inactivité, en secondes (1 à 86400) |
@@ -906,10 +921,10 @@ des runs vivants est gardé jusqu'à leur fin. Une configuration invalide est re
   `defer` notifie. Un refus du pilote n'entre pas dans l'oracle comme une correction
   humaine.
 
-### La QA de `/review` par Obscura (`repos[].preview`)
+### La QA de `/review` par Moli (`repos[].preview`)
 
 Un dépôt qui déclare `preview` laisse la revue **voir l'application tourner** : le service lance la
-prévisualisation du worktree du run (côté APRÈS seulement) et un navigateur Obscura qui n'a accès qu'à
+prévisualisation du worktree du run (côté APRÈS seulement) et un navigateur Moli qui n'a accès qu'à
 elle. Sans `preview`, rien ne change.
 
 ```json
@@ -922,22 +937,25 @@ elle. Sans `preview`, rien ne change.
   `omp-qa-<run>-<étape>-browser`. La prévisualisation est un conteneur de l'image des tests du dépôt,
   **sans réseau** (`--network=none`, comme un job heavy), le worktree monté en lecture seule (la commande
   écrit dans `/tmp`, `HOME=/tmp`, `PORT` est posé) ; elle ne démarre qu'en isolation `container`
-  (`heavy.isolation`). Le navigateur est l'instance Obscura de l'image épinglée
-  `omp-harness-obscura:local` (la même que la pile), lancée par le service pour CETTE revue avec
-  `--allow-private-network`, jointe à l'espace réseau de la prévisualisation (`--network=container:…`) et
-  à aucun autre : ni le harness, ni les runners, ni `harness:8790`, `mem0:8321`, `obscura-poste`, ni
-  l'hôte, ni la prévisualisation d'une autre revue. Le service `obscura` de la pile n'y sert pas. Les
+  (`heavy.isolation`). Le navigateur est l'instance Moli de l'image épinglée
+  `omp-harness-moli:local` (la même que la pile), lancée par le service pour CETTE revue sans
+  `--block-private-networks` (la prévisualisation écoute sur la boucle locale), jointe à l'espace réseau de la prévisualisation (`--network=container:…`) et
+  à aucun autre : ni le harness, ni les runners, ni `harness:8790`, `mem0:8321`, `moli-poste`, ni
+  l'hôte, ni la prévisualisation d'une autre revue. Le service `moli` de la pile n'y sert pas. Les
   deux conteneurs sont retirés ensemble (`docker rm --force`) à la fin de l'étape, quelle qu'en soit
   l'issue, et au redémarrage du service pour une revue interrompue.
 - **Le canal CDP.** Aucun réseau n'est partagé avec le service : chaque connexion passe par
   `docker exec -i <navigateur> nc 127.0.0.1 9222` (stdin/stdout du CLI), avec un jeton CDP de 32 octets
-  tiré pour la revue et jamais écrit dans une ligne de commande. Le code de la prévisualisation, qui partage
-  la boucle locale avec Obscura, ne peut donc pas le piloter.
+  tiré pour la revue, exigé par la porte CDP de l'image et jamais écrit dans une ligne de commande.
+  Limite : la porte ne protège que 9222. Moli lui-même écoute sur `127.0.0.1:9223`, sans
+  authentification (Moli n'en a pas), dans la boucle locale qu'il partage avec la
+  prévisualisation : le code du dépôt revu peut donc piloter ce navigateur jetable. Il n'y trouve
+  ni cookie ni identité, et n'a pas d'autre réseau ; il peut seulement fausser sa propre revue.
 - **Capture d'office.** Dès que la prévisualisation répond (2xx sur `preview.path`, au plus
   `readyTimeoutSec` secondes), le service ouvre sa propre connexion, charge la page d'accueil et verse la
   capture aux preuves du run (`screenshot`, étape `review`, côté `after`) — sans attendre l'agent. Son
-  titre porte la mention « rendu Obscura, fidélité visuelle non garantie » : Obscura n'est pas un
-  navigateur grand public. Ces preuves sont informatives, jamais dans la décision d'auto-merge, et suivent
+  titre porte la mention « rendu Moli, fidélité visuelle non garantie » : Moli n'est pas un
+  navigateur grand public et sa mise en page (`--layout`) n'est pas celle de Chrome. Ces preuves sont informatives, jamais dans la décision d'auto-merge, et suivent
   les bornes habituelles (50 par run, 8 Mio par preuve, 64 Mio par run).
 - **Les outils `qa_*`** (en `/review` seulement, quand la QA tourne ; l'agent ne donne jamais d'URL, le
   service compose `http://127.0.0.1:<port>` + un chemin) :
@@ -955,7 +973,7 @@ elle. Sans `preview`, rien ne change.
   Hors `/review`, ou sans `preview`, un outil `qa_*` répond par un refus explicite.
 - **Si ça ne démarre pas.** La revue continue : une preuve `log` « QA de /review indisponible » dit pourquoi
   (conteneur refusé, prévisualisation arrêtée avec la fin de ses logs, délai, isolation `none`/`systemd`).
-  Hors périmètre : la QA en isolation `none`/`systemd`, le côté AVANT, les vidéos, `obscura-poste`.
+  Hors périmètre : la QA en isolation `none`/`systemd`, le côté AVANT, les vidéos, `moli-poste`.
 
 ## La mémoire du projet
 
@@ -1656,12 +1674,12 @@ ne touche à la mémoire d'aucun projet.
 
 ### Le navigateur du serveur (`vps`)
 
-Le service `obscura-poste` de la pile (Obscura avec profil persistant, joignable du seul
+Le service `moli-poste` de la pile (Moli avec profil persistant, joignable du seul
 harness) est un navigateur du poste à part entière : `browserId: "vps"`, libellé « VPS
-(Obscura) ». L'exécuteur (`browser/vps.ts`) loue la file comme une extension
+(Moli) ». L'exécuteur (`browser/vps.ts`) loue la file comme une extension
 (`Workstation.next`, le même cantonnement aux onglets de l'agent, la même pause, les mêmes
-hôtes permis) et exécute chaque action par CDP dans `obscura-poste`. Il est **en ligne**
-seulement si `obscura-poste` répond ; tombé, il passe hors ligne tout de suite et une action
+hôtes permis) et exécute chaque action par CDP dans `moli-poste`. Il est **en ligne**
+seulement si `moli-poste` répond ; tombé, il passe hors ligne tout de suite et une action
 qui le cible est refusée (409) comme pour une extension hors ligne. L'approbateur le choisit
 par défaut par `PUT …/settings {defaultBrowser: "vps"}` ; un identifiant `vps` ne peut pas
 être pris par une extension (400). Sans choix, il n'est jamais le navigateur d'une extension
@@ -1669,14 +1687,14 @@ ancienne sans identifiant.
 
 **Les mêmes gardes que l'extension, d'une seule source.** Le côté page d'omp-chrome
 (`omp-chrome/src/page/agent.ts` et `lib/` : snapshot, gestes, `classifyOutbound`,
-`inspectGesture`, empreinte) est évalué dans la page d'Obscura (`browser/agent-bundle.ts` :
+`inspectGesture`, empreinte) est évalué dans la page de Moli (`browser/agent-bundle.ts` :
 types effacés par `stripTypeScriptTypes`, modules assemblés, sans étape de build) ;
 `Dockerfile.harness` copie `omp-chrome/src/lib` et `omp-chrome/src/page` dans l'image, et
 rien n'en est recopié dans `omp-harness/`. Un envoi détecté (clic sur Envoyer, saisie avec
 envoi, Entrée) rend `needs_approval` avec résumé, destinataires, aperçu et empreinte ; un envoi
 approuvé ne part que si l'empreinte recalculée est identique, sinon l'action repasse
 `awaiting_approval`. Les gestes passent par les événements DOM de la page (pas de clic de
-confiance). Un geste qu'Obscura ne sait pas faire rend `failed` avec la limite nommée
+confiance). Un geste que Moli ne sait pas faire rend `failed` avec la limite nommée
 (`download` : pas de téléchargement ; `upload` : pas de `DataTransfer` ; `back`/`forward` :
 seulement si le moteur rejoue l'historique). L'arrêt d'urgence (`POST …/stop`) et l'annulation
 d'une action coupent l'exécution en cours ; l'issue tardive n'écrase pas l'annulation.
@@ -1685,25 +1703,27 @@ d'une action coupent l'exécution en cours ; l'issue tardive n'écrase pas l'ann
 `PUT …/settings {mirrorBrowser: "<browserId>"}` (une extension connue ; `vps` → 400 ; `null`
 coupe le mirroir). Cette extension copie alors en continu **tout son profil**, sans filtre de
 domaine (décision de l'utilisateur : l'agent travaille en autonomie sous son identité), dans
-`obscura-poste`. `GET /v1/workstation/vps/mirror` (operator, au tick de 30 s) rend
-`{mirror: {generation} | null}` : non nul seulement pour l'extension source quand `obscura-poste`
+`moli-poste`. `GET /v1/workstation/vps/mirror` (operator, au tick de 30 s) rend
+`{mirror: {generation} | null}` : non nul seulement pour l'extension source quand `moli-poste`
 répond. À chaque génération nouvelle, l'extension envoie toute la session (`chrome.cookies.getAll`,
 par paquets) puis, entre deux ticks, les changements (`chrome.cookies.onChanged`) :
 `POST /v1/workstation/vps/cookies {generation, full?, last?, set: [cookie Chrome], removed:
 [{name, domain, path}]}` (1000 entrées au plus de chaque, 1 Mio par envoi) ; elle renvoie aussi
 tout toutes les 30 min. Une autre extension → 403 ; une génération périmée → 409 (l'extension
-renvoie tout). Un cookie host-only part en `url` sans `domain` (sinon Obscura rejette les
-`__Host-…`). Les cookies vont de l'extension au harness (TLS du tailnet) puis à `obscura-poste`
+renvoie tout). Un cookie host-only part en `url` sans `domain` (Moli rejette un
+`__Host-…` qui porte un domaine) ; une suppression garde la forme de domaine de Chrome
+(`.slack.com`), Moli n'effaçant un cookie que sur égalité exacte. Les cookies vont de l'extension au harness (TLS du tailnet) puis à `moli-poste`
 (`Network.setCookies`, `Network.deleteCookies`) ; ils ne sont écrits ni en base, ni au journal, ni
 dans un événement, une réponse d'API ou la mémoire. `browsers[vps].mirroredAt` date le dernier
 envoi accepté depuis le démarrage.
 
 **La connexion interactive, en secours** si la session copiée est refusée (Google lie ses
 sessions à l'appareil) : `POST /v1/workstation/vps/login {url}` (départ sur `slack.com` ou
-`google.com`), `GET …/login/frame` (une image PNG de la page, 1280×720), `POST …/login/input`
+`google.com`), `GET …/login/frame` (une image PNG de la page, forcée à 1280×720 par
+`Emulation.setDeviceMetricsOverride`, Moli ouvrant en 1920×1080), `POST …/login/input`
 `{type: click|text|key|scroll, …}`, `DELETE …/login` ; l'approbateur seulement (403 sinon). La
 navigation reste sur les domaines de compte et les hôtes de `workstation.allowedHosts` (l'IdP de
-l'entreprise), contrôlée APRÈS chaque navigation (Obscura n'offre aucune barrière avant la
+l'entreprise), contrôlée APRÈS chaque navigation (aucune barrière ne s'interpose avant la
 requête) : un autre hôte vide la page et refuse la connexion (409). Le mirroir suivant peut
 écraser les cookies obtenus ainsi s'il porte les mêmes noms.
 
@@ -1715,9 +1735,16 @@ ouverte dans un onglet jetable : une page de connexion donne `blocked` (mirroir)
 connexion passe `expired` (action ou relecture toutes les 30 min) : événement `workstation_account`
 et une seule notification ntfy par passage.
 
-**Limites.** Obscura ne fusionne les cookies dans `--storage-dir` qu'à la fermeture de la connexion
-et une connexion neuve repart de l'instantané du démarrage : l'exécuteur garde UNE connexion ouverte,
-et chaque connexion neuve change la génération du mirroir, qui renvoie alors toute la session. Les
+**Limites.** Moli n'a qu'un contexte de navigation partagé par toutes les connexions, et
+l'exécuteur n'utilise que lui : ses onglets et ses cookies survivent à une reconnexion. À chaque
+connexion neuve, l'exécuteur ouvre d'abord sa page d'accueil puis ferme toutes les autres pages
+du contexte, sauf une connexion interactive en cours (Moli abandonne le contexte par défaut à la
+fermeture de sa dernière page : la suivante tomberait dans un contexte neuf, sans rien de
+commun). La page de connexion interactive survit ainsi à une connexion perdue et est rattachée à
+la suivante ; si Moli a redémarré, la cible n'existe plus et la page répond 409 jusqu'à `finish`.
+`--profile-dir` garde IndexedDB et OPFS mais pas les cookies : un redémarrage de `moli-poste`
+les perd. Chaque connexion neuve change donc la génération du mirroir, qui
+renvoie alors toute la session. Les
 cookies partitionnés (CHIPS) et le stockage des pages (localStorage, IndexedDB) ne sont pas copiés.
 L'adresse publique du VPS reste coupée par les règles pare-feu de § « Couper l'hôte du navigateur ».
 
@@ -1812,19 +1839,20 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 - Une erreur d'outil (dépôt non déclaré ou sans forge, rôle insuffisant, issue fermée, `gh` ou `glab` en
   échec, run inconnu ou terminal) est un résultat `isError` ; une erreur de protocole,
   une erreur JSON-RPC.
-- **Navigateur (`browser_*`).** Les sept outils pilotent le navigateur `obscura` de
+- **Navigateur (`browser_*`).** Les sept outils pilotent le navigateur `moli` de
   la pile (§ « Avec Portainer ») ; sans `browser.url`, ils répondent « navigateur non
   configuré ». Un contexte est réservé au client qui l'a ouvert : un contexte d'autrui,
   inconnu ou expiré rend le même message « contexte inconnu ». Chaque client en a
   `browser.maxContextsPerClient` au plus, le service `browser.maxContexts` en tout ;
   un contexte est fermé après `browser.idleSec` secondes d'inactivité. Aucun outil
-  n'atteint `obscura-poste`. Garde réseau : celle d'Obscura fait autorité pour chaque
-  requête de la page, au moment de la connexion, tailnet et réseau privé compris ; le
+  n'atteint `moli-poste`. Garde réseau : celle de Moli (`--block-private-networks`) fait
+  autorité pour chaque requête de la page, au moment de la connexion, boucle locale et tailnet
+  compris ; le
   harness pré-contrôle l'adresse demandée et l'URL finale d'une navigation. L'adresse
   publique de l'hôte ne dépend que de la règle pare-feu de « Couper l'hôte du
-  navigateur ». Les erreurs qui citent la page ou Obscura arrivent enveloppées comme
+  navigateur ». Les erreurs qui citent la page ou Moli arrivent enveloppées comme
   contenu non fiable. Mode d'emploi : `DEVELOPPEMENT.md` § « Naviguer sans le Chrome
-  du Mac (Obscura) ».
+  du Mac (Moli) ».
 
 ## Les demandes en langage libre
 
@@ -2104,8 +2132,8 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/workstation/actions/{n}/result` `{outcome, result?, image?, error?, approval?, agentTabs?}` | operator | Le résultat de l'extension pour une action `running` (409 sinon, une action annulée comprise) : `done`, `failed`, ou `needs_approval` `{summary, recipients, preview, fingerprint?}` → `queued` approuvée par « soi » si tous les destinataires sont l'utilisateur, sinon `awaiting_approval` (`workstation_approval`, ntfy). `agentTabs` : les onglets de la fenêtre de l'agent, après l'action. |
 | `POST /v1/workstation/actions/{n}/approve` · `POST /v1/workstation/actions/{n}/refuse` `{reason?}` | operator (approbateur) | Le geste humain sur une action `awaiting_approval` (409 sinon), par le seul client `approver` (403 sinon) : `queued` avec `approved: true`, ou `refused`. `approve` exige `If-Match: "<updatedAt>"` (absent 428, périmé 412) ; `refuse` l'accepte facultatif (périmé 412). |
 | `POST /v1/workstation/actions/{n}/cancel` | operator | Annule une action `queued`, `running` ou `awaiting_approval` → `refused`, `error` « annulée par <client> » ; 409 si elle a déjà abouti. |
-| `GET /v1/workstation/vps/mirror` · `POST /v1/workstation/vps/cookies` `{generation, full?, last?, set?, removed?}` | operator | Le mirroir de la session du Chrome source (`mirrorBrowser`) vers `obscura-poste` : `{mirror: {generation} \| null}` pour l'extension appelante (`X-OMP-Browser`), puis ses envois (`{set, removed}` comptés ; 403 si elle n'est pas la source, 409 génération périmée, 400 cookie mal formé ou plus de 1000 entrées, 503 `obscura-poste` injoignable). Tous les domaines du profil ; aucune valeur n'est rendue ni journalisée. |
-| `POST /v1/workstation/vps/login` `{url}` · `GET /v1/workstation/vps/login` · `GET …/login/frame` · `POST …/login/input` · `DELETE …/login` | operator (approbateur) | La connexion interactive d'un compte dans `obscura-poste` (§ « Le navigateur du serveur »), 403 pour tout autre client ; 409 si une connexion est déjà ouverte ou si la page est sortie des hôtes permis. |
+| `GET /v1/workstation/vps/mirror` · `POST /v1/workstation/vps/cookies` `{generation, full?, last?, set?, removed?}` | operator | Le mirroir de la session du Chrome source (`mirrorBrowser`) vers `moli-poste` : `{mirror: {generation} \| null}` pour l'extension appelante (`X-OMP-Browser`), puis ses envois (`{set, removed}` comptés ; 403 si elle n'est pas la source, 409 génération périmée, 400 cookie mal formé ou plus de 1000 entrées, 503 `moli-poste` injoignable). Tous les domaines du profil ; aucune valeur n'est rendue ni journalisée. |
+| `POST /v1/workstation/vps/login` `{url}` · `GET /v1/workstation/vps/login` · `GET …/login/frame` · `POST …/login/input` · `DELETE …/login` | operator (approbateur) | La connexion interactive d'un compte dans `moli-poste` (§ « Le navigateur du serveur »), 403 pour tout autre client ; 409 si une connexion est déjà ouverte ou si la page est sortie des hôtes permis. |
 | `POST /v1/workstation/stop` | viewer | L'arrêt d'urgence : pause, actions en attente annulées, service de l'agent coupé → `{status, cancelled: [seq…]}` ; événement `workstation_stop`. La reprise : `PUT …/settings` `paused: false` par l'approbateur. |
 | `GET /v1/workstation/session?job=profil\|digest\|service&since=&before=&limit=` | viewer | La session du job, sous la forme de `GET /v1/runs/{id}/session` (`runId` et `auditId` nuls, `job`) ; `since` : seulement les entrées de `seq` plus grande. `job` inconnu ou `since` illisible → 400. |
 | `GET /v1/workstation/profile` · `POST /v1/workstation/profile/rebuild` | viewer · operator | Le dernier profil (`null` avant le premier) et les statistiques (`observedSeconds`, `since`, `topSites`, `activeHours`, `sequences`) ; demander une synthèse tout de suite (202 `{queued: true}`). |

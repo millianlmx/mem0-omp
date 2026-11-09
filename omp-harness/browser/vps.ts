@@ -1,13 +1,15 @@
 // L'exécuteur du poste sur le VPS : un navigateur du poste (`browserId: "vps"`) qui loue la file
-// d'actions comme une extension (`Workstation.next`) et les exécute par CDP dans `obscura-poste`,
-// le seul Obscura qui garde un profil (cookies persistants). Les gardes sont celles de
-// l'extension, tenues ailleurs et par la MÊME source : hôtes permis, onglets de l'agent et
-// pause/arrêt par `Workstation` ; garde d'envoi, empreinte, snapshot et gestes par le côté page
-// d'omp-chrome (`agent-bundle.ts`), évalué dans la page d'Obscura.
+// d'actions comme une extension (`Workstation.next`) et les exécute par CDP dans `moli-poste`,
+// le Moli réservé au poste, dont le contexte garde les cookies du mirroir tant que son processus
+// vit. Les gardes sont celles de l'extension, tenues ailleurs et par la MÊME source : hôtes
+// permis, onglets de l'agent et pause/arrêt par `Workstation` ; garde d'envoi, empreinte,
+// snapshot et gestes par le côté page d'omp-chrome (`agent-bundle.ts`), évalué dans la page de Moli.
 //
-// Une connexion CDP = un contexte (jar de cookies) : l'exécuteur garde UNE connexion ouverte,
-// dont les onglets sont les onglets de l'agent. Un geste qu'Obscura ne sait pas faire rend
-// `failed` avec une raison qui le dit : jamais un succès simulé.
+// Moli n'a qu'un contexte (le contexte par défaut, un seul jar de cookies), partagé par toutes
+// les connexions ; ses pages et ses cookies survivent à la fermeture d'une connexion. L'exécuteur
+// n'en crée jamais d'autre et garde UNE connexion ouverte, dont les onglets sont les onglets de
+// l'agent ; à chaque connexion neuve, il ferme les pages restées sans propriétaire. Un geste que
+// Moli ne sait pas faire rend `failed` avec une raison qui le dit : jamais un succès simulé.
 import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { WorkstationAction } from "../db.ts";
@@ -137,7 +139,7 @@ export class VpsBrowser {
 
   // -- connexion --------------------------------------------------------------------
 
-  /** La connexion persistante (un contexte), ouverte à la demande ; son échec est `CdpConnectError`. */
+  /** La connexion persistante, ouverte à la demande ; son échec est `CdpConnectError`. */
   #connect(): Promise<CdpConnection> {
     if (this.#connection !== null && !this.#connection.closed) return Promise.resolve(this.#connection);
     this.#connecting ??= this.#open().finally(() => {
@@ -161,8 +163,11 @@ export class VpsBrowser {
         flatten: true,
       });
       await connection.send("Page.enable", {}, { sessionId });
+      await this.#sweep(connection, targetId);
       this.#home = sessionId;
-      // Une connexion neuve repart de l'instantané d'Obscura : le mirroir de Chrome est à renvoyer en entier.
+      // Moli garde ses cookies d'une connexion à l'autre mais les perd à son redémarrage (même
+      // avec `--profile-dir`) ; une connexion neuve ne sait pas lequel des deux a eu lieu : le
+      // mirroir de Chrome est à renvoyer en entier.
       this.#generation = randomBytes(8).toString("hex");
     } catch (error) {
       connection.close();
@@ -179,6 +184,25 @@ export class VpsBrowser {
       this.#workstation.forget(VPS_BROWSER);
     });
     return connection;
+  }
+
+  /**
+   * Moli garde ses pages d'une connexion à l'autre, et d'un processus du harness au suivant : à
+   * chaque connexion neuve, les pages qu'aucun propriétaire vivant ne tient sont fermées (onglets
+   * d'une connexion tombée, sondes interrompues, accueil précédent). Restent la nouvelle page
+   * d'accueil et la page de la connexion interactive en cours, que `VpsLogin` rattache à la
+   * connexion neuve. L'accueil est créé AVANT : un contexte par défaut vidé de toutes ses pages
+   * disparaît, et la page suivante naîtrait dans un nouveau contexte (`BID-1`).
+   */
+  async #sweep(connection: CdpConnection, home: string): Promise<void> {
+    const owned = new Set([home, this.#login.target()]);
+    const { targetInfos } = await connection.send<{ targetInfos: { targetId: string; type: string }[] }>(
+      "Target.getTargets",
+    );
+    for (const info of targetInfos)
+      if (info.type === "page" && !owned.has(info.targetId))
+        // Une page partie d'elle-même entre-temps : rien à fermer.
+        await connection.send("Target.closeTarget", { targetId: info.targetId }).catch(() => undefined);
   }
 
   /** Le navigateur est connu du poste (réglage du navigateur par défaut) mais hors ligne. */
@@ -344,7 +368,7 @@ export class VpsBrowser {
         return { outcome: "done", result: { text: `onglet ${tab.id} fermé` } };
       }
       case "download":
-        return failed("download : Obscura ne gère pas les téléchargements de fichiers (limite du moteur)");
+        return failed("download : Moli ne gère pas les téléchargements de fichiers (limite du moteur)");
       default:
         return this.#inTab(signal, params, gate);
     }
@@ -386,7 +410,7 @@ export class VpsBrowser {
     }
   }
 
-  /** Les gestes qui visent un onglet de l'agent (tous ceux d'`obscura-poste`). */
+  /** Les gestes qui visent un onglet de l'agent (tous ceux de `moli-poste`). */
   async #inTab(
     signal: AbortSignal,
     params: Exclude<ActionParams, { kind: "decision" | "tabs" | "open" | "wait" | "close" | "download" }>,
@@ -411,7 +435,7 @@ export class VpsBrowser {
       }
       case "screenshot": {
         const { data } = await this.#send<{ data?: string }>(signal, tab, "Page.captureScreenshot", { format: "png" });
-        if (!data) return failed("screenshot : Obscura n'a rendu aucune image");
+        if (!data) return failed("screenshot : Moli n'a rendu aucune image");
         const page = await this.#locate(signal, tab);
         return { outcome: "done", result: { text: `capture de l'onglet ${tab.id} (${page.title})` }, image: data };
       }
@@ -447,7 +471,7 @@ export class VpsBrowser {
           file: { name: file.name, mime: file.mime, data: file.data },
         });
         return outcome.outcome === "failed"
-          ? failed(`upload : Obscura ne sait pas joindre ce fichier (${outcome.error})`)
+          ? failed(`upload : Moli ne sait pas joindre ce fichier (${outcome.error})`)
           : outcome;
       }
     }
@@ -498,7 +522,7 @@ export class VpsBrowser {
     const after = await this.#locate(signal, tab);
     if (after.url === before.url)
       return failed(
-        `${kind} : aucune page ${kind === "back" ? "précédente" : "suivante"} (ou Obscura ne rejoue pas l'historique : limite du moteur)`,
+        `${kind} : aucune page ${kind === "back" ? "précédente" : "suivante"} (ou Moli ne rejoue pas l'historique : limite du moteur)`,
       );
     await this.#observe(after.url);
     return { outcome: "done", result: { text: `onglet ${tab.id} : ${after.title} · ${after.url}` } };
@@ -508,7 +532,7 @@ export class VpsBrowser {
 
   /**
    * Ce que l'extension lit pour savoir si elle est la source du mirroir : la génération du jeu de
-   * cookies d'`obscura-poste`, ou `null` (ce navigateur n'est pas la source, ou Obscura est injoignable).
+   * cookies de `moli-poste`, ou `null` (ce navigateur n'est pas la source, ou Moli est injoignable).
    */
   async mirrorStatus(hello: BrowserHello): Promise<{ mirror: { generation: string } | null }> {
     if (!this.configured || hello.id === null || this.#workstation.settings().mirrorBrowser !== hello.id)
@@ -523,7 +547,7 @@ export class VpsBrowser {
 
   /**
    * Un envoi du mirroir : les cookies du Chrome de l'utilisateur, de TOUS les domaines, posés dans
-   * `obscura-poste` par `Network.setCookies`, et ceux qui y ont disparu, retirés. Jamais écrits
+   * `moli-poste` par `Network.setCookies`, et ceux qui y ont disparu, retirés. Jamais écrits
    * ailleurs (ni base, ni journal, ni événement). Après le dernier envoi d'une copie entière, l'état
    * des comptes est relu : une page de connexion donne `blocked` (session copiée refusée).
    */
@@ -547,7 +571,7 @@ export class VpsBrowser {
       if (cookies.length > 0)
         await connection.send("Network.setCookies", { cookies }, { sessionId: this.#home as string });
     } catch (error) {
-      // Le message d'Obscura n'est pas rendu : il pourrait citer un cookie.
+      // Le message de Moli n'est pas rendu : il pourrait citer un cookie.
       throw new HarnessError(
         502,
         `navigateur du poste : cookies refusés (${error instanceof Error ? error.name : "erreur"})`,

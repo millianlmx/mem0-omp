@@ -1,0 +1,44 @@
+# Le navigateur Moli de la pile (services `moli` et `moli-poste`, navigateur de la QA).
+# Moli ne publie pas d'image : celle-ci part de l'image node du harness, y pose le binaire
+# de la release épinglée (archive vérifiée par sa somme SHA-256) et la porte CDP
+# (moli-gate.ts) : Moli n'authentifie pas son CDP, la porte exige le jeton Bearer et
+# relaie vers Moli sur la boucle locale. Un busybox statique (épinglé) sert `nc` et
+# `wget` à la QA (`docker exec`). Tourne en 65532, comme les dossiers que `setup` lui donne.
+# Contexte de build : la racine du dépôt.
+ARG NODE_IMAGE=docker.io/library/node:22-bookworm-slim
+ARG BUSYBOX_IMAGE=docker.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478
+FROM ${BUSYBOX_IMAGE} AS busybox
+
+FROM ${NODE_IMAGE}
+# libfontconfig1 et une police : Moli en a besoin pour le rendu (--layout) ; ca-certificates
+# pour le HTTPS des pages. curl ne sert qu'au téléchargement, puis repart.
+ARG MOLI_VERSION=1.1.22
+ARG MOLI_SHA256_AMD64=7e10f9a5b62371da56203b21ac0172bbe3c3626de189fc3742b91b2e2b8cdd39
+ARG MOLI_SHA256_ARM64=a199802d237fff981cb5a72ac075813af2510f5a4b51ce182d8fc18b5520210b
+RUN set -eu; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl libfontconfig1 fonts-dejavu-core; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) triple=x86_64-unknown-linux-gnu; sum="$MOLI_SHA256_AMD64" ;; \
+      arm64) triple=aarch64-unknown-linux-gnu; sum="$MOLI_SHA256_ARM64" ;; \
+      *) echo "moli : architecture $arch non prise en charge" >&2; exit 1 ;; \
+    esac; \
+    file="moli-$triple.tar.gz"; \
+    curl -fsSL --retry 5 --retry-delay 5 -o "/tmp/$file" \
+      "https://github.com/lexmount/moli/releases/download/v${MOLI_VERSION}/$file"; \
+    echo "$sum  /tmp/$file" | sha256sum -c -; \
+    tar --no-same-owner -xzf "/tmp/$file" -C /tmp; \
+    install -m 0755 "/tmp/moli-v${MOLI_VERSION}-$triple/moli" /moli; \
+    rm -rf "/tmp/$file" "/tmp/moli-v${MOLI_VERSION}-$triple"; \
+    apt-get purge -y curl; \
+    apt-get autoremove -y; \
+    rm -rf /var/lib/apt/lists/*; \
+    /moli --version
+COPY --from=busybox /bin/busybox /busybox
+COPY omp-harness/deploy/container/moli-entrypoint /moli-entrypoint
+COPY omp-harness/deploy/container/moli-gate.ts /moli-gate.ts
+ENV HOME=/tmp
+USER 65532:65532
+ENTRYPOINT ["/bin/sh", "/moli-entrypoint"]
+CMD []

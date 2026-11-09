@@ -115,7 +115,7 @@ export async function startHarness(
   // Le jeton de mem0-rs peut venir de l'environnement (/etc/omp-harness/env), comme pour le plugin mémoire.
   if (config.oracle && !config.oracle.token && process.env.MEM0_HTTP_TOKEN)
     config.oracle.token = process.env.MEM0_HTTP_TOKEN;
-  // L'URL et le jeton du navigateur Obscura des outils `browser_*`, posés par `setup` dans l'environnement.
+  // L'URL et le jeton du navigateur Moli des outils `browser_*`, posés par `setup` dans l'environnement.
   browserFromEnv(config);
   const oracle = config.oracle ? new HttpOracle(config.oracle, { log }) : NO_ORACLE;
   const orchestrator = new Orchestrator({

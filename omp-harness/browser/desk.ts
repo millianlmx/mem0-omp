@@ -1,7 +1,7 @@
-// Les contextes de navigation des outils MCP `browser_*` : un contexte (une connexion CDP à
-// l'Obscura éphémère) appartient au client qui l'a ouvert, et à lui seul. Bornés par client et
-// au total, fermés après inactivité et à l'arrêt. Le journal ne reçoit que des noms de classe
-// et de méthode : jamais d'URL, d'hôte, de message d'Obscura ni de texte de page.
+// Les contextes de navigation des outils MCP `browser_*` : un contexte (un contexte de Moli, sur
+// sa connexion CDP) appartient au client qui l'a ouvert, et à lui seul. Bornés par client et au
+// total, fermés (contexte supprimé dans Moli) après inactivité et à l'arrêt. Le journal ne reçoit
+// que des noms de classe et de méthode : jamais d'URL, d'hôte, de message de Moli ni de texte de page.
 import { randomBytes } from "node:crypto";
 import type { Client } from "../auth.ts";
 import type { HarnessConfig } from "../config.ts";
@@ -21,10 +21,10 @@ const MAX_DETAIL = 500;
 const SWEEP_MAX_MS = 60_000;
 
 const detail = (text: string): string =>
-  untrusted("navigateur (Obscura)", text.length > MAX_DETAIL ? `${text.slice(0, MAX_DETAIL - 1)}…` : text);
+  untrusted("navigateur (Moli)", text.length > MAX_DETAIL ? `${text.slice(0, MAX_DETAIL - 1)}…` : text);
 
 /**
- * L'erreur que l'agent reçoit. Tout texte venu de la page ou d'Obscura (hôte, URL, raison de
+ * L'erreur que l'agent reçoit. Tout texte venu de la page ou de Moli (hôte, URL, raison de
  * refus, message CDP, exception) est enveloppé comme contenu non fiable, rogné ; le libellé
  * fixe du harness reste dehors. Une erreur inattendue remonte telle quelle (500).
  */
@@ -107,7 +107,7 @@ export class BrowserDesk {
         await session.navigate(url);
         snapshot = await session.snapshot();
       } catch (error) {
-        session.close();
+        await session.close();
         throw error;
       }
       const id = `bx_${randomBytes(8).toString("hex")}`;
@@ -133,7 +133,7 @@ export class BrowserDesk {
         return await fn(context.session);
       } catch (error) {
         if (error instanceof CdpTimeoutError || error instanceof CdpClosedError || error instanceof GuardRefusal)
-          this.#drop(context, "erreur", error);
+          await this.#drop(context, "erreur", error);
         throw error;
       } finally {
         context.lastUsedAt = Date.now();
@@ -153,7 +153,7 @@ export class BrowserDesk {
   async stop(): Promise<void> {
     clearInterval(this.#sweeper);
     this.#sweeper = undefined;
-    for (const context of [...this.#contexts.values()]) this.#drop(context, "arrêt");
+    await Promise.all([...this.#contexts.values()].map((context) => this.#drop(context, "arrêt")));
   }
 
   /** Même message pour un id inconnu, celui d'un autre client et un contexte expiré. */
@@ -161,20 +161,22 @@ export class BrowserDesk {
     const context = this.#contexts.get(id);
     if (context === undefined || context.owner !== client.name) throw unknown(id);
     if (Date.now() - context.lastUsedAt > this.#config().idleSec * 1000) {
-      this.#drop(context, "idle");
+      void this.#drop(context, "idle");
       throw unknown(id);
     }
     return context;
   }
 
-  #drop(context: Context, reason: string, error?: unknown): void {
-    if (!this.#contexts.delete(context.id)) return;
-    context.session.close();
+  /** Retire le contexte ; la promesse rendue est sa suppression dans Moli (elle ne lève jamais). */
+  #drop(context: Context, reason: string, error?: unknown): Promise<void> {
+    if (!this.#contexts.delete(context.id)) return Promise.resolve();
+    const closed = context.session.close();
     const cause =
       error instanceof Error
         ? ` (${error.name}${error instanceof CdpError || error instanceof CdpTimeoutError ? ` ${error.method}` : ""})`
         : "";
     this.#log(`navigateur : contexte ${context.id} fermé, ${reason}${cause} (client ${context.owner})`);
+    return closed;
   }
 
   #startSweeper(config: BrowserConfig): void {
@@ -183,7 +185,7 @@ export class BrowserDesk {
       () => {
         const idleMs = this.#config().idleSec * 1000;
         for (const context of [...this.#contexts.values()])
-          if (Date.now() - context.lastUsedAt > idleMs) this.#drop(context, "idle");
+          if (Date.now() - context.lastUsedAt > idleMs) void this.#drop(context, "idle");
       },
       Math.min((config.idleSec * 1000) / 2, SWEEP_MAX_MS),
     );

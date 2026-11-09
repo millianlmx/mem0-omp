@@ -186,9 +186,9 @@ export class Orchestrator {
   readonly metrics: Metrics;
   /** Les issues GitHub des dépôts déclarés, lancées en run (`POST /v1/mcp`). */
   readonly issues: IssueDesk;
-  /** Les contextes de navigation des outils MCP `browser_*` (Obscura éphémère). */
+  /** Les contextes de navigation des outils MCP `browser_*` (service `moli`, un contexte jetable par session). */
   readonly browsers: BrowserDesk;
-  /** L'exécuteur du poste sur le VPS (`browserId: "vps"`, `obscura-poste`) : il loue la file comme une extension. */
+  /** L'exécuteur du poste sur le VPS (`browserId: "vps"`, `moli-poste`) : il loue la file comme une extension. */
   readonly vps: VpsBrowser;
   /** Le rapport du matin, posté chaque jour à `notify.digestHour`. */
   readonly digest: DigestSender;

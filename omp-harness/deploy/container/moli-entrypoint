@@ -1,0 +1,17 @@
+#!/bin/sh
+# L'entrée de l'image Moli de la pile : le jeton CDP vient d'un fichier des secrets (écrit
+# par `setup`) ; la porte (moli-gate.ts) le lit dans MOLI_CDP_TOKEN, lance Moli sur la
+# boucle locale et écoute sur 0.0.0.0:9222. Les arguments du service (ex. --profile-dir)
+# passent à `moli serve`, après --layout (captures et gestes par coordonnées). Le jeton
+# n'est jamais affiché.
+set -eu
+
+env_file="${MOLI_ENV_FILE:-/run/secrets/moli/moli.env}"
+[ -r "$env_file" ] || { echo "✗ jeton CDP introuvable : $env_file" >&2; exit 1; }
+
+set -a
+# shellcheck disable=SC1090
+. "$env_file"
+set +a
+
+exec node --experimental-strip-types --disable-warning=ExperimentalWarning /moli-gate.ts -- --layout "$@"

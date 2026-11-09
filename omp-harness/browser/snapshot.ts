@@ -1,4 +1,4 @@
-// Le snapshot d'une page pour un agent : l'arbre d'accessibilité d'Obscura
+// Le snapshot d'une page pour un agent : l'arbre d'accessibilité de Moli
 // (`Accessibility.getFullAXTree`) réduit aux éléments utiles, chaque élément interactif
 // portant une référence stable `eN`. Pur, sans E/S. Même modèle que omp-chrome/src/lib/snapshot.ts
 // (qui tourne, lui, dans la page : on reproduit le modèle, on ne l'importe pas).
@@ -179,7 +179,7 @@ export function buildSnapshot(
 /** La seule forme sous laquelle un snapshot atteint un agent : URL et titre viennent de la page, donc dans le bloc. */
 export function renderPage(snapshot: PageSnapshot): string {
   return untrusted(
-    "page web (Obscura)",
+    "page web (Moli)",
     `url : ${snapshot.url}\ntitre : ${snapshot.title}\n\n${snapshot.lines.join("\n")}`,
   );
 }

@@ -1,6 +1,8 @@
 // Un client WebSocket minimal (RFC 6455) sur `node:http`, sans dépendance : le harness n'en
-// a besoin que pour parler CDP à Obscura. En-têtes maîtrisés (jamais `Origin` : Obscura
-// refuse en 403 toute requête qui en porte un), trames texte seulement.
+// a besoin que pour parler CDP à Moli, à travers la porte CDP de l'image (moli-gate.ts : jeton,
+// Host réécrit vers la boucle locale de Moli, `/devtools/browser` nu réécrit vers le chemin que
+// Moli publie). En-têtes maîtrisés (jamais `Origin` : Moli refuse en 403 toute origine
+// étrangère), trames texte seulement.
 import { createHash, randomBytes } from "node:crypto";
 import * as http from "node:http";
 import type { Socket } from "node:net";

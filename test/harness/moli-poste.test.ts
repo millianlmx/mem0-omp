@@ -1,10 +1,12 @@
-// Feature « Obscura conteneurisé sur le VPS », agent corpo : l'exécuteur `vps` du poste (il loue
-// la file comme une extension et l'exécute par CDP dans `obscura-poste`), ses gardes (les mêmes
+// Feature « Moli conteneurisé sur le VPS », agent corpo : l'exécuteur `vps` du poste (il loue
+// la file comme une extension et l'exécute par CDP dans `moli-poste`), ses gardes (les mêmes
 // que l'extension : hôtes permis, garde d'envoi et empreinte, arrêt d'urgence, pause), le mirroir
-// de la session du Chrome source, la connexion interactive et l'état des comptes. Tout tourne
-// contre un VRAI `obscura serve` v0.2.6 (bash scripts/obscura.sh --prepare) ; les pages « slack »
-// et « gmail » sont servies sous leurs noms par un proxy témoin (`--proxy`), jamais par le réseau.
-// Les valeurs de cookies sont des sentinelles ; aucun hôte, jeton ni donnée réels.
+// de la session du Chrome source, la connexion interactive, l'état des comptes et la reprise
+// d'une connexion CDP tombée. Tout tourne contre un VRAI `moli serve` v1.1.22 derrière la porte
+// CDP de l'image (bash scripts/moli.sh --prepare), réseau privé permis (les pages de test sont
+// sur 127.0.0.1) ; les pages « slack » et « gmail » sont servies sous leurs noms par un proxy
+// témoin (`--http-proxy`), jamais par le réseau. Les valeurs de cookies sont des sentinelles ;
+// aucun hôte, jeton ni donnée réels.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -14,6 +16,7 @@ import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { ClientRegistry } from "../../omp-harness/auth.ts";
 import { agentScript, bundleFiles } from "../../omp-harness/browser/agent-bundle.ts";
+import { CdpConnection } from "../../omp-harness/browser/cdp.ts";
 import type { Lookup } from "../../omp-harness/browser/guard.ts";
 import { parseMirrorCookies } from "../../omp-harness/browser/vps-policy.ts";
 import { validateConfig, browserFromEnv, defaultConfig } from "../../omp-harness/config.ts";
@@ -27,8 +30,8 @@ import { classifyOutbound, sendFingerprint } from "../../omp-chrome/src/lib/outb
 import type { OutboundContext } from "../../omp-chrome/src/lib/outbound.ts";
 import { fakeWorld, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { obscuraBin, pageServer, startObscura } from "../support/obscura.ts";
-import type { PageServer, RunningObscura, Route } from "../support/obscura.ts";
+import { countingProxy, moliBin, pageServer, startMoli } from "../support/moli.ts";
+import type { CountingProxy, PageServer, RunningMoli, Route } from "../support/moli.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
 /** Une adresse publique pour tout nom : le pré-contrôle DNS du harness ne sort jamais du test. */
@@ -70,7 +73,9 @@ type Reply<T> = { status: number; json: T };
 type Rig = {
   world: FakeWorld;
   pages: PageServer;
-  obscura: RunningObscura;
+  moli: RunningMoli;
+  /** Avec `relay` : le relais TCP entre l'exécuteur et Moli, à couper pour faire tomber sa connexion CDP. */
+  relay: CountingProxy | null;
   url: string;
   approver: string;
   ordinary: string;
@@ -91,20 +96,26 @@ type Rig = {
 type RigOptions = {
   allowedHosts?: string[];
   probe?: Partial<Record<"slack.com" | "google.com", string>>;
+  /** L'exécuteur joint Moli par un relais TCP (`Rig.relay`). */
+  relay?: boolean;
 };
 
-/** Un harness complet dont le navigateur du poste est un vrai Obscura derrière un proxy témoin. */
+/** Un harness complet dont le navigateur du poste est un vrai Moli derrière un proxy témoin. */
 async function rig(t: { skip(message: string): void }, options: RigOptions = {}): Promise<Rig | null> {
-  const bin = obscuraBin(t);
+  const bin = moliBin(t);
   if (bin === null) return null;
   const pages = await pageServer(ROUTES);
-  const obscura = await startObscura(bin, { proxy: pages.url });
+  const moli = await startMoli(bin, { proxy: pages.url });
+  const relay = options.relay ? await countingProxy(moli.port) : null;
   const logs: string[] = [];
   const world = fakeWorld(
     {},
     {
       patch: (config) => {
-        config.workstation.vps = { url: obscura.url, token: obscura.token };
+        config.workstation.vps = {
+          url: relay === null ? moli.url : `http://127.0.0.1:${relay.port}`,
+          token: moli.token,
+        };
         config.workstation.allowedHosts = options.allowedHosts ?? [];
       },
       vps: {
@@ -117,7 +128,7 @@ async function rig(t: { skip(message: string): void }, options: RigOptions = {})
       harnessLog: (line, fields) => logs.push(`${line} ${JSON.stringify(fields ?? {})}`),
     },
   );
-  const clients = new ClientRegistry(path.join(tmpdir("obscura-poste-"), "clients.json"));
+  const clients = new ClientRegistry(path.join(tmpdir("moli-poste-"), "clients.json"));
   const approver = clients.add("app-approbateur", "admin", "*", true).token;
   const ordinary = clients.add("extension", "operator", "*", false).token;
   const server = http.createServer(createHandler({ orchestrator: world.orchestrator, clients }));
@@ -129,7 +140,8 @@ async function rig(t: { skip(message: string): void }, options: RigOptions = {})
   const made: Rig = {
     world,
     pages,
-    obscura,
+    moli,
+    relay,
     url,
     approver,
     ordinary,
@@ -161,7 +173,8 @@ async function rig(t: { skip(message: string): void }, options: RigOptions = {})
       server.close(() => closed.resolve());
       await closed.promise;
       await world.orchestrator.stop();
-      await obscura.stop();
+      await relay?.stop();
+      await moli.stop();
       await pages.stop();
     },
   };
@@ -233,7 +246,7 @@ async function extensionPoll(r: Rig, headers: Record<string, string>): Promise<W
 
 const EXT = { "X-OMP-Browser": "b-ext", "X-OMP-Browser-Label": "Chrome", "X-OMP-Agent-Tabs": "1" };
 
-test("obscura-poste/AC-16 : le poste montre `vps` en ligne quand `obscura-poste` répond ; injoignable, il passe hors ligne et refuse une action comme une extension hors ligne", async (t) => {
+test("moli-poste/AC-16 : le poste montre `vps` en ligne quand `moli-poste` répond ; injoignable, il passe hors ligne et refuse une action comme une extension hors ligne", async (t) => {
   const r = await rig(t);
   if (r === null) return;
   try {
@@ -241,11 +254,11 @@ test("obscura-poste/AC-16 : le poste montre `vps` en ligne quand `obscura-poste`
     const vps = status.browsers.find((browser) => browser.id === "vps");
     assert.ok(vps, "vps figure dans les navigateurs du poste");
     assert.equal(vps.online, true);
-    assert.equal(vps.label, "VPS (Obscura)");
+    assert.equal(vps.label, "VPS (Moli)");
     // Le navigateur du serveur n'est jamais le défaut d'une extension sans identifiant.
     assert.notEqual(status.defaultBrowser, "vps");
 
-    await r.obscura.stop();
+    await r.moli.stop();
     await waitFor(
       () => !workstation(r).online(Date.now(), "vps"),
       () => "vps reste en ligne",
@@ -267,19 +280,19 @@ test("obscura-poste/AC-16 : le poste montre `vps` en ligne quand `obscura-poste`
   // Les réglages : l'URL et le jeton du navigateur du poste se valident et se lisent dans l'environnement.
   const config = defaultConfig();
   assert.deepEqual(config.workstation.vps, { url: null, token: null });
-  const env = { OBSCURA_POSTE_CDP_URL: "http://obscura-poste:9222", OBSCURA_POSTE_CDP_TOKEN: "a".repeat(64) };
+  const env = { MOLI_POSTE_CDP_URL: "http://moli-poste:9222", MOLI_POSTE_CDP_TOKEN: "a".repeat(64) };
   assert.deepEqual(browserFromEnv(defaultConfig(), env).workstation.vps, {
-    url: env.OBSCURA_POSTE_CDP_URL,
-    token: env.OBSCURA_POSTE_CDP_TOKEN,
+    url: env.MOLI_POSTE_CDP_URL,
+    token: env.MOLI_POSTE_CDP_TOKEN,
   });
   const broken = defaultConfig();
-  broken.workstation.vps = { url: "https://obscura-poste:9222", token: null };
+  broken.workstation.vps = { url: "https://moli-poste:9222", token: null };
   assert.throws(() => validateConfig(broken), /workstation\.vps\.url : http:\/\/ ou ws:\/\/ attendu/);
   broken.workstation.vps = { url: null, token: "court" };
   assert.throws(() => validateConfig(broken), /workstation\.vps\.token : 32 caractères au moins/);
 });
 
-test("obscura-poste/AC-17 : une action `navigate` déposée pour `vps` charge la page sous un hôte autorisé dans `obscura-poste` et passe `done` ; le long-poll d'une extension ne la rend jamais", async (t) => {
+test("moli-poste/AC-17 : une action `navigate` déposée pour `vps` charge la page sous un hôte autorisé dans `moli-poste` et passe `done` ; le long-poll d'une extension ne la rend jamais", async (t) => {
   const r = await rig(t, { allowedHosts: ["app.slack.com"] });
   if (r === null) return;
   try {
@@ -300,7 +313,7 @@ test("obscura-poste/AC-17 : une action `navigate` déposée pour `vps` charge la
   }
 });
 
-test("obscura-poste/AC-18 : un geste qu'Obscura ne sait pas faire (téléchargement) passe `failed` avec une raison qui nomme la limite", async (t) => {
+test("moli-poste/AC-18 : un geste que Moli ne sait pas faire (téléchargement) passe `failed` avec une raison qui nomme la limite", async (t) => {
   const r = await rig(t);
   if (r === null) return;
   try {
@@ -308,7 +321,7 @@ test("obscura-poste/AC-18 : un geste qu'Obscura ne sait pas faire (téléchargem
     const action = await deposit(r, { kind: "download", params: { tabId, url: "http://app.slack.com/fichier.txt" } });
     const done = await settled(r, action.seq);
     assert.equal(done.state, "failed", JSON.stringify(done));
-    assert.match(done.error ?? "", /Obscura ne gère pas les téléchargements/);
+    assert.match(done.error ?? "", /Moli ne gère pas les téléchargements/);
     assert.match(done.error ?? "", /limite du moteur/);
     assert.equal(done.result, null, "aucun succès n'est rendu");
   } finally {
@@ -350,7 +363,7 @@ function expectedOutbound(host: string, pathname: string, title: string, text: s
   };
 }
 
-test("obscura-poste/AC-19 : un clic sur Envoyer (Slack, Gmail) ou une saisie avec envoi est retenu `awaiting_approval` avec le résumé, les destinataires, l'aperçu et l'empreinte de l'extension ; rien ne part", async (t) => {
+test("moli-poste/AC-19 : un clic sur Envoyer (Slack, Gmail) ou une saisie avec envoi est retenu `awaiting_approval` avec le résumé, les destinataires, l'aperçu et l'empreinte de l'extension ; rien ne part", async (t) => {
   const r = await rig(t);
   if (r === null) return;
   try {
@@ -399,7 +412,7 @@ test("obscura-poste/AC-19 : un clic sur Envoyer (Slack, Gmail) ou une saisie ave
   }
 });
 
-test("obscura-poste/AC-20 : un envoi approuvé part si l'empreinte recalculée est identique ; la page changée, rien ne part et l'action repasse `awaiting_approval`", async (t) => {
+test("moli-poste/AC-20 : un envoi approuvé part si l'empreinte recalculée est identique ; la page changée, rien ne part et l'action repasse `awaiting_approval`", async (t) => {
   const r = await rig(t);
   if (r === null) return;
   const approve = async (action: WorkstationAction) =>
@@ -447,7 +460,7 @@ test("obscura-poste/AC-20 : un envoi approuvé part si l'empreinte recalculée e
   }
 });
 
-test("obscura-poste/AC-21 : un hôte hors de la liste attend l'humain comme pour l'extension, et le proxy ne voit aucune requête vers lui", async (t) => {
+test("moli-poste/AC-21 : un hôte hors de la liste attend l'humain comme pour l'extension, et le proxy ne voit aucune requête vers lui", async (t) => {
   const r = await rig(t, { allowedHosts: ["app.slack.com"] });
   if (r === null) return;
   try {
@@ -468,7 +481,7 @@ test("obscura-poste/AC-21 : un hôte hors de la liste attend l'humain comme pour
   }
 });
 
-test("obscura-poste/AC-22 : l'arrêt d'urgence interrompt l'exécution en cours dans un délai borné et annule les actions en attente ; en pause, l'exécuteur ne prend rien", async (t) => {
+test("moli-poste/AC-22 : l'arrêt d'urgence interrompt l'exécution en cours dans un délai borné et annule les actions en attente ; en pause, l'exécuteur ne prend rien", async (t) => {
   const r = await rig(t);
   if (r === null) return;
   try {
@@ -513,7 +526,7 @@ test("obscura-poste/AC-22 : l'arrêt d'urgence interrompt l'exécution en cours 
   }
 });
 
-test("obscura-poste/AC-23 : le navigateur par défaut du poste (`vps` ou une extension) décide qui exécute une action sans `browserId`", async (t) => {
+test("moli-poste/AC-23 : le navigateur par défaut du poste (`vps` ou une extension) décide qui exécute une action sans `browserId`", async (t) => {
   const r = await rig(t);
   if (r === null) return;
   try {
@@ -595,7 +608,7 @@ async function navigate(r: Rig, tabId: number, url: string): Promise<void> {
   assert.equal(done.state, "done", JSON.stringify(done));
 }
 
-test("obscura-poste/AC-24 : la session du Chrome source (tous ses domaines, cookies host-only compris) est posée dans `obscura-poste`, ses suppressions y sont reportées, et l'état des comptes est relu après la copie entière", async (t) => {
+test("moli-poste/AC-24 : la session du Chrome source (tous ses domaines, cookies host-only compris) est posée dans `moli-poste`, ses suppressions y sont reportées, et l'état des comptes est relu après la copie entière", async (t) => {
   const r = await rig(t, { probe: { "slack.com": "http://app.slack.com/client" } });
   if (r === null) return;
   try {
@@ -633,7 +646,7 @@ test("obscura-poste/AC-24 : la session du Chrome source (tous ses domaines, cook
     await navigate(r, tab, "http://evil.test/");
     assert.ok((cookiesSeen(r, "evil.test", "/").at(-1) ?? "").includes(`autre=${SENTINEL}-autre`));
 
-    // Un cookie disparu de Chrome disparaît d'Obscura.
+    // Un cookie disparu de Chrome disparaît de Moli.
     mirror.recordChange({ removed: true, cause: "explicit", cookie: cookie(".slack.com", "d") });
     await mirror.flush(target);
     assert.equal(mirror.pending, 0);
@@ -649,7 +662,7 @@ test("obscura-poste/AC-24 : la session du Chrome source (tous ses domaines, cook
   }
 });
 
-test("obscura-poste/AC-25 : sans source choisie, depuis une autre extension, avec une génération périmée ou un cookie mal formé, l'envoi est refusé et rien n'est posé ; `vps` ne peut pas être sa propre source", async (t) => {
+test("moli-poste/AC-25 : sans source choisie, depuis une autre extension, avec une génération périmée ou un cookie mal formé, l'envoi est refusé et rien n'est posé ; `vps` ne peut pas être sa propre source", async (t) => {
   const r = await rig(t);
   if (r === null) return;
   const OTHER = { "X-OMP-Browser": "b-autre", "X-OMP-Browser-Label": "Chrome perso" };
@@ -692,7 +705,7 @@ test("obscura-poste/AC-25 : sans source choisie, depuis une autre extension, ave
   }
 });
 
-test("obscura-poste/AC-26 : un client non approbateur (jeton ordinaire de l'extension) ne peut ni choisir la source du mirroir ni ouvrir une connexion : 403", async (t) => {
+test("moli-poste/AC-26 : un client non approbateur (jeton ordinaire de l'extension) ne peut ni choisir la source du mirroir ni ouvrir une connexion : 403", async (t) => {
   const r = await rig(t);
   if (r === null) return;
   try {
@@ -714,7 +727,7 @@ test("obscura-poste/AC-26 : un client non approbateur (jeton ordinaire de l'exte
   }
 });
 
-test("obscura-poste/AC-27 : aucune valeur de cookie dans la base (WAL compris), les journaux, les événements, les réponses d'API ni les appels à la mémoire, après un envoi du mirroir accepté puis un envoi refusé", async (t) => {
+test("moli-poste/AC-27 : aucune valeur de cookie dans la base (WAL compris), les journaux, les événements, les réponses d'API ni les appels à la mémoire, après un envoi du mirroir accepté puis un envoi refusé", async (t) => {
   const r = await rig(t, { probe: { "slack.com": "http://app.slack.com/client" } });
   if (r === null) return;
   const refusedValue = `${SENTINEL}-refuse`;
@@ -746,7 +759,7 @@ test("obscura-poste/AC-27 : aucune valeur de cookie dans la base (WAL compris), 
   }
 });
 
-test("obscura-poste/AC-36 : un cookie host-only du mirroir part en `url` sans `domain` (Obscura rejette sinon les `__Host-…`), un cookie de domaine garde son domaine pointé et son échéance entière", () => {
+test("moli-poste/AC-36 : un cookie host-only du mirroir part en `url` sans `domain` (Moli rejette sinon les `__Host-…`), un cookie de domaine garde son domaine pointé et son échéance entière", () => {
   const [hostOnly, domain] = parseMirrorCookies([
     {
       ...cookie("accounts.google.com", "__Host-GAPS"),
@@ -780,7 +793,7 @@ test("obscura-poste/AC-36 : un cookie host-only du mirroir part en `url` sans `d
 
 const PNG_BASE64 = "iVBORw0KGgo";
 
-test("obscura-poste/AC-28 : la connexion interactive (approbateur seulement) rend des images de la page, applique clics et frappes, suit un IdP listé dans `allowedHosts`, refuse les autres hôtes et un départ hors slack.com/google.com", async (t) => {
+test("moli-poste/AC-28 : la connexion interactive (approbateur seulement) rend des images de la page, applique clics et frappes, suit un IdP listé dans `allowedHosts`, refuse les autres hôtes et un départ hors slack.com/google.com", async (t) => {
   const r = await rig(t, { allowedHosts: ["idp.corp.test"] });
   if (r === null) return;
   const login = (body: unknown) =>
@@ -804,7 +817,8 @@ test("obscura-poste/AC-28 : la connexion interactive (approbateur seulement) ren
     assert.equal((await login({ url: "http://example.com/" })).status, 400);
     assert.equal((await login({ url: "http://slack.com.evil.test/" })).status, 400);
 
-    // Google : des images de la page, une frappe et un clic appliqués dans obscura-poste.
+    // Google : des images de la page (1280 × 720, la fenêtre des clics de l'app), une frappe et un
+    // clic appliqués dans moli-poste.
     assert.equal((await login({ url: "http://accounts.google.com/signin" })).status, 201);
     assert.equal(
       (await login({ url: "http://accounts.google.com/signin" })).status,
@@ -815,6 +829,12 @@ test("obscura-poste/AC-28 : la connexion interactive (approbateur seulement) ren
     assert.equal(first.status, 200, JSON.stringify(first.json).slice(0, 200));
     assert.equal(first.json.mime, "image/png");
     assert.ok(first.json.image.startsWith(PNG_BASE64), "une image PNG");
+    const png = Buffer.from(first.json.image, "base64");
+    assert.deepEqual(
+      [png.readUInt32BE(16), png.readUInt32BE(20), first.json.width, first.json.height],
+      [1280, 720, 1280, 720],
+      "l'image a la taille annoncée, celle des coordonnées d'un clic",
+    );
     assert.equal((await input({ type: "text", text: "bonjour" })).status, 200);
     await waitFor(
       () => r.pages.requests().some((request) => request.path === "/typed?v=bonjour"),
@@ -850,7 +870,7 @@ test("obscura-poste/AC-28 : la connexion interactive (approbateur seulement) ren
   }
 });
 
-test("obscura-poste/AC-29 : chaque compte porte un état (non connecté, connecté, expiré, bloqué) sans cookie ni jeton ; une session qui devient expirée passe à expiré avec une seule alerte", async (t) => {
+test("moli-poste/AC-29 : chaque compte porte un état (non connecté, connecté, expiré, bloqué) sans cookie ni jeton ; une session qui devient expirée passe à expiré avec une seule alerte", async (t) => {
   const r = await rig(t, { probe: { "slack.com": "http://app.slack.com/client" } });
   if (r === null) return;
   const accounts = async () =>
@@ -926,6 +946,79 @@ test("obscura-poste/AC-29 : chaque compte porte un état (non connecté, connect
   }
 });
 
+type PageTarget = { targetId: string; type: string; browserContextId?: string };
+
+/** Les pages de Moli, lues par une connexion à part (la porte, sans le relais de l'exécuteur). */
+async function pagesOf(moli: RunningMoli): Promise<PageTarget[]> {
+  const connection = await CdpConnection.connect({ url: moli.url, token: moli.token, callTimeoutMs: 5000 });
+  try {
+    const { targetInfos } = await connection.send<{ targetInfos: PageTarget[] }>("Target.getTargets");
+    return targetInfos.filter((info) => info.type === "page");
+  } finally {
+    connection.close();
+  }
+}
+
+test("moli-poste/AC-37 : reconnecté après une connexion CDP tombée, l'exécuteur ferme les pages sans propriétaire (ses anciens onglets, les restes d'un processus précédent), garde la page de connexion interactive en cours et les cookies du contexte, et exige une copie entière du mirroir", async (t) => {
+  const r = await rig(t, { relay: true });
+  if (r === null) return;
+  try {
+    const generation = await mirrorFrom(r);
+    const copied = await push(r, { generation, set: [cookie(".slack.com")] });
+    assert.equal(copied.status, 200, JSON.stringify(copied.json));
+    await openTab(r, "http://app.slack.com/hello");
+    // Le reste d'un processus précédent du harness : une page ouverte par une connexion fermée depuis.
+    const previous = await CdpConnection.connect({ url: r.moli.url, token: r.moli.token, callTimeoutMs: 5000 });
+    await previous.send("Target.createTarget", { url: "about:blank" });
+    previous.close();
+    const login = await r.call(r.approver, "POST", "/v1/workstation/vps/login", {
+      url: "http://accounts.google.com/signin",
+    });
+    assert.equal(login.status, 201, JSON.stringify(login.json));
+    const before = await pagesOf(r.moli);
+    assert.equal(before.length, 4, `accueil, onglet de l'agent, reste et connexion : ${JSON.stringify(before)}`);
+
+    // La connexion de l'exécuteur tombe (Moli, lui, continue) ; il se reconnecte sans relais.
+    r.world.config.workstation.vps = { url: r.moli.url, token: r.moli.token };
+    await r.relay?.stop();
+    const deadline = Date.now() + 15_000;
+    let fresh = generation;
+    while (fresh === generation) {
+      assert.ok(Date.now() < deadline, "l'exécuteur ne s'est pas reconnecté");
+      await sleep(100);
+      fresh = (await mirrorOf(r)).json.mirror?.generation ?? generation;
+    }
+    assert.equal(
+      (await push(r, { generation, set: [cookie(".slack.com", "autre")] })).status,
+      409,
+      "une connexion neuve exige une copie entière",
+    );
+
+    const after = await pagesOf(r.moli);
+    const survivors = after.filter((page) => before.some((old) => old.targetId === page.targetId));
+    assert.equal(after.length, 2, `nouvel accueil et connexion : ${JSON.stringify(after)}`);
+    assert.equal(survivors.length, 1, "seule la page de connexion en cours a survécu");
+    assert.ok(
+      after.every((page) => page.browserContextId === "BID-default"),
+      `tout reste dans le contexte par défaut : ${JSON.stringify(after)}`,
+    );
+
+    // La page de connexion est rattachée à la connexion neuve : ses images et gestes continuent.
+    const frame = await r.call<{ host: string }>(r.approver, "GET", "/v1/workstation/vps/login/frame");
+    assert.equal(frame.status, 200, JSON.stringify(frame.json).slice(0, 200));
+    assert.equal(frame.json.host, "accounts.google.com");
+    assert.equal((await r.call(r.approver, "DELETE", "/v1/workstation/vps/login")).status, 200);
+
+    // Les cookies du contexte ont survécu à la connexion, sans nouvel envoi du mirroir.
+    await openTab(r, "http://app.slack.com/hello");
+    const seen = cookiesSeen(r, "app.slack.com", "/hello");
+    assert.equal(seen.length, 2);
+    assert.ok((seen.at(-1) ?? "").includes(`d=${SENTINEL}`), seen.at(-1));
+  } finally {
+    await r.stop();
+  }
+});
+
 /** Les modules relatifs que `file` importe (`import … from "./x.ts"`, types compris), résolus en chemins absolus. */
 function relativeImports(file: string): string[] {
   const source = fs.readFileSync(file, "utf8");
@@ -948,7 +1041,7 @@ function reachable(entry: string): string[] {
 
 const sha = (file: string) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 
-test("obscura-poste/AC-35 : chaque module de l'exécuteur `vps` et de la garde d'envoi partagée est sous un dossier que Dockerfile.harness copie, et aucun n'est une copie d'un fichier d'omp-chrome", () => {
+test("moli-poste/AC-35 : chaque module de l'exécuteur `vps` et de la garde d'envoi partagée est sous un dossier que Dockerfile.harness copie, et aucun n'est une copie d'un fichier d'omp-chrome", () => {
   const dockerfile = fs.readFileSync(
     path.join(ROOT, "omp-harness", "deploy", "container", "Dockerfile.harness"),
     "utf8",
@@ -963,7 +1056,7 @@ test("obscura-poste/AC-35 : chaque module de l'exécuteur `vps` et de la garde d
   const executor = path.join(ROOT, "omp-harness", "browser", "vps.ts");
   const chain = reachable(entry);
   assert.ok(chain.includes(executor), "l'exécuteur `vps` est atteint depuis main.ts");
-  // Le côté page de l'extension, évalué dans la page d'Obscura : les mêmes fichiers que le build de l'extension.
+  // Le côté page de l'extension, évalué dans la page de Moli : les mêmes fichiers que le build de l'extension.
   const pageSide = bundleFiles().map((file) => path.join(ROOT, "omp-chrome", "src", file));
   const modules = [...new Set([...chain.filter((file) => file.startsWith(ROOT)), ...pageSide])];
   for (const file of modules)
