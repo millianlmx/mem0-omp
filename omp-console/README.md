@@ -7,7 +7,7 @@ groupes, raccourcis ⌘1…⌘7, et un panneau de détail :
 | Groupe | Section | Ce qu'elle montre |
 |---|---|---|
 | Travail | **À traiter** | La file unique de ce qui attend l'humain (questions, specs et revues à valider, envois du poste à approuver, alertes, audits à trier, décisions à relire), la plus vieille attente d'abord, sous une ligne de pouls (direct, en cours, en file, coût de la semaine). Vide : « Rien ne vous attend ». |
-| Travail | **Features** | Une ligne dense par feature, groupée « À vous », « En cours », « En file », « Terminées » ; la choisir ouvre sa **page** (en-tête, jalons Besoins → Specs → Implémentation → Revue → Fusion, onglets Aperçu, Direct, Fichiers, Tests, Frise, consigne à l'agent en pied). Portées : Features, Projets, Audits, Issues. |
+| Travail | **Features** | Une ligne dense par feature, groupée « À vous », « En cours », « En file », « Terminées » ; la choisir ouvre sa **page** (en-tête, jalons Besoins → Specs → Implémentation → Revue → Fusion, onglets Aperçu, Preuves, Direct, Fichiers, Tests, Frise, consigne à l'agent en pied). Portées : Features, Projets, Audits, Issues. |
 | Travail | **Poste** | Le poste de travail (extension Chrome et agent 24/24) : état, arrêt d'urgence, envois à approuver, demandes ; réglages, automatisations, profil, réunions et journal en sous-pages. |
 | Outils | **Mémoire**, **Terminal**, **Fichiers** | Locaux au Mac : la mémoire du projet, le terminal intégré, la visionneuse de fichiers et de différences. |
 | Système | **Système** | Ce qui se règle rarement, en sous-pages : Vigie, Planifications, Statistiques et santé, Administration (jeton admin seulement), Serveur. |
@@ -421,15 +421,30 @@ elle-même.
   entier ; `POST /v1/audits`). Aucun formulaire n'est posé en tête d'un écran.
 - **La page d'une feature** (Mac `RunPageView.swift`, iOS `IOSRunScreen.swift`) : un
   en-tête fixe (`RunDetailHeader` : titre, pastille d'état, `dépôt · créée il y a …`,
-  jalons Besoins → Specs → Implémentation → Revue → Fusion), puis cinq onglets
+  jalons Besoins → Specs → Implémentation → Revue → Fusion), puis six onglets
   segmentés (`run.tabs`) — **Aperçu** (ce que la feature attend de vous, en place,
-  la demande d'origine repliée, les specs et le verdict lisibles), **Direct**,
-  **Fichiers**, **Tests**, **Frise** — et, en pied, le champ de consigne à l'agent
-  quand elle en accepte une. Elle s'ouvre sur l'Aperçu quand elle vous attend, sur le
-  Direct quand elle tourne, sur l'Aperçu sinon. Tous ses gestes sont dans un seul
-  menu « … » (`run.actions`, le même que le menu contextuel d'une ligne) :
-  consigne, budget, priorité, relancer, arrêter, annuler la fusion, PR, suivre sur
-  l'écran verrouillé (iPhone). Les onglets :
+  la demande d'origine repliée, les specs et le verdict lisibles), **Preuves**,
+  **Direct**, **Fichiers**, **Tests**, **Frise** — et, en pied, le champ de consigne
+  à l'agent quand elle en accepte une. Elle s'ouvre sur les Preuves quand elle
+  attend la validation de sa revue, sur l'Aperçu quand elle vous attend autrement,
+  sur le Direct quand elle tourne, sur l'Aperçu sinon (`HarnessRunOpening`). Tous
+  ses gestes sont dans un seul menu « … » (`run.actions`, le même que le menu
+  contextuel d'une ligne) : consigne, budget, priorité, relancer, arrêter, annuler
+  la fusion, PR, suivre sur l'écran verrouillé (iPhone). Les onglets :
+  - **Preuves** : ce que la revue joint (`GET /v1/runs/{id}/proofs`, contenu par
+    `/proofs/{n}` lu à l'affichage), partagé Mac/iOS (`RunProofsSections`,
+    ConsoleUI). Le tour de revue courant d'abord — les preuves créées depuis le
+    début de la dernière étape /impl ou /impl --fix de la frise : l'avant et
+    l'après de chaque critère côte à côte (captures de même `acRef`, `side`
+    `before`/`after`), les autres captures en vignettes (agrandies d'un toucher),
+    les rapports de tests par critère (`<slug>/AC-n` ou `AC-n`, réussis et échoués,
+    « Rapport incomplet » quand il vient d'un résultat en cache), les journaux
+    repliés et les vidéos. Les tours précédents sont repliés sous « Tours
+    précédents », jamais mêlés. Un serveur qui ne sert pas les preuves (404) n'a
+    pas d'onglet, sans message ; une réponse illisible ou une panne s'affiche dans
+    l'onglet. La notification locale « Verdict à valider » finit par le nombre de
+    preuves du tour (`proofs` de l'événement `verdict`) : « aucune preuve »,
+    « 1 preuve », « 3 preuves » ;
   - **Direct** : la session OMP de l'agent du serveur en temps réel — ses
     paragraphes (rendus en Markdown), son raisonnement (replié), chaque outil avec
     son intention, sa commande, son état, sa durée et la fin de son résultat
@@ -967,6 +982,23 @@ sombre, teintée) dans `omp-console/ios/OMPConsoleIOS/Assets.xcassets/AppIcon.ap
 Tout est écrit dans un dossier temporaire, puis déplacé ; aucun fichier n'est
 remplacé à moitié. Codes de sortie : 0 les quatre fichiers écrits, 1 échec, 2 non
 exécuté hors macOS.
+
+### Capture de l'onglet « Preuves »
+
+```bash
+bash scripts/recette/mac-shots.sh
+```
+
+Le script construit l'app (`swift-app.sh --no-tests`), démarre un serveur de
+démonstration (`scripts/recette/mac-shots-serveur.ts` : le vrai gestionnaire HTTP
+d'omp-harness sur un monde de test, avec une feature qui attend la validation de sa
+revue et ses preuves sur deux tours), puis ouvre une COPIE de l'app
+(`com.omp.console.recette`) sur cette feature et capture sa fenêtre :
+`omp-console/build/mac-shots/preuves.png` (dossier ignoré par git). La copie lit un
+dossier personnel et une racine de support jetables (`CFFIXED_USER_HOME`,
+`OMP_CONSOLE_SUPPORT_ROOT`, recette de préparation `succes`) : ni les préférences, ni
+le trousseau, ni le `~/.omp` de l'utilisateur ne sont touchés. Codes de sortie :
+0 image produite, 1 échec, 2 non exécuté hors macOS.
 
 ### Liste attendue des intents Siri
 
@@ -1764,7 +1796,7 @@ omp-console/
 │   ├── ProjectRoot.swift          le projet choisi de l'app (`session.projectRoot`)
 │   ├── Server/                    les écrans servis par le serveur de pipelines
 │   │   ├── HarnessSectionViews.swift  cadre commun (sans barre d'outils répétée), À traiter, Features
-│   │   ├── RunPageView.swift      la page d'une feature (en-tête, onglets Aperçu, Direct, Fichiers, Tests, Frise, consigne)
+│   │   ├── RunPageView.swift      la page d'une feature (en-tête, onglets Aperçu, Preuves, Direct, Fichiers, Tests, Frise, consigne)
 │   │   ├── HarnessSessionView.swift   le contenu de session partagé par la page et la feuille (audits, jobs du poste)
 │   │   ├── HarnessMonitoringViews.swift fichiers et différences, tests en direct, frise, alertes, statistiques du monitoring
 │   │   ├── HarnessStatsCharts.swift   les indicateurs et graphiques de Système › Statistiques et santé
@@ -1847,7 +1879,7 @@ Features suit la feature ouverte (`drafts.openedRun`), celle de Système la page
 montrée (`drafts.systemPage`) ; la palette, les notifications et le widget y
 poussent donc leur page. Toucher une ligne de feature ouvre sa **page**
 (`IOSRunScreen.swift`, `ios.screen.run`) : en-tête et jalons, onglets Aperçu,
-Direct, Fichiers, Tests, Frise (`ios.run.tabs`), consigne en pied, gestes dans le
+Preuves, Direct, Fichiers, Tests, Frise (`ios.run.tabs`), consigne en pied, gestes dans le
 menu « … ». Créer passe par le « + » de la barre (`ios.inbox.new` sur À traiter,
 menu Nouvelle feature / Nouveau projet / Nouvel audit sur Features,
 `ios.schedules.new` sur Planifications), qui ouvre une feuille. Aucun bouton

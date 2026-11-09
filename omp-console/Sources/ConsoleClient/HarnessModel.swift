@@ -557,6 +557,21 @@ public final class HarnessModel: ObservableObject {
         try await readIfServed("/v1/runs/\(Self.encoded(runId))/proofs")
     }
 
+    /// Les octets d'une preuve (capture, journal, rapport de tests), tels que le serveur
+    /// les a enregistrés. `nil` sur un 404 (preuve ou feature inconnue) ; un autre
+    /// statut LÈVE l'échec qu'il dit.
+    public func proofContent(runId: String, n: Int) async throws -> Data? {
+        let call = HarnessCall(method: "GET", path: "/v1/runs/\(Self.encoded(runId))/proofs/\(n)")
+        let reply = try await exchange(call)
+        switch reply.status {
+        case 200: return reply.body
+        case 404: return nil
+        default:
+            let _: HarnessAck = try decode(reply, for: call)
+            throw HarnessFailure.unreadable
+        }
+    }
+
     /// Les fichiers touchés par une feature.
     public func changes(runId: String) async -> HarnessChanges? {
         await read("/v1/runs/\(Self.encoded(runId))/changes")

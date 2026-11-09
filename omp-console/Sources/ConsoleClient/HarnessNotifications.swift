@@ -129,6 +129,9 @@ public struct HarnessLocalAlert: Equatable, Sendable {
     public var repo: String?
     /// Le nombre de questions d'une escalade.
     public var questions: Int
+    /// Le nombre de preuves du tour de revue d'un verdict ; `nil` pour un serveur qui ne
+    /// le dit pas (le corps est alors celui d'avant).
+    public var proofs: Int? = nil
 
     /// Le titre, les mêmes mots que l'alerte push du serveur.
     public var title: String {
@@ -153,6 +156,9 @@ public struct HarnessLocalAlert: Equatable, Sendable {
         case .dailyBudget: NotificationText.dailyBudgetBody
         case .vigieSilent: NotificationText.vigieSilentBody
         case .backupFailed: NotificationText.backupFailedBody
+        case .verdict:
+            NotificationText.runLine(repo: repo ?? "", title: runTitle ?? alert.runId ?? "")
+                + (proofs.map { " · " + NotificationText.proofs($0) } ?? "")
         default: NotificationText.runLine(repo: repo ?? "", title: runTitle ?? alert.runId ?? "")
         }
     }
@@ -272,7 +278,8 @@ public enum HarnessNotificationRouting {
             category: category,
             eventId: id,
             repo: row.repo,
-            questions: questions
+            questions: questions,
+            proofs: kind == .verdict ? row.payload?.proofs : nil
         )
     }
 }
@@ -283,6 +290,8 @@ private struct StreamRow: Decodable {
         struct Item: Decodable {}
         var seq: Int?
         var items: [Item]?
+        /// Les preuves du tour de revue courant (événement `verdict`).
+        var proofs: Int?
     }
 
     var id: Int?
