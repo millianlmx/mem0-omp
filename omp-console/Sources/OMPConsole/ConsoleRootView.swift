@@ -148,7 +148,53 @@ struct ConsoleRootView: View {
         }
     }
 
+    /// Le prototype « OS agentique » (branche proto/os-fils) remplace la coque quand il est choisi.
+    @AppStorage("ui.os") private var osMode = false
+
     var body: some View {
+        Group {
+            if osMode {
+                OSRootView(server: server, drafts: drafts) { model.select($0) }
+            } else {
+                classic
+            }
+        }
+        .sheet(isPresented: setupShown) {
+            // OMP absent : la feuille est bloquante — ni « Fermer » ni ⎋ (Doc-1) ;
+            // « Quitter » passe par le déroulé de la sortie.
+            SetupView(setup: setup, omp: presence.omp, quit: { quit.request() })
+                .interactiveDismissDisabled(!presence.canLaunch)
+        }
+        .task {
+            notifications.attach(server, postsLocally: { !NSApp.isActive })
+            await server.load()
+            server.startLive()
+        }
+        // L'état du poste et ses envois à approuver, les propositions des signalements
+        // (badges, « À traiter »), relus à chaque serveur relié, et la vigie (badge de
+        // Système) ; le flux de la boîte les tient ensuite à jour. Un serveur relié : la
+        // permission de notifier est demandée (le système ne la demande qu'une fois).
+        .task(id: server.address) {
+            await workstation.refresh()
+            await signals.refresh()
+            await atlassian.refresh()
+            await server.intakes.refresh()
+            await server.vigie.refresh()
+            if server.isConfigured { _ = await notifications.requestAuthorization() }
+        }
+        // Le jeton approbateur ou non : les actions d'un envoi du poste agissent ou ouvrent l'app.
+        .onReceive(server.$client) { _ in notifications.refreshCategories() }
+        .consoleNotificationRoutes(notifications, server: server, drafts: drafts) { model.select($0) }
+        .onOpenURL { open($0) }
+        .consoleShell(ConsoleShell(
+            markdown: { AnyView(MarkdownBlocksView(blocks: $0)) },
+            session: { [server] request in AnyView(HarnessSessionSheet(server: server, request: request)) },
+            select: { [model] in model.select($0) }
+        ))
+        .frame(minWidth: 760, minHeight: 480)
+    }
+
+    private var classic: some View {
         NavigationSplitView {
             List(selection: selection) {
                 Section {
@@ -191,39 +237,7 @@ struct ConsoleRootView: View {
                 model.select(section)
             }
         }
-        .sheet(isPresented: setupShown) {
-            // OMP absent : la feuille est bloquante — ni « Fermer » ni ⎋ (Doc-1) ;
-            // « Quitter » passe par le déroulé de la sortie.
-            SetupView(setup: setup, omp: presence.omp, quit: { quit.request() })
-                .interactiveDismissDisabled(!presence.canLaunch)
-        }
-        .task {
-            notifications.attach(server, postsLocally: { !NSApp.isActive })
-            await server.load()
-            server.startLive()
-        }
-        // L'état du poste et ses envois à approuver, les propositions des signalements
-        // (badges, « À traiter »), relus à chaque serveur relié, et la vigie (badge de
-        // Système) ; le flux de la boîte les tient ensuite à jour. Un serveur relié : la
-        // permission de notifier est demandée (le système ne la demande qu'une fois).
-        .task(id: server.address) {
-            await workstation.refresh()
-            await signals.refresh()
-            await atlassian.refresh()
-            await server.intakes.refresh()
-            await server.vigie.refresh()
-            if server.isConfigured { _ = await notifications.requestAuthorization() }
-        }
-        // Le jeton approbateur ou non : les actions d'un envoi du poste agissent ou ouvrent l'app.
-        .onReceive(server.$client) { _ in notifications.refreshCategories() }
-        .consoleNotificationRoutes(notifications, server: server, drafts: drafts) { model.select($0) }
-        .onOpenURL { open($0) }
-        .consoleShell(ConsoleShell(
-            markdown: { AnyView(MarkdownBlocksView(blocks: $0)) },
-            session: { [server] request in AnyView(HarnessSessionSheet(server: server, request: request)) },
-            select: { [model] in model.select($0) }
-        ))
-        .frame(minWidth: 760, minHeight: 480)
+
     }
 }
 

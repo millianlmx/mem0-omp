@@ -111,6 +111,21 @@ struct OMPConsoleApp: App {
             // barre d'outils… ».
             ToolbarCommands()
             QuitCommands(quit: appDelegate.quit)
+            OSCommands()
+        }
+    }
+}
+
+/// Présentation ▸ « Nouvelle interface (prototype) » (⌘⇧O) : bascule vers le prototype
+/// « OS agentique » (branche proto/os-fils), et retour.
+struct OSCommands: Commands {
+    @AppStorage("ui.os") private var osMode = false
+
+    var body: some Commands {
+        CommandGroup(before: .sidebar) {
+            Toggle(OSText.toggle, isOn: $osMode)
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+            Divider()
         }
     }
 }

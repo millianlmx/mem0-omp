@@ -90,6 +90,10 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
     /// et `GET /v1/inbox` seulement : `nil` ailleurs et d'un serveur antérieur ; vide (`feature` vide, aucune carte)
     /// quand le run n'attend ni specs ni arbitrage.
     public var briefing: HarnessBriefing? = nil
+    /// La feature dont celle-ci est la suite (découpage, correction) ; `nil` sinon ou d'un serveur antérieur.
+    public var afterRun: String? = nil
+    /// La branche git de la feature (`harness/<slug>`) ; `nil` d'un serveur qui ne la sert pas.
+    public var branch: String? = nil
     public var createdAt: Double
     public var updatedAt: Double
 
@@ -99,7 +103,7 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         prUrl: String? = nil, reason: String? = nil, model: String? = nil, rev: Int? = nil, priority: Int? = nil,
         createdBy: String? = nil, mergeRetries: Int = 0, notBefore: Date? = nil, lastFailCause: String? = nil,
         projectId: String? = nil, createdAt: Double = 0, updatedAt: Double = 0, waitCause: String? = nil,
-        kind: String? = nil, labels: [String] = [], briefing: HarnessBriefing? = nil
+        kind: String? = nil, labels: [String] = [], briefing: HarnessBriefing? = nil, afterRun: String? = nil
     ) {
         self.id = id
         self.repo = repo
@@ -128,11 +132,12 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         self.kind = kind
         self.labels = labels
         self.briefing = briefing
+        self.afterRun = afterRun
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, repo, slug, title, request, state, step, fixes, modules, verdict, mergeSha, prUrl, reason, model
-        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, projectId, createdAt, updatedAt, waitCause, kind, labels, briefing
+        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, projectId, createdAt, updatedAt, waitCause, kind, labels, briefing, afterRun, branch
     }
 
     /// Un serveur antérieur n'écrit ni `mergeRetries`, ni `notBefore`, ni `lastFailCause`,
@@ -166,6 +171,8 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         kind = try container.decodeIfPresent(String.self, forKey: .kind)
         labels = try container.decodeIfPresent([String].self, forKey: .labels) ?? []
         briefing = try container.decodeIfPresent(HarnessBriefing.self, forKey: .briefing)
+        afterRun = try container.decodeIfPresent(String.self, forKey: .afterRun)
+        branch = try container.decodeIfPresent(String.self, forKey: .branch)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -197,6 +204,8 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         try container.encodeIfPresent(kind, forKey: .kind)
         try container.encode(labels, forKey: .labels)
         try container.encodeIfPresent(briefing, forKey: .briefing)
+        try container.encodeIfPresent(afterRun, forKey: .afterRun)
+        try container.encodeIfPresent(branch, forKey: .branch)
     }
 
     /// L'état connu, ou `nil` pour un état apparu après cette version de l'app.
