@@ -21,8 +21,8 @@ import type * as http from "node:http";
 import type { Client, Role } from "./auth.ts";
 import { ClientRegistry, ROLES, allows, canSeeRepo, repoFilter } from "./auth.ts";
 import type { Actor } from "./context.ts";
-import type { ActionState, ClientSource, DecisionStatus, EventRow, RepoFilter } from "./db.ts";
-import { ACTION_STATES, CLIENT_SOURCES } from "./db.ts";
+import type { ActionState, ClientSource, DecisionStatus, EventRow, RepoFilter, SignalState } from "./db.ts";
+import { ACTION_STATES, CLIENT_SOURCES, SIGNAL_STATES } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import {
   budgetInput,
@@ -105,8 +105,12 @@ export const API_FEATURES = [
   "prometheus",
   "vigie",
   "push-alerts",
+  "corporate-signals",
   "proofs",
 ] as const;
+
+/** Le refus d'un geste du poste (ou d'un signalement de collègue) à un client restreint à des dépôts. */
+const OWNER_ONLY = "le poste est réservé au propriétaire";
 
 /** La version du service, lue dans son `package.json`. */
 export const HARNESS_VERSION: string = (() => {
@@ -345,11 +349,22 @@ export function apiRoutes(
   };
   /** Le poste de travail est au propriétaire : un client restreint à des dépôts n'y a pas accès. */
   const workstationOf = (call: Call): Workstation => {
-    if (call.repos !== null) throw new HarnessError(403, "le poste est réservé au propriétaire");
+    if (call.repos !== null) throw new HarnessError(403, OWNER_ONLY);
     if (!orchestrator.workstation.enabled)
       throw new HarnessError(404, "le poste de travail est désactivé (workstation.enabled)");
     return orchestrator.workstation;
   };
+  /**
+   * Les signalements des collègues et l'origine d'un run sont au propriétaire, comme tout le poste : un
+   * client restreint (403) ou pilote (403, la vigie est un agent) n'y a pas accès. Sans le 404 « poste
+   * désactivé » : ils restent lisibles et confirmables quand le poste est coupé.
+   */
+  const ownerOf = (call: Call, pilotRefusal: string): void => {
+    if (call.repos !== null) throw new HarnessError(403, OWNER_ONLY);
+    if (call.client.pilot) throw new HarnessError(403, pilotRefusal);
+  };
+  const READS_SIGNALS = "réservé à l'humain — un client pilote ne lit pas les signalements";
+  const ACTS_ON_SIGNALS = "geste réservé à l'humain — un client pilote ne confirme pas de signalement";
   /**
    * Approuver, refuser ou régler le poste : l'appareil approbateur seulement. Le jeton du
    * code ordinaire vit dans `~/.omp/harness.json` et l'extension : une session omp qui le
@@ -451,6 +466,47 @@ export function apiRoutes(
     route("GET", "/v1/runs/{id}", "viewer", (call) => {
       const view = orchestrator.runView(call.match[1] as string, call.repos);
       send(call.res, 200, view, { ETag: `"${(view.run as { rev: number }).rev}"` });
+    }),
+    // Le pont corpo ↔ usine : les signalements des collègues et leurs propositions (propriétaire seul ;
+    // confirmer et écarter : l'appareil approbateur). L'origine d'un run se lit ici et nulle part ailleurs.
+    route("GET", "/v1/signals", "viewer", (call) => {
+      ownerOf(call, READS_SIGNALS);
+      const asked = (call.url.searchParams.get("state") ?? "proposed").split(",").filter((state) => state !== "");
+      const states = asked.filter((state): state is SignalState =>
+        (SIGNAL_STATES as readonly string[]).includes(state),
+      );
+      if (states.length !== asked.length) throw new HarnessError(400, `state : ${SIGNAL_STATES.join(" | ")}`);
+      send(call.res, 200, { signals: orchestrator.signals.list({ states, limit: limitOf(call.url, 50, 200) }) });
+    }),
+    route("GET", "/v1/signals/{id}", "viewer", (call) => {
+      ownerOf(call, READS_SIGNALS);
+      send(call.res, 200, { signal: orchestrator.signals.get(call.match[1] as string) });
+    }),
+    route("POST", "/v1/signals/{id}/preview", "viewer", async (call) => {
+      ownerOf(call, READS_SIGNALS);
+      send(call.res, 200, await orchestrator.signals.preview(call.match[1] as string, await readBody(call.req)));
+    }),
+    route("POST", "/v1/signals/{id}/confirm", "operator", async (call) => {
+      ownerOf(call, ACTS_ON_SIGNALS);
+      const result = await orchestrator.signals.confirm(
+        call.match[1] as string,
+        await readBody(call.req),
+        call.client,
+        call.actor,
+      );
+      send(call.res, 201, result);
+      void orchestrator.tick();
+    }),
+    route("POST", "/v1/signals/{id}/dismiss", "operator", async (call) => {
+      ownerOf(call, ACTS_ON_SIGNALS);
+      send(call.res, 200, {
+        signal: orchestrator.signals.dismiss(call.match[1] as string, await readBody(call.req), call.client),
+      });
+    }),
+    route("GET", "/v1/runs/{id}/origin", "viewer", (call) => {
+      const id = runId(call);
+      ownerOf(call, READS_SIGNALS);
+      send(call.res, 200, { origin: orchestrator.signals.originOf(id) });
     }),
     route("GET", "/v1/runs/{id}/timeline", "viewer", (call) =>
       send(call.res, 200, orchestrator.timeline(call.match[1] as string, call.repos)),
