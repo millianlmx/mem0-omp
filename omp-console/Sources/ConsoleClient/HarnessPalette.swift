@@ -12,6 +12,8 @@ import Foundation
 
 /// Ce que fait une entrée de la palette.
 public enum HarnessPaletteCommand: Hashable, Sendable {
+    /// Ouvrir la feuille « Demande » : une phrase libre que le serveur classe en plan.
+    case intake
     /// Montrer une section.
     case section(ConsoleSection)
     /// Montrer une page du hub Système.
@@ -63,6 +65,8 @@ public enum HarnessPalette {
     ) -> [HarnessPaletteItem] {
         var candidates: [HarnessPaletteItem] = []
         if !search {
+            // La Demande d'abord : la première entrée quand la saisie est vide.
+            candidates.append(HarnessPaletteItem(title: IntakeText.title, subtitle: IntakeText.paletteHint, symbol: IntakeText.titleSymbol, command: .intake))
             candidates += sections.map {
                 HarnessPaletteItem(title: $0.title, subtitle: PipelineServerText.paletteSection, symbol: $0.systemImage, command: .section($0))
             }

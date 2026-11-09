@@ -74,6 +74,8 @@ public final class HarnessModel: ObservableObject {
     /// Les signalements des collègues devenus propositions, et l'origine d'une feature
     /// (pont corpo ↔ usine) : même échange, même flux.
     public private(set) lazy var signals = CorporateSignalsModel(harness: self, reloadDelay: refreshDelay)
+    /// La Demande : une phrase libre classée en plan par le serveur (`/v1/intake*`).
+    public private(set) lazy var intakes = HarnessIntakes(harness: self, reloadDelay: refreshDelay)
     /// L'historique des features (`GET /v1/runs`), terminées comprises.
     public private(set) lazy var history = HarnessRunsHistory(harness: self)
     /// La vigie (surveillance 24/24 du harness) : réglages, battement, incidents.
@@ -280,6 +282,7 @@ public final class HarnessModel: ObservableObject {
     private func resetServerState() {
         workstation.reset()
         signals.reset()
+        intakes.reset()
         history.reset()
         vigie.reset()
         schedules.reset()
@@ -389,6 +392,7 @@ public final class HarnessModel: ObservableObject {
                         scheduleRefresh()
                         workstation.receive(names)
                         signals.receive(names)
+                        intakes.receive(names)
                         vigie.receive(names)
                         schedules.receive(names)
                         autonomy.receive(names)
