@@ -4,6 +4,8 @@
 // - Le juge de la suite complète d'un dépôt (`tests.judge`) se change par l'API
 //   (`PATCH /v1/repos/{name}`) : la configuration du VPS n'avait aucun autre chemin, et un
 //   dépôt rouge d'environnement dans le slot heavy envoyait chaque revue à l'humain.
+// - Le pilote tranche aussi les runs qui ne descendent d'aucun audit (`pilot.allRuns`) :
+//   lancés à la main ou par une issue, ils finissaient tous chez l'humain.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -14,7 +16,8 @@ import { ClientRegistry } from "../../omp-harness/auth.ts";
 import { testsJudge } from "../../omp-harness/config.ts";
 import { API_FEATURES, createHandler } from "../../omp-harness/http.ts";
 import { ConfigAdmin } from "../../omp-harness/repos.ts";
-import { fakeWorld, waitFor } from "../support/harness-fixtures.ts";
+import { FACTORY_PILOT } from "../../omp-harness/pilot.ts";
+import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 import { tmpdir } from "../support/repo.ts";
 
@@ -162,5 +165,76 @@ test("usine-autonome/AC-2 : `PATCH /v1/repos/{name}` change le juge de la suite 
     assert.equal(testsJudge(world.orchestrator.config.repos[0]!), "local");
   } finally {
     await api.close();
+  }
+});
+
+const REVIEW_HIGH = [
+  OK.review[0],
+  { tool: "review_verdict", args: { ...(OK.review[1]?.args as Record<string, unknown>), risk: "high" } },
+];
+
+function factoryWorld(allRuns: boolean): FakeWorld {
+  return fakeWorld(
+    {
+      req: [OK.req],
+      specs: [OK.specs],
+      impl: [OK.impl],
+      review: [REVIEW_HIGH],
+      pilote: [[{ tool: "pilot_act", args: { action: "approve", reason: "AC-1 livré et prouvé par harness/AC-1" } }]],
+    },
+    {
+      patch: (config) => {
+        config.pilot.allRuns = allRuns;
+      },
+    },
+  );
+}
+
+test("usine-autonome/AC-3 : un run lancé hors audit dont le verdict attend l'humain est tranché par le pilote de l'usine, et fusionne sans geste humain", async () => {
+  const world = factoryWorld(true);
+  await world.orchestrator.start();
+  try {
+    const run = world.orchestrator.createRun({ repo: "demo", title: "Export", request: "Exporter en CSV" });
+    await waitFor(
+      () => world.store.getRun(run.id)?.state === "merged",
+      () => `${world.store.getRun(run.id)?.state} — ${world.store.getRun(run.id)?.reason}`,
+      60_000,
+    );
+    const pilot = world.store.eventsSince(0, run.id).filter((event) => event.type === "pilot");
+    assert.ok(pilot.length > 0, "le pilote a tranché");
+    assert.deepEqual(
+      pilot.map((event) => [event.payload.action, event.payload.by, event.payload.auditId]),
+      pilot.map(() => ["approve", FACTORY_PILOT, null]),
+    );
+    const prompt = String(
+      world.log().find((entry) => entry.kind === "prompt" && entry.step === "pilote" && !entry.nudge)?.message ?? "",
+    );
+    assert.match(prompt, /les features de « demo » qui attendent l'humain/);
+    assert.doesNotMatch(prompt, /focus :/);
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+test("usine-autonome/AC-4 : `pilot.allRuns: false` laisse un run hors audit à l'humain, sans session de pilote", async () => {
+  const world = factoryWorld(false);
+  await world.orchestrator.start();
+  try {
+    const run = world.orchestrator.createRun({ repo: "demo", title: "Export", request: "Exporter en CSV" });
+    await waitFor(
+      () => world.store.getRun(run.id)?.state === "awaiting_human",
+      () => `${world.store.getRun(run.id)?.state} — ${world.store.getRun(run.id)?.reason}`,
+      60_000,
+    );
+    await world.orchestrator.tick();
+    await world.orchestrator.tick();
+    assert.equal(world.store.getRun(run.id)?.state, "awaiting_human");
+    assert.deepEqual(
+      world.store.eventsSince(0, run.id).filter((event) => event.type === "pilot"),
+      [],
+    );
+    assert.equal(world.log().filter((entry) => entry.kind === "prompt" && entry.step === "pilote").length, 0);
+  } finally {
+    await world.orchestrator.stop();
   }
 });

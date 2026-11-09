@@ -498,11 +498,13 @@ export type HarnessConfig = {
    */
   dreams: { checkMinutes: number | null; minFacts: number; maxDelayHours: number; tier: Tier };
   /**
-   * Le pilote des audits (pilot.ts) : chaque run d'un audit lancé qui attend l'humain est
-   * d'abord confié à une session sur `tier`, au plus `actionsPerRun` fois par run (`0` :
-   * pilote coupé) ; au-delà, l'humain.
+   * Le pilote (pilot.ts) : chaque run d'un audit lancé qui attend l'humain est d'abord confié
+   * à une session sur `tier`, au plus `actionsPerRun` fois par run (`0` : pilote coupé) ;
+   * au-delà, l'humain. `allRuns` (défaut `true`) étend le pilote aux runs qui ne descendent
+   * d'aucun audit (lancés à la main, par une issue, une planification) : l'usine n'attend
+   * l'humain que pour l'irréversible, le budget, et ce que le pilote lui laisse.
    */
-  pilot: { actionsPerRun: number; tier: Tier };
+  pilot: { actionsPerRun: number; tier: Tier; allRuns: boolean };
   /** Le classement des Demandes (intake.ts) : la session qui classe une phrase libre tourne sur `tier`. */
   intake: { tier: Tier };
   /** Le journal d'événements : au-delà de `retentionDays`, il est purgé (au démarrage, puis chaque heure). */
@@ -685,7 +687,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     memory: { runnerMode: true },
     oracle: null,
     dreams: { checkMinutes: 60, minFacts: 5, maxDelayHours: 24, tier: "standard" },
-    pilot: { actionsPerRun: 3, tier: "heavy" },
+    pilot: { actionsPerRun: 3, tier: "heavy", allRuns: true },
     intake: { tier: "standard" },
     events: { retentionDays: 30 },
     backups: { dir: null, intervalHours: 24, keep: 7, beforeMigration: true, remote: null },
@@ -1041,6 +1043,7 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     fail("pilot.actionsPerRun : entier ≥ 0");
   if (!(TIERS as readonly string[]).includes(config.pilot.tier))
     fail(`pilot.tier : tier inconnu (${TIERS.join(" | ")})`);
+  if (typeof config.pilot.allRuns !== "boolean") fail("pilot.allRuns : booléen");
   if (!(TIERS as readonly string[]).includes(config.intake.tier))
     fail(`intake.tier : tier inconnu (${TIERS.join(" | ")})`);
   const monitoring = config.monitoring;
