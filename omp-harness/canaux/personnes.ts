@@ -307,8 +307,8 @@ export class PeopleGraph {
   }
 }
 
-/** Un message de liste ou automatique (lettre d'information, notification) : personne à en tirer. */
-function isBulk(headers: Record<string, string>): boolean {
+/** Un message de liste ou automatique (lettre d'information, notification) : personne à en tirer, rien à proposer. */
+export function isBulk(headers: Record<string, string>): boolean {
   const auto = (headers["Auto-Submitted"] ?? "no").trim().toLowerCase();
   const precedence = (headers.Precedence ?? "").trim().toLowerCase();
   return (

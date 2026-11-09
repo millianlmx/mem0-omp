@@ -13,13 +13,16 @@
 //        → sessions → usage → push → push-devices → workstation → workstation-meetings
 //        → workstation-captures → workstation-browsers → workstation-requests
 //        → issues → schedules → observability → vigie → corporate-signals → intakes
-//        → channel-contents → people → Store
+//        → channel-contents → people → watch-items → Store
 //
 // Ainsi `Store` garde l'API d'un seul objet pour tous ses appelants, et une couche
 // qui a besoin d'une autre (le journal lit le dépôt d'un run) la trouve en dessous.
-import { PeopleStore } from "./db/people.ts";
+import { WatchStore } from "./db/watch-items.ts";
 
-export class Store extends PeopleStore {}
+export class Store extends WatchStore {}
+
+export { WATCH_KINDS } from "./db/watch-items.ts";
+export type { WatchItemInput, WatchItemRow, WatchKind } from "./db/watch-items.ts";
 
 export { DELEGATIONS, PERSON_FIELDS, emailKey, slackKey } from "./db/people.ts";
 export type { Delegation, PersonField, PersonRow, PersonValues } from "./db/people.ts";

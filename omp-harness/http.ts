@@ -101,6 +101,7 @@ export const API_FEATURES = [
   "workstation-channels",
   "workstation-channel-reads",
   "workstation-people",
+  "workstation-watch",
   "mcp",
   "digest",
   "instructions",
@@ -368,6 +369,7 @@ export function apiRoutes(
   };
   const READS_SIGNALS = "réservé à l'humain — un client pilote ne lit pas les signalements";
   const ACTS_ON_SIGNALS = "geste réservé à l'humain — un client pilote ne confirme pas de signalement";
+  const READS_WATCH = "réservé à l'humain — un client pilote ne lit pas la veille du poste";
   /** Approuver, refuser ou régler le poste : l'appareil approbateur seulement (`approverFor`). */
   const approverOf = (call: Call): Workstation => approverFor(orchestrator.workstation, call.client);
   /** La présentation de l'extension appelante : son navigateur (`X-OMP-Browser`), son libellé et sa version. */
@@ -1093,6 +1095,20 @@ export function apiRoutes(
       approverOf(call);
       const body = await readBody(call.req);
       send(call.res, 200, orchestrator.people.patch(call.match[1] as string, body, ifMatch(call.req)));
+    }),
+    // La veille proactive du poste : les éléments de « À traiter » (réponses proposées, relances,
+    // préparations, brief), au propriétaire seul et jamais à un client pilote (ce sont des messages
+    // de collègues). `?state=` (défaut `open`, liste séparée par des virgules ; vide : tous).
+    route("GET", "/v1/workstation/watch", "viewer", (call) => {
+      workstationOf(call);
+      if (call.client.pilot) throw new HarnessError(403, READS_WATCH);
+      const states = (call.url.searchParams.get("state") ?? "open").split(",").filter((state) => state !== "");
+      send(call.res, 200, orchestrator.watch.list(states, limitOf(call.url, 100, 500)));
+    }),
+    route("GET", "/v1/workstation/watch/{id}", "viewer", (call) => {
+      workstationOf(call);
+      if (call.client.pilot) throw new HarnessError(403, READS_WATCH);
+      send(call.res, 200, orchestrator.watch.get(call.match[1] as string));
     }),
     // La vigie (vigie/) : ses réglages (admin), son battement de cœur et ses incidents (son client pilote).
     route("GET", "/v1/vigie", "viewer", (call) => send(call.res, 200, orchestrator.vigie.view(call.repos, Date.now()))),

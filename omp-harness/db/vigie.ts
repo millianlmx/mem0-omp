@@ -331,6 +331,12 @@ export class VigieStore extends ObservabilityStore {
         row.tone,
         parsed(row.topics),
       ]);
+    // La veille du poste (db/watch-items.ts) : textes proposés, sujets et contexte (participants, destinataires).
+    for (const row of this.selectAll(
+      "SELECT subject, text, context, topic FROM workstation_watch_items WHERE updated_at >= ?",
+      since,
+    ))
+      add([row.subject, row.text, parsed(row.context), row.topic]);
     // Le profil établi et les identités de l'utilisateur (réglages du poste), quelle que soit leur date.
     for (const row of this.selectAll("SELECT profile FROM workstation_profiles ORDER BY version DESC LIMIT 1"))
       add(parsed(row.profile));
