@@ -55,6 +55,14 @@ const LOCAL_INTENTS: readonly [tool: string, intent: string][] = [
 /** Les objets posés tels quels : un échec, un arrêt motivé, un audit proposé, les espaces et les consignes. */
 function seed(world: FakeWorld): void {
   const { store, orchestrator } = world;
+  // Une feature arrêtée sur une question tient ses modules : sans modules elle tiendrait tout le dépôt,
+  // et plus rien n'y partirait.
+  store.updateRun(GRAPH_RUN, { modules: ["src/factures", "src/courriel"] });
+  // La revue attend l'humain pour la taille de son diff : la raison que la machine écrit, et que les vues relisent.
+  store.updateRun(DEMO_RUN, {
+    modules: ["src/panier.ts"],
+    reason: "validation humaine : diff de 412 lignes au-delà de review.maxDiffLines (300)",
+  });
   store.createRun({
     id: "demo-echec",
     repo: CLIENT_REPO,
@@ -182,7 +190,13 @@ export async function osDemoWorld(): Promise<{
   await orchestrator.start();
   // La première feature va de /req au merge sans aucun geste : elle est « livrée seule ».
   const delivered = orchestrator.createRun(
-    { repo: "demo", title: "Exporter les commandes en CSV", request: "Exporter la liste des commandes au format CSV." },
+    {
+      repo: "demo",
+      title: "Exporter les commandes en CSV",
+      request: "Exporter la liste des commandes au format CSV.",
+      // Des modules précis : une feature sans modules tient tout le dépôt, et la question ouverte la retiendrait.
+      modules: ["src/api"],
+    },
     ACTOR,
   );
   await waitFor(
@@ -197,6 +211,7 @@ export async function osDemoWorld(): Promise<{
       title: "Filtrer les commandes par statut",
       request: "Filtrer la liste des commandes par statut (payée, expédiée, annulée).",
       kind: "feature",
+      modules: ["src/api"],
     },
     ACTOR,
   );
