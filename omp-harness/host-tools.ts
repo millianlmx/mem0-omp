@@ -2,6 +2,7 @@
 // (`progress`, `oracle_recall`, `decision`, `save_checkpoint`, `set_modules`, `split_feature`,
 // `run_tests`, `review_verdict`, `qa_record_proof`). Le runner n'a ni la base ni le jeton de l'API : tout
 // passe par ici.
+import { baselineSummary } from "./baseline.ts";
 import type { HarnessContext } from "./context.ts";
 import { ARTIFACTS_DIR, isArtifactPath } from "./git.ts";
 import type { RunRow, StepRow } from "./db.ts";
@@ -399,9 +400,14 @@ async function runTestsTool(
   if (scope !== "check" && !(result.cached && state.lastTests?.result.key === result.key))
     state.lastTests = { scope, result };
   if (scope === "full") state.lastFull = result;
+  // Un rouge que main a déjà n'est pas un bloquant : l'agent de revue le lit ici, avant son verdict.
+  const judged = scope === "full" ? await ctx.baseline.judge(run, repo, result) : null;
+  const baseline = judged
+    ? `\n\nROUGE DE BASE : ${baselineSummary(judged)}.${judged.new.length === 0 ? " Ce n'est pas un bloquant." : ""}`
+    : "";
   return {
-    text: heavyReport(result, config.heavy.memoryMax),
-    isError: result.outcome !== "pass",
+    text: heavyReport(result, config.heavy.memoryMax) + baseline,
+    isError: result.outcome !== "pass" && !(judged !== null && judged.new.length === 0),
     details: { outcome: result.outcome, cached: result.cached, tree: result.tree },
   };
 }

@@ -1747,8 +1747,8 @@ export class Workstation {
    * une approbation non donnée après `approvalTtlHours` → `expired` (JAMAIS approuvée) ; une
    * action restée en file aussi longtemps → `expired` (elle ne part pas des jours plus tard) ;
    * un meeting `live` muet depuis `ORPHAN_MEETING_MS` → `ended` (son digest part). Puis, au
-   * plus une fois par heure, la rétention des observations, des transcripts et des résultats
-   * d'actions (vidés, la ligne du journal reste).
+   * plus une fois par heure, la rétention des observations, des transcripts, des résultats
+   * d'actions (vidés, la ligne du journal reste) et des contenus lus des canaux corpo.
    */
   maintain(now = Date.now()): void {
     const config = this.#ctx.config.workstation;
@@ -1780,6 +1780,12 @@ export class Workstation {
       const cleared = store.clearWorkstationResultsBefore(before);
       if (cleared > 0)
         this.#ctx.log(`poste : ${cleared} résultat(s) d'action de plus de ${config.retentionDays} j vidé(s)`);
+      // Les contenus lus des canaux corpo (messages, événements, auteurs Slack) et les éléments de la veille.
+      const read = store.pruneChannelContents(before) + store.pruneWatchItems(before);
+      if (read > 0)
+        this.#ctx.log(
+          `poste : ${read} contenu(s) des canaux ou élément(s) de veille de plus de ${config.retentionDays} j purgé(s)`,
+        );
     }
     // Les captures, à chaque tour : leur rétention se compte en heures.
     store.pruneWorkstationCaptures(now - config.captureRetentionHours * 3_600_000);

@@ -608,6 +608,11 @@ canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `syste
 | `workstation.allowedHosts` | `[]` | les hôtes où l'on navigue sans approbation (`open`, `navigate`), sous-domaines compris (`exemple.fr` couvre `crm.exemple.fr`) ; vide : tout hôte, hors sites exclus par l'extension. Une adresse hors de la liste attend l'approbateur, quelle que soit l'origine de l'action |
 | `workstation.exfiltrationGuard` | `true` | la garde anti-exfiltration de l'agent 24/24 : une adresse vers un hôte jamais observé ni listé dans `allowedHosts`, ou dont la query (ou le fragment `#a=b`) porte une valeur de plus de 100 caractères ou un jeton opaque (≥ 24 caractères alphanumériques mêlant lettres et chiffres), attend l'approbateur ; `false` la coupe |
 | `workstation.captureRetentionHours` | `24` | les captures d'écran gardées par action (le JPEG tel que capturé, table `workstation_captures`), effacées passé ce délai (à chaque tour) |
+| `workstation.channelReadEveryMin` | `5` | le repos entre deux passages de lecture des canaux corpo (Gmail, Agenda, Slack ; § « Lire les canaux ») : hors pause du poste et poste désactivé, sans runner ; minutes ≥ 1 |
+| `workstation.watch.intervalMinutes` | `5` | le repos entre deux passages de la veille proactive (job `poste-veille`, § « La veille proactive ») ; entier de 1 à 15, sinon le harness refuse de démarrer |
+| `workstation.watch.days` | `["mon", "tue", "wed", "thu", "fri"]` | les jours ouvrés de la veille (`sun` à `sat`, liste non vide) |
+| `workstation.watch.start` / `workstation.watch.end` | `"09:00"` / `"18:00"` | la plage ouvrée (`HH:MM`, heure murale de `schedules.timezone`) ; une plage vide (`end` ≤ `start`) refuse le démarrage |
+| `workstation.watch.followUpDays` | `3` | le silence, en jours ouvrés, après lequel un mail de l'utilisateur sans réponse est relancé ; entier ≥ 1 |
 | `issues.label` | `omp:fix` | le label des issues qu'`issues_fix_labeled` et la relève automatique lancent (§ « Les issues (MCP) ») |
 | `issues.maxLaunch` | `5` | les runs qu'un appel d'`issues_fix_labeled` (ou une relève, par dépôt) lance au plus ; le reste attend l'appel suivant |
 | `issues.pollSec` | `900` | la relève automatique : toutes les 15 min, les issues ouvertes du label de chaque dépôt qui a un distant (`repos[].remote`) partent en run, sans appel MCP ; entier ≥ 60, ou `null` : seulement à la demande |
@@ -765,6 +770,23 @@ des runs vivants est gardé jusqu'à leur fin. Une configuration invalide est re
   ouverte, confiance forte, chaque `AC-n` de specs.md prouvé `pass`, et tous les
   fichiers touchés relus. Un point non vérifié ne bloque que s'il cite un `AC-n` ;
   sinon tu valides, et tu lis le code si le verdict est faible.
+- **Rouge de base.** Un échec de la suite complète ne bloque que s'il est nouveau
+  par rapport à `main`. Sur un résultat `full` rouge qui porte des lignes TAP
+  `not ok`, le service obtient la liste des tests en échec de `main` : la même
+  commande, le même environnement, dans un slot heavy, sur un worktree détaché
+  `<worktreesDir>/<dépôt>/_baseline-<arbre>` rendu après la mesure (au démarrage
+  aussi). La liste (titres TAP) est mémorisée dans le cache heavy sous
+  `baseline:<clé>` — un seul lancement, sans relance, par arbre de `main`, partagé
+  par tous les runs du dépôt et par les appels simultanés. Échecs ⊆ base : la
+  suite compte pour verte (le résumé du verdict le dit), au merge comme en revue ;
+  sinon le bloquant ne nomme que les nouveaux échecs et compte les préexistants.
+  Un échec de `main` absent de la branche n'est jamais une erreur. Une base
+  illisible (suite plantée sans TAP, délai, OOM, plus de 5 000 échecs) ou une
+  `main` verte : comportement d'avant, rouge. Les titres sont comparés tels quels :
+  un test échoué sur `main` sous le même titre qu'un nouveau échec le masque.
+  L'événement `heavy_baseline` (`where` : `review` ou `merge`, `failing`,
+  `preexisting`, `new`, `newTests`) alimente le champ additif `baseline` de
+  `GET /v1/runs/{id}/timeline` (le dernier jugement, `null` sans).
 - **Correction.** L'agent reçoit le verdict complet (bloquants, risques, points
   non vérifiés), corrige, et écrit `.harness/fix.md` : chaque levée avec sa
   preuve.
@@ -1530,6 +1552,130 @@ sert qu'à déclencher une relecture de `GET /v1/workstation/channels` : l'état
 n'est pas la source. Les lignes de journal des canaux ne portent que le canal, l'état et un
 code.
 
+#### Lire les canaux
+
+Toutes les `workstation.channelReadEveryMin` minutes (5 par défaut), hors pause du poste (arrêt
+d'urgence compris) et poste désactivé, le serveur lit les canaux `connected` ou `error`
+(`canaux/lecture.ts`) par `Channels.request` et garde ce qu'il lit en base. Ce passage
+n'appelle jamais un runner ni un modèle. Points de lecture ajoutés à la liste blanche, tous
+en `GET` de leur canal : `users/me/history`, `users/me/messages` et `users/me/messages/{id}`
+(Gmail), `calendars/primary/events` (Agenda), `conversations.list`, `conversations.history`,
+`conversations.replies`, `search.messages` et `users.info` (Slack).
+
+- **Gmail** (`lecture-google.ts`) : `users.history.list` depuis le dernier `historyId`, puis
+  `users.messages.get` des messages ajoutés (brouillons sautés). Le curseur n'avance qu'une
+  page entièrement gardée, et un message déjà gardé n'est pas relu : une lecture coupée au
+  milieu d'une page reprend cette page sans perte ni doublon. La première lecture, et un
+  historique expiré (404), relisent au plus 200 messages des 7 derniers jours (au plus
+  `retentionDays`). L'historique repart ensuite du `historyId` relevé avant cette liste.
+- **Agenda** : `events.list` du calendrier principal (`singleEvents`), d'abord sur les 60
+  jours à venir, puis par `nextSyncToken`. Un événement déplacé est mis à jour sur place, un
+  annulé est retiré. Un 410 vide les événements gardés et relit la fenêtre.
+- **Slack** (`lecture-slack.ts`, jeton utilisateur) : les DM (`im`, `mpim`), les canaux
+  suivis (`conversations.history`, puis `conversations.replies` des fils qui ont bougé), les
+  mentions de l'utilisateur partout, canaux non suivis compris (`search.messages` sur
+  `<@moi>`), puis l'identité des auteurs (`users.info`, adresse comprise). Le curseur d'une
+  conversation ou de la recherche n'avance qu'une fois sa lecture finie. Un canal archivé,
+  quitté ou introuvable est sauté.
+- **Limites de débit** : un 429 (`Retry-After`) ou un 403 `rateLimitExceeded` suspend la
+  lecture de CE canal jusqu'à l'échéance. Les curseurs n'ayant avancé que sur des pages
+  finies, rien n'est perdu ni doublé. Les autres canaux continuent.
+- **Canaux suivis** : `GET /v1/workstation/channels/slack/conversations` liste les canaux
+  publics et privés de l'espace (lus en direct). `PUT …/conversations/{id} {followed}` coche ou
+  décoche un canal (appareil approbateur), et la lecture suivante l'applique.
+- **Rétention** : messages, événements finis et auteurs Slack plus vieux que
+  `workstation.retentionDays` sont effacés par la purge horaire du poste. La vigie retire ces
+  contenus (sujets, corps, en-têtes, auteurs, participants, noms de canaux) des issues
+  qu'elle publie (`workstationTexts`). Le journal ne porte que le canal et un code. Les
+  événements `workstation_channel_read` (`{channel, added, removed}`) et
+  `workstation_channel_follow` (`{id, followed}`) ne portent aucun contenu.
+
+**Le stockage, pour les couches suivantes** (graphe des personnes, veille). Il vit dans
+`db/channel-contents.ts`, méthodes du `Store`. Tout y est du texte NON FIABLE : il passe par
+`untrusted()` (`workstation-guards.ts`) avant d'être montré à un agent, et ne va jamais dans
+un log, une issue ni la mémoire d'un dépôt.
+
+| Méthode | Rend |
+| --- | --- |
+| `listChannelMessages({channel?, afterSeq?, threadId?, limit?})` | Les messages Gmail et Slack par `seq` croissant : `{seq, id, channel, sourceId, threadId, conversation, conversationKind, origin, author, authorName, authorEmail, at, subject, text, headers, labels, mentionsMe, bot, readAt}`. `id` vaut `gmail:<id>` ou `slack:<conversation>:<ts>`. `seq` croît à chaque message NOUVEAU : les nouveautés depuis une veille sont `afterSeq: <dernier vu>`. Gmail : `author` = `From` tel quel, `headers` = From, To, Cc, Subject, List-Id, List-Unsubscribe, Auto-Submitted, Precedence, Message-ID, In-Reply-To, References, et `labels` (`SENT`, `INBOX`…). Slack : `author` = `U…`, avec son nom et son adresse s'ils sont lus. `origin` : `history`, `resync`, `dm`, `followed` ou `search`. |
+| `listChannelEvents({from?, to?})` | Les événements de l'Agenda qui finissent après `from` et commencent avant `to` : `{id, summary, startAt, endAt, allDay, organizer, attendees: [{email, name, response, self, organizer}], meetUrl, recurringEventId, updatedAt, readAt}`. `meetUrl` = `hangoutLink` ou le point d'entrée vidéo de `conferenceData`. |
+| `getSlackUser(id)` · `listSlackConversations()` | Un auteur Slack `{id, name, realName, email, bot}` ; les canaux de l'espace `{id, name, kind: public \| private, archived, followed}`. |
+| `getChannelCursor(key)` · `setChannelCursor(key, value, at)` | Les curseurs de lecture : `gmail`, `calendar`, `slack.self`, `slack.conv:<id>`, `slack.search`. Les clés propres aux couches suivantes s'y ajoutent sans toucher à celles-là. |
+
+#### Le graphe des personnes
+
+Le poste tient un graphe des collègues (`canaux/personnes.ts`, table `workstation_people` de
+`db/people.ts`). Une personne porte un nom, ses adresses, ses identifiants Slack, un rôle, une
+équipe, des projets, le ton à employer, un niveau de délégation (`jamais`, `brouillon`,
+`réponse`) et les sujets sur lesquels une réponse peut être prête. Elle a une révision, et
+chaque champ dit s'il est corrigé par l'humain.
+
+- **Alimentation automatique** : à chaque tour (poste activé), `PeopleGraph.feed()` reprend
+  ce que la lecture des canaux a gardé depuis son passage précédent (curseurs `people.*` de
+  `channel_cursors`) : `From`, `To` et `Cc` des mails (hors listes et messages automatiques),
+  participants de l'Agenda, auteurs Slack (hors bots), et la personne des signalements du poste
+  quand c'est une adresse. L'utilisateur lui-même (`selfIdentities`, comptes des canaux)
+  n'entre pas. Une adresse ou un identifiant Slack déjà rattaché désigne la même personne :
+  un auteur Slack de même adresse qu'un correspondant Gmail la rejoint, sans doublon.
+- **Ce qu'elle écrit** : `name` (s'il manque), `emails`, `slackIds`, `role`, `team`,
+  `projects` et `tone`, jamais un champ corrigé. Une personne qu'elle crée naît au niveau
+  `jamais`, sans sujet. Un niveau ou des sujets qu'elle porterait sont ignorés.
+- **Pour les couches suivantes** (veille, réponses) : `orchestrator.people.observe({emails?,
+  slackIds?, name?, role?, team?, projects?, tone?})` propose une suggestion sous les mêmes
+  règles ; `store.listPeople()` et `store.personIdOfKey(emailKey(adresse))` lisent le graphe.
+- **Correction** : `PATCH /v1/workstation/people/{id}` depuis l'appareil approbateur, avec
+  la révision lue en `If-Match` (§ API). C'est le seul chemin qui écrit le niveau et les sujets.
+
+Noms et adresses ne vont dans aucun log. L'événement `workstation_person` ne porte que `{id}`
+(dépôt `null`). La vigie retire ces textes des issues qu'elle publie (`workstationTexts`).
+
+#### La veille proactive
+
+Le job `poste-veille` (`canaux/veille.ts`, éléments dans `workstation_watch_items` de
+`db/watch-items.ts`) lit ce que la lecture des canaux a gardé et le graphe des personnes, et ne
+propose QUE ce qui demande l'utilisateur, dans « À traiter » :
+
+- **Quand** : un passage toutes les `workstation.watch.intervalMinutes` minutes aux heures
+  ouvrées (`days`, `start`–`end`, heure murale de `schedules.timezone`), quelle que soit
+  l'autonomie du poste ; jamais en pause, à l'arrêt d'urgence (qui coupe une veille en cours) ni
+  poste désactivé. Dans les 15 minutes avant l'ouverture, un passage ne prépare que les réunions
+  qui commencent dans les 15 premières minutes de la plage. Aucune planification ne la lance.
+- **Le tri, sans modèle** : n'est pas retenu un message de l'utilisateur, d'une personne
+  inconnue ou au niveau `jamais`, un mail où l'utilisateur n'est pas en `To`, un message
+  automatique (`List-Id`, `List-Unsubscribe`, `Auto-Submitted` autre que `no`, `Precedence`
+  `bulk`/`list`/`junk`), un bot Slack, un message de canal suivi sans mention, ni un message
+  auquel l'utilisateur a répondu depuis dans le même fil. Sans rien de dû (message retenu,
+  relance, préparation, brief), aucun runner ne part : ni coût, ni slot. Un canal non connecté,
+  à reconnecter ou bloqué est ignoré ; un canal en erreur reste lu.
+- **Ce qu'elle propose** : une **réponse** aux messages retenus (`brouillon` : sur tout sujet ;
+  `réponse` : marquée « prête » quand le modèle cite un sujet listé de la personne, que le
+  serveur vérifie, brouillon ordinaire sinon). Un mail reçoit un brouillon Gmail par API dans son
+  fil (`POST users/me/drafts`), retenté au passage suivant s'il échoue ; une réponse Slack garde
+  un brouillon interne (le texte de l'élément) et rien n'est écrit dans Slack. Une **relance**
+  d'un fil Gmail dont le dernier message est de l'utilisateur à autrui, sans réponse depuis
+  `followUpDays` jours ouvrés (une par silence, avec son brouillon). La **préparation** d'une
+  réunion à participants au premier passage entre « début − 15 min » et le début (une fois par
+  événement) : participants et graphe, 5 fils récents avec eux, et les transcripts des meetings
+  du poste tenus au même lien (origine et chemin ; 3 au plus, jamais par titre ; sinon « aucun
+  transcript passé »). Le **brief du matin**, une fois par jour, au premier passage des heures
+  ouvrées s'il y a des nouveautés, des relances ou des réunions.
+- **Gardes du serveur** : chaque outil ne vise qu'une référence de ce passage, le niveau est
+  relu à l'écriture, aucun outil n'envoie, n'approuve ni n'agit dans le navigateur. Le modèle
+  peut ne rien rendre (coût compté, aucune sortie). Un échec du runner laisse les nouveautés à
+  revoir, trois fois de suite au plus. Plafond journalier et slot runner refusés : le passage
+  suivant retente.
+- **Confidentialité** : tout contenu de canal arrive au modèle par `untrusted()` ; le job est
+  muet (ni direct, ni `intent`, ni `progress`) ; sa scope mémoire est `workstation` ; le
+  journal ne dit que `poste : veille en échec (n/3)`. L'événement `workstation_watch` ne porte
+  que `{id, kind, state, ready}` (dépôt `null`) ; l'alerte push part à l'appareil approbateur,
+  sans contenu, avec la catégorie `omp.reply` (geste valider, `omp.watchId`) pour une réponse
+  prête et `omp.open` (à relire) sinon. La vigie retire ces textes de ce qu'elle publie ; les
+  éléments suivent la purge `workstation.retentionDays`.
+
+Contrat pour la validation des réponses : un élément `reply` ou `followup` naît `open` ; son
+`draft` est `{kind: "gmail", id, error}` ou `{kind: "internal"}` ; `context.to` porte les
+destinataires ; `store.updateWatchItem(id, rev, {state?, text?})` change l'élément sous révision.
+
 ## Les issues (MCP)
 
 `POST /v1/mcp` est un serveur MCP (transport « Streamable HTTP », réponses JSON, sans
@@ -1806,9 +1952,12 @@ Parmi elles, `instructions` (`POST /v1/runs/{id}/instructions`, et `instructions
 la relance), `run-budget` (`budgetUsd` au lancement, `POST /v1/runs/{id}/budget`),
 `admin-repos` (`POST /v1/repos`), `reload` (le rechargement de la configuration,
 `POST /v1/reload`), `push-alerts` (`POST /v1/push/devices`, les alertes push des
-appareils iOS) et `workstation-channels` (`GET /v1/workstation/channels` et le geste de
-connexion des canaux corpo).
-appareils iOS) et `autonomy` (`GET /v1/autonomy`, `kind` et `labels` d'un run).
+appareils iOS), `workstation-channels` (`GET /v1/workstation/channels` et le geste de
+connexion des canaux corpo), `workstation-channel-reads` (la lecture des canaux et les canaux
+Slack suivis, `GET /v1/workstation/channels/slack/conversations`), `workstation-people` (le
+graphe des personnes, `GET /v1/workstation/people` et `PATCH …/people/{id}`), `workstation-watch`
+(la veille proactive du poste, `GET /v1/workstation/watch`) et `autonomy`
+(`GET /v1/autonomy`, `kind` et `labels` d'un run).
 
 `GET /v1/health` vérifie aussi le service : `checks.db` (une lecture de la base),
 `checks.scheduler` (`ageSec`, l'âge du dernier tour du scheduling, borné par
@@ -1889,6 +2038,11 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `PUT /v1/workstation/channels/{id}/client` `{clientId, clientSecret}` \| `{json}` \| `{clientId}` | operator (approbateur) | Saisit le client OAuth de la connexion `{id}` = `google` (identifiant et secret, ou le JSON « Application de bureau » téléchargé, clé `installed`) ou `slack` (identifiant seul : PKCE, aucun secret) : 200 `{connection}`, 400 corps illisible, 404 connexion inconnue. Un identifiant différent efface les jetons de la connexion. |
 | `POST /v1/workstation/channels/{id}/login` `{channels?}` | operator (approbateur) | Démarre la connexion `google` ou `slack` : 201 `{login}` dont `url` est l'URL d'autorisation (PKCE + `state`) ; 409 sans client. `channels` (`gmail`, `calendar`) ne demande que les scopes de ces canaux (défaut : tous). |
 | `POST /v1/workstation/channels/{id}/login/answer` `{value}` \| `{blocked: true, channels?}` | operator (approbateur) | Recolle l'URL de retour (ou le code, ou le texte d'erreur affiché) : 200 `{login, channels}`, 400 (`state` étranger, texte non reconnu, connexion expirée), 409 (aucune connexion en cours, refus du fournisseur, scope en trop ou manquant, jeton de bot). `blocked: true` déclare que l'administrateur bloque (seul chemin pour Slack, dont la demande d'approbation ne redirige pas) ; `channels` ne bloque que ces canaux. Événement `workstation_channel`. |
+| `GET /v1/workstation/channels/slack/conversations` | viewer | Les canaux publics et privés de l'espace Slack, relus en direct (`conversations.list`) : `{conversations: [{id, name, kind: public \| private, archived, followed}]}`, par nom. 409 Slack non connecté ou bloqué, 429 limite de débit (`Retry-After`), 502 refus ou coupure du fournisseur. Propriétaire seulement (403), 404 si le poste est désactivé. Capacité `workstation-channel-reads`. |
+| `PUT /v1/workstation/channels/slack/conversations/{id}` `{followed}` | operator (approbateur) | Coche (`true`) ou décoche un canal Slack suivi : 200 `{conversation}`. La lecture suivante lit ses messages et fils (les DM et les mentions sont lus partout). 400 corps illisible, 404 conversation absente de la dernière liste. Événement `workstation_channel_follow`. |
+| `GET /v1/workstation/people` | viewer | Le graphe des personnes du poste : `{people: [{id, name, emails, slackIds, role, team, projects, tone, delegation, topics, corrected, rev, createdAt, updatedAt}]}`. `delegation` : `jamais` \| `brouillon` \| `réponse` ; `corrected` dit, pour chaque champ, s'il est corrigé par l'humain (figé). Propriétaire seulement (403), 404 si le poste est désactivé. Capacité `workstation-people`. |
+| `PATCH /v1/workstation/people/{id}` `{name?, emails?, slackIds?, role?, team?, projects?, tone?, delegation?, topics?}` + `If-Match: <rev>` | operator (approbateur) | Corrige une personne : un champ absent reste, un champ donné est écrit et figé contre l'alimentation automatique, un champ à `null` est relâché (sa valeur reste, la suggestion suivante peut la remplacer). 200 `{person}`, révision +1. 428 sans `If-Match`, 412 révision dépassée (rien n'est écrit), 400 champ inconnu, corps vide ou valeur invalide (niveau hors `jamais \| brouillon \| réponse`), 404 personne inconnue, 409 adresse ou identifiant Slack déjà à une autre personne. Seul geste qui écrit `delegation` et `topics`. Pas de PUT de collection. Événement `workstation_person` (`{id}`). |
+| `GET /v1/workstation/watch?state=&limit=` · `GET /v1/workstation/watch/{id}` | viewer | Les éléments de la veille proactive dans « À traiter », récents d'abord (`state` : `open` par défaut, plusieurs séparés par des virgules ; `limit` ≤ 500) : `{items}` ; un élément : `{item}` = `{id, kind, state, ready, channel, messageId, eventId, personId, topic, subject, text, context, draft, rev, createdAt, updatedAt}`. `kind` : `reply` \| `followup` \| `prep` \| `brief` ; `ready` : réponse prête (geste valider) ; `draft` : `{kind: "gmail", id, error}`, `{kind: "internal"}` (Slack) ou `null`. Propriétaire seulement (403), jamais un client pilote (403), 404 si le poste est désactivé ou l'élément inconnu. Capacité `workstation-watch`, événement `workstation_watch` (`{id, kind, state, ready}`). |
 | `GET /v1/signals?state=&limit=` · `GET /v1/signals/{id}` | viewer (propriétaire) | Les signalements des collègues, récents d'abord (`state` : `received`, `proposed` par défaut, `ignored`, `dismissed`, `confirmed`, séparés par des virgules ; `limit` ≤ 200) : `{signals}` ; un signalement : `{signal}` = `{id, createdAt, updatedAt, channel, threadRef, url, personRef, excerpt, state, reason, error, repo, kind, title, body, issue, runId, confirmedBy, confirmedAt}`. 403 client restreint (« le poste est réservé au propriétaire ») ou pilote ; 404 inconnu ; 400 `state` inconnu. Même sans poste actif. |
 | `POST /v1/signals/{id}/preview` `{repo?, title?, body?}` | viewer (propriétaire) | Le texte EXACT que `confirm` enverrait à la forge : `{repo, policy: {declared, applied, note}, title, body, issue}` (`issue` : l'issue déjà créée, dont le texte n'est alors pas renvoyé). Sans `title`/`body`, la proposition ; sous `full` appliqué, le corps porte la section « Origine ». 409 dépôt en `forbid` ou sans forge, signalement déjà traité. Ne crée rien. |
 | `POST /v1/signals/{id}/confirm` `{repo, title, body}` · `POST /v1/signals/{id}/dismiss` `{reason?}` | operator (approbateur) | Confirme : crée l'issue puis le run lié (201 `{signal, issue, run, policy}`) ; 502 si la forge échoue (la proposition reste, avec `error`), 409 « le signalement est déjà <état> », dépôt `forbid`/sans forge, ou dépôt autre que celui de l'issue déjà créée ; 404 `dépôt inconnu`. Écarte (200 `{signal}`, `reason` ≤ 500) : jamais reproposé. 403 non approbateur, pilote ou client restreint. Événement `signal`. |

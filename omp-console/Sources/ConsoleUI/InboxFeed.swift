@@ -1,6 +1,8 @@
-// « À TRAITER », écrit une fois pour le Mac et l'iPhone/iPad : la ligne de pouls, les
-// envois du poste à approuver, les propositions nées des signalements de collègues
-// (`SignalProposalsSection`), puis la FILE unique de ce qui attend l'humain
+// « À TRAITER », écrit une fois pour le Mac et l'iPhone/iPad : la ligne de pouls, le
+// bouton Demande et les demandes ouvertes (`IntakeInboxSection`), les envois du poste
+// à approuver, les propositions nées des signalements de collègues
+// (`SignalProposalsSection`), les éléments de la veille du poste (`WorkstationWatchSection`),
+// puis la FILE unique de ce qui attend l'humain
 // (`HarnessInboxFeed`) — un élément par section, son genre, son dépôt et son âge en
 // tête, la décision dedans. Rien de vide ne s'affiche : une file vide devient « Rien
 // ne vous attend ». Les graphiques et les compteurs vivent dans Système › Statistiques.
@@ -21,6 +23,8 @@ public struct InboxFeed: View {
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var vigie: HarnessVigie
     @ObservedObject var signals: CorporateSignalsModel
+    @ObservedObject var watch: WorkstationWatchModel
+    @ObservedObject var intakes: HarnessIntakes
     let inbox: HarnessInbox
 
     public init(server: HarnessModel, drafts: HarnessDrafts, inbox: HarnessInbox) {
@@ -29,6 +33,8 @@ public struct InboxFeed: View {
         self.workstation = server.workstation
         self.vigie = server.vigie
         self.signals = server.signals
+        self.watch = server.watch
+        self.intakes = server.intakes
         self.inbox = inbox
     }
 
@@ -43,9 +49,11 @@ public struct InboxFeed: View {
             }
         }
         VigieSilentBanner(vigie: vigie)
+        IntakeInboxSection(server: server, drafts: drafts)
         WorkstationHomeApprovals(workstation: workstation, drafts: drafts)
         SignalProposalsSection(signals: signals, drafts: drafts)
-        if items.isEmpty, workstation.approvals.isEmpty, signals.pendingCount == 0 {
+        WorkstationWatchSection(watch: watch)
+        if items.isEmpty, workstation.approvals.isEmpty, signals.pendingCount == 0, watch.pendingCount == 0, intakes.open.isEmpty {
             Section {
                 InboxAllClear(drafts: drafts, canAct: server.canAct)
             }

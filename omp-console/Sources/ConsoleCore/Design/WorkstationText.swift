@@ -378,3 +378,180 @@ public enum SignalText {
         }
     }
 }
+
+/// L’écran Canaux du Poste : l’état de Gmail, de l’Agenda et de Slack, et leur connexion
+/// (client OAuth, page d’autorisation, URL de retour recollée, blocage par l’administrateur).
+public enum ChannelText {
+    public static let title = L10n.text("Canaux")
+    public static let pageSymbol = "tray.2"
+    public static let channelsHeader = L10n.text("Canaux corpo")
+    public static let channelsHint = L10n.text("La veille lit ces canaux côté serveur, en lecture seule : rien n’est envoyé sans votre geste.")
+    public static let accountLabel = L10n.text("Compte")
+    public static let neverRead = L10n.text("Aucune lecture réussie")
+    /// « Dernière lecture il y a 5 minutes ».
+    public static func lastRead(_ when: String) -> String { L10n.format("Dernière lecture %@", when) }
+
+    /// Le canal, brut (`gmail`, `calendar`, `slack`) ; un canal inconnu se rend tel quel.
+    public static func channel(_ raw: String) -> String {
+        switch raw {
+        case "gmail": L10n.text("Gmail")
+        case "calendar": L10n.text("Agenda")
+        case "slack": L10n.text("Slack")
+        default: raw
+        }
+    }
+
+    /// La connexion, brute (`google`, `slack`) ; une connexion inconnue se rend telle quelle.
+    public static func connection(_ raw: String) -> String {
+        switch raw {
+        case "google": L10n.text("Google")
+        case "slack": L10n.text("Slack")
+        default: raw
+        }
+    }
+
+    /// L’état d’un canal, brut ; un état inconnu se rend tel quel.
+    public static func state(_ raw: String) -> String {
+        switch raw {
+        case "disconnected": L10n.text("Non connecté")
+        case "connected": L10n.text("Connecté")
+        case "reconnect": L10n.text("À reconnecter")
+        case "blocked": L10n.text("Bloqué par l’administrateur")
+        case "error": L10n.text("En erreur")
+        default: raw
+        }
+    }
+
+    /// L’état d’un canal en pastille : son mot et son ton.
+    public static func status(_ raw: String) -> ConsoleStatus {
+        let tone: ConsoleTone = switch raw {
+        case "connected": .success
+        case "reconnect": .attention
+        case "blocked": .paused
+        case "error": .danger
+        default: .neutral
+        }
+        return ConsoleStatus(text: state(raw), tone: tone)
+    }
+
+    // MARK: - Connexion
+
+    public static let clientMissing = L10n.text("Client OAuth non configuré")
+    /// « Client 1234.apps.googleusercontent.com ».
+    public static func client(_ id: String) -> String { L10n.format("Client %@", id) }
+    public static let configureClient = L10n.text("Configurer le client…")
+    public static let changeClient = L10n.text("Changer de client…")
+    public static let clientSymbol = "key"
+    public static let connect = L10n.text("Connecter")
+    public static let connectAll = L10n.text("Connecter Gmail et l’Agenda")
+    public static let connectGmailOnly = L10n.text("Gmail seul")
+    public static let connectCalendarOnly = L10n.text("L’Agenda seul")
+    public static let connectSymbol = "link"
+    public static let connectHint = L10n.text("Si l’administrateur bloque Gmail, connectez l’Agenda seul.")
+    public static let loginHeader = L10n.text("Connexion en cours")
+    public static let openAuthorization = L10n.text("Ouvrir la page d’autorisation")
+    public static let openSymbol = "arrow.up.right.square"
+    /// « Expire dans 9 minutes ».
+    public static func expires(_ when: String) -> String { L10n.format("Expire %@", when) }
+    public static let answerLabel = L10n.text("Adresse de retour, code ou erreur affichée")
+    public static let answerHint = L10n.text("Après l’autorisation, le navigateur affiche une page qui ne se charge pas : copiez son adresse et collez-la ici. Si le fournisseur affiche une erreur, collez son texte.")
+    public static let answer = L10n.text("Valider la connexion")
+    public static let declareBlocked = L10n.text("L’administrateur bloque l’app")
+    public static let blockedSymbol = "hand.raised"
+    public static let blockAll = L10n.text("Toute la connexion")
+    public static let blockGmailOnly = L10n.text("Gmail seulement")
+    public static let blockCalendarOnly = L10n.text("L’Agenda seulement")
+    public static let blockedHint = L10n.text("Une app Slack qui attend l’approbation d’un administrateur ne redirige pas : déclarez le blocage.")
+    /// La dernière connexion a échoué : la phrase du serveur.
+    public static func loginFailed(_ error: String) -> String { L10n.format("Dernière connexion échouée : %@", error) }
+    public static let approverOnly = L10n.text("Seul l’appareil approbateur configure et connecte les canaux : appairez cette app avec le code approbateur (harness.sh approver sur le VPS).")
+
+    // MARK: - Feuille du client OAuth
+
+    public static let googleSheetTitle = L10n.text("Client Google")
+    public static let slackSheetTitle = L10n.text("App Slack")
+    public static let pasteJSON = L10n.text("Coller le JSON")
+    public static let typeCredentials = L10n.text("Identifiant et secret")
+    public static let jsonLabel = L10n.text("JSON du client « Application de bureau »")
+    public static let clientIdLabel = L10n.text("Identifiant client")
+    public static let clientSecretLabel = L10n.text("Secret client")
+    public static let googleHint = L10n.text("Dans un projet Google Cloud à vous : activez Gmail et Google Calendar, créez un client OAuth « Application de bureau » et téléchargez son JSON.")
+    public static let secretHint = L10n.text("Le secret part au serveur, qui le garde : l’app ne le réaffiche ni ne le garde.")
+    public static let slackHint = L10n.text("Créez l’app depuis le manifeste omp-harness/deploy/slack-app-manifest.json : en PKCE, aucun secret.")
+    public static let save = L10n.text("Enregistrer")
+}
+
+/// Les canaux Slack suivis, dans l’écran Canaux : la case « suivi » de chaque canal de l’espace.
+public enum SlackFollowText {
+    public static let header = L10n.text("Canaux Slack suivis")
+    public static let hint = L10n.text("La veille lit vos messages privés et vos mentions partout, et en entier les canaux cochés.")
+    public static let empty = L10n.text("Aucun canal dans l’espace Slack")
+    public static let privateChannel = L10n.text("Canal privé")
+    public static let privateSymbol = "lock"
+}
+
+/// La page Personnes du Poste : le graphe des collègues que le serveur tient (canaux lus,
+/// observations du poste), et la correction de chaque champ par l’appareil approbateur.
+public enum PeopleText {
+    public static let title = L10n.text("Personnes")
+    public static let pageSymbol = "person.2"
+    public static let empty = L10n.text("Aucune personne : le graphe se remplit à la lecture des canaux.")
+    public static let hint = L10n.text("Une personne vue dans les canaux naît au niveau Jamais : rien ne lui est proposé tant que vous ne changez pas son niveau.")
+    public static let unnamed = L10n.text("Sans nom")
+    public static let corrected = L10n.text("Corrigé")
+    public static let correctedSymbol = "pencil.circle.fill"
+    public static let release = L10n.text("Relâcher")
+    public static let releaseHint = L10n.text("Un champ corrigé est figé : la lecture des canaux ne le change plus. Relâcher le rend aux suggestions.")
+    public static let listHint = L10n.text("Plusieurs valeurs : séparez-les par des virgules.")
+    public static let save = L10n.text("Enregistrer la correction")
+    public static let approverOnly = L10n.text("Seul l’appareil approbateur corrige les personnes : appairez cette app avec le code approbateur (harness.sh approver sur le VPS).")
+
+    /// Le nom d’un champ, brut (`name`, `emails`…) ; un champ inconnu se rend tel quel.
+    public static func field(_ raw: String) -> String {
+        switch raw {
+        case "name": L10n.text("Nom")
+        case "emails": L10n.text("Adresses")
+        case "slackIds": L10n.text("Identifiants Slack")
+        case "role": L10n.text("Rôle")
+        case "team": L10n.text("Équipe")
+        case "projects": L10n.text("Projets")
+        case "tone": L10n.text("Style à adopter")
+        case "delegation": L10n.text("Délégation")
+        case "topics": L10n.text("Sujets de réponse")
+        default: raw
+        }
+    }
+
+    /// Le niveau de délégation, brut (`jamais`, `brouillon`, `réponse`).
+    public static func delegation(_ raw: String) -> String {
+        switch raw {
+        case "jamais": L10n.text("Jamais")
+        case "brouillon": L10n.text("Brouillon")
+        case "réponse": L10n.text("Réponse sur les sujets listés")
+        default: raw
+        }
+    }
+}
+
+/// Le vocabulaire de la VEILLE PROACTIVE du poste dans « À traiter » : réponses proposées,
+/// relances, préparations de réunions et brief du matin. Un code inconnu se rend tel quel.
+public enum WatchText {
+    public static let sectionTitle = L10n.text("Veille du poste")
+    public static let sectionSymbol = "tray.full"
+    public static let sectionHint = L10n.text("Ce que la veille a trouvé dans vos canaux. Rien ne part sans votre geste.")
+    public static let ready = L10n.text("Prête à valider")
+    public static let toReview = L10n.text("À relire")
+    public static let gmailDraft = L10n.text("Brouillon Gmail créé")
+    public static let gmailDraftPending = L10n.text("Brouillon Gmail pas encore créé")
+    public static let internalDraft = L10n.text("Brouillon gardé par le serveur")
+
+    public static func kind(_ raw: String) -> String {
+        switch raw {
+        case "reply": L10n.text("Réponse proposée")
+        case "followup": L10n.text("Rappel proposé")
+        case "prep": L10n.text("Préparation de réunion")
+        case "brief": L10n.text("Brief du matin")
+        default: raw
+        }
+    }
+}

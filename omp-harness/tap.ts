@@ -6,8 +6,15 @@ import { StringDecoder } from "node:string_decoder";
 
 export type TapCount = { tests: number; passed: number; failed: number };
 
-/** `ids` : un compte par clé `<slug>/AC-n` (id qualifié) ou `AC-n` (id nu) ; `other` : les tests sans id. */
-export type TapTally = { ids: Record<string, TapCount>; other: TapCount };
+/**
+ * `ids` : un compte par clé `<slug>/AC-n` (id qualifié) ou `AC-n` (id nu) ; `other` : les tests sans id ;
+ * `failing` : les titres distincts des tests en échec (`not ok`, hors SKIP/TODO), `null` au-delà de `MAX_FAILING`
+ * (une liste tronquée ferait passer un échec nouveau pour un échec connu).
+ */
+export type TapTally = { ids: Record<string, TapCount>; other: TapCount; failing: string[] | null };
+
+/** Le nombre de titres en échec gardés ; au-delà la liste n'est plus fiable. */
+export const MAX_FAILING = 5000;
 
 const QUALIFIED = /(?<![\w.-])([A-Za-z0-9][\w.-]*)\/AC-(\d+)(?![0-9])/;
 const BARE = /(?<![\w/.-])AC-(\d+)(?![0-9])/;
@@ -30,6 +37,7 @@ export class TapCounter {
   readonly #decoder = new StringDecoder("utf8");
   readonly #ids: Record<string, TapCount> = {};
   readonly #other = zero();
+  readonly #failing = new Set<string>();
   #line = "";
   #skipping = false;
   /** Au moins un octet est arrivé. */
@@ -66,7 +74,10 @@ export class TapCounter {
     }
     count.tests++;
     if (match[1] === "ok") count.passed++;
-    else count.failed++;
+    else {
+      count.failed++;
+      if (this.#failing.size <= MAX_FAILING) this.#failing.add((match[2] as string).trim());
+    }
   }
 
   /** Compte la dernière ligne (même sans saut final), puis rend le décompte. */
@@ -75,7 +86,11 @@ export class TapCounter {
     if (!this.#skipping) this.#count(this.#line);
     this.#line = "";
     this.#skipping = false;
-    return { ids: this.#ids, other: this.#other };
+    return {
+      ids: this.#ids,
+      other: this.#other,
+      failing: this.#failing.size > MAX_FAILING ? null : [...this.#failing],
+    };
   }
 }
 

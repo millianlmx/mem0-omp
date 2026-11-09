@@ -12,6 +12,7 @@
 // Les étapes de contrat (/req, /specs) passent, avant leur clôture, devant le
 // contradicteur (challenge.ts). Les specs closes sont GELÉES (`SPECS_BASELINE`) : la revue
 // et l'auto-merge jugent sur leurs critères, pas sur ceux que /impl aurait réécrits.
+import { baselineSummary, newFailuresText } from "./baseline.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Answer, ChallengeRecord, Finding } from "./challenge.ts";
@@ -826,17 +827,24 @@ export class StepExecutor {
       await this.#adoptMainIfRebased(run);
       run = store.getRun(run.id) as RunRow;
       const base = run.baseSha ?? repo.mainBranch;
-      const fullTests = await this.#fullTests(live, run);
+      let fullTests = await this.#fullTests(live, run);
       let verdict = live.verdict as Verdict;
-      // Une suite rouge est un bloquant, quoi qu'en dise la revue.
-      if (fullTests === "fail")
-        verdict = {
-          ...verdict,
-          blockers: [
-            ...verdict.blockers,
-            `suite complète rouge : ${live.lastFull ? failSummary(live.lastFull) : "voir le dernier résultat heavy"}`,
-          ],
-        };
+      // Une suite rouge est un bloquant, quoi qu'en dise la revue : sauf les échecs que main a déjà.
+      if (fullTests === "fail") {
+        const judged = live.lastFull ? await this.#ctx.baseline.judge(run, repo, live.lastFull) : null;
+        if (judged) this.#ctx.baseline.record(run.id, "review", judged);
+        if (judged !== null && judged.new.length === 0) {
+          fullTests = "pass";
+          verdict = { ...verdict, summary: `${verdict.summary}\n\n${baselineSummary(judged)}` };
+        } else {
+          const detail = judged
+            ? newFailuresText(judged)
+            : live.lastFull
+              ? failSummary(live.lastFull)
+              : "voir le dernier résultat heavy";
+          verdict = { ...verdict, blockers: [...verdict.blockers, `suite complète rouge : ${detail}`] };
+        }
+      }
       // Le contrat est celui des specs gelées, plus les critères ajoutés depuis.
       const acIds = this.#specsAcIds(run.id);
       const mergeEvidence = {

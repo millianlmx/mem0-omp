@@ -17,12 +17,22 @@ export type Entry = { method: Method; host: string; path: string; channel: Chann
 export const ALLOWLIST: readonly Entry[] = [
   { method: "POST", host: "oauth2.googleapis.com", path: "/token", channel: null },
   { method: "GET", host: "gmail.googleapis.com", path: "/gmail/v1/users/me/profile", channel: "gmail" },
+  // La lecture (lecture.ts) : historique incrémental, liste bornée d'une resynchronisation, un message.
+  { method: "GET", host: "gmail.googleapis.com", path: "/gmail/v1/users/me/history", channel: "gmail" },
+  { method: "GET", host: "gmail.googleapis.com", path: "/gmail/v1/users/me/messages", channel: "gmail" },
+  { method: "GET", host: "gmail.googleapis.com", path: "/gmail/v1/users/me/messages/{id}", channel: "gmail" },
   { method: "POST", host: "gmail.googleapis.com", path: "/gmail/v1/users/me/drafts", channel: "gmail" },
   { method: "PUT", host: "gmail.googleapis.com", path: "/gmail/v1/users/me/drafts/{id}", channel: "gmail" },
   { method: "DELETE", host: "gmail.googleapis.com", path: "/gmail/v1/users/me/drafts/{id}", channel: "gmail" },
   { method: "GET", host: "www.googleapis.com", path: "/calendar/v3/calendars/primary", channel: "calendar" },
+  { method: "GET", host: "www.googleapis.com", path: "/calendar/v3/calendars/primary/events", channel: "calendar" },
   { method: "POST", host: "slack.com", path: "/api/oauth.v2.access", channel: null },
   { method: "GET", host: "slack.com", path: "/api/auth.test", channel: "slack" },
+  { method: "GET", host: "slack.com", path: "/api/conversations.list", channel: "slack" },
+  { method: "GET", host: "slack.com", path: "/api/conversations.history", channel: "slack" },
+  { method: "GET", host: "slack.com", path: "/api/conversations.replies", channel: "slack" },
+  { method: "GET", host: "slack.com", path: "/api/search.messages", channel: "slack" },
+  { method: "GET", host: "slack.com", path: "/api/users.info", channel: "slack" },
 ];
 
 const SEGMENT = "[A-Za-z0-9_-]+";

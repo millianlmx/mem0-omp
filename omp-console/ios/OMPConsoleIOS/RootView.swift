@@ -189,6 +189,7 @@ struct RootView: View {
             .task(id: server.address) {
                 await workstation.refresh()
                 await signals.refresh()
+                await server.intakes.refresh()
                 await vigie.refresh()
             }
             // Au retour au premier plan, le flux coupé en arrière-plan est rouvert sur une
@@ -201,6 +202,7 @@ struct RootView: View {
                     server.startLive()
                     await workstation.refresh()
                     await signals.refresh()
+                    await server.intakes.refresh()
                 }
             }
     }
