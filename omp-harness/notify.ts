@@ -31,6 +31,15 @@ const ERROR_LOG_EVERY_MS = 60 * 60 * 1000;
 
 const SEND_TIMEOUT_MS = 10_000;
 
+/** La médiane d'une alerte `step_slow` : en secondes sous une minute ; `medianMin` pour un ancien événement. */
+function slowMedian(payload: Record<string, unknown>): string {
+  if (typeof payload.medianMs === "number") {
+    const seconds = Math.round(payload.medianMs / 1000);
+    return seconds < 60 ? `${seconds} s` : `${Math.round(seconds / 60)} min`;
+  }
+  return typeof payload.medianMin === "number" ? `${payload.medianMin} min` : "?";
+}
+
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : fallback;
 }
@@ -172,7 +181,7 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
       return {
         title: `Étape lente — ${feature}`,
         body: short(
-          `/${text(payload.step, "?")} dure depuis ${typeof payload.minutes === "number" ? payload.minutes : "?"} min (médiane ${typeof payload.medianMin === "number" ? payload.medianMin : "?"} min)`,
+          `/${text(payload.step, "?")} dépasse largement sa durée habituelle dans ce dépôt (médiane ${slowMedian(payload)})`,
         ),
         priority: 3,
         tags: ["snail"],
