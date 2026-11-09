@@ -126,7 +126,7 @@ if [ "$MODE" = "--prepare" ]; then
     extrait="$(mktemp -d "$dest_dir/.extraction.XXXXXX")" || exit 1
     trap 'rm -rf "$archive" "$extrait"' EXIT
     url="https://github.com/qdrant/qdrant/releases/download/v$QDRANT_VERSION/$asset"
-    if ! curl -fsSL -o "$archive" "$url"; then
+    if ! curl -fsSL --retry 5 --retry-delay 5 -o "$archive" "$url"; then
       printf 'téléchargement de Qdrant impossible : %s\n' "$url"
       exit 1
     fi
