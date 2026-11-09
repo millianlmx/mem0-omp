@@ -122,9 +122,9 @@ export class CorporateReplyStore extends WatchStore {
 
   /** Les brouillons « en attente d'approbation » : l'envoi que leur demande du poste porte reste à suivre. */
   pendingReplies(): ReplyRow[] {
-    return this.selectAll(
-      "SELECT * FROM corporate_replies WHERE state = 'pending' ORDER BY created_at, id",
-    ).map(replyOf);
+    return this.selectAll("SELECT * FROM corporate_replies WHERE state = 'pending' ORDER BY created_at, id").map(
+      replyOf,
+    );
   }
 
   /** Les brouillons `attente` encore à l'état « brouillon » : ceux que le classement automatique peut retirer. */

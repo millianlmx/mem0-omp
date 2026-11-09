@@ -83,10 +83,7 @@ type World = {
   close: () => Promise<void>;
 };
 
-async function open(
-  scenario: Record<string, unknown> = IDLE,
-  patch?: (config: HarnessConfig) => void,
-): Promise<World> {
+async function open(scenario: Record<string, unknown> = IDLE, patch?: (config: HarnessConfig) => void): Promise<World> {
   const log: string[] = [];
   const fetched: string[] = [];
   const fetchDouble = (async (input: unknown) => {
@@ -396,8 +393,15 @@ test("pont-corpo-reponses/AC-152 : un run failed puis un run cancelled ont chacu
 
     const relaunched = link(w, { signal: failed.signal, state: "merged", channel: "gmail" });
     for (let turn = 0; turn < 2; turn++) reconcile(w);
-    assert.deepEqual(replies(w, relaunched.run.id).map((row) => row.kind), ["final"]);
-    assert.deepEqual(replies(w, failed.run.id).map((row) => row.kind), ["attente"], "pas de second attente");
+    assert.deepEqual(
+      replies(w, relaunched.run.id).map((row) => row.kind),
+      ["final"],
+    );
+    assert.deepEqual(
+      replies(w, failed.run.id).map((row) => row.kind),
+      ["attente"],
+      "pas de second attente",
+    );
     assert.equal(store(w).listReplies({ limit: 50 }).length, 3);
   } finally {
     await w.close();
@@ -415,7 +419,10 @@ test("pont-corpo-reponses/AC-153 : pas d'attente pour un run dépassé ; l'atten
 
     // Une attente en brouillon avant la relance : classée au tour suivant, texte gardé, approbation refusée.
     const first = drafted(w, { state: "failed", channel: "gmail" });
-    assert.equal((await listed(w)).some((entry) => entry.id === first.reply.id), true);
+    assert.equal(
+      (await listed(w)).some((entry) => entry.id === first.reply.id),
+      true,
+    );
     link(w, { signal: first.signal, state: "failed", channel: "gmail" });
     await online(w);
     reconcile(w);
@@ -441,8 +448,15 @@ test("pont-corpo-reponses/AC-153 : pas d'attente pour un run dépassé ; l'atten
     const place = drafted(w, { state: "failed", channel: "gmail" });
     store(w).updateRun(place.run.id, { state: "failed" });
     reconcile(w);
-    assert.deepEqual(replies(w, place.run.id).map((row) => row.kind), ["attente"]);
-    assert.equal((await listed(w)).some((entry) => entry.id === place.reply.id), true, "toujours dans la liste");
+    assert.deepEqual(
+      replies(w, place.run.id).map((row) => row.kind),
+      ["attente"],
+    );
+    assert.equal(
+      (await listed(w)).some((entry) => entry.id === place.reply.id),
+      true,
+      "toujours dans la liste",
+    );
     store(w).updateRun(place.run.id, { state: "merged" });
     reconcile(w);
     assert.deepEqual(
@@ -462,7 +476,10 @@ test("pont-corpo-reponses/AC-153 : pas d'attente pour un run dépassé ; l'atten
     const fast = link(w, { state: "failed" });
     store(w).updateRun(fast.run.id, { state: "merged" });
     reconcile(w);
-    assert.deepEqual(replies(w, fast.run.id).map((row) => row.kind), ["final"]);
+    assert.deepEqual(
+      replies(w, fast.run.id).map((row) => row.kind),
+      ["final"],
+    );
   } finally {
     await w.close();
   }
@@ -486,7 +503,7 @@ test("pont-corpo-reponses/AC-154 : l'approbation porte le texte approuvé, seul 
     assert.equal(operator.status, 403);
     assert.ok(String(operator.json.error).includes(APPROVER_MARK));
     assert.equal(replies(w, made.run.id)[0]?.text, edited);
-    for (const bad of ["   ", "x".repeat(1501), "ghp_" + "a".repeat(36), "token: abcdef123456"]) {
+    for (const bad of ["   ", "x".repeat(1501), `ghp_${"a".repeat(36)}`, "token: abcdef123456"]) {
       assert.equal((await approver(w, "PUT", `/v1/replies/${id}`, { text: bad })).status, 400);
     }
     assert.equal((await approver(w, "PUT", `/v1/replies/${id}`, {})).status, 400);
@@ -583,7 +600,11 @@ test("pont-corpo-reponses/AC-156 : l'approbation slack pose une demande dont la 
     await until(w, () => !w.world.orchestrator.workstationAgent.isLive("poste-demande"), "le job finit");
 
     const actions = store(w).listWorkstationActions({ requestId: request.id, order: "asc", limit: 20 });
-    assert.deepEqual(actions.map((action) => action.kind), ["type", "key"], "les gestes refusés ne sont pas créés");
+    assert.deepEqual(
+      actions.map((action) => action.kind),
+      ["type", "key"],
+      "les gestes refusés ne sont pas créés",
+    );
     const results = w.world
       .log()
       .filter((entry) => entry.kind === "tool" && entry.tool === "workstation_act")
@@ -699,7 +720,9 @@ test("pont-corpo-reponses/AC-158 : l'état suit la demande et l'envoi : retour a
     assert.equal(ws(w).getAction(sendB.seq).state, "failed");
     assert.equal(ws(w).getAction(sendB.seq).error, REPLY_SEND_TAKEN);
     assert.equal(store(w).getReply(three.reply.id)?.sendSeq, sendA.seq, "l'envoi marqué ne change pas");
-    const approvals = store(w).eventsOfType("workstation_approval").map((event) => event.payload.seq);
+    const approvals = store(w)
+      .eventsOfType("workstation_approval")
+      .map((event) => event.payload.seq);
     assert.deepEqual(approvals, [sendA.seq], "aucune approbation pour le second envoi");
     ws(w).refuse(sendA.seq, "non", { by: "app-approbateur", rev: ws(w).getAction(sendA.seq).updatedAt });
     await until(w, () => store(w).getReply(three.reply.id)?.state === "draft");
@@ -866,7 +889,9 @@ test("pont-corpo-reponses/AC-161 : un client restreint et un client pilote sont 
     }
     assert.equal((await w.call(w.tokens.narrow, "GET", `/v1/runs/${made.run.id}/origin`)).json.error, OWNER_ONLY);
     assert.deepEqual(
-      store(w).eventsSince(0, null, 1000, ["demo"]).filter((event) => event.type === "reply"),
+      store(w)
+        .eventsSince(0, null, 1000, ["demo"])
+        .filter((event) => event.type === "reply"),
       [],
       "le client restreint ne reçoit aucun événement de brouillon",
     );
@@ -941,8 +966,7 @@ test("pont-corpo-reponses/AC-162 : chaque changement d'état émet un événemen
       "POST /v1/replies/{id}/approve",
       "POST /v1/replies/{id}/archive",
     ];
-    for (const route of documented)
-      assert.ok(readme.includes(`\`${route}`), `${route} manque au README`);
+    for (const route of documented) assert.ok(readme.includes(`\`${route}`), `${route} manque au README`);
     assert.match(readme, /`GET \/v1\/events\?[^\n]*`reply` \(/);
   } finally {
     await w.close();
@@ -1014,10 +1038,15 @@ test("pont-corpo-reponses/AC-164 : ni le texte du brouillon, ni le fil, ni l'url
     // L'extension : la navigation retenue par allowedHosts est approuvée, la saisie exacte, puis l'envoi retenu.
     await until(
       w,
-      () => store(w).listWorkstationActions({ requestId: request.id }).some((action) => action.kind === "navigate"),
+      () =>
+        store(w)
+          .listWorkstationActions({ requestId: request.id })
+          .some((action) => action.kind === "navigate"),
       "la navigation est déposée",
     );
-    const nav = store(w).listWorkstationActions({ requestId: request.id }).find((action) => action.kind === "navigate");
+    const nav = store(w)
+      .listWorkstationActions({ requestId: request.id })
+      .find((action) => action.kind === "navigate");
     assert.equal(nav?.state, "awaiting_approval");
     allow(w, nav?.seq as number);
     await give(w, (await lease(w)).seq, FINISHED);
@@ -1118,7 +1147,9 @@ test("pont-corpo-reponses/AC-165 : classer est réservé à l'approbateur ; un b
     assert.deepEqual(await listed(w), []);
     assert.equal((await originOf(w, made.run.id))?.reply, "aucune");
     assert.deepEqual(
-      replyEvents(w).slice(-1).map((event) => event.payload),
+      replyEvents(w)
+        .slice(-1)
+        .map((event) => event.payload),
       [{ id: made.reply.id, state: "archived" }],
     );
     noWorkstationTrace(w);
@@ -1153,12 +1184,19 @@ test("pont-corpo-reponses/AC-166 : gmail failed puis relance merged : la liste p
     const relaunched = link(w, { signal: failed.signal, channel: "gmail", state: "merged" });
     reconcile(w);
     const final = replies(w, relaunched.run.id)[0] as ReplyRow;
-    assert.deepEqual((await listed(w)).map((entry) => entry.id), [final.id], "seul le final reste listé");
+    assert.deepEqual(
+      (await listed(w)).map((entry) => entry.id),
+      [final.id],
+      "seul le final reste listé",
+    );
     await online(w);
     const got = await approver(w, "POST", `/v1/replies/${final.id}/approve`, { text: final.text });
     assert.equal(got.status, 201, JSON.stringify(got.json));
     assert.deepEqual(await listed(w), []);
-    assert.deepEqual((await listed(w, "pending")).map((entry) => entry.id), [final.id]);
+    assert.deepEqual(
+      (await listed(w, "pending")).map((entry) => entry.id),
+      [final.id],
+    );
     const request = got.json.request as WorkstationRequest;
     await until(w, () => ws(w).getRequest(request.id).state === "running");
     act(w, request.id, "type", TYPE(final.text));
@@ -1170,7 +1208,10 @@ test("pont-corpo-reponses/AC-166 : gmail failed puis relance merged : la liste p
     await give(w, (await lease(w)).seq, FINISHED);
     assert.deepEqual(await listed(w), []);
     assert.equal((await originOf(w, relaunched.run.id))?.reply, "envoyée");
-    assert.deepEqual((await listed(w, "sent")).map((entry) => entry.id), [final.id]);
+    assert.deepEqual(
+      (await listed(w, "sent")).map((entry) => entry.id),
+      [final.id],
+    );
   } finally {
     await w.close();
   }

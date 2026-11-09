@@ -191,8 +191,7 @@ export class ReplyDesk {
     const { store } = this.#ctx;
     let request = row.requestId === null ? null : store.getWorkstationRequest(row.requestId);
     const send = row.sendSeq === null ? null : store.getWorkstationAction(row.sendSeq);
-    if (send?.state === "done")
-      return this.#move(row, ["pending"], { state: "sent", sentAt: Date.now(), error: null });
+    if (send?.state === "done") return this.#move(row, ["pending"], { state: "sent", sentAt: Date.now(), error: null });
     const failed = send?.state === "refused" || send?.state === "expired" || send?.state === "failed";
     if (failed && request !== null && (request.state === "queued" || request.state === "running")) {
       try {
@@ -207,11 +206,11 @@ export class ReplyDesk {
       request !== null &&
       store.listWorkstationActions({ requestId: request.id, states: Workstation.PENDING, limit: 1 }).length > 0;
     if (running || open) return row;
-    return this.#move(row, ["pending"], { state: "draft", error: this.#whyUnsent(row, request, send?.state ?? null) });
+    return this.#move(row, ["pending"], { state: "draft", error: this.#whyUnsent(request, send?.state ?? null) });
   }
 
   /** Pourquoi un brouillon revient à l'état « brouillon » : une raison fixe, jamais le texte ni le fil. */
-  #whyUnsent(row: ReplyRow, request: WorkstationRequest | null, sendState: string | null): string {
+  #whyUnsent(request: WorkstationRequest | null, sendState: string | null): string {
     if (sendState === "refused") return "l'envoi a été refusé";
     if (sendState === "expired") return "l'envoi a expiré";
     if (sendState === "failed") return "l'envoi a échoué";
