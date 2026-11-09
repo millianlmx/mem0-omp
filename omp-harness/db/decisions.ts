@@ -3,8 +3,15 @@
 import type { AutonomyProof } from "../autonomy-rules.ts";
 import { StepStore } from "./steps.ts";
 import type { DecisionCategory } from "../decisions.ts";
+import type { DecisionCard } from "../card.ts";
 import { str, strOrNull, num, numOrNull, json, repoClause } from "./sql.ts";
 import type { SqlValue, Row, RepoFilter } from "./sql.ts";
+
+/** L'artefact interne (caché de l'API, jamais purgé) qui garde les cartes des escalades d'un run, par id. */
+export const ESCALATION_CARDS = "_escalation-cards.json";
+
+/** Idem pour les cartes des décisions prises seules (celles de /req et /specs nourrissent la carte des specs). */
+export const DECISION_CARDS = "_decision-cards.json";
 
 /** `auto_timeout` : tranchée par le service à l'échéance d'une escalade, sur la recommandation de l'agent. */
 export type DecisionStatus = "auto" | "auto_timeout" | "accepted" | "reversed" | "superseded";
@@ -58,6 +65,8 @@ export type EscalationRow = {
   answerReason: string | null;
   /** Le client qui a répondu (`null` : réponse du service, escalade devenue caduque). */
   answeredBy: string | null;
+  /** La carte de décision lisible en 30 s (`null` : escalade antérieure, ou posée sans carte). */
+  card: DecisionCard | null;
   createdAt: number;
   answeredAt: number | null;
 };
@@ -87,7 +96,7 @@ function decisionOf(row: Row): DecisionRow {
   };
 }
 
-function escalationOf(row: Row): EscalationRow {
+function escalationOf(row: Row, card: DecisionCard | null): EscalationRow {
   return {
     id: num(row, "id"),
     runId: str(row, "run_id"),
@@ -103,6 +112,7 @@ function escalationOf(row: Row): EscalationRow {
     answer: strOrNull(row, "answer"),
     answerReason: strOrNull(row, "answer_reason"),
     answeredBy: strOrNull(row, "answered_by"),
+    card,
     createdAt: num(row, "created_at"),
     answeredAt: numOrNull(row, "answered_at"),
   };
@@ -124,7 +134,7 @@ export class DecisionStore extends StepStore {
       | "context"
       | "impacts"
       | "autonomy"
-    > & { context?: string | null; impacts?: string[]; autonomy?: AutonomyProof | null },
+    > & { context?: string | null; impacts?: string[]; autonomy?: AutonomyProof | null; card?: DecisionCard | null },
     status: "auto" | "auto_timeout" = "auto",
   ): DecisionRow {
     return this.transaction(() => {
@@ -151,8 +161,23 @@ export class DecisionStore extends StepStore {
         input.autonomy ? JSON.stringify(input.autonomy) : null,
         this.now(),
       );
-      return decisionOf(this.selectOne("SELECT * FROM decisions WHERE id = ?", Number(result.lastInsertRowid)) as Row);
+      const row = decisionOf(
+        this.selectOne("SELECT * FROM decisions WHERE id = ?", Number(result.lastInsertRowid)) as Row,
+      );
+      if (input.card)
+        this.putArtifact(
+          input.runId,
+          DECISION_CARDS,
+          JSON.stringify({ ...this.#cards(input.runId, DECISION_CARDS), [String(next)]: input.card }),
+          input.stepId,
+        );
+      return row;
     });
+  }
+
+  /** Les cartes des décisions d'un run (celles posées avec une carte), par numéro de décision. */
+  decisionCards(runId: string): Record<string, DecisionCard> {
+    return this.#cards(runId, DECISION_CARDS);
   }
 
   getDecision(runId: string, seq: number): DecisionRow | null {
@@ -235,29 +260,40 @@ export class DecisionStore extends StepStore {
 
   // -- escalades ------------------------------------------------------------
 
+  /** `card` : la carte de l'escalade, gardée dans l'artefact interne `_escalation-cards.json` du run. */
   addEscalation(
     input: Pick<EscalationRow, "runId" | "stepId" | "category" | "question" | "options" | "context"> & {
       recommended?: string | null;
       rationale?: string | null;
       impacts?: string[];
+      card?: DecisionCard | null;
     },
   ): EscalationRow {
-    const result = this.execute(
-      "INSERT INTO escalations (run_id, step_id, category, question, options, context, rationale, impacts, recommended, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)",
-      input.runId,
-      input.stepId,
-      input.category,
-      input.question,
-      JSON.stringify(input.options),
-      input.context,
-      input.rationale ?? null,
-      JSON.stringify(input.impacts ?? []),
-      input.recommended ?? null,
-      this.now(),
-    );
-    return escalationOf(
-      this.selectOne("SELECT * FROM escalations WHERE id = ?", Number(result.lastInsertRowid)) as Row,
-    );
+    return this.transaction(() => {
+      const result = this.execute(
+        "INSERT INTO escalations (run_id, step_id, category, question, options, context, rationale, impacts, recommended, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)",
+        input.runId,
+        input.stepId,
+        input.category,
+        input.question,
+        JSON.stringify(input.options),
+        input.context,
+        input.rationale ?? null,
+        JSON.stringify(input.impacts ?? []),
+        input.recommended ?? null,
+        this.now(),
+      );
+      const id = Number(result.lastInsertRowid);
+      const card = input.card ?? null;
+      if (card !== null)
+        this.putArtifact(
+          input.runId,
+          ESCALATION_CARDS,
+          JSON.stringify({ ...this.#cards(input.runId), [String(id)]: card }),
+          input.stepId,
+        );
+      return escalationOf(this.selectOne("SELECT * FROM escalations WHERE id = ?", id) as Row, card);
+    });
   }
 
   listEscalations(
@@ -279,7 +315,23 @@ export class DecisionStore extends StepStore {
       params.push(filter.stepId);
     }
     const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
-    return this.selectAll(`SELECT * FROM escalations ${clause} ORDER BY id`, ...params).map(escalationOf);
+    const cards = new Map<string, Record<string, DecisionCard>>();
+    return this.selectAll(`SELECT * FROM escalations ${clause} ORDER BY id`, ...params).map((row) => {
+      const runId = str(row, "run_id");
+      if (!cards.has(runId)) cards.set(runId, this.#cards(runId));
+      return escalationOf(row, cards.get(runId)?.[String(num(row, "id"))] ?? null);
+    });
+  }
+
+  /** Les cartes des escalades d'un run (artefact interne : aucune migration), par id d'escalade. */
+  #cards(runId: string, name: string = ESCALATION_CARDS): Record<string, DecisionCard> {
+    const raw = this.getArtifact(runId, name);
+    if (raw === null) return {};
+    try {
+      return JSON.parse(raw) as Record<string, DecisionCard>;
+    } catch {
+      return {};
+    }
   }
 
   /** `reason` : la raison donnée par l'humain (`null` : réponse sans raison, ou du service). */

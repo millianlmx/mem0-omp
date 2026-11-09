@@ -17,6 +17,8 @@
 // chaque décision porte son `context` (la situation, autoportante, en Markdown) et,
 // pour une escalade, l'impact de chaque option (`impacts`, dans l'ordre des options).
 
+import { type CardDraft, parseCard } from "./card.ts";
+
 export type DecisionCategory = "reversible" | "clarification" | "schema" | "public_api" | "deletion";
 
 export const DECISION_CATEGORIES: readonly DecisionCategory[] = [
@@ -59,6 +61,9 @@ export function detectIrreversible(text: string): IrreversibleCategory | null {
   return null;
 }
 
+/** Le nombre maximal de preuves (`evidence`) qu'une décision cite. */
+export const EVIDENCE_MAX = 10;
+
 export type DecisionInput = {
   question: string;
   options: string[];
@@ -71,11 +76,20 @@ export type DecisionInput = {
   category: DecisionCategory;
   /** Les numéros des décisions du run dont ce choix découle. */
   dependsOn: number[];
+  /** Ce qui fonde la décision : chemins du dépôt ou motifs de recherche, vérifiés contre le graphe du run. */
+  evidence: string[];
+  /** La carte de décision (headline, stake, options chiffrées…) ; `null` sans carte. Exigée pour une escalade. */
+  card: CardDraft | null;
 };
 
 export type DecisionPlan =
   | { kind: "checkpoint"; input: DecisionInput }
-  | { kind: "escalate"; input: DecisionInput; category: IrreversibleCategory; hardened: boolean };
+  | {
+      kind: "escalate";
+      input: DecisionInput & { card: CardDraft };
+      category: IrreversibleCategory;
+      hardened: boolean;
+    };
 
 export type DecisionParse = { ok: true; plan: DecisionPlan } | { ok: false; error: string };
 
@@ -127,6 +141,22 @@ function dependsOnOf(value: unknown): number[] | null {
   return seqs.sort((a, b) => a - b);
 }
 
+const EVIDENCE_ERROR = `evidence : une liste de chemins du dépôt ou de motifs de recherche (${EVIDENCE_MAX} au plus)`;
+
+/** Les preuves citées, dédoublonnées dans l'ordre, ou l'erreur à rendre à l'agent. */
+function evidenceOf(value: unknown): { ok: true; items: string[] } | { ok: false; error: string } {
+  if (value === undefined || value === null) return { ok: true, items: [] };
+  if (!Array.isArray(value)) return { ok: false, error: EVIDENCE_ERROR };
+  const items: string[] = [];
+  for (const item of value as unknown[]) {
+    const entry = typeof item === "string" ? item.trim() : "";
+    if (entry === "" || entry.length > 500) return { ok: false, error: EVIDENCE_ERROR };
+    if (!items.includes(entry)) items.push(entry);
+  }
+  if (items.length > EVIDENCE_MAX) return { ok: false, error: `evidence : au plus ${EVIDENCE_MAX} preuves` };
+  return { ok: true, items };
+}
+
 /** Les impacts, un par option ; `null` si la liste n'en est pas une ou ne suit pas les options. */
 function impactsOf(value: unknown, options: readonly string[]): string[] | null {
   if (value === undefined || value === null) return [];
@@ -137,23 +167,37 @@ function impactsOf(value: unknown, options: readonly string[]): string[] | null 
   return impacts;
 }
 
-/** Valide l'appel `decision` d'un runner et dit ce que le service en fait. */
-export function planDecision(raw: unknown): DecisionParse {
+const CARD_HINT =
+  "headline (15 mots au plus, ni chemin ni `code`), stake (une ligne), established (une ligne), evidence (au moins une pour une escalade), " +
+  "options [{ label, impact, reversible, cost? }], recommended, confidence";
+
+/**
+ * Valide l'appel `decision` d'un runner et dit ce que le service en fait. `cardRequired` : la carte est exigée
+ * même pour une décision qui ne s'escalade pas (/req et /specs).
+ */
+export function planDecision(raw: unknown, rules: { cardRequired?: boolean } = {}): DecisionParse {
   if (!isRecord(raw))
     return {
       ok: false,
-      error: "arguments attendus : { question, context, options, impacts?, chosen, rationale, category, dependsOn? }",
+      error:
+        "arguments attendus : { question | headline, context, options, impacts?, chosen | recommended, rationale, category, dependsOn?, evidence?, stake?, established?, confidence? }",
     };
-  const question = typeof raw.question === "string" ? raw.question.trim() : "";
-  if (question === "") return { ok: false, error: "question est requise" };
-  const options = Array.isArray(raw.options)
-    ? raw.options.filter((o): o is string => typeof o === "string" && o.trim() !== "").map((o) => o.trim())
-    : [];
+  const parsedCard = parseCard(raw);
+  if (!parsedCard.ok) return { ok: false, error: parsedCard.error };
+  // Avec une carte, `headline` EST la question, les options portent leurs impacts, `recommended` est le choix.
+  const card = parsedCard.draft;
+  const question = card ? card.headline : typeof raw.question === "string" ? raw.question.trim() : "";
+  if (question === "") return { ok: false, error: "question est requise (headline avec la carte)" };
+  const options = card
+    ? card.options.map((option) => option.label)
+    : Array.isArray(raw.options)
+      ? raw.options.filter((o): o is string => typeof o === "string" && o.trim() !== "").map((o) => o.trim())
+      : [];
   if (options.length < OPTIONS_MIN) return { ok: false, error: "au moins deux options sont requises" };
   if (options.length > OPTIONS_MAX)
     return { ok: false, error: `au plus ${OPTIONS_MAX} options : garde les plus plausibles` };
   if (new Set(options).size !== options.length) return { ok: false, error: "options : deux options identiques" };
-  const chosen = typeof raw.chosen === "string" ? raw.chosen.trim() : "";
+  const chosen = card ? card.recommended : typeof raw.chosen === "string" ? raw.chosen.trim() : "";
   if (!options.includes(chosen)) return { ok: false, error: "chosen doit reprendre une des options mot pour mot" };
   const rationale = typeof raw.rationale === "string" ? raw.rationale.trim() : "";
   if (rationale === "") return { ok: false, error: "rationale est requise : une décision sans raison sera rouverte" };
@@ -166,28 +210,59 @@ export function planDecision(raw: unknown): DecisionParse {
     };
   const category = categoryOf(raw.category);
   if (category === null) return { ok: false, error: `category : ${DECISION_CATEGORIES.join(" | ")}` };
-  const impacts = impactsOf(raw.impacts, options);
+  const impacts = card ? card.options.map((option) => option.impact) : impactsOf(raw.impacts, options);
   if (impacts === null)
     return { ok: false, error: "impacts : une conséquence par option, non vide, dans l'ordre des options" };
   const dependsOn = dependsOnOf(raw.dependsOn);
   if (dependsOn === null)
     return { ok: false, error: "dependsOn : la liste des numéros (#N) des décisions dont ce choix découle" };
-  const input: DecisionInput = { question, options, chosen, rationale, context, impacts, category, dependsOn };
+  const evidence = evidenceOf(raw.evidence);
+  if (!evidence.ok) return { ok: false, error: evidence.error };
+  const input: DecisionInput = {
+    question,
+    options,
+    chosen,
+    rationale,
+    context,
+    impacts,
+    category,
+    dependsOn,
+    evidence: evidence.items,
+    card,
+  };
   const declared = irreversibleOf(category);
-  if (declared !== null && impacts.length === 0)
+  // Le contexte décrit la situation, pas le choix : il n'entre pas dans la détection (faux positifs).
+  const detected = declared === null ? detectIrreversible([question, chosen, rationale].join("\n")) : null;
+  const escalation = declared ?? detected;
+  if (escalation === null) {
+    // /req et /specs : la carte de chaque décision nourrit la carte en tête des specs à valider (la preuve y reste facultative).
+    if (card === null && rules.cardRequired === true)
+      return { ok: false, error: `la carte est requise pour toute décision de /req et /specs : ${CARD_HINT}` };
+    return { ok: true, plan: { kind: "checkpoint", input } };
+  }
+  if (card === null)
     return {
       ok: false,
-      error: "impacts est requis pour une escalade : l'humain tranche entre des conséquences, pas entre des libellés",
+      error:
+        detected === null
+          ? `la carte est requise pour une escalade (${escalation}) : ${CARD_HINT}`
+          : `décision déclarée réversible mais classée ${escalation} par le service : elle sera escaladée, et une escalade exige sa carte — donne ${CARD_HINT}, ou reformule-la sans geste irréversible`,
     };
-  if (declared !== null) return { ok: true, plan: { kind: "escalate", input, category: declared, hardened: false } };
-  // Le contexte décrit la situation, pas le choix : il n'entre pas dans la détection (faux positifs).
-  const detected = detectIrreversible([question, chosen, rationale].join("\n"));
-  if (detected)
+  if (input.evidence.length === 0)
     return {
-      ok: true,
-      plan: { kind: "escalate", input: { ...input, category: detected }, category: detected, hardened: true },
+      ok: false,
+      error:
+        "evidence : au moins une preuve est requise pour une escalade (un fichier ou dossier que tu as lu ou modifié, ou le motif exact d'une recherche faite)",
     };
-  return { ok: true, plan: { kind: "checkpoint", input } };
+  return {
+    ok: true,
+    plan: {
+      kind: "escalate",
+      input: { ...input, card, category: escalation },
+      category: escalation,
+      hardened: detected !== null,
+    },
+  };
 }
 
 /** Le message du commit WIP d'une décision : le checkpoint N, retrouvable après un rebase. */

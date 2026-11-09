@@ -11,7 +11,7 @@ import { crashed } from "../../omp-harness/machine.ts";
 import type { Transition } from "../../omp-harness/machine.ts";
 
 function specsWith(split: string): string {
-  return `## Relevé du dépôt\n- src/api : routes\n## Non-objectifs\n## Spécifications\nS-1 (AC-1) : export CSV\n## Critères d'acceptation\nAC-1 (B-1) : Given des données, When l'export est demandé, Then un CSV est produit\n## Modules\n- src/api\n## Découpage\n${split}\n`;
+  return `Ce que fait cette feature : exporter les données au format CSV.\n## Relevé du dépôt\n- src/api : routes\n## Non-objectifs\n## Spécifications\nS-1 (AC-1) : export CSV\n## Critères d'acceptation\nAC-1 (B-1) : Given des données, When l'export est demandé, Then un CSV est produit\n## Modules\n- src/api\n## Découpage\n${split}\n`;
 }
 
 // Les features découpées touchent d'autres modules que le parent : seul le préalable du merge les retient.

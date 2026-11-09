@@ -309,6 +309,9 @@ export function runnerEnv(
 
 const STRINGS = { type: "array", items: { type: "string" } } as const;
 
+/** Une ligne de carte : le serveur refuse au-delà (card.ts `CARD_LINE_MAX`). */
+const ONE_LINE = { type: "string", maxLength: 240 } as const;
+
 const DECISION_TOOL: HostToolDefinition = {
   name: "decision",
   label: "Harness — décision",
@@ -320,7 +323,10 @@ const DECISION_TOOL: HostToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      question: { type: "string", description: "La question, autoportante, en une phrase." },
+      question: {
+        type: "string",
+        description: "La question, autoportante, en une phrase. Avec la carte, `headline` en tient lieu.",
+      },
       context: {
         type: "string",
         description:
@@ -329,16 +335,42 @@ const DECISION_TOOL: HostToolDefinition = {
           "et ce qu'elle doit livrer, l'endroit du code concerné (fichiers, symboles), ce qui pose la question (ce que les " +
           "specs ou l'existant ne tranchent pas) et l'enjeu. Explique tout terme propre au projet.",
       },
-      options: { ...STRINGS, minItems: 2, maxItems: 4, description: "Les options envisagées (2 à 4), mot pour mot." },
+      options: {
+        type: "array",
+        minItems: 2,
+        maxItems: 4,
+        items: {
+          anyOf: [
+            { type: "string" },
+            {
+              type: "object",
+              properties: {
+                label: { type: "string", description: "Le libellé de l'option, mot pour mot." },
+                impact: { ...ONE_LINE, description: "Sa conséquence pour l'humain, une ligne." },
+                reversible: { type: "boolean", description: "Peut-on la défaire sans dommage ?" },
+                cost: { type: "string", enum: ["faible", "moyen", "fort"] },
+              },
+              required: ["label", "impact", "reversible"],
+              additionalProperties: false,
+            },
+          ],
+        },
+        description:
+          "Les options envisagées (2 à 4), mot pour mot. Pour une ESCALADE : des objets { label, impact, reversible, cost? } " +
+          "(le service refuse une option sans `impact` ni `reversible`) ; sinon des textes suffisent.",
+      },
       impacts: {
         ...STRINGS,
         minItems: 2,
         maxItems: 4,
         description:
-          "Ce qu'emporte chaque option, dans l'ordre de `options` (une phrase chacune : ce qui change, ce qu'il en coûte, " +
-          "ce qui devient difficile à défaire). REQUIS pour une escalade ; recommandé pour une clarification.",
+          "Sans carte : ce qu'emporte chaque option, dans l'ordre de `options` (une phrase chacune : ce qui change, ce qu'il en coûte, " +
+          "ce qui devient difficile à défaire). Avec la carte, chaque option porte son `impact`.",
       },
-      chosen: { type: "string", description: "L'option retenue (reprise d'une des options)." },
+      chosen: {
+        type: "string",
+        description: "L'option retenue (reprise d'une des options). Avec la carte, `recommended` en tient lieu.",
+      },
       rationale: {
         type: "string",
         description: "Pourquoi cette option : réversibilité, coût, cohérence avec l'existant.",
@@ -351,8 +383,39 @@ const DECISION_TOOL: HostToolDefinition = {
           "Les numéros (#N) des décisions déjà prises dont ce choix découle. Renverser l'une d'elles annulera aussi celle-ci ; " +
           "un choix qui tiendrait quelle que soit l'issue des autres n'en déclare aucune.",
       },
+      evidence: {
+        ...STRINGS,
+        maxItems: 10,
+        description:
+          "Ce qui fonde la décision, lu ou fait par TOI dans cette session : chemins du dépôt " +
+          "(fichier ou dossier, `chemin:ligne` accepté) ou motif exact d'une recherche faite. Le service refuse " +
+          "une preuve qu'il n'a pas vue. Facultatif, SAUF pour une escalade (au moins une).",
+      },
+      headline: {
+        ...ONE_LINE,
+        description:
+          "LA CARTE d'une escalade, ce que l'humain lit d'abord : la question en 15 mots au plus, sans chemin de fichier ni " +
+          "`code` ni identifiant. Remplace `question`. Le service refuse une carte non conforme.",
+      },
+      stake: {
+        ...ONE_LINE,
+        description: "Carte : l'enjeu en une ligne (ce qu'on perd ou gagne), sans chemin de fichier.",
+      },
+      established: {
+        ...ONE_LINE,
+        description: "Carte : ce qui est déjà établi, en une ligne, sans chemin de fichier.",
+      },
+      recommended: {
+        type: "string",
+        description: "Carte : le libellé de l'option que tu recommandes (remplace `chosen`).",
+      },
+      confidence: {
+        type: "string",
+        enum: ["faible", "moyenne", "forte"],
+        description: "Carte : ta confiance dans la recommandation.",
+      },
     },
-    required: ["question", "context", "options", "chosen", "rationale", "category"],
+    required: ["context", "options", "rationale", "category"],
     additionalProperties: false,
   },
   loadMode: "essential",
@@ -737,6 +800,31 @@ const INTAKE_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+/** Le relecteur « humain pressé » (card-reader.ts) : il rend ses réécritures, jamais les options. */
+const CARD_REVIEW_TOOL: HostToolDefinition = {
+  name: "card_review",
+  label: "Harness — relecture de carte",
+  description:
+    "Rends ta relecture de la carte, UNE fois. `headline`, `stake`, `established` et `impacts` : donne une réécriture " +
+    "SEULEMENT si la carte ne se comprend pas en 30 secondes sans connaître le code ; sinon omets-les. Tu ne touches " +
+    "jamais aux options, à leur réversibilité, à la recommandation ni à la confiance.",
+  parameters: {
+    type: "object",
+    properties: {
+      headline: { ...ONE_LINE, description: "La question réécrite : 15 mots au plus, ni chemin de fichier ni code." },
+      stake: { ...ONE_LINE, description: "L'enjeu réécrit, une ligne, sans chemin." },
+      established: { ...ONE_LINE, description: "Ce qui est établi, réécrit, une ligne, sans chemin." },
+      impacts: {
+        type: "array",
+        items: ONE_LINE,
+        description: "Les impacts réécrits, un par option, dans l'ordre des options (une ligne chacun).",
+      },
+    },
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 const WORKSTATION_ACT_TOOL: HostToolDefinition = {
   name: "workstation_act",
   label: "Poste — action dans le navigateur",
@@ -1075,10 +1163,11 @@ const WORKSTATION_WATCH_BRIEF_TOOL: HostToolDefinition = {
  * quand la revue a une prévisualisation (`options.qa`, browser/qa.ts).
  */
 export function hostToolsFor(
-  step: StepKind | "audit" | "intake" | "pilot" | "challenge" | "dream" | WorkstationJob,
+  step: StepKind | "audit" | "intake" | "pilot" | "challenge" | "dream" | "carte" | WorkstationJob,
   options: { qa?: boolean } = {},
 ): HostToolDefinition[] {
   if (step === "intake") return [PROGRESS_TOOL, INTAKE_TOOL];
+  if (step === "carte") return [CARD_REVIEW_TOOL];
   if (step === "audit") return [PROGRESS_TOOL, RECALL_TOOL, AUDIT_TOOL];
   if (step === "pilot") return [PROGRESS_TOOL, RECALL_TOOL, PILOT_TOOL];
   if (step === "dream") return [PROGRESS_TOOL, RECALL_TOOL, DREAM_TOOL];

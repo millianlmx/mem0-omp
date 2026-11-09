@@ -127,9 +127,16 @@ export const EVENT_TYPES = [
   "activity",
   "session",
   "test_output",
+  // le graphe de session d'un run a changé : `{version, nodes, edges}` (des nombres), le client relit `GET /v1/runs/{id}/graph`
+  "graph",
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
 
 /** Les événements poussés en direct sans être écrits. */
-export const EPHEMERAL_EVENTS: ReadonlySet<EventType> = new Set<EventType>(["activity", "session", "test_output"]);
+export const EPHEMERAL_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
+  "activity",
+  "session",
+  "test_output",
+  "graph",
+]);

@@ -39,6 +39,8 @@ import type { DecisionRow, RepoFilter, RunRow } from "./db.ts";
 import { detectIrreversible } from "./decisions.ts";
 import { DigestSender } from "./digest.ts";
 import { HarnessError } from "./errors.ts";
+import { Briefings } from "./briefing.ts";
+import type { Briefing } from "./briefing.ts";
 import { HumanLoop } from "./gestures.ts";
 import type { Delivered } from "./gestures.ts";
 import { newId } from "./ids.ts";
@@ -66,6 +68,7 @@ import { inboxOf, loadOf, runView } from "./queries.ts";
 import { forceStopQa } from "./browser/qa.ts";
 import { forceStop } from "./runner.ts";
 import { auditOwner } from "./session-feed.ts";
+import type { SessionGraphView } from "./session-graph.ts";
 import { Schedules } from "./schedules.ts";
 import { projectScope } from "./scope.ts";
 import type { Slot } from "./scheduler.ts";
@@ -147,6 +150,7 @@ export type RunWithWait = RunRow & { waitCause?: QueueWait["cause"] };
 export class Orchestrator {
   readonly #ctx: HarnessContext;
   readonly #steps: StepExecutor;
+  readonly #briefings: Briefings;
   readonly #splits: Splitter;
   readonly #merger: Merger;
   readonly #human: HumanLoop;
@@ -226,6 +230,7 @@ export class Orchestrator {
     this.#splits = new Splitter(this.#ctx, {
       openProject: (input, parent) => this.#openProject(input, SERVICE, { afterRun: parent }),
     });
+    this.#briefings = new Briefings(this.#ctx);
     this.#steps = new StepExecutor(this.#ctx, {
       split: (run, features, step) => this.#splits.launch(run, features, step, "runner"),
     });
@@ -897,6 +902,8 @@ export class Orchestrator {
             : run.step === "review" && run.lastFailCause === "missing_output"
               ? run.lastFailCause
               : null;
+        // L'attente de specs ou d'arbitrage s'ouvre sur sa carte : écrite AVANT la transition, jamais bloquante.
+        if (transition.state === "awaiting_human") await this.#briefings.prepare(run, transition);
         // Une attente que l'autonomie va lever seule : les notifications sont retenues (`hold`) jusqu'à
         // son tour, qui valide ou y renonce et les publie (autonomy-gates.ts).
         const held =
@@ -1212,23 +1219,31 @@ export class Orchestrator {
     const view = runView(this.store, this.withWait(this.visibleRun(runId, repos)), this.#live.has(runId));
     return {
       ...view,
+      run: this.withBriefing(view.run as RunRow),
       usage: this.store.runUsage(runId),
       budget: this.#ctx.monitor.budget(runId),
       alerts: this.#ctx.monitor.alertsOf(runId),
     };
   }
 
+  /** Un run tel que l'API le rend, avec la carte en tête de ce qu'il attend (`briefing`, vide s'il n'attend ni specs ni arbitrage). */
+  withBriefing<T extends RunRow>(run: T): T & { briefing: Briefing } {
+    return { ...run, briefing: this.#briefings.read(run) };
+  }
+
   /** La boîte de l'humain : `inboxOf` (filtrée par dépôts), les alertes et les coûts des runs listés. */
   inboxView(repos: RepoFilter = null): Record<string, unknown> {
     const inbox = inboxOf(this.store, repos);
-    const runs = (inbox.runs as RunRow[]).map((run) => this.withWait(run));
+    const runs = (inbox.runs as RunRow[]).map((run) => this.withBriefing(this.withWait(run)));
+    const awaiting = (inbox.awaiting as RunRow[]).map((run) => this.withBriefing(run));
     const batches = (inbox.batches as { run: RunRow | null; items: unknown[] }[]).map((batch) => ({
       ...batch,
-      run: batch.run === null ? null : this.withWait(batch.run),
+      run: batch.run === null ? null : this.withBriefing(this.withWait(batch.run)),
     }));
     return {
       ...inbox,
       runs,
+      awaiting,
       batches,
       alerts: this.#ctx.monitor.alerts(repos),
       costs: this.store.runCosts(runs.map((run) => run.id)),
@@ -1254,6 +1269,11 @@ export class Orchestrator {
       entries,
       more,
     };
+  }
+
+  /** Le graphe de session d'un run : ce que l'agent a lu, cherché, testé, modifié et décidé. */
+  graphView(runId: string, repos: RepoFilter = null): SessionGraphView {
+    return this.#ctx.graphs.view(this.visibleRun(runId, repos).id);
   }
 
   /** Le direct de l'analyse d'un audit, sous la même forme (`auditId` au lieu de `runId`). */

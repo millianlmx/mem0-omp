@@ -118,6 +118,7 @@ export const API_FEATURES = [
   "corporate-signals",
   "intake",
   "proofs",
+  "session-graph",
 ] as const;
 
 /** Le refus d'un geste du poste (ou d'un signalement de collègue) à un client restreint à des dépôts. */
@@ -526,6 +527,9 @@ export function apiRoutes(
     ),
     route("GET", "/v1/runs/{id}/session/{n}", "viewer", (call) =>
       send(call.res, 200, orchestrator.sessionEntryView(call.match[1] as string, Number(call.match[2]), call.repos)),
+    ),
+    route("GET", "/v1/runs/{id}/graph", "viewer", (call) =>
+      send(call.res, 200, orchestrator.graphView(call.match[1] as string, call.repos)),
     ),
     route("GET", "/v1/runs/{id}/proofs", "viewer", (call) =>
       send(call.res, 200, orchestrator.proofsView(call.match[1] as string, call.repos)),

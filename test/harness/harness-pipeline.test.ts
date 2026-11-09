@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { escalationArgs, readFrames } from "../support/card-fixtures.ts";
 import { OK, commitOnMain, fakeWorld, git, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 import { Orchestrator } from "../../omp-harness/orchestrator.ts";
@@ -283,35 +284,27 @@ test("harness-pipeline/AC-15 : une décision dont rien ne dépend se renverse sa
 });
 
 test("harness-pipeline/AC-4 : une décision irréversible n'est pas appliquée ; les escalades partent ensemble en fin d'étape, le runner meurt, la réponse fait reprendre l'étape", async () => {
-  const escalate = (question: string) => ({
+  const escalate = (headline: string, extra: Record<string, unknown> = {}) => ({
     tool: "decision",
-    args: {
-      question,
-      context: CONTEXT,
-      options: ["ajouter une colonne", "table séparée"],
-      impacts: ["une migration de la table existante", "une jointure de plus à chaque lecture"],
-      chosen: "ajouter une colonne",
-      rationale: "simple",
-      category: "schema",
-    },
+    args: escalationArgs({ headline, context: CONTEXT, rationale: "simple", ...extra }),
   });
   const world = fakeWorld({
     req: [OK.req],
     specs: [OK.specs],
     impl: [
       [
+        ...readFrames(),
         escalate("Où stocker la date d'export ?"),
-        {
-          tool: "decision",
-          args: {
-            question: "Purger l'historique ?",
-            context: CONTEXT,
-            options: ["oui", "non"],
-            chosen: "oui",
-            rationale: "supprimer les données de l'historique",
-            category: "reversible",
-          },
-        },
+        // Déclarée réversible : le service la durcit (suppression de données), la carte reste exigée.
+        escalate("Purger l'historique ?", {
+          options: [
+            { label: "oui", impact: "L'historique disparaît pour de bon.", reversible: false },
+            { label: "non", impact: "L'historique reste et grossit.", reversible: true },
+          ],
+          recommended: "oui",
+          rationale: "supprimer les données de l'historique",
+          category: "reversible",
+        }),
         ...OK.impl,
       ],
       OK.impl,

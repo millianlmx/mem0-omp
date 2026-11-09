@@ -7,7 +7,7 @@
 //
 // Scénario (FAKE_SCENARIO) : pour chaque étape (`req`, `specs`, `impl`, `review`, `audit`, `demande`,
 // `pilote`, `fix`, `contradicteur`, `reve`, les jobs du poste `poste-profil`, `poste-digest`,
-// `poste-service`, `poste-demande`, `poste-signal`, `poste-veille`, et les sessions de la vigie `vigie-triage`, `vigie-pilote`), une liste d'OCCURRENCES ; chaque occurrence est une liste d'actions :
+// `poste-service`, `poste-demande`, `poste-signal`, `poste-veille`, et les sessions de la vigie `vigie-triage`, `vigie-pilote`, et le relecteur des cartes d'escalade `carte`), une liste d'OCCURRENCES ; chaque occurrence est une liste d'actions :
 //   { "write": "chemin", "content": "…" }       écrit un fichier du worktree
 //   { "tool": "nom", "args": { … } }            appelle un outil hôte et attend
 //   { "parallel": [{ "tool", "args" }, …] }     appelle ces outils hôtes ensemble (un tour à plusieurs outils)
@@ -67,7 +67,7 @@ function stepOf(message: string): string | null {
   const first = message.split("\n")[0] ?? "";
   if (first.startsWith("# /impl --fix")) return "fix";
   const match =
-    /^# \/(req|specs|impl|review|audit|demande|pilote|contradicteur|reve|poste-profil|poste-digest|poste-service|poste-demande|poste-signal|poste-veille|vigie-triage|vigie-pilote)\b/.exec(
+    /^# \/(req|specs|impl|review|audit|demande|pilote|contradicteur|reve|carte|poste-profil|poste-digest|poste-service|poste-demande|poste-signal|poste-veille|vigie-triage|vigie-pilote)\b/.exec(
       first,
     );
   return match ? (match[1] as string) : null;

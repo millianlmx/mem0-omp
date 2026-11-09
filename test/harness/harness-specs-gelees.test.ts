@@ -16,7 +16,7 @@ const AC2 =
   "AC-2 (B-1) : Given un champ avec une virgule, When l'export est demandé, Then le champ est entre guillemets";
 
 const REQ = `## Besoins\nB-1 : exporter les données au format CSV\n## Critères d'acceptation\n${AC1}\n${AC2}\n## Hors périmètre\n## Contraintes\n`;
-const SPECS = `## Relevé du dépôt\n- src/api : routes\n## Non-objectifs\n## Spécifications\nS-1 (AC-1) : export CSV\nS-2 (AC-2) : échappement\n## Critères d'acceptation\n${AC1}\n${AC2}\n## Modules\n- src/api\n## Découpage\naucun\n`;
+const SPECS = `Ce que fait cette feature : exporter les données au format CSV.\n## Relevé du dépôt\n- src/api : routes\n## Non-objectifs\n## Spécifications\nS-1 (AC-1) : export CSV\nS-2 (AC-2) : échappement\n## Critères d'acceptation\n${AC1}\n${AC2}\n## Modules\n- src/api\n## Découpage\naucun\n`;
 
 function verdictOf(criteria: Verdict["criteria"]): Verdict {
   return {

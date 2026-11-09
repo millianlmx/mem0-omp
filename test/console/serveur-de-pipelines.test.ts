@@ -12,6 +12,7 @@ import { ClientRegistry } from "../../omp-harness/auth.ts";
 import { PERSON_FIELDS } from "../../omp-harness/db.ts";
 import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/http.ts";
 import { APPROVER_ONLY } from "../../omp-harness/workstation.ts";
+import { buildCard } from "../../omp-harness/card.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import { covers, swiftFields } from "../support/swift-contract.ts";
 import { ROOT } from "../support/repo.ts";
@@ -65,6 +66,20 @@ test("serveur-de-pipelines/AC-1 : chaque champ décodé par le client Swift exis
       question: "Q ?",
       options: ["a", "b"],
       context: "c",
+      card: buildCard(
+        {
+          headline: "Q ?",
+          stake: "Un enjeu.",
+          established: "Un fait.",
+          options: [
+            { label: "a", impact: "ia", reversible: true },
+            { label: "b", impact: "ib", reversible: false, cost: "fort" },
+          ],
+          recommended: "a",
+          confidence: "forte",
+        },
+        true,
+      ),
     });
     store.addDecision({
       runId: "r1",
@@ -103,6 +118,20 @@ test("serveur-de-pipelines/AC-1 : chaque champ décodé par le client Swift exis
     runFields.delete("waitCause");
     covers(awaiting, runFields, "HarnessRun");
     covers(awaiting.verdict as Record<string, unknown>, swiftFields(wire, "HarnessVerdict"), "HarnessVerdict");
+    // Champs ajoutés (session en graphe) : la carte de l'escalade et le briefing du run en attente. Le client Swift ne
+    // les décode pas encore ; la garde les fige côté serveur pour que les rendus Mac, iOS et Chrome lisent ce contrat.
+    const card = (batch.items as Record<string, unknown>[])[0]?.card as Record<string, unknown>;
+    assert.deepEqual(Object.keys(card).sort(), [
+      "confidence",
+      "headline",
+      "options",
+      "recommended",
+      "reviewed",
+      "schema",
+      "stake",
+    ]);
+    assert.deepEqual(Object.keys(card.schema as object).sort(), ["edges", "nodes"]);
+    assert.deepEqual(awaiting.briefing, { feature: "", cards: [] }, "un run qui attend un verdict : briefing vide");
     // Les états que l'app nomme sont ceux de la machine du serveur.
     const states = [...wire.matchAll(/case (\w+)(?: = "(\w+)")?$/gm)].map(([, name, raw]) => raw ?? name);
     const machine = read("omp-harness", "machine.ts");

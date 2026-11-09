@@ -31,6 +31,7 @@ import {
 import type { ChallengeStep } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { RunRow, StepRow } from "./db.ts";
+import { featureLine } from "./card.ts";
 import { detectIrreversible } from "./decisions.ts";
 import { ARTIFACTS_DIR, isArtifactPath, isTestFile } from "./git.ts";
 import type { HeavyResult } from "./heavy.ts";
@@ -306,7 +307,10 @@ export class StepExecutor {
         onHostTool: (name, args, signal) => runHostTool(this.#ctx, this.#hooks, live, live.runId, name, args, signal),
         event: (type, payload) =>
           this.#ctx.event(type, live.runId, { ...payload, ...(live.step ? { step: live.step.kind } : {}) }),
-        frame: (frame) => this.#ctx.sessions.frame(live.runId, live.step?.kind ?? null, frame),
+        frame: (frame) => {
+          this.#ctx.sessions.frame(live.runId, live.step?.kind ?? null, frame);
+          this.#ctx.graphs.frame(run, live.step, frame);
+        },
         runnerChanged: (unit, model) => {
           store.updateRun(live.runId, { model });
           if (live.step) store.setStepRunner(live.step.id, unit, model);
@@ -362,6 +366,7 @@ export class StepExecutor {
       reused ? session.unit : null,
     );
     live.step = stepRow;
+    this.#ctx.graphs.step(run, stepRow);
     live.verdict = null;
     live.fullRunsThisStep = 0;
     live.lastFull = null;
@@ -499,6 +504,8 @@ export class StepExecutor {
         reason,
         !(err instanceof PolicyRefusal),
       );
+    } finally {
+      this.#ctx.graphs.flush(run.id);
     }
   }
 
@@ -802,6 +809,8 @@ export class StepExecutor {
         return "la section `## Modules` de specs.md est vide : une puce par chemin du dépôt que l'implémentation touchera (les fichiers de `.harness/` ne comptent pas)";
       const gap = specsCoverageGap(store.getArtifact(run.id, "req.md") ?? "", specs);
       if (gap !== null) return gap;
+      if (featureLine(specs) === null)
+        return "la ligne `Ce que fait cette feature : <une phrase>` manque en tête de specs.md : c'est la première ligne de la carte que l'humain lit";
     }
     if (step === "review" && (await git.mergeInProgress(worktree))) {
       const unresolved = await this.#unresolvedConflicts(worktree);

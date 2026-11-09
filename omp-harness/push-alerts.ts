@@ -10,7 +10,9 @@
 //
 // La charge est minimale : un titre, le dépôt et le titre du run, et des identifiants
 // (`omp.kind`, `runId`, `rev`, `seq`) — jamais le contenu du poste (ni résumé, ni
-// destinataires, ni brouillon), jamais une raison d'échec ou une question. Le nombre de
+// destinataires, ni brouillon), jamais une raison d'échec ni la question d'une escalade sans carte.
+// Une escalade à carte porte sa `headline` (titre) et son `stake` (corps) seulement : la carte
+// est écrite pour être lue d'un coup d'œil, sans chemin ni code. Le nombre de
 // preuves d'un verdict n'est pas du contenu de run : il s'ajoute au corps. La
 // `category` dit le geste que l'appareil peut faire de la notification : valider ou
 // refuser (specs, verdict : opérateur au moins), approuver ou refuser (envoi du poste :
@@ -23,6 +25,7 @@
 import { createHash } from "node:crypto";
 import type { Client } from "./auth.ts";
 import { allows, canSeeRepo } from "./auth.ts";
+import { batchLead } from "./card.ts";
 import type { ApnsConfig } from "./config.ts";
 import type { EventRow, RunRow, Store } from "./db.ts";
 import type { LogLine } from "./logger.ts";
@@ -142,10 +145,14 @@ export function alertFor(event: EventRow, store: Store): Alert | null {
         .filter(Number.isInteger)
         .sort((a, b) => a - b);
       if (ids.length === 0) return null;
+      const alert = runAlert(run, "escalation", "", `escalation:${run.id}:${ids.join(",")}`);
+      // Une escalade à carte : la headline et le stake de la première, rien d'autre (jamais option ni contexte).
+      const lead = batchLead(Array.isArray(payload.items) ? payload.items : []);
+      if (lead) return { ...alert, title: lead.headline, body: lead.body };
       // Les mots de l'app (vouvoiement, « feature » plutôt que « run ») : la notification est la sienne.
       const title =
         ids.length === 1 ? "Une question attend votre réponse" : `${ids.length} questions attendent votre réponse`;
-      return runAlert(run, "escalation", title, `escalation:${run.id}:${ids.join(",")}`);
+      return { ...alert, title };
     }
     case "workstation_approval": {
       const seq = Number(payload.seq);

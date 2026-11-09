@@ -9,6 +9,7 @@
 // minutes : une alerte qui revient en boucle ne sonne qu'une fois. Fire-and-forget :
 // une erreur n'arrête rien et n'est journalisée (log + événement `notify_failed`)
 // qu'une fois par heure et par cible.
+import { batchLead } from "./card.ts";
 import type { HarnessConfig, NotifyTarget } from "./config.ts";
 import type { EventRow, RunRow, Store } from "./db.ts";
 import { scheduleStatus } from "./digest.ts";
@@ -67,6 +68,9 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
   switch (event.type) {
     case "escalations": {
       const items = Array.isArray(payload.items) ? payload.items : [];
+      // Une escalade à carte : titre = sa headline, corps = son stake (+ les autres du lot), rien d'autre.
+      const lead = batchLead(items);
+      if (lead) return { title: lead.headline, body: lead.body, priority: 4, tags: ["question"], click: null };
       const first = items[0];
       const question = first !== null && typeof first === "object" && "question" in first ? text(first.question) : "";
       return {

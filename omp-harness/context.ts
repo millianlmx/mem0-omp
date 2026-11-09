@@ -30,6 +30,7 @@ import type { Scheduler } from "./scheduler.ts";
 import type { ChannelFetch } from "./canaux/channels.ts";
 import { Monitor } from "./monitor.ts";
 import { SessionFeeds } from "./session-feed.ts";
+import { SessionGraphs } from "./session-graph.ts";
 import { ActivityPusher, ApnsClient } from "./push.ts";
 import { AlertPusher } from "./push-alerts.ts";
 import { ProofStore, currentRound } from "./proofs.ts";
@@ -95,6 +96,8 @@ export class HarnessContext {
   readonly notifier: Notifier;
   /** Le direct des sessions de runners : poussé en événements éphémères `session`, gardé en tampon borné. */
   readonly sessions: SessionFeeds;
+  /** Le graphe de session des runs : écrit dans `_session-graph.json`, poussé en événement éphémère `graph`. */
+  readonly graphs: SessionGraphs;
   /** La veille : coût et budget des features, alertes (agent muet, étape lente, boucle de corrections). */
   readonly monitor: Monitor;
   /** La sortie en direct des jobs de tests (événements éphémères `test_output`, derniers jobs en mémoire). */
@@ -152,6 +155,12 @@ export class HarnessContext {
       // Les clés que le service passe aux runners : masquées si l'agent les affiche.
       secrets: () => Object.values(this.providers.runnerEnv()),
       onUsage: (owner, step, usage) => this.monitor.recordUsage(owner, step, usage),
+    });
+    this.graphs = new SessionGraphs({
+      store: this.store,
+      publish: (runId, payload) => this.event("graph", runId, payload),
+      secrets: () => Object.values(this.providers.runnerEnv()),
+      log: this.log,
     });
     this.monitor = new Monitor({
       store: this.store,
@@ -267,6 +276,7 @@ export class HarnessContext {
             category: item.category,
             question: item.question,
             options: item.options,
+            stake: item.card?.stake ?? null,
           })),
         });
       }
