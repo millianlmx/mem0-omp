@@ -1434,6 +1434,12 @@
 "Brouillon Gmail créé" = "Gmail draft created";
 "Brouillon Gmail pas encore créé" = "Gmail draft not created yet";
 "Brouillon gardé par le serveur" = "Draft kept by the server";
+"Valider ce texte" = "Approve this text";
+"Texte de la réponse" = "Reply text";
+"Validée, en attente d’envoi" = "Approved, waiting to be sent";
+"Envoi non abouti" = "Not sent";
+"Cette réponse a changé depuis votre lecture : la liste vient d’être relue, relisez-la avant de la valider." = "This reply changed since you read it: the list was just reloaded, review it before approving.";
+"Seul l’appareil approbateur peut valider, modifier ou écarter une réponse proposée : appairez cette app avec le code approbateur (harness.sh approver sur le VPS)." = "Only the approver device can approve, edit or dismiss a proposed reply: pair this app with the approver code (harness.sh approver on the VPS).";
 "Réponse proposée" = "Proposed reply";
 "Rappel proposé" = "Proposed follow-up";
 "Préparation de réunion" = "Meeting preparation";

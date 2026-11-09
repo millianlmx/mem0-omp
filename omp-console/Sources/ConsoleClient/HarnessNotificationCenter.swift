@@ -116,6 +116,9 @@ public final class HarnessNotificationCenter: NSObject, ObservableObject {
             return
         }
         guard await !server.execute(gesture), let alert else { return }
+        // Une réponse que le serveur n'a pas validée (en pause, changée, droits) : « À traiter »,
+        // où elle se relit et se revalide.
+        if case .validateReply = gesture { openRequest = alert.destination }
         // Refusé (révision périmée, droits) : rien n'est tranché, et l'humain le sait.
         let content = UNMutableNotificationContent()
         content.title = NotificationText.gestureFailed

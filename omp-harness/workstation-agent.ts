@@ -36,6 +36,7 @@ import * as path from "node:path";
 import type { HarnessConfig, RepoConfig, Tier } from "./config.ts";
 import { isRecord, repoDefaults } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
+import { replyPromptSection } from "./canaux/reponses.ts";
 import type { Watch, WatchPlan } from "./canaux/veille.ts";
 import type { SignalDesk, SignalInput } from "./corporate/signals.ts";
 import type { Meeting, StoredObservation, WorkstationAction, WorkstationProfile, WorkstationRequest } from "./db.ts";
@@ -799,11 +800,14 @@ export class WorkstationAgent {
         this.#requestTool(name, args, counter, live, request.id, out),
       );
       const deadlineAt = Date.now() + config.runner.stepTimeoutSec * 1000;
+      // Une demande rattachée à une réponse validée : la marche à suivre et la réponse (non fiable).
+      const reply = store.watchItemOfRequest(request.id);
       let result = await session.prompt(
         workstationRequestPrompt({
           instruction: request.instruction,
           maxActions: config.workstation.shiftMaxActions,
           profile: profileText(store.latestWorkstationProfile()),
+          reply: reply === null ? null : replyPromptSection(reply),
         }),
         live.abort.signal,
         deadlineAt,
@@ -863,6 +867,24 @@ export class WorkstationAgent {
       }
       case "workstation_signal":
         return this.#reportSignal(args, requestId);
+      case "workstation_reply_type": {
+        // Le texte validé EXACT, tenu par le serveur : le modèle ne le recopie jamais.
+        const reply = this.#ctx.store.watchItemOfRequest(requestId);
+        if (reply === null || reply.channel !== "slack" || reply.state !== "validated")
+          return { text: "cette demande n'envoie aucune réponse Slack validée", isError: true };
+        return this.#deposit(
+          "workstation_act",
+          {
+            kind: "type",
+            params: { tabId: args.tabId, ref: args.ref, text: reply.text, submit: args.submit ?? true },
+            rationale: "saisir et envoyer la réponse validée par l'humain",
+          },
+          counter,
+          live,
+          requestId,
+          "plafond d'actions de cette demande atteint : rends ton compte rendu par `workstation_request_report` maintenant.",
+        );
+      }
       default:
         return { text: `outil inconnu : ${name}`, isError: true };
     }

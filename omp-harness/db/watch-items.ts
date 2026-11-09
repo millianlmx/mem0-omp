@@ -6,11 +6,11 @@
 // une issue ni la mémoire d'un dépôt (la vigie retire ces textes, VigieStore.workstationTexts),
 // purgée avec le poste (`workstation.retentionDays`).
 //
-// Contrat pour la sous-feature « Validation et envoi des réponses proposées » : `state` vaut
-// `open` à la création ; elle ajoute ses états (écartée, validée, envoyée) et ses gestes
-// par `updateWatchItem` (révision `rev`, comme une personne du graphe).
+// La validation des réponses proposées (canaux/reponses.ts) ajoute ses états — `validated`
+// (en attente d'envoi), `sent`, `dismissed`, `failed` (envoi non abouti, revalidable) — et ses
+// colonnes : la demande du poste rattachée, l'empreinte figée, l'action d'envoi autorisée.
 import { PeopleStore } from "./people.ts";
-import { json, num, str, strOrNull } from "./sql.ts";
+import { json, num, numOrNull, str, strOrNull } from "./sql.ts";
 import type { Row, SqlValue } from "./sql.ts";
 
 /** Les sortes d'élément : réponse proposée, relance due, préparation de réunion, brief du matin. */
@@ -51,6 +51,36 @@ export type WatchItemRow = Omit<WatchItemInput, "at"> & {
   rev: number;
   createdAt: number;
   updatedAt: number;
+  /** La demande du poste rattachée à la réponse validée. */
+  requestId: string | null;
+  /** L'empreinte SHA-256 des destinataires et du texte complet, figée à la validation. */
+  fingerprint: string | null;
+  /** L'action d'envoi de la demande rattachée (la première qui a demandé l'accord). */
+  sendSeq: number | null;
+  /** Pourquoi l'envoi n'a pas abouti (`failed`). */
+  sendError: string | null;
+  validatedAt: number | null;
+};
+
+/** Ce que les gestes de la validation écrivent ; un champ absent reste. */
+export type WatchItemPatch = {
+  state?: string;
+  text?: string;
+  requestId?: string | null;
+  fingerprint?: string | null;
+  sendSeq?: number | null;
+  sendError?: string | null;
+  validatedAt?: number | null;
+};
+
+const PATCH_COLUMNS: Record<keyof WatchItemPatch, string> = {
+  state: "state",
+  text: "text",
+  requestId: "request_id",
+  fingerprint: "fingerprint",
+  sendSeq: "send_seq",
+  sendError: "send_error",
+  validatedAt: "validated_at",
 };
 
 function itemOf(row: Row): WatchItemRow {
@@ -73,6 +103,11 @@ function itemOf(row: Row): WatchItemRow {
     rev: num(row, "rev"),
     createdAt: num(row, "created_at"),
     updatedAt: num(row, "updated_at"),
+    requestId: strOrNull(row, "request_id"),
+    fingerprint: strOrNull(row, "fingerprint"),
+    sendSeq: numOrNull(row, "send_seq"),
+    sendError: strOrNull(row, "send_error"),
+    validatedAt: numOrNull(row, "validated_at"),
   };
 }
 
@@ -139,21 +174,31 @@ export class WatchStore extends PeopleStore {
   }
 
   /**
-   * Change l'état et, s'il est donné, le texte d'un élément lu à la révision `rev` : `null` s'il a
-   * changé depuis (rien n'est écrit). Pour les gestes de la validation des réponses.
+   * Change un élément lu à la révision `rev` : `null` s'il a changé depuis (rien n'est écrit).
+   * Pour les gestes de la validation des réponses ; la révision avance.
    */
-  updateWatchItem(id: string, rev: number, patch: { state?: string; text?: string }, at: number): WatchItemRow | null {
-    const before = this.getWatchItem(id);
-    if (before === null || before.rev !== rev) return null;
+  updateWatchItem(id: string, rev: number, patch: WatchItemPatch, at: number): WatchItemRow | null {
+    const sets: string[] = [];
+    const params: SqlValue[] = [];
+    for (const [key, value] of Object.entries(patch) as [keyof WatchItemPatch, SqlValue | undefined][]) {
+      if (value === undefined) continue;
+      sets.push(`${PATCH_COLUMNS[key]} = ?`);
+      params.push(value);
+    }
     const changed = this.execute(
-      "UPDATE workstation_watch_items SET state = ?, text = ?, rev = rev + 1, updated_at = ? WHERE id = ? AND rev = ?",
-      patch.state ?? before.state,
-      patch.text ?? before.text,
+      `UPDATE workstation_watch_items SET ${[...sets, "rev = rev + 1", "updated_at = ?"].join(", ")} WHERE id = ? AND rev = ?`,
+      ...params,
       at,
       id,
       rev,
     );
     return Number(changed.changes) > 0 ? this.getWatchItem(id) : null;
+  }
+
+  /** La réponse rattachée à une demande du poste, s'il y en a une. */
+  watchItemOfRequest(requestId: string): WatchItemRow | null {
+    const row = this.selectOne("SELECT * FROM workstation_watch_items WHERE request_id = ?", requestId);
+    return row ? itemOf(row) : null;
   }
 
   /** Les éléments Gmail ouverts dont le brouillon reste à créer. */

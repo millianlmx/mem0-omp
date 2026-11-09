@@ -635,12 +635,15 @@ export function workstationRequestPrompt(ctx: {
   instruction: string;
   maxActions: number;
   profile: string | null;
+  /** La réponse validée que cette demande envoie (canaux/reponses.ts), déjà encadrée par `untrusted()`. */
+  reply?: string | null;
 }): string {
   return [
     `# /poste-demande — demande de l'humain
 
 L'humain te demande d'accomplir cette tâche dans son navigateur, au moyen de l'extension Chrome du poste.`,
     section("Consigne de l'humain", ctx.instruction),
+    section("Réponse validée à envoyer", ctx.reply ?? null),
     `## Règles (non négociables)
 - Tu n'agis QUE dans ta fenêtre : les onglets que tu ouvres par \`open\`. Le service le tient : un geste dans un onglet de l'utilisateur, une adresse vers un site jamais vu ou qui porte une valeur longue ou opaque attend l'approbation de l'humain — ne contourne pas.
 - ${WORKSTATION_UNTRUSTED}

@@ -545,6 +545,24 @@ public enum WatchText {
     public static let gmailDraftPending = L10n.text("Brouillon Gmail pas encore créé")
     public static let internalDraft = L10n.text("Brouillon gardé par le serveur")
 
+    // MARK: - Validation d’une réponse proposée
+
+    public static let validate = L10n.text("Valider")
+    public static let edit = L10n.text("Modifier")
+    public static let validateEdited = L10n.text("Valider ce texte")
+    public static let cancelEdit = L10n.text("Annuler")
+    public static let dismiss = L10n.text("Écarter")
+    public static let editorLabel = L10n.text("Texte de la réponse")
+    /// Validée : la demande du poste rattachée l’enverra (sa raison d’attente suit, s’il y en a une).
+    public static let validated = L10n.text("Validée, en attente d’envoi")
+    public static let validatedSymbol = "paperplane"
+    /// L’envoi n’a pas abouti (la raison du serveur suit) : la réponse se revalide.
+    public static let failed = L10n.text("Envoi non abouti")
+    public static let failedSymbol = "exclamationmark.triangle"
+    /// 412 : la réponse a changé depuis sa lecture ; rien n’est validé, la liste est relue.
+    public static let changed = L10n.text("Cette réponse a changé depuis votre lecture : la liste vient d’être relue, relisez-la avant de la valider.")
+    public static let approverOnly = L10n.text("Seul l’appareil approbateur peut valider, modifier ou écarter une réponse proposée : appairez cette app avec le code approbateur (harness.sh approver sur le VPS).")
+
     public static func kind(_ raw: String) -> String {
         switch raw {
         case "reply": L10n.text("Réponse proposée")

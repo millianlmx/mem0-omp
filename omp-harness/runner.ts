@@ -882,6 +882,24 @@ const WORKSTATION_REQUEST_REPORT_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+const WORKSTATION_REPLY_TYPE_TOOL: HostToolDefinition = {
+  name: "workstation_reply_type",
+  label: "Poste — saisir la réponse validée",
+  description:
+    "Seulement pour une demande qui envoie une réponse Slack validée : saisit dans le champ de message `ref` de l'onglet `tabId` le texte validé EXACT, tenu par le serveur, puis l'envoie (Entrée) si `submit` n'est pas `false`. L'envoi passe par la garde d'envoi : il ne part sans second geste que si l'extension voit exactement la réponse validée.",
+  parameters: {
+    type: "object",
+    properties: {
+      tabId: { type: "integer", description: "L'onglet de ta fenêtre où est ouverte la conversation Slack." },
+      ref: { type: "string", description: "La référence du champ de message (snapshot de la page)." },
+      submit: { type: "boolean", description: "Envoyer après la saisie (Entrée) ; `true` par défaut." },
+    },
+    required: ["tabId", "ref"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 const WORKSTATION_DIGEST_TOOL: HostToolDefinition = {
   name: "workstation_meeting_digest",
   label: "Poste — digest de meeting",
@@ -1074,6 +1092,7 @@ export function hostToolsFor(
       WORKSTATION_DECISION_TOOL,
       WORKSTATION_SIGNAL_TOOL,
       WORKSTATION_REQUEST_REPORT_TOOL,
+      WORKSTATION_REPLY_TYPE_TOOL,
     ];
   if (step === "poste-service")
     return [

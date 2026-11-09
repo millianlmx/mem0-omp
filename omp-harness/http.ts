@@ -1110,6 +1110,22 @@ export function apiRoutes(
       if (call.client.pilot) throw new HarnessError(403, READS_WATCH);
       send(call.res, 200, orchestrator.watch.get(call.match[1] as string));
     }),
+    // La validation des réponses proposées (canaux/reponses.ts) : l'appareil approbateur seul.
+    // Écarter supprime le brouillon Gmail ; valider (texte modifié ou non, `If-Match` facultatif)
+    // met le brouillon à jour, fige l'empreinte et pose la demande du poste qui enverra.
+    route("POST", "/v1/workstation/watch/{id}/dismiss", "operator", async (call) => {
+      approverOf(call);
+      send(call.res, 200, await orchestrator.replies.dismiss(call.match[1] as string));
+    }),
+    route("POST", "/v1/workstation/watch/{id}/validate", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(
+        call.res,
+        201,
+        await orchestrator.replies.validate(call.match[1] as string, body, ifMatch(call.req), call.actor),
+      );
+    }),
     // La vigie (vigie/) : ses réglages (admin), son battement de cœur et ses incidents (son client pilote).
     route("GET", "/v1/vigie", "viewer", (call) => send(call.res, 200, orchestrator.vigie.view(call.repos, Date.now()))),
     route("PUT", "/v1/vigie", "admin", async (call) =>

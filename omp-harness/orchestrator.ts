@@ -74,6 +74,7 @@ import { Splitter, waitReason } from "./split.ts";
 import { Workstation } from "./workstation.ts";
 import { IssueDesk } from "./issues.ts";
 import { SignalDesk } from "./corporate/signals.ts";
+import { Replies } from "./canaux/reponses.ts";
 import { Watch } from "./canaux/veille.ts";
 import { WorkstationAgent } from "./workstation-agent.ts";
 import { VigieDesk } from "./vigie/desk.ts";
@@ -185,6 +186,8 @@ export class Orchestrator {
   readonly people: PeopleGraph;
   /** La veille proactive du poste : ses éléments d'« À traiter » (réponses, relances, préparations, brief). */
   readonly watch: Watch;
+  /** La validation des réponses proposées : écarter, modifier, valider (envoi par le navigateur seul). */
+  readonly replies: Replies;
   /** Les signalements des collègues et leurs propositions (pont corpo ↔ usine) : `reportSignal` est le point d'entrée des canaux. */
   readonly signals: SignalDesk;
   /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
@@ -280,6 +283,13 @@ export class Orchestrator {
       store: this.#ctx.store,
       workstation: this.workstation,
       channels: this.channels,
+      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
+    });
+    this.replies = new Replies({
+      store: this.#ctx.store,
+      workstation: this.workstation,
+      channels: this.channels,
+      watch: this.watch,
       event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
     });
     this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation, this.signals, this.watch);
