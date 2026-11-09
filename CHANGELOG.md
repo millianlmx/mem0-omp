@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.32.0 — 2026-11-09
+
+- feat(harness): la CI de la forge comme juge de la suite complète (tests.judge: ci) (#415) (9dc6e53)
+
 ## omp-harness 1.31.0 — 2026-11-09
 
 - feat(harness): Obscura conteneurisé sur le VPS (socle, agent corpo, QA de /review) (#411) (b402ad3)
