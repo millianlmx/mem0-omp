@@ -121,7 +121,8 @@ function scheduleLine(event: EventRow): string {
 /**
  * Le rapport des dépôts que le lecteur voit (`repos`, `null` : tous) sur [since, until].
  * Mergés et échoués : les runs dont la dernière écriture (la fin) tombe dans la fenêtre ;
- * décisions : celles prises seules dans la fenêtre et pas encore acceptées ni renversées ;
+ * décisions : celles prises seules dans la fenêtre et pas encore acceptées ni renversées, plus les validations
+ * prises seules par l'autonomie (`autonomy`) créées avant sa fin, tant qu'elles n'ont été ni acceptées ni renversées ;
  * attentes : tout ce qui bloque sur l'humain à l'instant du rapport, quelle que soit la date.
  * La dernière ligne nomme le commit du service (`commit`, défaut : `OMP_HARNESS_COMMIT`).
  * `health` ajoute la section « Santé » (lecteur qui voit tous les dépôts seulement).
@@ -142,7 +143,11 @@ export function digestOf(
   const waiting = runs.filter((run) => run.state === "awaiting_human" || run.state === "escalated");
   const decisions = store
     .listDecisions({ status: ["auto", "auto_timeout"], repos })
-    .filter((decision) => inWindow(decision.createdAt));
+    .filter(
+      (decision) =>
+        inWindow(decision.createdAt) ||
+        (decision.autonomy !== null && decision.status === "auto" && decision.createdAt <= until),
+    );
   const usage = store.usageSince(since, repos).filter((row) => row.at <= until);
   const schedules = [...store.eventsOfType("schedule_fired", repos), ...store.eventsOfType("schedule_skipped", repos)]
     .filter((event) => inWindow(event.at))

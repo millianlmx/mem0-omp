@@ -96,22 +96,29 @@ export class GitError extends Error {
   }
 }
 
+/** Un fichier de test : `test/**`, `**\/Tests/**` ou `*.test.*` (le motif `tests.pattern` du dépôt, s'il est posé, prime ailleurs). */
+export function isTestFile(file: string): boolean {
+  const parts = file.split("/");
+  const name = parts[parts.length - 1] ?? file;
+  if (parts[0] === "test" && parts.length > 1) return true;
+  if (parts.slice(0, -1).includes("Tests")) return true;
+  return /\.test\.[^/]+$/.test(name);
+}
+
 /**
  * Les fichiers hors « code » pour le compte du diff en mode `code` : tests, docs,
  * changelog, manifestes et verrous (`test/**`, `**\/*.test.*`, `**\/Tests/**`, `**\/*.md`,
  * `CHANGELOG*`, `package.json`, `*.lock`).
  */
 export function isNonCode(file: string): boolean {
-  const parts = file.split("/");
-  const name = parts[parts.length - 1] ?? file;
-  if (parts[0] === "test" && parts.length > 1) return true;
-  if (parts.slice(0, -1).includes("Tests")) return true;
-  if (/\.test\.[^/]+$/.test(name)) return true;
-  if (/\.md$/i.test(name)) return true;
-  if (/^CHANGELOG/.test(name)) return true;
-  if (name === "package.json") return true;
-  if (/\.lock$/.test(name)) return true;
-  return false;
+  const name = file.split("/").pop() ?? file;
+  return (
+    isTestFile(file) ||
+    /\.md$/i.test(name) ||
+    /^CHANGELOG/.test(name) ||
+    name === "package.json" ||
+    /\.lock$/.test(name)
+  );
 }
 
 export class Git {

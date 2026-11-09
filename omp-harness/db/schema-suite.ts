@@ -177,6 +177,11 @@ export const MIGRATIONS_SUITE: readonly string[] = [
      created_at INTEGER NOT NULL
    );
    CREATE INDEX corporate_signal_runs_signal ON corporate_signal_runs (signal_id);`,
+  // L'autonomie par paliers : le type de travail et les labels d'un run (déclarés à sa création),
+  // et, pour une validation prise seule, la porte, la règle et les preuves (décisions).
+  `ALTER TABLE runs ADD COLUMN kind TEXT;
+   ALTER TABLE runs ADD COLUMN labels TEXT NOT NULL DEFAULT '[]';
+   ALTER TABLE decisions ADD COLUMN autonomy TEXT;`,
   // Les Demandes (intake.ts) : une phrase libre classée par un job, confirmée en un objet.
   `CREATE TABLE intakes (
      id TEXT PRIMARY KEY,

@@ -110,6 +110,16 @@ export class JournalStore extends RunStore {
     return this.selectAll(`SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY id`, ...params).map(eventOf);
   }
 
+  /** Le dernier événement d'un type écrit pour ce run, ou `null`. */
+  lastRunEvent(runId: string, type: string): EventRow | null {
+    const row = this.selectOne(
+      "SELECT * FROM events WHERE run_id = ? AND type = ? ORDER BY id DESC LIMIT 1",
+      runId,
+      type,
+    );
+    return row ? eventOf(row) : null;
+  }
+
   /** Le dernier identifiant du journal (0 s'il est vide) : le curseur d'un abonnement qui ne veut que la suite. */
   lastEventId(): number {
     return num(this.selectOne("SELECT COALESCE(MAX(id), 0) AS id FROM events") as Row, "id");

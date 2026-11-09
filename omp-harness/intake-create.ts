@@ -15,7 +15,9 @@ export function createFromPlan(orchestrator: Orchestrator, client: Client, actor
   switch (plan.kind) {
     case "feature":
     case "bug": {
-      const input = newRunInput({ repo, title: plan.title, request: plan.statement }, client);
+      const input = newRunInput({ repo, title: plan.title, request: plan.statement, kind: plan.kind }, client, {
+        typed: true,
+      });
       return { kind: "run", id: orchestrator.createRun(input, actor).id };
     }
     case "audit": {

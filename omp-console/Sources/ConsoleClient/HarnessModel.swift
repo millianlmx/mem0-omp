@@ -71,6 +71,9 @@ public final class HarnessModel: ObservableObject {
     /// Le poste de travail (extension Chrome, agent 24/24), servi par le même serveur :
     /// il passe par l'échange de ce modèle et reçoit les événements de son flux.
     public private(set) lazy var workstation = WorkstationModel(harness: self, reloadDelay: refreshDelay)
+    /// Les signalements des collègues devenus propositions, et l'origine d'une feature
+    /// (pont corpo ↔ usine) : même échange, même flux.
+    public private(set) lazy var signals = CorporateSignalsModel(harness: self, reloadDelay: refreshDelay)
     /// L'historique des features (`GET /v1/runs`), terminées comprises.
     public private(set) lazy var history = HarnessRunsHistory(harness: self)
     /// La vigie (surveillance 24/24 du harness) : réglages, battement, incidents.
@@ -81,6 +84,8 @@ public final class HarnessModel: ObservableObject {
     public private(set) lazy var admin = HarnessAdmin(harness: self)
     /// Les issues des dépôts, lues et corrigées par le MCP du serveur.
     public private(set) lazy var issues = HarnessIssues(harness: self)
+    /// L'autonomie par paliers, en lecture : règles, validations prises seules, propositions.
+    public private(set) lazy var autonomy = HarnessAutonomy(harness: self)
     /// La remontée bornée des erreurs de l'app (contrat C2).
     var reporter: HarnessErrorReporter
     /// Les événements complets du flux, à qui en veut le détail (les notifications
@@ -274,11 +279,13 @@ public final class HarnessModel: ObservableObject {
     /// Ce qui appartient au serveur relié : poste, historique, services, remontée.
     private func resetServerState() {
         workstation.reset()
+        signals.reset()
         history.reset()
         vigie.reset()
         schedules.reset()
         admin.reset()
         issues.reset()
+        autonomy.reset()
         reporter.reset()
         health = nil
         healthReached = false
@@ -381,8 +388,10 @@ public final class HarnessModel: ObservableObject {
                         let names = events.map(\.name)
                         scheduleRefresh()
                         workstation.receive(names)
+                        signals.receive(names)
                         vigie.receive(names)
                         schedules.receive(names)
+                        autonomy.receive(names)
                         streamObserver?(events)
                     }
                 }
@@ -555,6 +564,21 @@ public final class HarnessModel: ObservableObject {
     /// Une erreur de transport ou de décodage LÈVE : une clé mal nommée ne passe pas pour un serveur sans preuves.
     public func proofs(runId: String) async throws -> HarnessProofs? {
         try await readIfServed("/v1/runs/\(Self.encoded(runId))/proofs")
+    }
+
+    /// Les octets d'une preuve (capture, journal, rapport de tests), tels que le serveur
+    /// les a enregistrés. `nil` sur un 404 (preuve ou feature inconnue) ; un autre
+    /// statut LÈVE l'échec qu'il dit.
+    public func proofContent(runId: String, n: Int) async throws -> Data? {
+        let call = HarnessCall(method: "GET", path: "/v1/runs/\(Self.encoded(runId))/proofs/\(n)")
+        let reply = try await exchange(call)
+        switch reply.status {
+        case 200: return reply.body
+        case 404: return nil
+        default:
+            let _: HarnessAck = try decode(reply, for: call)
+            throw HarnessFailure.unreadable
+        }
     }
 
     /// Les fichiers touchés par une feature.
@@ -740,7 +764,9 @@ public final class HarnessModel: ObservableObject {
             priority: options.priority,
             lane: options.lane == .full ? HarnessLane.full.rawValue : nil,
             req: options.req,
-            budgetUsd: options.budgetUsd
+            budgetUsd: options.budgetUsd,
+            kind: options.kind?.rawValue,
+            labels: options.labels.isEmpty ? nil : options.labels
         )
         let reply: HarnessRunReply? = await launch("/v1/runs", body: body)
         return reply?.run
@@ -1132,6 +1158,8 @@ private struct RunBody: Encodable {
     var lane: String?
     var req: String?
     var budgetUsd: Double?
+    var kind: String?
+    var labels: [String]?
 }
 
 private struct ProjectBody: Encodable {
