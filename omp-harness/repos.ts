@@ -13,8 +13,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { HarnessConfig, RepoConfig } from "./config.ts";
-import { loadConfig } from "./config.ts";
+import type { HarnessConfig, RepoConfig, TestJudge } from "./config.ts";
+import { DEFAULT_CI_TIMEOUT_SEC, ciTimeoutSec, loadConfig, testsJudge } from "./config.ts";
 import { HarnessError } from "./errors.ts";
 import { forgeKindOf, remoteLocation } from "./forge.ts";
 import { remoteEnv, type Git } from "./git.ts";
@@ -335,4 +335,56 @@ export class ConfigAdmin {
       return { repo, added: reload.added.includes(repo), message: result.message, reload };
     });
   }
+
+  /**
+   * Change qui juge la suite complète d'un dépôt déclaré (`tests.judge`, `tests.ciTimeoutSec` ; `null` rend le
+   * défaut), sans éditer le fichier à la main. Le fichier candidat est validé AVANT de remplacer l'ancien : une
+   * configuration refusée (par exemple `ci` sans forge) est un 400 et rien ne change. Puis rechargement à chaud.
+   */
+  setTests(name: string, patch: RepoTestsPatch): Promise<RepoTestsSet> {
+    return this.#serial(async () => {
+      const file = this.#requireFile();
+      const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { repos?: Record<string, unknown>[] };
+      const entry = (raw.repos ?? []).find((repo) => repo.name === name);
+      if (entry === undefined) throw new HarnessError(404, `dépôt non déclaré : ${name}`);
+      const tests: Record<string, unknown> =
+        typeof entry.tests === "object" && entry.tests !== null ? { ...(entry.tests as Record<string, unknown>) } : {};
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === null) delete tests[key];
+        else if (value !== undefined) tests[key] = value;
+      }
+      entry.tests = tests;
+      const content = `${JSON.stringify(raw, null, 2)}\n`;
+      // Le candidat est validé hors du dossier du service ; le fichier est réécrit sur place comme `addRepo`
+      // (un fichier monté seul dans un conteneur ne se remplace pas par renommage).
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-harness-config-"));
+      try {
+        const candidate = path.join(dir, "config.json");
+        fs.writeFileSync(candidate, content);
+        loadConfig(candidate);
+      } catch (err) {
+        throw new HarnessError(
+          400,
+          `réglage refusé, rien ne change : ${err instanceof Error ? err.message : String(err)}`,
+        );
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+      fs.writeFileSync(file, content);
+      const reload = await this.#reload();
+      const repo = this.#service.config.repos.find((candidateRepo) => candidateRepo.name === name);
+      return {
+        repo: name,
+        judge: repo ? testsJudge(repo) : "local",
+        ciTimeoutSec: repo ? ciTimeoutSec(repo) : DEFAULT_CI_TIMEOUT_SEC,
+        reload,
+      };
+    });
+  }
 }
+
+/** Ce qu'un administrateur change dans `repos[].tests` par l'API ; `null` rend le défaut, absent ne touche pas. */
+export type RepoTestsPatch = { judge?: TestJudge | null; ciTimeoutSec?: number | null };
+
+/** Le réglage en vigueur après `setTests`, défauts compris. */
+export type RepoTestsSet = { repo: string; judge: TestJudge; ciTimeoutSec: number; reload: ReloadSummary };

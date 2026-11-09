@@ -475,7 +475,8 @@ const PILOT_WAIT: Record<HumanWait, string> = {
 
 export type PilotPromptContext = {
   repo: string;
-  focus: string;
+  /** `null` : le run ne descend d'aucun audit (pilote de l'usine du dépôt). */
+  focus: string | null;
   title: string;
   request: string;
   wait: HumanWait;
@@ -490,7 +491,7 @@ export type PilotPromptContext = {
   /** Les artefacts du run (specs.md, impl.md…), déjà coupés. */
   artifacts: { name: string; content: string }[];
   decisions: string[];
-  /** Les autres features pilotées par cet audit et leur état. */
+  /** Les autres features pilotées avec celle-ci (celles de l'audit, ou les runs en cours du dépôt) et leur état. */
   siblings: string[];
   /** Les gestes déjà faits par le pilote sur ce run. */
   history: string[];
@@ -498,11 +499,15 @@ export type PilotPromptContext = {
 };
 
 /**
- * Le prompt du pilote d'un audit : un run de l'audit attend l'humain ; le pilote, qui a le
- * contexte de l'audit, tranche ce qui est réversible par `pilot_act`, ou le laisse à l'humain.
+ * Le prompt du pilote : un run attend l'humain ; le pilote, qui a le contexte de l'audit (ou
+ * celui du dépôt pour un run hors audit), tranche ce qui est réversible par `pilot_act`, ou le laisse à l'humain.
  */
 export function pilotPrompt(ctx: PilotPromptContext): string {
-  const focus = ctx.focus.trim() === "" ? "le dépôt entier" : ctx.focus.trim();
+  const focus = ctx.focus === null ? null : ctx.focus.trim() === "" ? "le dépôt entier" : ctx.focus.trim();
+  const scope =
+    focus === null
+      ? `les features de « ${ctx.repo} » qui attendent l'humain, pour que l'usine livre sans lui quand c'est sûr`
+      : `les features lancées par l'audit de « ${ctx.repo} » (focus : ${focus})`;
   const verdict =
     ctx.verdict === null
       ? null
@@ -519,16 +524,16 @@ export function pilotPrompt(ctx: PilotPromptContext): string {
   return [
     `# /pilote — « ${ctx.title} »
 
-Tu pilotes, à la place de l'humain, les features lancées par l'audit de « ${ctx.repo} » (focus : ${focus}). Celle-ci attend une décision : ${PILOT_WAIT[ctx.wait]}.
+Tu pilotes, à la place de l'humain, ${scope}. Celle-ci attend une décision : ${PILOT_WAIT[ctx.wait]}.
 Raison du service : ${ctx.reason}
 
-Tu as le contexte de l'audit : décide, au lieu de renvoyer la question. Le répertoire courant est le HEAD du run, en LECTURE SEULE (ne modifie AUCUN fichier) : \`git diff ${ctx.baseSha ?? "main"}..HEAD\` montre son travail, le code et les tests se lisent. Vérifie dans le code ce que les artefacts affirment.
+Tu as le contexte : décide, au lieu de renvoyer la question. Le répertoire courant est le HEAD du run, en LECTURE SEULE (ne modifie AUCUN fichier) : \`git diff ${ctx.baseSha ?? "main"}..HEAD\` montre son travail, le code et les tests se lisent. Vérifie dans le code ce que les artefacts affirment.
 
 Gestes permis : ${ctx.allowed.map((a) => `\`${a}\``).join(", ")}.
-- \`approve\` : les critères d'acceptation sont livrés et prouvés par des tests nommés ; ou ce qui reste non vérifié ne peut pas l'être sur le runner (outillage absent, comme Xcode sur Linux) et le code comme ses tests se lisent justes — dis-le dans \`reason\`. La taille du diff seule n'est pas une raison de refuser ni de déférer.
+- \`approve\` : les critères d'acceptation sont livrés et prouvés par des tests nommés ; ou ce qui reste non vérifié ne peut pas l'être sur le runner (outillage absent, comme Xcode sur Linux) et le code comme ses tests se lisent justes — dis-le dans \`reason\`. Une suite complète rouge dont les échecs existent déjà sur main (environnement du slot : macOS, Swift, outils absents) n'est pas un bloquant : la CI de la forge juge la PR avant la fusion. La taille du diff seule n'est pas une raison de refuser ni de déférer.
 - \`refuse\` : un critère n'est pas livré, ou un bloquant est réel ; \`reason\` est la consigne de correction, précise et vérifiable.
 - \`retry\` : la cause de la panne peut changer avec une consigne (\`instructions\`) : code déjà livré, conflit à résoudre, piste à abandonner. Ne relance jamais à l'identique ce qui a déjà échoué.
-- \`cancel\` : la feature est sans objet (déjà livrée ailleurs, doublon d'une autre feature de l'audit) ou ne peut pas aboutir sur ce serveur. La branche reste.
+- \`cancel\` : la feature est sans objet (déjà livrée ailleurs, doublon d'une autre feature en cours) ou ne peut pas aboutir sur ce serveur. La branche reste.
 - \`defer\` : seulement si la décision exige l'humain : un choix de produit sans critère, un accès que tu n'as pas, un doute sur l'irréversibilité. \`reason\` pose la question avec ta recommandation.
 
 Termine par \`pilot_act\`, une fois.`,
@@ -537,7 +542,10 @@ Termine par \`pilot_act\`, une fois.`,
     section("Verdict de la dernière revue", verdict),
     ...ctx.artifacts.map((artifact) => section(`Artefact ${ART}/${artifact.name}`, artifact.content)),
     section("Décisions du run (elles tiennent)", ctx.decisions.map((d) => `- ${d}`).join("\n")),
-    section("Autres features de l'audit", ctx.siblings.map((s) => `- ${s}`).join("\n")),
+    section(
+      focus === null ? "Autres features en cours du dépôt" : "Autres features de l'audit",
+      ctx.siblings.map((s) => `- ${s}`).join("\n"),
+    ),
     section("Tes gestes précédents sur ce run", ctx.history.map((h) => `- ${h}`).join("\n")),
     section("Oracle (rappel du service)", ctx.memories),
     `\n- \`progress\` à chaque vérification, une phrase. N'utilise JAMAIS \`ask\` : personne ne répond pendant ce travail.\n`,

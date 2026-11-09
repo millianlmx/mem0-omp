@@ -21,6 +21,8 @@ import type * as http from "node:http";
 import type { Client, Role } from "./auth.ts";
 import { ClientRegistry, ROLES, allows, canSeeRepo, repoFilter } from "./auth.ts";
 import type { Actor } from "./context.ts";
+import type { TestJudge } from "./config.ts";
+import { TEST_JUDGES, testsJudge } from "./config.ts";
 import type { ActionState, ClientSource, DecisionStatus, EventRow, RepoFilter, SignalState } from "./db.ts";
 import { ACTION_STATES, CLIENT_SOURCES, SIGNAL_STATES } from "./db.ts";
 import { HarnessError } from "./errors.ts";
@@ -115,6 +117,7 @@ export const API_FEATURES = [
   "intake",
   "proofs",
   "session-graph",
+  "repo-tests",
 ] as const;
 
 /** Le refus d'un geste du poste (ou d'un signalement de collègue) à un client restreint à des dépôts. */
@@ -429,6 +432,7 @@ export function apiRoutes(
             mainBranch: repo.mainBranch,
             merge: repo.merge,
             maxParallel: repo.maxParallel,
+            judge: testsJudge(repo),
           })),
       }),
     ),
@@ -439,6 +443,36 @@ export function apiRoutes(
       const name = text(body, "name", false).trim();
       const declared = await target.declare(text(body, "url"), name === "" ? undefined : name);
       send(call.res, declared.added ? 201 : 200, declared);
+    }),
+    // Qui juge la suite complète d'un dépôt (`tests.judge`, `tests.ciTimeoutSec`) : écrit, validé, rechargé à chaud.
+    route("PATCH", "/v1/repos/{name}", "admin", async (call) => {
+      const target = adminOf(call);
+      const body = await readBody(call.req);
+      const tests = body.tests;
+      if (typeof tests !== "object" || tests === null || Array.isArray(tests))
+        throw new HarnessError(400, "tests : un objet { judge?, ciTimeoutSec? } attendu");
+      const fields = tests as Record<string, unknown>;
+      const unknown = Object.keys(fields).filter((key) => key !== "judge" && key !== "ciTimeoutSec");
+      if (unknown.length > 0)
+        throw new HarnessError(400, `tests : champ(s) non modifiable(s) ici : ${unknown.join(", ")}`);
+      const { judge, ciTimeoutSec } = fields;
+      if (judge !== undefined && judge !== null && !(TEST_JUDGES as readonly unknown[]).includes(judge))
+        throw new HarnessError(400, `tests.judge : ${TEST_JUDGES.map((value) => `"${value}"`).join(" | ")} ou null`);
+      if (
+        ciTimeoutSec !== undefined &&
+        ciTimeoutSec !== null &&
+        !(Number.isInteger(ciTimeoutSec) && (ciTimeoutSec as number) >= 1)
+      )
+        throw new HarnessError(400, "tests.ciTimeoutSec : entier ≥ 1 (secondes) ou null");
+      const name = call.match[1] as string;
+      send(
+        call.res,
+        200,
+        await target.setTests(name, {
+          ...(judge !== undefined ? { judge: judge as TestJudge | null } : {}),
+          ...(ciTimeoutSec !== undefined ? { ciTimeoutSec: ciTimeoutSec as number | null } : {}),
+        }),
+      );
     }),
     // SIGHUP par l'API : la configuration relue, les dépôts rechargés ; invalide, 400 et rien ne change.
     route("POST", "/v1/reload", "admin", async (call) => send(call.res, 200, { reload: await adminOf(call).reload() })),

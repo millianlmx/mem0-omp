@@ -70,6 +70,8 @@ export function testConfig(repo: string, patch: (config: HarnessConfig) => void 
   config.challenge.steps = [];
   // Le relecteur de cartes lance un faux runner de plus à chaque escalade : il a ses propres tests (session-graph/AC-18…).
   config.review.cardReader = false;
+  // Le pilote de l'usine trancherait chaque attente humaine des scénarios : il a ses propres tests (usine-autonome/AC-3…).
+  config.pilot.allRuns = false;
   // Une relance immédiate, une seule : les scénarios d'échec restent courts (le backoff a ses propres tests).
   config.runner.retryBackoffSec = [0];
   config.runner.stepRetries = 1;
