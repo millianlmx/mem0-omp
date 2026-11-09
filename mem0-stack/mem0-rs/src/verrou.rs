@@ -94,7 +94,14 @@ mod tests {
         assert!(matches!(prendre(&base), Err(ErreurVerrou::Tenu)));
         assert!(tenu_par_autrui(&base).unwrap());
         drop(premier);
-        assert!(!tenu_par_autrui(&base).unwrap());
+        // Un autre test du même processus qui lance une commande peut, entre son
+        // `fork` et son `exec`, garder une copie du descripteur : le verrou tombe
+        // alors à l'`exec` de cet enfant, quelques millisecondes plus tard.
+        let limite = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while tenu_par_autrui(&base).unwrap() {
+            assert!(std::time::Instant::now() < limite, "le verrou reste tenu après la fermeture");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let _second = prendre(&base).unwrap();
         assert!(chemin(&base).is_file(), "le .lock n'est jamais supprimé");
     }
