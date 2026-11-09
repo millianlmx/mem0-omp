@@ -595,11 +595,29 @@ approuver seulement s'il y en a, « Demander au poste » (un champ, le navigateu
 l'envoi ; les demandes en cours et la plus récente terminée, « Toutes les
 demandes »), les cinq dernières décisions (« Tout le journal »), puis une rangée
 par sous-page (`WorkstationPage`, `workstation.page.<page>`) : **Réglages**
-(autonomie, adresses et pseudos, navigateurs, navigation gardée),
-**Automatisations**, **Commander le navigateur**, **Profil**, **Réunions**,
-**Journal**, **Sessions** des jobs du poste, **Demandes**. Ce que ces pages
-montrent :
+(autonomie, adresses et pseudos, navigateurs, navigation gardée), **Canaux**
+(seulement si le serveur les sert à ce jeton), **Automatisations**, **Commander
+le navigateur**, **Profil**, **Réunions**, **Journal**, **Sessions** des jobs du
+poste, **Demandes**. Ce que ces pages montrent :
 
+- **Canaux** (`server.channels`, `GET /v1/workstation/channels`) : Gmail, Agenda et
+  Slack, chacun avec son état (non connecté, connecté, à reconnecter, bloqué par
+  l'administrateur, en erreur), son compte, sa dernière lecture et la phrase du
+  serveur (blocage, scope manquant, refus du fournisseur) ; la rangée compte les
+  canaux à reconnecter ou en erreur. En tête, une connexion en cours : « Ouvrir la
+  page d'autorisation » (l'URL que rend le serveur), un champ où recoller l'adresse
+  de retour, le code ou le texte d'erreur affiché (`POST …/{id}/login/answer
+  {value}`), et « L'administrateur bloque l'app » (`{blocked: true}`, ou un seul
+  canal Google : `channels: ["gmail"]` ou `["calendar"]`). Puis une section par
+  connexion : le client OAuth et « Configurer le client… » (feuille : JSON du
+  client « Application de bureau » ou identifiant et secret pour Google,
+  identifiant seul pour Slack, `PUT …/{id}/client`), et « Connecter » (Google :
+  Gmail et l'Agenda, Gmail seul ou l'Agenda seul, `POST …/{id}/login {channels?}`).
+  Le secret ne vit que dans la feuille, vidé à l'envoi : l'app ne le réaffiche ni
+  ne le garde. Les gestes n'existent que pour l'appareil approbateur (seul à
+  recevoir l'URL d'autorisation) ; un refus du serveur revient au geste. L'écran
+  est relu à chaque événement `workstation_channel` ; sur un serveur sans la route
+  (404) ou pour un jeton restreint (403), il n'existe pas.
 - **Extension et agent 24/24** (`GET /v1/workstation`) : extension en ligne ou
   hors ligne et son dernier contact, sa version, les heures observées sur le seuil
   (barre de progression), le dernier et le prochain passage de l'agent.
