@@ -106,7 +106,7 @@ struct HarnessNotificationsTests {
         #expect(ordinary.prefix(2).allSatisfy { $0.foreground && !$0.authenticationRequired }, "sans jeton approbateur : ouvrir l'app")
 
         #expect(HarnessNotificationRouting.actions(for: .open, approver: true).map(\.action) == [.open])
-        #expect(HarnessNotificationCategory.allCases.map(\.rawValue) == ["omp.validate", "omp.approve", "omp.open"])
+        #expect(HarnessNotificationCategory.allCases.map(\.rawValue) == ["omp.validate", "omp.approve", "omp.answer", "omp.open"])
     }
 
     @Test("une action devient le geste de sa catégorie avec la révision de la notification ; sinon elle ouvre l'app là où le geste se fait")

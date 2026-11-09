@@ -36,10 +36,13 @@ public struct HarnessLaunchOptions: Equatable, Sendable {
     public var kind: HarnessWorkKind?
     /// Les labels, rognés et sans doublon, que `match.labels` d'une règle peut exiger.
     public var labels: [String]
+    /// Le curseur d'autonomie de la feature : `ask` (tout demander), `deliver` (livrer et
+    /// prévenir) ; `nil` : celui de l'espace du dépôt, sinon ses règles.
+    public var autonomy: HarnessRunAutonomy?
 
     public init(
         priority: Int? = nil, lane: HarnessLane = .auto, modules: [String] = [], req: String? = nil, budgetUsd: Double? = nil,
-        kind: HarnessWorkKind? = nil, labels: [String] = []
+        kind: HarnessWorkKind? = nil, labels: [String] = [], autonomy: HarnessRunAutonomy? = nil
     ) {
         self.priority = priority
         self.lane = lane
@@ -48,6 +51,7 @@ public struct HarnessLaunchOptions: Equatable, Sendable {
         self.budgetUsd = budgetUsd
         self.kind = kind
         self.labels = labels
+        self.autonomy = autonomy
     }
 
     /// Les bornes de la priorité, celles du serveur (`setPriority`, admission).
@@ -76,10 +80,11 @@ public struct HarnessLaunchDraft: Equatable, Sendable {
     public var kind: HarnessWorkKind?
     /// Les labels séparés par des virgules ou des retours à la ligne.
     public var labels = ""
+    public var autonomy: HarnessRunAutonomy?
 
     public init(
         priority: String = "", lane: HarnessLane = .auto, modules: String = "", req: String = "", budget: String = "",
-        kind: HarnessWorkKind? = nil, labels: String = ""
+        kind: HarnessWorkKind? = nil, labels: String = "", autonomy: HarnessRunAutonomy? = nil
     ) {
         self.priority = priority
         self.lane = lane
@@ -88,6 +93,7 @@ public struct HarnessLaunchDraft: Equatable, Sendable {
         self.budget = budget
         self.kind = kind
         self.labels = labels
+        self.autonomy = autonomy
     }
 
     /// Les labels saisis : rognés, sans vide ni doublon (le premier gardé), comme le serveur.
@@ -134,6 +140,7 @@ public struct HarnessLaunchDraft: Equatable, Sendable {
         }
         options.kind = kind
         options.labels = labels
+        options.autonomy = autonomy
         return .success(options)
     }
 }

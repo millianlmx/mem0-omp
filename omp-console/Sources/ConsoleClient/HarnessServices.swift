@@ -82,10 +82,12 @@ public struct HarnessStatus: Decodable, Equatable, Sendable {
     public var backups: HarnessBackupsStatus?
     /// Les features dues que l'admission retient en file, par cause (serveurs récents).
     public var queue: HarnessQueueStatus?
+    /// Tout est suspendu (« Tout suspendre ») ; faux d'un serveur antérieur à la pause.
+    public var paused: Bool = false
 
     public init(
         repos: [HarnessRepo] = [], oracle: HarnessOracleStatus? = nil, scheduler: HarnessStats.Scheduler? = nil,
-        memory: HarnessMemoryStatus? = nil, backups: HarnessBackupsStatus? = nil, queue: HarnessQueueStatus? = nil
+        memory: HarnessMemoryStatus? = nil, backups: HarnessBackupsStatus? = nil, queue: HarnessQueueStatus? = nil, paused: Bool = false
     ) {
         self.repos = repos
         self.oracle = oracle
@@ -93,9 +95,10 @@ public struct HarnessStatus: Decodable, Equatable, Sendable {
         self.memory = memory
         self.backups = backups
         self.queue = queue
+        self.paused = paused
     }
 
-    private enum CodingKeys: String, CodingKey { case repos, oracle, scheduler, memory, backups, queue }
+    private enum CodingKeys: String, CodingKey { case repos, oracle, scheduler, memory, backups, queue, paused }
 
     /// Les dépôts sont requis ; chaque bloc de service est lu à part : un bloc absent
     /// (serveur ancien) ou d'une autre forme laisse `nil`, sans perdre les dépôts.
@@ -107,6 +110,7 @@ public struct HarnessStatus: Decodable, Equatable, Sendable {
         memory = (try? container.decodeIfPresent(HarnessMemoryStatus.self, forKey: .memory)) ?? nil
         backups = (try? container.decodeIfPresent(HarnessBackupsStatus.self, forKey: .backups)) ?? nil
         queue = (try? container.decodeIfPresent(HarnessQueueStatus.self, forKey: .queue)) ?? nil
+        paused = (try? container.decodeIfPresent(Bool.self, forKey: .paused)) ?? false
     }
 }
 

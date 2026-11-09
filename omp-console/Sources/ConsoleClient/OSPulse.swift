@@ -1,8 +1,8 @@
-// PROTOTYPE « OS agentique » (branche proto/os-fils) : le POULS des agents. Un seul
-// flux `GET /v1/events?live=1` sans filtre de feature porte l'activité éphémère de
-// TOUS les agents : l'outil lancé et son intention (`activity`, runner-session.ts) et
-// chaque entrée de leur direct (`session`). Le pouls n'en garde que la dernière ligne
-// lisible par agent : une feature, le poste (`payload.workstation`), un audit
+// « OS agentique » : le POULS des agents. Un seul flux `GET /v1/events?live=1` sans
+// filtre de feature porte l'activité éphémère de TOUS les agents : l'outil lancé et son
+// intention (`activity`, runner-session.ts) et chaque entrée de leur direct (`session`).
+// Le pouls n'en garde que la dernière ligne lisible par agent : une feature, une session
+// omp locale (`payload.localSession`), le poste (`payload.workstation`), un audit
 // (`payload.auditId`), ou l'OS lui-même (pilote, classeur de la Demande, vigie).
 //
 // Le flux porte aussi le direct entier de chaque agent : c'est plus que le pouls n'en a
@@ -25,6 +25,8 @@ public enum OSAgentKey: Hashable, Sendable {
     case run(String)
     case workstation(String)
     case audit(String)
+    /// Une session omp locale (son identifiant).
+    case localSession(String)
     case system
 }
 
@@ -93,7 +95,9 @@ public final class OSPulse: ObservableObject {
     private func receive(_ event: HarnessStreamEvent) {
         guard let envelope = try? JSONDecoder().decode(PulseEnvelope.self, from: event.data) else { return }
         let key: OSAgentKey
-        if let runId = envelope.runId {
+        if let session = envelope.payload.localSession {
+            key = .localSession(session)
+        } else if let runId = envelope.runId {
             key = .run(runId)
         } else if let job = envelope.payload.workstation {
             key = .workstation(job)
@@ -104,9 +108,13 @@ public final class OSPulse: ObservableObject {
         }
         let at = Date(timeIntervalSince1970: (envelope.at ?? Date().timeIntervalSince1970 * 1000) / 1000)
         if event.name == "activity" {
-            guard let tool = envelope.payload.tool else { return }
+            let tool = envelope.payload.tool
             let intent = envelope.payload.intent.map(OSThreads.firstLine) ?? ""
-            activity[key] = OSActivity(tool: tool, line: intent.isEmpty ? tool : intent, at: at)
+            // Une session locale bat à chaque intention, outil nommé ou non.
+            guard tool != nil || envelope.payload.localSession != nil,
+                  let line = [intent, tool ?? ""].first(where: { !$0.isEmpty })
+            else { return }
+            activity[key] = OSActivity(tool: tool, line: line, at: at)
             return
         }
         // Un paragraphe de l'agent (pas son raisonnement) : ce qu'il dit faire.
@@ -126,6 +134,7 @@ private struct PulseEnvelope: Decodable {
         var intent: String?
         var workstation: String?
         var auditId: String?
+        var localSession: String?
         var entry: HarnessSessionEntry?
     }
 

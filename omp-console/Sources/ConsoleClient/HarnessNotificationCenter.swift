@@ -76,7 +76,7 @@ public final class HarnessNotificationCenter: NSObject, ObservableObject {
         }
         return UNTextInputNotificationAction(
             identifier: spec.action.rawValue, title: spec.title, options: options,
-            textInputButtonTitle: spec.title, textInputPlaceholder: NotificationText.refusePlaceholder
+            textInputButtonTitle: spec.title, textInputPlaceholder: spec.placeholder ?? ""
         )
     }
 

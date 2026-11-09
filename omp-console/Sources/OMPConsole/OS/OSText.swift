@@ -127,6 +127,7 @@ enum OSText {
         case let .vigie(number): number.map { "Vigie · issue #\($0)" } ?? "Vigie"
         case .audit: "Audit"
         case .factory: "Pilote de l'usine"
+        case let .local(host): host
         }
     }
 
@@ -137,6 +138,7 @@ enum OSText {
         case .vigie: "binoculars.fill"
         case .audit: "magnifyingglass"
         case .factory: "gearshape.2.fill"
+        case .local: "laptopcomputer"
         }
     }
 
