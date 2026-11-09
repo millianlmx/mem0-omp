@@ -700,6 +700,15 @@ une portée de **Features**. Un serveur qui ne sert pas une fonction le dit
   désactiver (`PUT`, `If-Match`), « Déclencher maintenant » (`POST …/run`), supprimer
   (confirmé). Le serveur ne rend que la prochaine échéance : elle s'affiche dès la
   création.
+- **Autonomie** (`AutonomyViews.swift`, `server.autonomy`) : en lecture seule, les
+  règles de chaque dépôt visible, les validations prises seules de la fenêtre
+  d'apprentissage et les propositions de palier avec la modification de configuration
+  suggérée (`changes`), lues par `GET /v1/autonomy`. Un serveur qui ne sert pas la
+  route (404) retire la page du hub et de la palette. La feuille « Nouvelle feature »
+  envoie le type de travail et les labels (`POST /v1/runs {kind?, labels?}`), et la
+  carte d'une décision prise seule par l'autonomie (`decision.autonomy`) montre la
+  porte franchie, la règle (rang, `match`, exigences, portes) et chaque preuve avec sa
+  valeur, à la place du contexte de l'agent.
 - **Administration** (admin seulement, masquée sinon) : clients (`/v1/clients` : créer
   avec rôle et dépôts — le jeton n'est montré qu'une fois —, révoquer, confirmé), dépôts
   (`POST /v1/repos` : la clé de déploiement à poser et le lien de la page des clés),
@@ -711,7 +720,8 @@ une portée de **Features**. Un serveur qui ne sert pas une fonction le dit
 
 La garde `test/console/tour-de-controle.test.ts` confronte chaque route de ces écrans
 au routeur du serveur (rôle compris), chaque champ décodé au JSON réel, et vérifie
-leur câblage dans les deux apps.
+leur câblage dans les deux apps ; `test/console/autonomie-console.test.ts` fait de même
+pour l'autonomie.
 
 ## Lire les fichiers et les diffs d'une cible
 

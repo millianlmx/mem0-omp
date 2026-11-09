@@ -1,6 +1,7 @@
 // Le hub SYSTÈME, écrit une fois pour le Mac et l'iPhone/iPad : une rangée par page de
-// ce qui se règle ou se consulte rarement (vigie, planifications, statistiques et santé,
-// administration, serveur), avec son état d'un coup d'œil à droite. Chaque rangée pousse
+// ce qui se règle ou se consulte rarement (vigie, planifications, autonomie, statistiques
+// et santé, administration, serveur), avec son état d'un coup d'œil à droite. L'Autonomie
+// quitte le hub sur un serveur qui ne la sert pas (404). Chaque rangée pousse
 // sa page dans la pile de navigation de l'app (`NavigationLink(value: SystemPage)`) ;
 // le Serveur ouvre la feuille de connexion.
 
@@ -13,17 +14,19 @@ public struct SystemHubSections: View {
     @ObservedObject var drafts: HarnessDrafts
     @ObservedObject var vigie: HarnessVigie
     @ObservedObject var schedules: HarnessSchedules
+    @ObservedObject var autonomy: HarnessAutonomy
 
     public init(server: HarnessModel, drafts: HarnessDrafts) {
         self.server = server
         self.drafts = drafts
         self.vigie = server.vigie
         self.schedules = server.schedules
+        self.autonomy = server.autonomy
     }
 
     public var body: some View {
         Section {
-            ForEach(SystemPage.visible(isAdmin: server.isAdmin).filter { $0 != .server }) { page in
+            ForEach(SystemPage.visible(isAdmin: server.isAdmin, autonomy: autonomy.isServed).filter { $0 != .server }) { page in
                 NavigationLink(value: page) {
                     row(page)
                 }
@@ -84,6 +87,10 @@ public struct SystemHubSections: View {
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
+            }
+        case .autonomy:
+            if let count = autonomy.view?.proposals.count, count > 0 {
+                ConsoleStatusChip(status: ConsoleStatus(text: AutonomyText.proposalsCount(count), tone: .attention))
             }
         case .server:
             HStack(spacing: 6) {
