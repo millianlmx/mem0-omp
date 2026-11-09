@@ -778,6 +778,65 @@ public struct HarnessProofs: Codable, Equatable, Sendable {
     }
 }
 
+/// Le contenu d'une preuve `test_report` (omp-harness/test-report.ts) : le décompte
+/// des tests par critère des specs du run, lu dans toute la sortie des tests.
+public struct HarnessTestReport: Codable, Equatable, Sendable {
+    /// `impl` ou `fix`.
+    public var step: String
+    /// `touched` ou `full`.
+    public var scope: String
+    /// `pass`, `fail`, `oom`, `timeout`, `error` ou `aborted`.
+    public var outcome: String
+    /// Vrai : le rapport vient d'un résultat servi par le cache, compté sur la fin
+    /// gardée de la sortie ; des critères peuvent manquer.
+    public var truncated: Bool
+    public var criteria: [HarnessTestCriterion]
+    /// Les tests hors des critères du run (autre slug, critère absent des specs, sans id).
+    public var other: HarnessTestCount
+
+    public init(step: String, scope: String = "touched", outcome: String = "pass", truncated: Bool = false, criteria: [HarnessTestCriterion] = [], other: HarnessTestCount = HarnessTestCount()) {
+        self.step = step
+        self.scope = scope
+        self.outcome = outcome
+        self.truncated = truncated
+        self.criteria = criteria
+        self.other = other
+    }
+}
+
+/// Le décompte d'un critère d'un rapport de tests.
+public struct HarnessTestCriterion: Codable, Equatable, Sendable, Identifiable {
+    /// `<slug>/AC-n`, ou `AC-n` quand `slug` est nul.
+    public var id: String
+    public var slug: String?
+    public var ac: String
+    public var tests: Int
+    public var passed: Int
+    public var failed: Int
+
+    public init(id: String, slug: String? = nil, ac: String, tests: Int = 0, passed: Int = 0, failed: Int = 0) {
+        self.id = id
+        self.slug = slug
+        self.ac = ac
+        self.tests = tests
+        self.passed = passed
+        self.failed = failed
+    }
+}
+
+/// Un décompte de tests.
+public struct HarnessTestCount: Codable, Equatable, Sendable {
+    public var tests: Int
+    public var passed: Int
+    public var failed: Int
+
+    public init(tests: Int = 0, passed: Int = 0, failed: Int = 0) {
+        self.tests = tests
+        self.passed = passed
+        self.failed = failed
+    }
+}
+
 /// Un dépôt déclaré sur le serveur (`GET /v1/status`).
 /// Le client de ce jeton (`GET /v1/me`) : son nom, son rôle, ses dépôts.
 public struct HarnessClient: Decodable, Equatable, Sendable {

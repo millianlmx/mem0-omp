@@ -6,10 +6,12 @@ import SwiftUI
 // La PAGE d'une feature sur iPhone et iPad, poussée dans la pile de la section
 // Features (`drafts.openedRun`) : son en-tête (titre, état, dépôt, jalons), puis des
 // onglets segmentés — Aperçu (ce qu'elle attend de vous, sa demande, ses specs et sa
-// revue), Direct, Fichiers, Tests et Frise (le contenu partagé du direct,
-// `IOSSessionSections`). La consigne à l'agent se tape en pied de page tant que la
-// feature l'accepte ; tous ses gestes tiennent dans un seul menu de barre
-// (`RunActionsMenu`, avec la Live Activity de l'iPhone par `ConsoleShell.runActions`).
+// revue), Preuves (captures, avant/après, rapports de tests et journaux de la revue,
+// `RunProofsSections` ; absent d'un serveur qui ne les sert pas), Direct, Fichiers,
+// Tests et Frise (le contenu partagé du direct, `IOSSessionSections`). La consigne à
+// l'agent se tape en pied de page tant que la feature l'accepte ; tous ses gestes
+// tiennent dans un seul menu de barre (`RunActionsMenu`, avec la Live Activity de
+// l'iPhone par `ConsoleShell.runActions`).
 //
 // Le direct suit la feature tant qu'un de ses onglets est montré et s'arrête quand la
 // page disparaît. Les mots viennent du noyau (`ShellText`, `MonitoringText`) : aucun
@@ -17,11 +19,12 @@ import SwiftUI
 
 /// Les onglets de la page d'une feature.
 enum IOSRunTab: Hashable, CaseIterable {
-    case overview, live, changes, tests, timeline
+    case overview, proofs, live, changes, tests, timeline
 
     var title: String {
         switch self {
         case .overview: ShellText.tabOverview
+        case .proofs: ProofsText.tab
         case .live: MonitoringText.tabLive
         case .changes: MonitoringText.tabFiles
         case .tests: MonitoringText.tabTests
@@ -29,10 +32,10 @@ enum IOSRunTab: Hashable, CaseIterable {
         }
     }
 
-    /// Le contenu du direct montré par l'onglet ; `nil` pour l'Aperçu.
+    /// Le contenu du direct montré par l'onglet ; `nil` pour l'Aperçu et les Preuves.
     var session: IOSSessionTab? {
         switch self {
-        case .overview: nil
+        case .overview, .proofs: nil
         case .live: .live
         case .changes: .changes
         case .tests: .tests
@@ -40,11 +43,20 @@ enum IOSRunTab: Hashable, CaseIterable {
         }
     }
 
-    /// L'onglet ouvert d'abord : l'Aperçu quand la feature attend l'humain, le Direct
-    /// quand elle tourne, l'Aperçu sinon.
-    static func initial(pending: Bool, running: Bool) -> IOSRunTab {
-        if pending { return .overview }
-        return running ? .live : .overview
+    /// Les onglets montrés : les Preuves seulement quand le serveur les sert.
+    static func shown(proofs: Bool) -> [IOSRunTab] {
+        allCases.filter { $0 != .proofs || proofs }
+    }
+
+    /// L'onglet ouvert d'abord (`HarnessRunOpening`) : les Preuves quand la feature
+    /// attend la validation de sa revue, l'Aperçu quand elle attend l'humain autrement,
+    /// le Direct quand elle tourne, l'Aperçu sinon.
+    static func initial(_ opening: HarnessRunOpening) -> IOSRunTab {
+        switch opening {
+        case .proofs: .proofs
+        case .overview: .overview
+        case .live: .live
+        }
     }
 }
 
@@ -58,6 +70,15 @@ struct IOSRunScreen: View {
     /// la connaissent (une notification, une feature ancienne), et ses specs.
     @State private var detail: HarnessRunView?
     @State private var looked = false
+    /// Les preuves de la feature (écran recréé à chaque feature : `.id(runId)`).
+    @StateObject private var proofs: HarnessRunProofs
+
+    init(server: HarnessModel, drafts: HarnessDrafts, runId: String) {
+        self.server = server
+        self.drafts = drafts
+        self.runId = runId
+        _proofs = StateObject(wrappedValue: HarnessRunProofs(harness: server, runId: runId))
+    }
 
     var body: some View {
         Group {
@@ -76,6 +97,7 @@ struct IOSRunScreen: View {
         .task(id: runId) {
             detail = await server.runDetail(runId: runId)
             looked = true
+            await proofs.load()
             await server.signals.loadOrigin(runId: runId)
         }
         .accessibilityElement(children: .contain)
@@ -89,7 +111,10 @@ struct IOSRunScreen: View {
     private var target: HarnessSessionTarget { .run(runId) }
 
     private func shown(_ run: HarnessRun) -> IOSRunTab {
-        chosen ?? IOSRunTab.initial(pending: RunPendingCard.isPending(run, in: server.inbox), running: HarnessRunGroup.of(run) == .running)
+        let preferred = chosen ?? IOSRunTab.initial(HarnessRunOpening.of(
+            run, pending: RunPendingCard.isPending(run, in: server.inbox), running: HarnessRunGroup.of(run) == .running, proofsShown: proofs.showsTab
+        ))
+        return IOSRunTab.shown(proofs: proofs.showsTab).contains(preferred) ? preferred : .overview
     }
 
     private func page(_ run: HarnessRun) -> some View {
@@ -100,7 +125,7 @@ struct IOSRunScreen: View {
                     RunDetailHeader(server: server, run: run)
                 }
                 Picker(PipelineServerText.sessionTitle, selection: Binding(get: { tab }, set: { chosen = $0 })) {
-                    ForEach(IOSRunTab.allCases, id: \.self) { tab in
+                    ForEach(IOSRunTab.shown(proofs: proofs.showsTab), id: \.self) { tab in
                         Text(tab.title).tag(tab)
                     }
                 }
@@ -110,6 +135,8 @@ struct IOSRunScreen: View {
                 .accessibilityIdentifier("ios.run.tabs")
                 if let session = tab.session {
                     IOSSessionSections(server: server, target: target, tab: session, followsEnd: $followsEnd)
+                } else if tab == .proofs {
+                    RunProofsSections(proofs: proofs)
                 } else {
                     overview(run)
                 }
@@ -141,8 +168,12 @@ struct IOSRunScreen: View {
             }
         }
         .onAppear {
-            if chosen == nil { chosen = tab }
+            // L'onglet d'ouverture se fige une fois les preuves tranchées (servies ou non).
+            if chosen == nil, proofs.isResolved { chosen = tab }
             follow(tab)
+        }
+        .onChange(of: proofs.isResolved) { _, resolved in
+            if resolved, chosen == nil { chosen = shown(run) }
         }
         .onChange(of: tab) { _, tab in follow(tab) }
         .onDisappear { server.stopSession() }

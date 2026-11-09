@@ -1,9 +1,11 @@
 // La PAGE d'une feature sur le Mac, à droite de la liste de Features — comme une
 // session cmux : l'en-tête fixe (titre, état, dépôt, jalons), puis des onglets
 // segmentés — Aperçu (ce qu'elle attend de vous, sa demande, ses specs, son verdict),
-// Direct, Fichiers, Tests et Frise (le contenu de session partagé avec la feuille des
-// audits) — et la consigne à l'agent en pied de page tant qu'elle en accepte une. Ses
-// gestes tiennent dans UN menu de la barre d'outils (`RunActionsMenu`).
+// Preuves (captures, avant/après, rapports de tests, journaux de la revue ; absent
+// d'un serveur qui ne les sert pas), Direct, Fichiers, Tests et Frise (le contenu de
+// session partagé avec la feuille des audits) — et la consigne à l'agent en pied de
+// page tant qu'elle en accepte une. Ses gestes tiennent dans UN menu de la barre
+// d'outils (`RunActionsMenu`).
 //
 // Le direct suit la feature dès qu'un onglet de session s'ouvre, et s'arrête quand la
 // page disparaît.
@@ -15,11 +17,12 @@ import SwiftUI
 
 /// Les onglets de la page.
 enum RunPageTab: Hashable, CaseIterable {
-    case overview, live, files, tests, timeline
+    case overview, proofs, live, files, tests, timeline
 
     var title: String {
         switch self {
         case .overview: ShellText.tabOverview
+        case .proofs: ProofsText.tab
         case .live: MonitoringText.tabLive
         case .files: MonitoringText.tabFiles
         case .tests: MonitoringText.tabTests
@@ -27,10 +30,10 @@ enum RunPageTab: Hashable, CaseIterable {
         }
     }
 
-    /// Le contenu de session de l'onglet ; aucun pour l'Aperçu.
+    /// Le contenu de session de l'onglet ; aucun pour l'Aperçu et les Preuves.
     var pane: HarnessSessionPane? {
         switch self {
-        case .overview: nil
+        case .overview, .proofs: nil
         case .live: .live
         case .files: .files
         case .tests: .tests
@@ -38,12 +41,24 @@ enum RunPageTab: Hashable, CaseIterable {
         }
     }
 
-    /// L'onglet d'ouverture : l'Aperçu quand la feature vous attend, le Direct quand
-    /// elle tourne, l'Aperçu sinon.
+    /// Les onglets montrés : les Preuves seulement quand le serveur les sert.
+    static func shown(proofs: Bool) -> [RunPageTab] {
+        allCases.filter { $0 != .proofs || proofs }
+    }
+
+    /// L'onglet d'ouverture (`HarnessRunOpening`) : les Preuves quand la feature attend
+    /// la validation de sa revue, l'Aperçu quand elle vous attend autrement, le Direct
+    /// quand elle tourne, l'Aperçu sinon.
     @MainActor
-    static func initial(for run: HarnessRun, inbox: HarnessInbox?) -> RunPageTab {
-        if RunPendingCard.isPending(run, in: inbox) { return .overview }
-        return HarnessRunGroup.of(run) == .running ? .live : .overview
+    static func initial(for run: HarnessRun, inbox: HarnessInbox?, proofs: Bool) -> RunPageTab {
+        let opening = HarnessRunOpening.of(
+            run, pending: RunPendingCard.isPending(run, in: inbox), running: HarnessRunGroup.of(run) == .running, proofsShown: proofs
+        )
+        switch opening {
+        case .proofs: return .proofs
+        case .overview: return .overview
+        case .live: return .live
+        }
     }
 }
 
@@ -57,6 +72,15 @@ struct RunPageView: View {
     /// La vue du serveur : ses specs, et la feature si ni la boîte ni l'historique ne la connaissent.
     @State private var view: HarnessRunView?
     @State private var isLoaded = false
+    /// Les preuves de la feature (page recréée à chaque feature : `.id(runId)`).
+    @StateObject private var proofs: HarnessRunProofs
+
+    init(server: HarnessModel, drafts: HarnessDrafts, runId: String) {
+        self.server = server
+        self.drafts = drafts
+        self.runId = runId
+        _proofs = StateObject(wrappedValue: HarnessRunProofs(harness: server, runId: runId))
+    }
 
     var body: some View {
         Group {
@@ -72,6 +96,7 @@ struct RunPageView: View {
         .task(id: runId + "|" + (server.knownRun(runId)?.state ?? "")) {
             view = await server.runView(runId)
             isLoaded = true
+            await proofs.load()
             await server.signals.loadOrigin(runId: runId)
         }
         .onDisappear {
@@ -81,7 +106,9 @@ struct RunPageView: View {
     }
 
     private func page(_ run: HarnessRun) -> some View {
-        let tab = chosen ?? RunPageTab.initial(for: run, inbox: server.inbox)
+        let tabs = RunPageTab.shown(proofs: proofs.showsTab)
+        let preferred = chosen ?? RunPageTab.initial(for: run, inbox: server.inbox, proofs: proofs.showsTab)
+        let tab = tabs.contains(preferred) ? preferred : .overview
         return VStack(spacing: 0) {
             RunDetailHeader(server: server, run: run)
                 .padding(.horizontal, 20)
@@ -89,7 +116,7 @@ struct RunPageView: View {
                 .padding(.bottom, 12)
             HStack {
                 Picker(ShellText.scope, selection: Binding(get: { tab }, set: { chosen = $0 })) {
-                    ForEach(RunPageTab.allCases, id: \.self) { tab in
+                    ForEach(tabs, id: \.self) { tab in
                         Text(tab.title).tag(tab)
                     }
                 }
@@ -110,6 +137,12 @@ struct RunPageView: View {
             if let pane = tab.pane {
                 HarnessSessionContent(server: server, target: .run(run.id), pane: pane, followsEnd: $followsEnd)
                     .onAppear { server.followSession(.run(run.id)) }
+            } else if tab == .proofs {
+                Form {
+                    RunProofsSections(proofs: proofs)
+                }
+                .formStyle(.grouped)
+                .accessibilityIdentifier("run.proofs")
             } else {
                 overview(run)
             }

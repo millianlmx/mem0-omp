@@ -356,9 +356,11 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
   « sélectionné » pour VoiceOver ; aucun caractère « ✓ ».
   `[garde: ios-finitions-composants/AC-2]`
 - Toucher une ligne de feature pousse sa page (`IOSRunScreen`) : en-tête et jalons,
-  onglets segmentés Aperçu, Direct, Fichiers, Tests, Frise, consigne en pied, gestes
-  dans le menu « … » ; elle s'ouvre sur l'Aperçu quand la feature vous attend, sur
-  le Direct quand elle tourne. `[test: runPageOpensOnTheRightTab]`
+  onglets segmentés Aperçu, Preuves (absent d'un serveur qui ne les sert pas),
+  Direct, Fichiers, Tests, Frise, consigne en pied, gestes dans le menu « … » ; elle
+  s'ouvre sur les Preuves quand sa revue attend votre validation, sur l'Aperçu quand
+  elle vous attend autrement, sur le Direct quand elle tourne.
+  `[test: runPageOpensOnTheRightTab]`
 - L'Aperçu d'une feature lancée depuis un signalement de collègue porte une section
   Origine (canal, personne, lien du fil, extrait caviardé, issue) ; rien sans
   origine ni pour un jeton restreint. `[garde: pont-corpo-console/AC-3]`
