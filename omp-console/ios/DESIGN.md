@@ -330,6 +330,13 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
   par `IOSMarkdownView`, verdicts, questions en lot, décisions renversables,
   alertes, audits à trier), rien de vide affiché ; file vide : « Rien ne vous
   attend ». `[garde: ios-souvenir-markdown-altere/AC-4]`
+- Les propositions nées des signalements de collègues (`SignalProposalsSection`,
+  vue partagée de `ConsoleUI`) suivent les envois du poste dans À traiter et
+  s'ajoutent à son badge ; « Relire et confirmer » ouvre une feuille en `Form`
+  groupé, titrée, dont le dépôt se choisit dans un `Picker` natif et dont l'aperçu
+  de ce qui partira à la forge est relu après chaque modification. Un jeton
+  restreint n'en voit rien ; le refus d'un jeton non approbateur est dit dans la
+  feuille. `[garde: pont-corpo-console/AC-1]` `[garde: pont-corpo-console/AC-2]`
 - Les tuiles d'indicateurs et les quatre graphiques (ce qui vous attend par projet,
   le débit, le coût des agents, la santé) vivent dans Système › Statistiques et
   santé (`IOSStatsCharts.swift`), teintés par `IOSDataPalette`, chaque graphique en
@@ -352,6 +359,9 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
   onglets segmentés Aperçu, Direct, Fichiers, Tests, Frise, consigne en pied, gestes
   dans le menu « … » ; elle s'ouvre sur l'Aperçu quand la feature vous attend, sur
   le Direct quand elle tourne. `[test: runPageOpensOnTheRightTab]`
+- L'Aperçu d'une feature lancée depuis un signalement de collègue porte une section
+  Origine (canal, personne, lien du fil, extrait caviardé, issue) ; rien sans
+  origine ni pour un jeton restreint. `[garde: pont-corpo-console/AC-3]`
 - La feuille « Session en direct » ne sert plus qu'aux audits et aux jobs du poste ;
   les différences d'un fichier se poussent dans la pile. Tous ses mots viennent de
   `MonitoringText` et `PipelineServerText`. `[garde: design-ios/AC-5]`

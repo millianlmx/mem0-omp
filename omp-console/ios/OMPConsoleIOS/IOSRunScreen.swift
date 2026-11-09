@@ -76,6 +76,7 @@ struct IOSRunScreen: View {
         .task(id: runId) {
             detail = await server.runDetail(runId: runId)
             looked = true
+            await server.signals.loadOrigin(runId: runId)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.screen.run")
@@ -179,6 +180,7 @@ struct IOSRunScreen: View {
                 }
             }
         }
+        RunOriginSection(signals: server.signals, runId: run.id)
         if !pending, let verdict = run.verdict {
             Section {
                 Text(PipelineServerText.risk(verdict.risk))
