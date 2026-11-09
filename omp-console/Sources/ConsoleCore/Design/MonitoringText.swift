@@ -82,11 +82,21 @@ public enum MonitoringText {
         return L10n.format("%@ (outil %@)", base, tool)
     }
 
-    /// « Étape /impl lente : 25 min (médiane 10 min) »
-    public static func alertSlow(step: String, minutes: Int?, medianMin: Int?) -> String {
+    /// « Étape /review lente : en cours depuis 31 min (médiane 36 s) » — la durée mesurée à `now` depuis `startedAt` (ms) ;
+    /// un serveur ancien, sans `startedAt`/`medianMs`, garde « : 25 min (médiane 10 min) », figés au déclenchement.
+    public static func alertSlow(step: String, startedAt: Double?, medianMs: Double?, minutes: Int?, medianMin: Int?, now: Date) -> String {
         var line = L10n.format("Étape %@ lente", step)
-        if let minutes { line += L10n.format(" : %lld min", minutes) }
-        if let medianMin { line += L10n.format(" (médiane %lld min)", medianMin) }
+        if let startedAt {
+            line += L10n.format(" : en cours depuis %lld min", max(0, Int((now.timeIntervalSince1970 * 1000 - startedAt) / 60_000)))
+        } else if let minutes {
+            line += L10n.format(" : %lld min", minutes)
+        }
+        if let medianMs {
+            let seconds = Int((medianMs / 1000).rounded())
+            line += seconds < 60 ? L10n.format(" (médiane %lld s)", seconds) : L10n.format(" (médiane %lld min)", Int((Double(seconds) / 60).rounded()))
+        } else if let medianMin {
+            line += L10n.format(" (médiane %lld min)", medianMin)
+        }
         return line
     }
 

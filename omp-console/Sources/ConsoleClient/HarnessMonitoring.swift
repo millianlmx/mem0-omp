@@ -95,8 +95,11 @@ public struct HarnessAlertDetail: Codable, Equatable, Sendable {
     public var budget: Double?
     public var threshold: Double?
     public var paused: Bool?
+    /// `step_slow` : le début de l'étape et la médiane de son dépôt, en ms ; absents d'un serveur ancien.
+    public var startedAt: Double?
+    public var medianMs: Double?
 
-    public init(minutes: Int? = nil, medianMin: Int? = nil, step: String? = nil, tool: String? = nil, fixes: Int? = nil, cost: Double? = nil, budget: Double? = nil, threshold: Double? = nil, paused: Bool? = nil) {
+    public init(minutes: Int? = nil, medianMin: Int? = nil, step: String? = nil, tool: String? = nil, fixes: Int? = nil, cost: Double? = nil, budget: Double? = nil, threshold: Double? = nil, paused: Bool? = nil, startedAt: Double? = nil, medianMs: Double? = nil) {
         self.minutes = minutes
         self.medianMin = medianMin
         self.step = step
@@ -106,6 +109,8 @@ public struct HarnessAlertDetail: Codable, Equatable, Sendable {
         self.budget = budget
         self.threshold = threshold
         self.paused = paused
+        self.startedAt = startedAt
+        self.medianMs = medianMs
     }
 }
 
@@ -437,13 +442,23 @@ public struct HarnessFlakyTest: Codable, Equatable, Sendable, Identifiable {
 // MARK: - Lecture
 
 extension HarnessAlert {
-    /// L'alerte en une ligne, d'après sa sorte et ce qu'elle dit d'elle-même.
-    public var line: String {
+    /// L'alerte en une ligne, d'après sa sorte et ce qu'elle dit d'elle-même ; une durée en cours se mesure maintenant.
+    public var line: String { line(at: Date()) }
+
+    /// L'alerte en une ligne, les durées en cours mesurées à `now`.
+    public func line(at now: Date) -> String {
         switch sort {
         case .stalled:
             MonitoringText.alertStalled(minutes: detail.minutes, tool: detail.tool)
         case .stepSlow:
-            MonitoringText.alertSlow(step: HarnessRun.label(forStep: detail.step ?? ""), minutes: detail.minutes, medianMin: detail.medianMin)
+            MonitoringText.alertSlow(
+                step: HarnessRun.label(forStep: detail.step ?? ""),
+                startedAt: detail.startedAt,
+                medianMs: detail.medianMs,
+                minutes: detail.minutes,
+                medianMin: detail.medianMin,
+                now: now
+            )
         case .fixLoop:
             MonitoringText.alertFixLoop(fixes: detail.fixes)
         case .budgetExceeded:
