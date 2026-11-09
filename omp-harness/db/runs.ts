@@ -83,7 +83,17 @@ export type NewRun = Pick<RunRow, "id" | "repo" | "slug" | "title" | "request" |
   Partial<
     Pick<
       RunRow,
-      "projectId" | "projectOrder" | "modules" | "state" | "step" | "priority" | "createdBy" | "afterRun" | "reason" | "kind" | "labels"
+      | "projectId"
+      | "projectOrder"
+      | "modules"
+      | "state"
+      | "step"
+      | "priority"
+      | "createdBy"
+      | "afterRun"
+      | "reason"
+      | "kind"
+      | "labels"
     >
   >;
 

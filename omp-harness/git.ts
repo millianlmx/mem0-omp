@@ -112,7 +112,13 @@ export function isTestFile(file: string): boolean {
  */
 export function isNonCode(file: string): boolean {
   const name = file.split("/").pop() ?? file;
-  return isTestFile(file) || /\.md$/i.test(name) || /^CHANGELOG/.test(name) || name === "package.json" || /\.lock$/.test(name);
+  return (
+    isTestFile(file) ||
+    /\.md$/i.test(name) ||
+    /^CHANGELOG/.test(name) ||
+    name === "package.json" ||
+    /\.lock$/.test(name)
+  );
 }
 
 export class Git {

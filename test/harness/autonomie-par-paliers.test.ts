@@ -21,7 +21,18 @@ import { WAIT_REASON, humanWaitOf } from "../../omp-harness/machine.ts";
 import { REVIEW_EVIDENCE, SPECS_BASELINE } from "../../omp-harness/steps.ts";
 import { mergeDecision } from "../../omp-harness/verdict.ts";
 import type { ReviewEvidence, Verdict } from "../../omp-harness/verdict.ts";
-import { BUG_REVIEW_RULE, autonomyDecisions, bugWorld, configure, eventsOf, implOf, lines, reviewOf, stateOf, until } from "../support/autonomie-fixtures.ts";
+import {
+  BUG_REVIEW_RULE,
+  autonomyDecisions,
+  bugWorld,
+  configure,
+  eventsOf,
+  implOf,
+  lines,
+  reviewOf,
+  stateOf,
+  until,
+} from "../support/autonomie-fixtures.ts";
 import { OK, fakeWorld, git, harnessRepo, testConfig, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 import { tmpdir } from "../support/repo.ts";
@@ -192,7 +203,11 @@ test("autonomie-par-paliers/AC-20 : après N refus humains d'une attente verdict
         [{ path: "repos.demo.autonomy.rules[0].gates.review", value: "human" }],
         `cas : ${name} : changes`,
       );
-      assert.deepEqual(world.config.repos.find((r) => r.name === "demo")?.autonomy, rulesBefore, `cas : ${name} : règle`);
+      assert.deepEqual(
+        world.config.repos.find((r) => r.name === "demo")?.autonomy,
+        rulesBefore,
+        `cas : ${name} : règle`,
+      );
       assert.deepEqual(world.config, configBefore, `cas : ${name} : configuration`);
     } finally {
       world.store.close();
@@ -249,7 +264,10 @@ test("autonomie-par-paliers/S-17 : la forme de changes, le tri, le filtre repos,
       "cas : tri par dépôt, type puis porte",
     );
     const changes = Object.fromEntries(all.map((p) => [at(p), p.changes]));
-    const gateOf = (i: number, gate: string) => ({ path: `repos.demo.autonomy.rules[${i}].gates.${gate}`, value: "auto" });
+    const gateOf = (i: number, gate: string) => ({
+      path: `repos.demo.autonomy.rules[${i}].gates.${gate}`,
+      value: "auto",
+    });
     const wide = (i: number) => ({ path: `repos.demo.autonomy.rules[${i}].match.maxDiffLines`, value: 60 });
     assert.deepEqual(changes["demo/bug/review"], [gateOf(0, "review"), wide(0)], "cas : règle sans maxDiffLines");
     assert.deepEqual(changes["demo/feature/review"], [gateOf(1, "review"), wide(1)], "cas : maxDiffLines ≤ serveur");
@@ -418,7 +436,12 @@ test("autonomie-par-paliers/AC-31 : le renversement d'un run mergé validé seul
     }
     assert.deepEqual(world.proposals(), [], "témoin : aucune correction, aucune baisse");
 
-    const decision = decideL(world, "m-0", "Valider le verdict et fusionner sans geste humain (autonomie) ?", proofOf("review"));
+    const decision = decideL(
+      world,
+      "m-0",
+      "Valider le verdict et fusionner sans geste humain (autonomie) ?",
+      proofOf("review"),
+    );
     world.store.reverseDecision("m-0", decision.seq, "laisser à l'humain", "à revoir", [], "humain");
     world.store.appendEvent("reverted", "m-0", { by: "humain" });
     const [proposal, ...others] = world.proposals();
@@ -462,7 +485,15 @@ test("autonomie-par-paliers/AC-30 : une décision d'autonomie reste au rapport d
   const viewer = clients.add("tableau", "viewer", "*").token;
   const server = http.createServer(createHandler({ orchestrator: world.orchestrator, clients }));
   try {
-    timed.createRun({ id: "auto", repo: "demo", slug: "auto", title: "Export CSV", request: "x", branch: "harness/auto", kind: "bug" });
+    timed.createRun({
+      id: "auto",
+      repo: "demo",
+      slug: "auto",
+      title: "Export CSV",
+      request: "x",
+      branch: "harness/auto",
+      kind: "bug",
+    });
     const taken = decideL({ store: timed }, "auto", question, proofOf("review"));
     // Une décision d'agent prise seule avant la fenêtre ultérieure : fenêtrée comme avant.
     const agent = decideL({ store: timed }, "auto", "Séparateur du CSV ?", null);
@@ -483,7 +514,7 @@ test("autonomie-par-paliers/AC-30 : une décision d'autonomie reste au rapport d
     const inbox = async () => {
       const response = await fetch(`${url}/v1/inbox`, { headers: { Authorization: `Bearer ${viewer}` } });
       // La forme de /v1/inbox est figée par queries.ts (inboxOf).
-      const body: { decisions: { question: string }[] } = await response.json();
+      const body = (await response.json()) as { decisions: { question: string }[] };
       return body.decisions.map((d) => d.question);
     };
     assert.ok((await inbox()).includes(question), "avant accept : À traiter la liste");
@@ -571,7 +602,11 @@ async function runCaseRA(options: CaseOptionsRA) {
 async function baselineReasonRA(options: CaseOptionsRA): Promise<string | null> {
   const { world, done } = await runCaseRA({ ...options, rules: null });
   try {
-    assert.equal(done.state, "awaiting_human", `le monde sans autonomie attend l'humain : ${done.state}/${done.reason}`);
+    assert.equal(
+      done.state,
+      "awaiting_human",
+      `le monde sans autonomie attend l'humain : ${done.state}/${done.reason}`,
+    );
     return done.reason;
   } finally {
     await world.orchestrator.stop();
@@ -617,7 +652,12 @@ test("autonomie-par-paliers/AC-9 : sans test ajouté ou avec une suite complète
   );
   await world.orchestrator.start();
   try {
-    const run = world.orchestrator.createRun({ repo: "demo", title: "Corriger l'export", request: "Corriger", kind: "bug" });
+    const run = world.orchestrator.createRun({
+      repo: "demo",
+      title: "Corriger l'export",
+      request: "Corriger",
+      kind: "bug",
+    });
     await waitFor(
       () =>
         world.store.getRun(run.id)?.step === "fix" ||
@@ -645,7 +685,10 @@ test("autonomie-par-paliers/AC-10 : avec require.proofs, un critère non prouvé
   const cases: { name: string; review: unknown[] }[] = [
     { name: "AC-1 non testé", review: verdictOf({ criteria: [{ id: "AC-1", test: "", status: "untested" }] }) },
     { name: "AC-1 en échec", review: verdictOf({ criteria: [{ id: "AC-1", test: "harness/AC-1", status: "fail" }] }) },
-    { name: "AC-1 absent du verdict", review: verdictOf({ criteria: [{ id: "AC-2", test: "harness/AC-2", status: "pass" }] }) },
+    {
+      name: "AC-1 absent du verdict",
+      review: verdictOf({ criteria: [{ id: "AC-2", test: "harness/AC-2", status: "pass" }] }),
+    },
     { name: "AC-1 non vérifié", review: verdictOf({ unverified: ["AC-1 : export non rejoué"] }) },
   ];
   for (const item of cases) {
@@ -675,7 +718,10 @@ test("autonomie-par-paliers/AC-11 : match.paths [docs/] ne correspond pas à un 
   const docsOnly: AutonomyRule = { ...BUG_REVIEW_RULE, match: { kind: "bug", maxDiffLines: 50, paths: ["docs/"] } };
   await assertWaitsHumanRA({ rules: [docsOnly] }, "seule règle limitée à docs/");
 
-  const srcRule: AutonomyRule = { ...BUG_REVIEW_RULE, match: { kind: "bug", maxDiffLines: 50, paths: ["src/", "test/"] } };
+  const srcRule: AutonomyRule = {
+    ...BUG_REVIEW_RULE,
+    match: { kind: "bug", maxDiffLines: 50, paths: ["src/", "test/"] },
+  };
   const { world, runId, done } = await runCaseRA({ rules: [docsOnly, srcRule] });
   try {
     assert.equal(done.state, "merged", stateOf(world, runId));
@@ -689,7 +735,11 @@ test("autonomie-par-paliers/AC-11 : match.paths [docs/] ne correspond pas à un 
 });
 
 test("autonomie-par-paliers/AC-12 : deux règles correspondantes, la première review: human et la seconde auto, laissent l'attente à l'humain", async () => {
-  const human: AutonomyRule = { match: { kind: "bug", maxDiffLines: 50 }, require: {}, gates: { specs: "human", review: "human" } };
+  const human: AutonomyRule = {
+    match: { kind: "bug", maxDiffLines: 50 },
+    require: {},
+    gates: { specs: "human", review: "human" },
+  };
   await assertWaitsHumanRA({ rules: [human, BUG_REVIEW_RULE] }, "la première règle retenue est human");
   // Contre-épreuve : dans l'ordre inverse, la règle auto vient d'abord et le run est fusionné.
   const { world, runId, done } = await runCaseRA({ rules: [BUG_REVIEW_RULE, human] });
@@ -727,11 +777,18 @@ test("autonomie-par-paliers/AC-18 : un run validé seul est lu dans /v1/inbox et
       assert.equal(response.status, 200, route);
       return (await response.json()) as Record<string, unknown>;
     };
-    type Seen = { runId: string; status: string; autonomy: { gate: string; rule: { rank: number; match: unknown }; proofs: Record<string, unknown> } | null };
+    type Seen = {
+      runId: string;
+      status: string;
+      autonomy: { gate: string; rule: { rank: number; match: unknown }; proofs: Record<string, unknown> } | null;
+    };
     const decisions = ((await get("/v1/decisions?status=auto")).decisions as Seen[]).filter((d) => d.autonomy !== null);
     const inbox = await get("/v1/inbox");
     const inboxed = (inbox.decisions as Seen[]).filter((d) => d.autonomy !== null);
-    for (const [where, seen] of [["decisions", decisions], ["inbox", inboxed]] as const) {
+    for (const [where, seen] of [
+      ["decisions", decisions],
+      ["inbox", inboxed],
+    ] as const) {
       assert.equal(seen.length, 1, `${where} : une décision d'autonomie`);
       const [decision] = seen;
       assert.equal(decision?.runId, runId, `${where} : nomme le run`);
@@ -758,7 +815,11 @@ test("autonomie-par-paliers/AC-18 : un run validé seul est lu dans /v1/inbox et
 const SPECS_S = String(OK.specs[0]?.content);
 
 /** La règle de référence de la porte des specs : tout run `docs`, specs en auto. */
-const DOCS_SPECS_RULE_S: AutonomyRule = { match: { kind: "docs" }, require: {}, gates: { specs: "auto", review: "human" } };
+const DOCS_SPECS_RULE_S: AutonomyRule = {
+  match: { kind: "docs" },
+  require: {},
+  gates: { specs: "auto", review: "human" },
+};
 
 const HUMAN_RULES_S: AutonomyRule[] = [
   { match: { kind: "docs" }, require: {}, gates: { specs: "human", review: "human" } },
@@ -791,7 +852,9 @@ function worldS(options: {
     {
       req: [OK.req],
       specs: options.challenge === true ? [specs, specs] : [specs],
-      ...(options.challenge === true ? { contradicteur: [[{ tool: "challenge_report", args: { findings: [BLOQUANT_S] } }]] } : {}),
+      ...(options.challenge === true
+        ? { contradicteur: [[{ tool: "challenge_report", args: { findings: [BLOQUANT_S] } }]] }
+        : {}),
       impl: options.impl ?? BLOCKED_IMPL_S,
       review: [reviewOf()],
     },
@@ -999,7 +1062,12 @@ test("autonomie-par-paliers/AC-13 : des specs à geste irréversible restent à 
   // À la porte revue, des specs validées avec un geste irréversible gardent le verdict à l'humain.
   await withHeld({}, async (held) => {
     const stepId = held.world.store.listSteps(held.runId).at(0)?.id ?? null;
-    held.world.store.putArtifact(held.runId, SPECS_BASELINE, "S-1 (AC-1) : export CSV, puis supprimer les données exportées", stepId);
+    held.world.store.putArtifact(
+      held.runId,
+      SPECS_BASELINE,
+      "S-1 (AC-1) : export CSV, puis supprimer les données exportées",
+      stepId,
+    );
     await holdAndTick(held);
     assertDeferred(held, "specs irréversibles à la revue", /irréversible/);
   });
@@ -1045,11 +1113,7 @@ test("autonomie-par-paliers/AC-34 : validation des specs renversée pendant /imp
     await waitFor(
       () => {
         const live = world.store.getRun(run.id);
-        return (
-          autonomyDecisions(world, run.id).length === 1 &&
-          live?.step === "impl" &&
-          live.state === "running"
-        );
+        return autonomyDecisions(world, run.id).length === 1 && live?.step === "impl" && live.state === "running";
       },
       () => stateOf(world, run.id),
       60_000,
@@ -1091,7 +1155,8 @@ test("autonomie-par-paliers/AC-34 : validation des specs renversée pendant /imp
     await waitFor(
       () => {
         const live = world.store.getRun(run.id);
-        if (live?.state === "merged" || live?.state === "failed") throw new Error(`le run ne devait pas finir : ${stateOf(world, run.id)}`);
+        if (live?.state === "merged" || live?.state === "failed")
+          throw new Error(`le run ne devait pas finir : ${stateOf(world, run.id)}`);
         return live?.state === "awaiting_human" && humanWaitOf(live) === "verdict";
       },
       () => stateOf(world, run.id),
@@ -1146,18 +1211,62 @@ test("autonomie-par-paliers/AC-2 : une règle au kind inconnu, à la porte incon
   const cases: [string, unknown, RegExp][] = [
     ["autonomy n'est pas un objet", "oui", /repos\.demo\.autonomy : \{ rules/],
     ["rules n'est pas une liste", { rules: {} }, /repos\.demo\.autonomy\.rules : liste de règles/],
-    ["règle avec une clé inconnue", { rules: [rule({ extra: 1 })] }, /repos\.demo\.autonomy\.rules\[0\] : \{ match, require\?, gates\? \}/],
-    ["kind inconnu", { rules: [{ match: { kind: "chore" } }] }, /repos\.demo\.autonomy\.rules\[0\]\.match\.kind : bug \| feature \| docs \| deps \| test/],
+    [
+      "règle avec une clé inconnue",
+      { rules: [rule({ extra: 1 })] },
+      /repos\.demo\.autonomy\.rules\[0\] : \{ match, require\?, gates\? \}/,
+    ],
+    [
+      "kind inconnu",
+      { rules: [{ match: { kind: "chore" } }] },
+      /repos\.demo\.autonomy\.rules\[0\]\.match\.kind : bug \| feature \| docs \| deps \| test/,
+    ],
     ["kind absent", { rules: [{ match: {} }] }, /repos\.demo\.autonomy\.rules\[0\]\.match\.kind/],
-    ["clé de match inconnue", { rules: [{ match: { kind: "bug", size: 3 } }] }, /rules\[0\]\.match : kind, maxDiffLines\?, paths\?, labels\?/],
-    ["maxDiffLines nul", { rules: [{ match: { kind: "bug", maxDiffLines: 0 } }] }, /rules\[0\]\.match\.maxDiffLines : entier ≥ 1/],
-    ["paths absolu", { rules: [{ match: { kind: "bug", paths: ["/etc"] } }] }, /rules\[0\]\.match\.paths : chemins relatifs/],
-    ["paths avec ..", { rules: [{ match: { kind: "bug", paths: ["a/../b"] } }] }, /rules\[0\]\.match\.paths : chemins relatifs/],
-    ["labels vide", { rules: [{ match: { kind: "bug", labels: [] } }] }, /rules\[0\]\.match\.labels : liste de labels non vides/],
-    ["require non booléen", { rules: [rule({ require: { reproTest: "oui" } })] }, /rules\[0\]\.require : \{ reproTest\?, greenChecks\?, proofs\? \} booléens/],
-    ["porte specs inconnue", { rules: [rule({ gates: { specs: "maybe" } })] }, /rules\[0\]\.gates\.specs : human \| auto/],
-    ["porte review inconnue", { rules: [rule({ gates: { review: "yes" } })] }, /rules\[0\]\.gates\.review : human \| auto/],
-    ["clé de gates inconnue", { rules: [rule({ gates: { merge: "auto" } })] }, /rules\[0\]\.gates : \{ specs\?, review\? \}/],
+    [
+      "clé de match inconnue",
+      { rules: [{ match: { kind: "bug", size: 3 } }] },
+      /rules\[0\]\.match : kind, maxDiffLines\?, paths\?, labels\?/,
+    ],
+    [
+      "maxDiffLines nul",
+      { rules: [{ match: { kind: "bug", maxDiffLines: 0 } }] },
+      /rules\[0\]\.match\.maxDiffLines : entier ≥ 1/,
+    ],
+    [
+      "paths absolu",
+      { rules: [{ match: { kind: "bug", paths: ["/etc"] } }] },
+      /rules\[0\]\.match\.paths : chemins relatifs/,
+    ],
+    [
+      "paths avec ..",
+      { rules: [{ match: { kind: "bug", paths: ["a/../b"] } }] },
+      /rules\[0\]\.match\.paths : chemins relatifs/,
+    ],
+    [
+      "labels vide",
+      { rules: [{ match: { kind: "bug", labels: [] } }] },
+      /rules\[0\]\.match\.labels : liste de labels non vides/,
+    ],
+    [
+      "require non booléen",
+      { rules: [rule({ require: { reproTest: "oui" } })] },
+      /rules\[0\]\.require : \{ reproTest\?, greenChecks\?, proofs\? \} booléens/,
+    ],
+    [
+      "porte specs inconnue",
+      { rules: [rule({ gates: { specs: "maybe" } })] },
+      /rules\[0\]\.gates\.specs : human \| auto/,
+    ],
+    [
+      "porte review inconnue",
+      { rules: [rule({ gates: { review: "yes" } })] },
+      /rules\[0\]\.gates\.review : human \| auto/,
+    ],
+    [
+      "clé de gates inconnue",
+      { rules: [rule({ gates: { merge: "auto" } })] },
+      /rules\[0\]\.gates : \{ specs\?, review\? \}/,
+    ],
     ["seconde règle fautive", { rules: [rule({}), { match: { kind: "oups" } }] }, /rules\[1\]\.match\.kind/],
   ];
   for (const [name, autonomy, message] of cases) {
@@ -1181,7 +1290,12 @@ test("autonomie-par-paliers/AC-2 : une règle au kind inconnu, à la porte incon
 
 const TOKEN = "t".repeat(64);
 
-async function withServer<T>(world: FakeWorld, use: (call: (method: string, route: string, body?: unknown) => Promise<{ status: number; body: Record<string, unknown> }>) => Promise<T>): Promise<T> {
+async function withServer<T>(
+  world: FakeWorld,
+  use: (
+    call: (method: string, route: string, body?: unknown) => Promise<{ status: number; body: Record<string, unknown> }>,
+  ) => Promise<T>,
+): Promise<T> {
   const server = http.createServer(createHandler({ orchestrator: world.orchestrator, token: TOKEN }));
   try {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -1223,7 +1337,11 @@ test("autonomie-par-paliers/AC-4 : POST /v1/runs déclare type et labels, la vue
       const refused: [string, Record<string, unknown>, RegExp][] = [
         ["kind inconnu", { kind: "chore" }, /kind : bug \| feature \| docs \| deps \| test/],
         ["labels n'est pas une liste", { labels: "export" }, /labels : liste de chaînes attendue/],
-        ["trop de labels", { labels: Array.from({ length: 21 }, (_, i) => `l${i}`) }, /labels : 20 au plus, de 1 à 50 caractères chacun/],
+        [
+          "trop de labels",
+          { labels: Array.from({ length: 21 }, (_, i) => `l${i}`) },
+          /labels : 20 au plus, de 1 à 50 caractères chacun/,
+        ],
         ["label vide", { labels: ["  "] }, /labels : 20 au plus/],
         ["label trop long", { labels: ["x".repeat(51)] }, /labels : 20 au plus/],
       ];
@@ -1236,8 +1354,14 @@ test("autonomie-par-paliers/AC-4 : POST /v1/runs déclare type et labels, la vue
 
     // Aucun chemin ne les modifie ensuite : le patch d'un run ne les connaît pas, et MCP ne les lit pas.
     const [first] = world.store.listRuns({});
-    assert.throws(() => world.store.updateRun(first?.id as string, { kind: "docs" } as never), /colonne de run inconnue/);
-    assert.throws(() => world.store.updateRun(first?.id as string, { labels: ["x"] } as never), /colonne de run inconnue/);
+    assert.throws(
+      () => world.store.updateRun(first?.id as string, { kind: "docs" } as never),
+      /colonne de run inconnue/,
+    );
+    assert.throws(
+      () => world.store.updateRun(first?.id as string, { labels: ["x"] } as never),
+      /colonne de run inconnue/,
+    );
     const client: Client = { name: "agent", role: "operator", repos: "*", createdAt: 0, approver: false, pilot: false };
     const viaMcp = newRunInput({ repo: "demo", title: "t", request: "r", kind: "bug", labels: ["x"] }, client);
     assert.equal("kind" in viaMcp, false, "run_start ne pose pas de type");
@@ -1247,14 +1371,23 @@ test("autonomie-par-paliers/AC-4 : POST /v1/runs déclare type et labels, la vue
   }
 });
 
-const SPLIT_SPECS = String(OK.specs[0]?.content).replace("## Découpage\naucun", "## Découpage\n- Export JSON — Exporter aussi en JSON — docs");
+const SPLIT_SPECS = String(OK.specs[0]?.content).replace(
+  "## Découpage\naucun",
+  "## Découpage\n- Export JSON — Exporter aussi en JSON — docs",
+);
 
 test("autonomie-par-paliers/AC-29 : un run de suite (revert) et une feature découpée n'héritent ni du type ni des labels de leur parent", async () => {
   // Le revert d'un run mergé seul par l'autonomie ouvre un run de suite sans type.
   const world = bugWorld({ rules: [BUG_REVIEW_RULE] });
   await world.orchestrator.start();
   try {
-    const parent = world.orchestrator.createRun({ repo: "demo", title: "Corriger l'export", request: "Corriger", kind: "bug", labels: ["export"] });
+    const parent = world.orchestrator.createRun({
+      repo: "demo",
+      title: "Corriger l'export",
+      request: "Corriger",
+      kind: "bug",
+      labels: ["export"],
+    });
     const done = await until(world, parent.id, ["merged", "awaiting_human", "failed"]);
     assert.equal(done.state, "merged", stateOf(world, parent.id));
     assert.deepEqual([done.kind, done.labels], ["bug", ["export"]]);
@@ -1275,11 +1408,20 @@ test("autonomie-par-paliers/AC-29 : un run de suite (revert) et une feature déc
   );
   await splitWorld.orchestrator.start();
   try {
-    const parent = splitWorld.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: "Exporter", kind: "bug", labels: ["export"] });
+    const parent = splitWorld.orchestrator.createRun({
+      repo: "demo",
+      title: "Export CSV",
+      request: "Exporter",
+      kind: "bug",
+      labels: ["export"],
+    });
     await until(splitWorld, parent.id, ["awaiting_human", "failed"]);
     assert.equal(humanWaitOf(runOf(splitWorld, parent.id)), "specs", stateOf(splitWorld, parent.id));
     await splitWorld.orchestrator.validate(parent.id, true, "", { by: "humain" });
-    await waitFor(() => splitWorld.store.listRuns({ afterRun: parent.id }).length > 0, () => stateOf(splitWorld, parent.id));
+    await waitFor(
+      () => splitWorld.store.listRuns({ afterRun: parent.id }).length > 0,
+      () => stateOf(splitWorld, parent.id),
+    );
     for (const child of splitWorld.store.listRuns({ afterRun: parent.id })) {
       assert.equal(child.kind, null, `${child.title} : sans type`);
       assert.deepEqual(child.labels, [], `${child.title} : sans labels`);
@@ -1336,8 +1478,16 @@ function assertDeferred(held: Held, message: string, why?: RegExp): void {
   assert.equal(lastAutonomy(held)?.payload.action, "defer", `${message} : defer écrit`);
   if (why) assert.match(String(lastAutonomy(held)?.payload.why), why, `${message} : raison du renoncement`);
   assert.equal(autonomyDecisions(world, runId).length, 0, `${message} : aucune décision prise seule`);
-  assert.equal(eventsOf(world, runId, "autonomy").filter((e) => e.payload.action === "validate").length, 0, `${message} : aucun validate`);
-  assert.equal(eventsOf(world, runId, "verdict").length, 2, `${message} : la notification part (à la pose, puis au renoncement)`);
+  assert.equal(
+    eventsOf(world, runId, "autonomy").filter((e) => e.payload.action === "validate").length,
+    0,
+    `${message} : aucun validate`,
+  );
+  assert.equal(
+    eventsOf(world, runId, "verdict").length,
+    2,
+    `${message} : la notification part (à la pose, puis au renoncement)`,
+  );
 }
 
 async function withHeld(options: { createdBy?: string }, use: (held: Held) => Promise<void>): Promise<void> {
@@ -1385,7 +1535,14 @@ test("autonomie-par-paliers/AC-14 : une attente de budget ou un budget dépassé
   await withHeld({}, async (held) => {
     const { world, runId } = held;
     // Un second run, déjà en attente, dont l'attente est retenue : il vient après le premier dans le tour.
-    world.store.createRun({ id: "second", repo: "demo", slug: "second", title: "Second", request: "x", branch: "harness/second" });
+    world.store.createRun({
+      id: "second",
+      repo: "demo",
+      slug: "second",
+      title: "Second",
+      request: "x",
+      branch: "harness/second",
+    });
     world.store.updateRun("second", { state: "awaiting_human", step: "review", reason: "validation humaine : test" });
     world.store.appendEvent("autonomy", "second", { action: "hold", gate: "review", rev: 0 }, "demo");
     // Le premier échoue à la relecture de l'arbre : une exception hors de `evaluate`.
@@ -1445,7 +1602,14 @@ test("autonomie-par-paliers/AC-15 : un run qui a porté une escalade schema, pub
 });
 
 test("autonomie-par-paliers/AC-16 : un run créé par le client de la vigie, sa correction d'incident ou sa descendance n'est jamais validé seul", async () => {
-  const vigieClient: Client = { name: "sentinelle", role: "operator", repos: "*", createdAt: 0, approver: false, pilot: true };
+  const vigieClient: Client = {
+    name: "sentinelle",
+    role: "operator",
+    repos: "*",
+    createdAt: 0,
+    approver: false,
+    pilot: true,
+  };
 
   await withHeld({ createdBy: "sentinelle" }, async (held) => {
     held.world.orchestrator.vigie.heartbeat({}, vigieClient, Date.now());
@@ -1475,7 +1639,15 @@ test("autonomie-par-paliers/AC-16 : un run créé par le client de la vigie, sa 
   await withHeld({}, async (held) => {
     const { store } = held.world;
     held.world.orchestrator.vigie.heartbeat({}, vigieClient, Date.now());
-    store.createRun({ id: "vigie-parent", repo: "demo", slug: "vigie-parent", title: "Correction", request: "x", branch: "harness/vigie-parent", createdBy: "sentinelle" });
+    store.createRun({
+      id: "vigie-parent",
+      repo: "demo",
+      slug: "vigie-parent",
+      title: "Correction",
+      request: "x",
+      branch: "harness/vigie-parent",
+      createdBy: "sentinelle",
+    });
     store.appendEvent("follow_up", "vigie-parent", { runId: held.runId });
     await holdAndTick(held);
     assertDeferred(held, "descendant d'un run de la vigie", /vigie/);
@@ -1526,16 +1698,56 @@ function rewriteReview(held: Held, change: (verdict: Verdict, evidence: ReviewEv
 test("autonomie-par-paliers/AC-25 : toute autre raison d'auto-merge refusé que le diff, seule ou jointe à un diff de 40 lignes, laisse l'attente à l'humain", async () => {
   const reasons: [string, (verdict: Verdict, evidence: ReviewEvidence) => void][] = [
     ["bloquant", (v) => void v.blockers.push("une régression")],
-    ["risque au-dessus du plafond", (v) => void (v.risk = "high")],
-    ["suite complète rouge", (_v, e) => void (e.fullTests = "fail")],
-    ["suite complète non lancée", (_v, e) => void (e.fullTests = "not_run")],
-    ["escalade ouverte", (_v, e) => void (e.openEscalations = 1)],
-    ["critère absent du verdict", (_v, e) => void (e.acIds = ["AC-1", "AC-2"])],
-    ["critère non prouvé", (v) => void (v.criteria = [{ id: "AC-1", test: "x", status: "fail" }])],
+    [
+      "risque au-dessus du plafond",
+      (v) => {
+        v.risk = "high";
+      },
+    ],
+    [
+      "suite complète rouge",
+      (_v, e) => {
+        e.fullTests = "fail";
+      },
+    ],
+    [
+      "suite complète non lancée",
+      (_v, e) => {
+        e.fullTests = "not_run";
+      },
+    ],
+    [
+      "escalade ouverte",
+      (_v, e) => {
+        e.openEscalations = 1;
+      },
+    ],
+    [
+      "critère absent du verdict",
+      (_v, e) => {
+        e.acIds = ["AC-1", "AC-2"];
+      },
+    ],
+    [
+      "critère non prouvé",
+      (v) => {
+        v.criteria = [{ id: "AC-1", test: "x", status: "fail" }];
+      },
+    ],
     ["critère non vérifié", (v) => void v.unverified.push("AC-1 : export non rejoué")],
-    ["critère validé modifié depuis /specs", (_v, e) => void (e.specsDrift = [{ id: "AC-1", validated: "Given a", current: "Given b" }])],
+    [
+      "critère validé modifié depuis /specs",
+      (_v, e) => {
+        e.specsDrift = [{ id: "AC-1", validated: "Given a", current: "Given b" }];
+      },
+    ],
     ["fichier touché non relu", (_v, e) => void e.touchedFiles.push("src/api/autre.ts")],
-    ["verdict faible", (v) => void (v.confidence = "weak")],
+    [
+      "verdict faible",
+      (v) => {
+        v.confidence = "weak";
+      },
+    ],
   ];
   const held = await heldRun();
   try {
@@ -1593,7 +1805,13 @@ test("autonomie-par-paliers/AC-33 : GET /v1/autonomy rend règles, validations e
   const server = http.createServer(createHandler({ orchestrator: world.orchestrator, clients }));
   try {
     // Une validation prise seule dans `demo` (le pipeline complet).
-    const run = world.orchestrator.createRun({ repo: "demo", title: "Corriger l'export", request: "Corriger", kind: "bug", labels: ["export"] });
+    const run = world.orchestrator.createRun({
+      repo: "demo",
+      title: "Corriger l'export",
+      request: "Corriger",
+      kind: "bug",
+      labels: ["export"],
+    });
     const done = await until(world, run.id, ["merged", "awaiting_human", "failed"]);
     assert.equal(done.state, "merged", stateOf(world, run.id));
 
@@ -1606,10 +1824,29 @@ test("autonomie-par-paliers/AC-33 : GET /v1/autonomy rend règles, validations e
         store.appendEvent("validation", id, { gate: "verdict", approve: false, liftable: true, by: "humain" });
       }
     }
-    store.createRun({ id: "autre-auto", repo: "autre", slug: "autre-auto", title: "Autre", request: "x", branch: "harness/autre-auto", kind: "bug" });
+    store.createRun({
+      id: "autre-auto",
+      repo: "autre",
+      slug: "autre-auto",
+      title: "Autre",
+      request: "x",
+      branch: "harness/autre-auto",
+      kind: "bug",
+    });
     const step = store.startStep("autre-auto", "impl", 1, null, null);
     store.addDecision(
-      { runId: "autre-auto", stepId: step.id, question: "Valider ?", options: ["valider", "laisser à l'humain"], chosen: "valider", rationale: "r", category: "reversible", checkpointSha: null, dependsOn: [], autonomy: proofOfT(BUG_REVIEW_RULE) },
+      {
+        runId: "autre-auto",
+        stepId: step.id,
+        question: "Valider ?",
+        options: ["valider", "laisser à l'humain"],
+        chosen: "valider",
+        rationale: "r",
+        category: "reversible",
+        checkpointSha: null,
+        dependsOn: [],
+        autonomy: proofOfT(BUG_REVIEW_RULE),
+      },
       "auto",
     );
 
@@ -1617,13 +1854,19 @@ test("autonomie-par-paliers/AC-33 : GET /v1/autonomy rend règles, validations e
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     type Body = {
       repos: { repo: string; rules: unknown }[];
-      validations: { runId: string; step: unknown; autonomy: { gate: string; rule: { rank: number; match: unknown }; proofs: Record<string, unknown> } }[];
+      validations: {
+        runId: string;
+        step: unknown;
+        autonomy: { gate: string; rule: { rank: number; match: unknown }; proofs: Record<string, unknown> };
+      }[];
       proposals: { repo: string; kind: string; gate: string; direction: string; changes: unknown }[];
       features: string[];
     };
     const call = async (token: string, method: string, route: string) => {
       const response = await fetch(`${url}${route}`, { method, headers: { Authorization: `Bearer ${token}` } });
-      const body: Body = await response.json().catch(() => ({ repos: [], validations: [], proposals: [], features: [] }));
+      const body = (await response
+        .json()
+        .catch(() => ({ repos: [], validations: [], proposals: [], features: [] }))) as Body;
       return { status: response.status, body };
     };
     const rulesBefore = JSON.stringify(repoOf(world.config).autonomy);
@@ -1641,7 +1884,8 @@ test("autonomie-par-paliers/AC-33 : GET /v1/autonomy rend règles, validations e
     assert.equal(validation.autonomy.proofs.diffLines, 40);
     assert.ok(validation.step, "la décision porte son étape");
     assert.ok(seen.body.proposals.length >= 1);
-    for (const proposal of seen.body.proposals) assert.equal(proposal.repo, "demo", "aucune proposition d'un autre dépôt");
+    for (const proposal of seen.body.proposals)
+      assert.equal(proposal.repo, "demo", "aucune proposition d'un autre dépôt");
     const lower = seen.body.proposals.find((p) => p.direction === "lower" && p.kind === "bug" && p.gate === "review");
     assert.deepEqual(lower?.changes, [{ path: "repos.demo.autonomy.rules[0].gates.review", value: "human" }]);
 

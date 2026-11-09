@@ -73,7 +73,9 @@ export class AutonomyGates {
         ...gateReasons(run, store.getArtifact(run.id, "specs.md") ?? ""),
         ...(disputes.length > 0 ? ["désaccord avec le contradicteur"] : []),
       ];
-      return reasons.length > 0 ? `les specs portent une raison de porte : ${reasons.join(" ; ")}` : { gate: "specs", facts };
+      return reasons.length > 0
+        ? `les specs portent une raison de porte : ${reasons.join(" ; ")}`
+        : { gate: "specs", facts };
     }
     const raw = store.getArtifact(run.id, REVIEW_EVIDENCE);
     if (raw === null || run.verdict === null) return "évidence de revue absente";
@@ -89,7 +91,12 @@ export class AutonomyGates {
     // Des specs validées avec un geste irréversible restent à l'humain jusqu'au merge.
     if (detectIrreversible(store.getArtifact(run.id, SPECS_BASELINE) ?? "") !== null)
       return "les specs validées portent un geste irréversible";
-    return { gate: "review", facts: { ...facts, touchedFiles: evidence.touchedFiles, diffLines: evidence.diffLines }, evidence, merge };
+    return {
+      gate: "review",
+      facts: { ...facts, touchedFiles: evidence.touchedFiles, diffLines: evidence.diffLines },
+      evidence,
+      merge,
+    };
   }
 
   /** Une règle qui correspond pourrait-elle lever l'attente de ce run, règles et type mis à part ? */
@@ -106,7 +113,10 @@ export class AutonomyGates {
     try {
       return this.#evaluate(run);
     } catch (err: unknown) {
-      return { ok: false, why: `évaluation impossible : ${err instanceof Error ? err.message : String(err)}`.slice(0, 300) };
+      return {
+        ok: false,
+        why: `évaluation impossible : ${err instanceof Error ? err.message : String(err)}`.slice(0, 300),
+      };
     }
   }
 
@@ -138,7 +148,8 @@ export class AutonomyGates {
     if (match === null) return no("aucune règle ne correspond");
     const { rule, rank } = match;
     const mode = rule.gates[gate === "specs" ? "specs" : "review"];
-    if (mode !== "auto") return no(`la règle ${rank} laisse la porte ${gate === "specs" ? "specs" : "revue"} à l'humain`);
+    if (mode !== "auto")
+      return no(`la règle ${rank} laisse la porte ${gate === "specs" ? "specs" : "revue"} à l'humain`);
     const base = { kind: run.kind, labels: run.labels };
     if (lift.gate === "specs") return { ok: true, gate, rank, rule, proofs: { ...base, gateReasons: [] } };
 
@@ -207,7 +218,10 @@ export class AutonomyGates {
   async #settle(run: RunRow): Promise<void> {
     const verdict = this.evaluate(run);
     if (!verdict.ok) return this.#defer(run.id, verdict.why);
-    if (verdict.gate === "review" && (await this.#ctx.git.revParse(run.worktree as string, "HEAD")) !== run.lastReviewSha)
+    if (
+      verdict.gate === "review" &&
+      (await this.#ctx.git.revParse(run.worktree as string, "HEAD")) !== run.lastReviewSha
+    )
       return this.#defer(run.id, "l'arbre a changé depuis la revue");
     try {
       await this.#hooks.validate(

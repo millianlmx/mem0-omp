@@ -109,7 +109,11 @@ export class JournalStore extends RunStore {
 
   /** Le dernier événement d'un type écrit pour ce run, ou `null`. */
   lastRunEvent(runId: string, type: string): EventRow | null {
-    const row = this.selectOne("SELECT * FROM events WHERE run_id = ? AND type = ? ORDER BY id DESC LIMIT 1", runId, type);
+    const row = this.selectOne(
+      "SELECT * FROM events WHERE run_id = ? AND type = ? ORDER BY id DESC LIMIT 1",
+      runId,
+      type,
+    );
     return row ? eventOf(row) : null;
   }
 

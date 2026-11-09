@@ -21,7 +21,12 @@ export type AutonomyRule = {
 };
 
 /** La règle retenue pour une validation prise seule, telle qu'elle est inscrite à la décision. */
-export type RuleSnapshot = { rank: number; match: AutonomyRule["match"]; require: AutonomyRule["require"]; gates: AutonomyRule["gates"] };
+export type RuleSnapshot = {
+  rank: number;
+  match: AutonomyRule["match"];
+  require: AutonomyRule["require"];
+  gates: AutonomyRule["gates"];
+};
 
 /** Ce qui est gardé d'une validation prise seule : la porte, la règle et les preuves constatées. */
 export type AutonomyProof = { gate: AutonomyGate; rule: RuleSnapshot; proofs: Record<string, unknown> };
@@ -53,7 +58,8 @@ function checkMatch(where: string, value: unknown): AutonomyRule["match"] {
       !Array.isArray(paths) ||
       paths.length === 0 ||
       paths.some(
-        (p) => typeof p !== "string" || p === "" || p.startsWith("/") || p.split("/").some((segment) => segment === ".."),
+        (p) =>
+          typeof p !== "string" || p === "" || p.startsWith("/") || p.split("/").some((segment) => segment === ".."),
       );
     if (bad) throw new Error(`${where}.match.paths : chemins relatifs du dépôt (liste non vide)`);
     match.paths = [...(paths as string[])];
@@ -78,7 +84,8 @@ function checkRequire(where: string, value: unknown): AutonomyRule["require"] {
 function checkGates(where: string, value: unknown): AutonomyRule["gates"] {
   const gates: AutonomyRule["gates"] = { specs: "human", review: "human" };
   if (value === undefined) return gates;
-  if (!isRecord(value) || unknownKey(value, ["specs", "review"])) throw new Error(`${where}.gates : { specs?, review? }`);
+  if (!isRecord(value) || unknownKey(value, ["specs", "review"]))
+    throw new Error(`${where}.gates : { specs?, review? }`);
   for (const gate of ["specs", "review"] as const) {
     const mode = value[gate];
     if (mode === undefined) continue;
@@ -98,7 +105,11 @@ export function checkAutonomy(where: string, value: unknown): { rules: AutonomyR
       const at = `${where}.rules[${index}]`;
       if (!isRecord(rule) || unknownKey(rule, ["match", "require", "gates"]))
         throw new Error(`${at} : { match, require?, gates? }`);
-      return { match: checkMatch(at, rule.match), require: checkRequire(at, rule.require), gates: checkGates(at, rule.gates) };
+      return {
+        match: checkMatch(at, rule.match),
+        require: checkRequire(at, rule.require),
+        gates: checkGates(at, rule.gates),
+      };
     }),
   };
 }
@@ -135,9 +146,13 @@ export function firstRule(
         continue;
     } else {
       const files = facts.touchedFiles ?? [];
-      if (match.paths !== undefined && (files.length === 0 || !files.every((f) => match.paths?.some((p) => under(f, p)))))
+      if (
+        match.paths !== undefined &&
+        (files.length === 0 || !files.every((f) => match.paths?.some((p) => under(f, p))))
+      )
         continue;
-      if (match.maxDiffLines !== undefined && (facts.diffLines ?? Number.POSITIVE_INFINITY) > match.maxDiffLines) continue;
+      if (match.maxDiffLines !== undefined && (facts.diffLines ?? Number.POSITIVE_INFINITY) > match.maxDiffLines)
+        continue;
     }
     return { rule, rank: index + 1 };
   }

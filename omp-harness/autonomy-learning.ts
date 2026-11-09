@@ -31,13 +31,27 @@ export type AutonomyProposal = {
 
 const DAY_MS = 86_400_000;
 
-type Group = { repo: string; kind: WorkKind; gate: AutonomyGate; passages: number; runs: Set<string>; refused: Set<string> };
+type Group = {
+  repo: string;
+  kind: WorkKind;
+  gate: AutonomyGate;
+  passages: number;
+  runs: Set<string>;
+  refused: Set<string>;
+};
 
 /** La règle qui règle la porte de ce type : la première de même `kind` qui peut s'appliquer à cette porte. */
-function ruleFor(rules: readonly AutonomyRule[], kind: WorkKind, gate: AutonomyGate): { rule: AutonomyRule; rank: number } | null {
+function ruleFor(
+  rules: readonly AutonomyRule[],
+  kind: WorkKind,
+  gate: AutonomyGate,
+): { rule: AutonomyRule; rank: number } | null {
   for (const [index, rule] of rules.entries()) {
     if (rule.match.kind !== kind) continue;
-    const idle = rule.match.paths === undefined && rule.match.maxDiffLines === undefined && !Object.values(rule.require).some(Boolean);
+    const idle =
+      rule.match.paths === undefined &&
+      rule.match.maxDiffLines === undefined &&
+      !Object.values(rule.require).some(Boolean);
     if (gate === "review" || idle) return { rule, rank: index + 1 };
   }
   return null;
@@ -102,14 +116,26 @@ export function autonomyProposals(
     if (pilot === true && !byAutonomy) continue;
     if (approve !== true && byAutonomy) continue;
     const key = `${event.repo}\u0000${kind}\u0000${gate}`;
-    const group = groups.get(key) ?? { repo: event.repo ?? "", kind, gate, passages: 0, runs: new Set(), refused: new Set() };
+    const group = groups.get(key) ?? {
+      repo: event.repo ?? "",
+      kind,
+      gate,
+      passages: 0,
+      runs: new Set(),
+      refused: new Set(),
+    };
     group.passages += 1;
     group.runs.add(event.runId);
     if (approve !== true) group.refused.add(event.runId);
     groups.set(key, group);
   }
 
-  const reverted = new Set(store.eventsOfType("reverted", repos).filter((e) => inWindow(e.at)).map((e) => e.runId));
+  const reverted = new Set(
+    store
+      .eventsOfType("reverted", repos)
+      .filter((e) => inWindow(e.at))
+      .map((e) => e.runId),
+  );
   const overturned = store
     .listDecisions({ status: ["reversed"], repos })
     .filter((d) => d.autonomy !== null && inWindow(d.decidedAt));
@@ -129,7 +155,8 @@ export function autonomyProposals(
     if (declared === undefined) continue;
     const match = ruleFor(declared.autonomy?.rules ?? [], group.kind, group.gate);
     const current = match?.rule.gates[group.gate] ?? "human";
-    const direction = current === "auto" ? (rate >= lowerMinRate ? "lower" : null) : rate <= raiseMaxRate ? "raise" : null;
+    const direction: AutonomyProposal["direction"] | null =
+      current === "auto" ? (rate >= lowerMinRate ? "lower" : null) : rate <= raiseMaxRate ? "raise" : null;
     if (direction === null) continue;
     const head = { repo: group.repo, kind: group.kind, gate: group.gate, direction, rule: match?.rank ?? null };
     proposals.push({

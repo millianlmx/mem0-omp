@@ -28,7 +28,7 @@ export function configure(rules: AutonomyRule[] | null, patch: (config: HarnessC
 
 /** `count` lignes de code (le diff compté par le serveur ne porte que le code, pas les tests ni la doc). */
 export function lines(count: number): string {
-  return Array.from({ length: count }, (_, i) => `export const v${i} = ${i};`).join("\n") + "\n";
+  return `${Array.from({ length: count }, (_, i) => `export const v${i} = ${i};`).join("\n")}\n`;
 }
 
 /** /impl : un diff de `diff` lignes de code, et un test de reproduction si `test`. */
@@ -47,7 +47,10 @@ export function implOf(diff: number, test: "none" | "added" = "added") {
 export function reviewOf(args: Record<string, unknown> = {}) {
   const verdict = OK.review[1];
   const files = ["src/api/export.ts", "test/export.test.ts"];
-  return [OK.review[0], { tool: "review_verdict", args: { ...(verdict?.args as Record<string, unknown>), files, ...args } }];
+  return [
+    OK.review[0],
+    { tool: "review_verdict", args: { ...(verdict?.args as Record<string, unknown>), files, ...args } },
+  ];
 }
 
 /** Un monde dont le seul run déclaré `bug` va jusqu'à l'attente de verdict (sans autonomie, sinon le merge). */
