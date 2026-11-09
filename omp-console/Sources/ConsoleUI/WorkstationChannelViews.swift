@@ -55,6 +55,10 @@ public struct WorkstationChannelsSections: View {
                     channels: channels, connection: connection, clientSheet: $clientSheet, failure: $failure
                 )
             }
+            // Les canaux Slack suivis : seulement quand Slack est lisible (connecté ou en erreur).
+            if channels.channels.contains(where: { $0.id == "slack" && ($0.state == "connected" || $0.state == "error") }) {
+                SlackFollowSection(conversations: channels.slackConversations, isApprover: channels.isApprover)
+            }
             if !channels.isApprover {
                 Section {
                     Text(ChannelText.approverOnly)

@@ -1401,3 +1401,9 @@
 "Dans un projet Google Cloud à vous : activez Gmail et Google Calendar, créez un client OAuth « Application de bureau » et téléchargez son JSON." = "In a Google Cloud project of yours: enable Gmail and Google Calendar, create a \"Desktop app\" OAuth client and download its JSON.";
 "Le secret part au serveur, qui le garde : l’app ne le réaffiche ni ne le garde." = "The secret goes to the server, which keeps it: the app neither shows it again nor keeps it.";
 "Créez l’app depuis le manifeste omp-harness/deploy/slack-app-manifest.json : en PKCE, aucun secret." = "Create the app from the manifest omp-harness/deploy/slack-app-manifest.json: with PKCE, no secret.";
+
+/* Canaux Slack suivis (SlackFollowText) */
+"Canaux Slack suivis" = "Followed Slack channels";
+"La veille lit vos messages privés et vos mentions partout, et en entier les canaux cochés." = "The watch reads your direct messages and mentions everywhere, and the checked channels in full.";
+"Aucun canal dans l’espace Slack" = "No channel in the Slack workspace";
+"Canal privé" = "Private channel";

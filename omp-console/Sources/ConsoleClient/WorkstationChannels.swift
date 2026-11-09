@@ -111,6 +111,8 @@ public final class WorkstationChannelsModel: ObservableObject {
     @Published public private(set) var failure: HarnessFailure?
     /// Les connexions dont un geste attend la réponse du serveur.
     @Published public private(set) var busy: Set<String> = []
+    /// Les canaux Slack de l'espace et leur case « suivi » (lecture des canaux).
+    public private(set) lazy var slackConversations = WorkstationSlackConversationsModel(harness: harness)
 
     weak var harness: HarnessModel?
     private let reloadDelay: Duration
@@ -165,6 +167,7 @@ public final class WorkstationChannelsModel: ObservableObject {
     /// relire (regroupé : une rafale ne coûte qu'une relecture). Un événement arrivé PENDANT
     /// la relecture n'est pas perdu : la relecture est replanifiée.
     func receive(_ names: [String]) {
+        slackConversations.receive(names)
         guard names.contains("workstation_channel") else { return }
         switch availability {
         case .absent, .reserved: return
@@ -200,6 +203,7 @@ public final class WorkstationChannelsModel: ObservableObject {
         reloadAgain = false
         clear(.unknown)
         busy = []
+        slackConversations.reset()
     }
 
     private func clear(_ next: Availability) {
