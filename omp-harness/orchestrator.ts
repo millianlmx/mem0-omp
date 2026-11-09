@@ -609,7 +609,11 @@ export class Orchestrator {
       // Un run qui a déjà un worktree a déjà été admis par le planificateur : il repasse devant.
       const resumed = runs.filter((run) => run.worktree !== null);
       const fresh = runs.filter((run) => run.worktree === null);
-      const others = active.filter((run) => run.repo === name).map((run) => ({ id: run.id, modules: run.modules }));
+      // Un run garé chez l'humain (`awaiting_human`) ne tient plus ses modules : il peut y rester des heures, et la
+      // file entière l'attendrait pour rien. À sa reprise, la revue et le merge rebasent sur main (conflits compris).
+      const others = active
+        .filter((run) => run.repo === name && run.state !== "awaiting_human")
+        .map((run) => ({ id: run.id, modules: run.modules }));
       const free = new Set(
         schedulable(
           fresh.map((run) => ({ id: run.id, modules: run.modules })),
