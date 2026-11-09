@@ -87,7 +87,10 @@ async function mergingRun(w: FakeWorld, slug: string, extra: Record<string, stri
 }
 
 async function leftMerging(w: FakeWorld, runId: string): Promise<RunRow> {
-  await waitFor(() => w.store.getRun(runId)?.state !== "merging", () => String(w.store.getRun(runId)?.state));
+  await waitFor(
+    () => w.store.getRun(runId)?.state !== "merging",
+    () => String(w.store.getRun(runId)?.state),
+  );
   return w.store.getRun(runId) as RunRow;
 }
 
@@ -175,7 +178,10 @@ test("rouge-de-base/AC-1 : full rouge avec les mêmes échecs que main → pas d
     );
     const done = w.store.getRun(run.id);
     assert.equal(done?.state, "merged", done?.reason ?? "");
-    assert.deepEqual((done?.verdict?.blockers ?? []).filter((blocker) => /suite complète rouge/.test(blocker)), []);
+    assert.deepEqual(
+      (done?.verdict?.blockers ?? []).filter((blocker) => /suite complète rouge/.test(blocker)),
+      [],
+    );
     assert.match(done?.verdict?.summary ?? "", /1 échec\(s\) préexistant\(s\), aucun nouveau/);
     const baseline = baselineOf(w, run.id);
     assert.deepEqual([baseline?.failing, baseline?.preexisting, baseline?.new], [1, 1, 0]);
