@@ -1,6 +1,7 @@
 // Les alertes push des appareils (app iOS) : APNs `push-type: alert`, pour ce qui attend
 // l'humain ou casse — specs ou verdict à valider, escalade, envoi du poste à approuver,
-// run échoué, alerte de veille (agent muet, budget), vigie muette, sauvegarde échouée.
+// commentaire Jira à publier, plan du jour prêt, run échoué, alerte de veille (agent muet,
+// budget), vigie muette, sauvegarde échouée.
 //
 // Chaque appareil (`POST /v1/push/devices`) est lié au client qui l'a enregistré, et ses
 // droits sont relus à chaque envoi : un appareil ne reçoit que les runs des dépôts que
@@ -11,6 +12,8 @@
 // La charge est minimale : un titre, le dépôt et le titre du run, et des identifiants
 // (`omp.kind`, `runId`, `rev`, `seq`) — jamais le contenu du poste (ni résumé, ni
 // destinataires, ni brouillon), jamais une raison d'échec ni la question d'une escalade sans carte.
+// Exception voulue : un commentaire Jira à valider porte sa clé et le début de son texte, le plan
+// du jour le début de son résumé (propriétaire ou approbateur seulement).
 // Une escalade à carte porte sa `headline` (titre) et son `stake` (corps) seulement : la carte
 // est écrite pour être lue d'un coup d'œil, sans chemin ni code. Le nombre de
 // preuves d'un verdict n'est pas du contenu de run : il s'ajoute au corps. La
@@ -54,6 +57,8 @@ export const ALERT_KINDS = [
   "daily_budget",
   "vigie_silent",
   "backup_failed",
+  "atlassian_comment",
+  "plan",
 ] as const;
 
 export type AlertKind = (typeof ALERT_KINDS)[number];
@@ -116,6 +121,12 @@ function serverAlert(kind: AlertKind, title: string, body: string, key: string):
     audience: "owner",
     gesture: null,
   };
+}
+
+/** Le début d'un texte pour un corps de notification : une ligne, 120 caractères au plus. */
+function opening(text: string): string {
+  const line = text.replace(/\s+/g, " ").trim();
+  return line.length > 120 ? `${line.slice(0, 119)}…` : line;
 }
 
 /** L'alerte d'un événement du journal, ou `null` s'il n'en mérite pas (ou que son sujet a déjà bougé). */
@@ -195,6 +206,27 @@ export function alertFor(event: EventRow, store: Store): Alert | null {
         remote ? "La copie distante de la base a échoué." : "La sauvegarde locale de la base a échoué.",
         `backup_failed:${remote ? "remote" : "local"}`,
       );
+    }
+    case "atlassian_write": {
+      const write = typeof payload.id === "string" ? store.getAtlassianWrite(payload.id) : null;
+      if (write?.kind !== "comment" || write.state !== "proposed") return null;
+      return {
+        kind: "atlassian_comment",
+        title: "Commentaire Jira à valider",
+        body: `${write.issueKey} : ${opening(write.body)}`,
+        runId: null,
+        repo: null,
+        rev: null,
+        seq: null,
+        thread: "atlassian",
+        key: `atlassian_comment:${write.id}`,
+        audience: "approver",
+        gesture: null,
+      };
+    }
+    case "atlassian_plan": {
+      const plan = typeof payload.id === "string" ? store.getAtlassianPlan(payload.id) : null;
+      return plan ? serverAlert("plan", "Plan du jour prêt", opening(plan.summary), `plan:${plan.id}`) : null;
     }
     default:
       return null;

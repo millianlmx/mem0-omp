@@ -15,10 +15,16 @@ struct IOSWorkstationScreen: View {
     @ObservedObject var drafts: HarnessDrafts
 
     var body: some View {
-        IOSHarnessScreen(server: server, drafts: drafts, section: .workstation, catalog: false, reloadAlso: { await workstation.load() }) {
-            WorkstationSections(workstation: workstation, drafts: drafts)
+        IOSHarnessScreen(server: server, drafts: drafts, section: .workstation, catalog: false, reloadAlso: {
+            await workstation.load()
+            await server.atlassian.refresh()
+        }) {
+            WorkstationSections(workstation: workstation, atlassian: server.atlassian, drafts: drafts)
         }
         .workstationDestinations(server: server, drafts: drafts)
-        .task { await workstation.load() }
+        .task {
+            await workstation.load()
+            await server.atlassian.refresh()
+        }
     }
 }

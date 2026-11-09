@@ -66,6 +66,8 @@ import {
   parseRequestStates,
   workstationFor,
 } from "./workstation.ts";
+import type { AtlassianDesk } from "./atlassian/desk.ts";
+import { INVALID_LINK, writeStateOf } from "./atlassian/desk.ts";
 
 export const API_VERSION = 1;
 
@@ -118,10 +120,16 @@ export const API_FEATURES = [
   "proofs",
   "session-graph",
   "repo-tests",
+  "atlassian",
 ] as const;
 
 /** Le refus d'un geste du poste (ou d'un signalement de collègue) à un client restreint à des dépôts. */
 const OWNER_ONLY = "le poste est réservé au propriétaire";
+/** Les refus d'Atlassian à un client pilote, ou à un autre appareil que l'approbateur. */
+const READS_ATLASSIAN = "réservé à l'humain — un client pilote ne lit pas Atlassian";
+const ACTS_ON_ATLASSIAN = "geste réservé à l'humain — un client pilote ne touche pas à Atlassian";
+const ATLASSIAN_APPROVER_ONLY =
+  "seul l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut brancher Atlassian ou trancher ses écritures";
 
 /** La version du service, lue dans son `package.json`. */
 export const HARNESS_VERSION: string = (() => {
@@ -407,6 +415,16 @@ export function apiRoutes(
       throw new HarnessError(409, "service lancé sans fichier de configuration (--config) : rien à relire ni à écrire");
     return admin;
   };
+  /**
+   * Atlassian est au propriétaire, comme le poste (403 restreint ou pilote), puis 404 s'il est
+   * désactivé ; ses gestes (`gesture`) sont à l'appareil approbateur. Indépendant du poste.
+   */
+  const atlassianOf = (call: Call, gesture: boolean): AtlassianDesk => {
+    ownerOf(call, gesture ? ACTS_ON_ATLASSIAN : READS_ATLASSIAN);
+    if (!orchestrator.atlassian.enabled()) throw new HarnessError(404, "Atlassian désactivé (atlassian.enabled)");
+    if (gesture && !call.client.approver) throw new HarnessError(403, ATLASSIAN_APPROVER_ONLY);
+    return orchestrator.atlassian;
+  };
 
   return [
     route("GET", "/v1/me", "viewer", (call) => send(call.res, 200, { client: call.client })),
@@ -536,6 +554,49 @@ export function apiRoutes(
       const id = runId(call);
       ownerOf(call, READS_SIGNALS);
       send(call.res, 200, { origin: orchestrator.signals.originOf(id) });
+    }),
+    // Le connecteur Atlassian (atlassian/desk.ts) : lire au propriétaire ; brancher, débrancher, publier ou
+    // écarter un commentaire, demander un plan ou une passe de savoir : l'appareil approbateur. Le retour
+    // du consentement par le navigateur est une route publique, plus bas (`createHandler`).
+    route("GET", "/v1/atlassian", "viewer", (call) =>
+      send(call.res, 200, { atlassian: atlassianOf(call, false).status() }),
+    ),
+    route("POST", "/v1/atlassian/connect", "operator", async (call) =>
+      send(call.res, 200, await atlassianOf(call, true).connect(call.client.name)),
+    ),
+    route("POST", "/v1/atlassian/callback", "operator", async (call) => {
+      const desk = atlassianOf(call, true);
+      const body = await readBody(call.req);
+      send(call.res, 200, { atlassian: await desk.completeFromUrl(body.url) });
+    }),
+    route("DELETE", "/v1/atlassian", "operator", (call) =>
+      send(call.res, 200, { atlassian: atlassianOf(call, true).disconnect(call.client.name) }),
+    ),
+    route("GET", "/v1/atlassian/writes", "viewer", (call) => {
+      const desk = atlassianOf(call, false);
+      const state = writeStateOf(call.url.searchParams.get("state"));
+      send(call.res, 200, { writes: desk.listWrites(state, limitOf(call.url, 50, 200)) });
+    }),
+    route("POST", "/v1/atlassian/writes/{id}/approve", "operator", async (call) => {
+      const desk = atlassianOf(call, true);
+      const body = await readBody(call.req);
+      send(call.res, 200, { write: await desk.approve(call.match[1] as string, body, call.client.name) });
+    }),
+    route("POST", "/v1/atlassian/writes/{id}/dismiss", "operator", async (call) => {
+      const desk = atlassianOf(call, true);
+      await readBody(call.req);
+      send(call.res, 200, { write: desk.dismiss(call.match[1] as string, call.client.name) });
+    }),
+    route("GET", "/v1/atlassian/plan", "viewer", (call) =>
+      send(call.res, 200, { plan: atlassianOf(call, false).latestPlan() }),
+    ),
+    route("POST", "/v1/atlassian/plan", "operator", (call) => {
+      atlassianOf(call, true).requestPlan(call.client.name);
+      send(call.res, 202, { queued: true });
+    }),
+    route("POST", "/v1/atlassian/knowledge", "operator", (call) => {
+      atlassianOf(call, true).requestKnowledge(call.client.name);
+      send(call.res, 202, { queued: true });
     }),
     route("GET", "/v1/runs/{id}/timeline", "viewer", (call) =>
       send(call.res, 200, orchestrator.timeline(call.match[1] as string, call.repos)),
@@ -1261,6 +1322,38 @@ export function apiRoutes(
   ];
 }
 
+/**
+ * La page du retour de consentement : 200 branché, 400 lien invalide ou expiré, 502 refus d'Atlassian.
+ * Aucun paramètre de la requête n'y figure, ni au journal (le code et le state sont des secrets).
+ */
+async function atlassianCallback(
+  orchestrator: Orchestrator,
+  url: URL,
+  res: http.ServerResponse,
+  log: LogLine,
+): Promise<void> {
+  let status = 200;
+  let message = "Atlassian est branché, tu peux fermer cet onglet.";
+  try {
+    await orchestrator.atlassian.complete({ code: url.searchParams.get("code"), state: url.searchParams.get("state") });
+  } catch (error) {
+    status = error instanceof HarnessError && error.status === 400 ? 400 : 502;
+    message =
+      status === 400 ? INVALID_LINK : "Atlassian a refusé la connexion : relance-la depuis l'app (Poste › Atlassian).";
+    if (status !== 400)
+      log(`retour Atlassian : ${error instanceof Error ? error.message : String(error)}`, { level: "warn" });
+  }
+  const html = `<!doctype html>\n<html lang="fr"><head><meta charset="utf-8"><title>Atlassian</title></head><body><p>${message}</p></body></html>\n`;
+  res.writeHead(status, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": Buffer.byteLength(html),
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'none'",
+    "Referrer-Policy": "no-referrer",
+  });
+  res.end(html);
+}
+
 /** Le gestionnaire de requêtes (sans serveur) : testable par `http.createServer`. */
 export function createHandler(options: HttpOptions): http.RequestListener {
   const { orchestrator } = options;
@@ -1424,6 +1517,12 @@ export function createHandler(options: HttpOptions): http.RequestListener {
             features: API_FEATURES,
             checks: health.checks,
           });
+          return;
+        }
+        // Le retour du consentement Atlassian par le navigateur de l'humain : public (il n'a pas de jeton),
+        // protégé par le `state` à usage unique ; la page ne cite aucun paramètre.
+        if (req.method === "GET" && url.pathname === "/v1/atlassian/callback" && orchestrator.atlassian.enabled()) {
+          await atlassianCallback(orchestrator, url, res, log);
           return;
         }
         const auth = req.headers.authorization ?? "";

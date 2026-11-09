@@ -636,6 +636,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `repos[].gh` | la connexion du service | `{ "configDir"?, "tokenEnv"? }` : le compte GitHub du dépôt pour `gh` (PR, merge, issues, MCP) — un `GH_CONFIG_DIR` à lui, ou le NOM d'une variable du service qui porte son jeton |
 | `repos[].memory.tokenEnv` | le jeton global | le NOM d'une variable du service qui porte un jeton mem0-rs limité à la scope du dépôt (`MEM0_HTTP_TOKENS`) : ses runners le reçoivent au lieu du jeton global |
 | `repos[].autonomy.rules` | absent | l'autonomie par paliers du dépôt (§ « L'autonomie par paliers ») : des règles ordonnées `{ "match": { "kind", "maxDiffLines"?, "paths"?, "labels"? }, "require"?: { "reproTest"?, "greenChecks"?, "proofs"? }, "gates"?: { "specs"?, "review"? } }` — `kind` parmi `bug` · `feature` · `docs` · `deps` · `test`, chaque porte `human` (défaut) ou `auto`. Une règle mal formée refuse la configuration (et le rechargement : 400, l'ancienne reste). Une règle ne s'applique qu'aux attentes posées après son chargement |
+| `repos[].atlassian` | absent (`false`) | `true` : les étapes des runs de ce dépôt reçoivent les outils Atlassian en lecture et `corpo_recall` (§ « Atlassian »), si Atlassian est branché. **Jamais sur un dépôt public** (mem0-omp l'est) : ce qu'un agent lit de Jira ou Confluence peut finir dans le code, une PR ou une issue |
 | `runner.stepTimeoutSec` | `5400` | la durée maximale d'une étape (prompts, relance et bascules compris) : au-delà, le runner est arrêté et l'étape échoue, relançable |
 | `events.retentionDays` | `30` | le journal d'événements est purgé au-delà (au démarrage, puis chaque heure), le direct des sessions aussi |
 | `autonomyLearning.windowDays`, `.minRuns`, `.raiseMaxRate`, `.lowerMinRate` | `30`, `10`, `0.05`, `0.2` | les seuils des propositions de palier d'autonomie (`GET /v1/autonomy`) : sur `windowDays` jours, un groupe (dépôt, type, porte) d'au moins `minRuns` runs reçoit une proposition de baisse si son taux de runs corrigés vaut `lowerMinRate` ou plus, de montée s'il vaut `raiseMaxRate` ou moins (`raiseMaxRate` < `lowerMinRate`, entre 0 et 1). `windowDays` ne dépasse pas `events.retentionDays` (sinon la configuration est refusée : le journal purgé ne porte plus la fenêtre). Changés au redémarrage seulement |
@@ -677,6 +678,12 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `browser.maxContexts` | `12` | les contextes ouverts en tout (de `maxContextsPerClient` à 64) |
 | `browser.idleSec` | `600` | un contexte est fermé après cette inactivité, en secondes (1 à 86400) |
 | `browser.callTimeoutSec` | `30` | le délai d'un appel au navigateur, en secondes (1 à 300) |
+| `atlassian.enabled` | `true` | le connecteur Atlassian (§ « Atlassian (Jira et Confluence) ») ; `false` : les routes `/v1/atlassian*` rendent 404, ni plan, ni passe de savoir, ni outil |
+| `atlassian.mcpUrl` | `https://mcp.atlassian.com/v2/mcp` | le serveur Atlassian Rovo MCP (https seulement) |
+| `atlassian.redirectUri` | `null` (`http://127.0.0.1:53682/callback`) | l'adresse de retour du consentement OAuth : `https://<hôte>:7443/v1/atlassian/callback` (le tailnet) conseillée ; `null` : une boucle locale, l'adresse de retour se colle dans l'app. https, ou http sur la boucle locale |
+| `atlassian.tokenFile` | `atlassian.json` à côté de `tokenFile` | les jetons OAuth du harness (0600, écrit par fichier temporaire puis renommage) ; jamais en base ni au journal |
+| `atlassian.planHour`, `atlassian.planWeekdaysOnly` | `8`, `true` | l'heure locale (`schedules.timezone`, 0–23) du plan du jour, du lundi au vendredi ; `planHour: null` : seulement à la demande |
+| `atlassian.knowledgeEveryHours` | `24` | la période de la passe de savoir de la boîte (1–720 h) ; `null` : seulement à la demande |
 | `clientsFile` | à côté de `tokenFile` | les clients nommés (empreintes de jetons, rôles, dépôts), relu à chaque changement ; illisible (JSON cassé à la main), le dernier jeu lu reste en vigueur, l'erreur est journalisée une fois et `add`/`revoke` refusent de l'écraser |
 
 Un `kill -HUP` du service (`harness.sh reload`, ou `systemctl kill -s HUP
@@ -1672,7 +1679,7 @@ locale (ni long-poll, ni exécution, l'action en cours interrompue), puis appell
 route. `POST /v1/workstation/actions/{n}/cancel` (operator) annule une seule action qui
 n'a pas abouti (« annulée par <client> »).
 
-**Ce qui se voit.** La session de chaque job (`GET /v1/workstation/session?job=profil|digest|service`)
+**Ce qui se voit.** La session de chaque job (`GET /v1/workstation/session?job=profil|digest|service|plan|savoir`)
 se lit comme celle d'un run, et la capture de chaque `screenshot` réussi reste lisible
 `captureRetentionHours` heures (`GET …/actions/{n}/capture`).
 
@@ -1758,6 +1765,86 @@ les perd. Chaque connexion neuve change donc la génération du mirroir, qui
 renvoie alors toute la session. Les
 cookies partitionnés (CHIPS) et le stockage des pages (localStorage, IndexedDB) ne sont pas copiés.
 L'adresse publique du VPS reste coupée par les règles pare-feu de § « Couper l'hôte du navigateur ».
+
+## Atlassian (Jira et Confluence)
+
+Le harness lit Jira et Confluence, et fait avancer les tickets de l'utilisateur, par le
+serveur **Atlassian Rovo MCP** (`atlassian.mcpUrl`), en OAuth 2.1. Il a SON consentement,
+distinct de celui du Mac : un client enregistré pour lui (DCR, sans secret), PKCE S256,
+ses jetons dans `atlassian.tokenFile` (0600, jamais en base, au journal ni dans une
+réponse). Le jeton d'accès vit 8 h ; il est rafraîchi seul, un seul rafraîchissement à la
+fois, et le refresh token rendu remplace l'ancien. Si Atlassian refuse le refresh token
+(révoqué), les jetons sont oubliés : l'app affiche « non connecté » et l'erreur.
+
+**Brancher.** Depuis l'app (Poste › Atlassian), l'approbateur touche « Connecter » :
+`POST /v1/atlassian/connect` découvre le serveur d'autorisation, enregistre le client,
+puis rend l'adresse de consentement, valable 10 minutes (un seul consentement en
+attente ; un nouveau remplace l'ancien). Sur la page d'Atlassian, il choisit le site.
+Le retour :
+
+- **par le tailnet** (conseillé) : avec `atlassian.redirectUri` =
+  `https://<hôte>:7443/v1/atlassian/callback` (l'adresse publiée par Tailscale), le
+  navigateur revient sur `GET /v1/atlassian/callback`, route publique (sans jeton, comme
+  `/v1/health`), protégée par le `state` à usage unique. La page dit seulement
+  « Atlassian est branché, tu peux fermer cet onglet. » ou « Lien de connexion invalide
+  ou expiré. » : aucun paramètre n'y est repris (`Content-Security-Policy:
+  default-src 'none'`, `Cache-Control: no-store`) ;
+- **par la boucle locale** (`redirectUri: null`) : le navigateur échoue sur
+  `http://127.0.0.1:53682/callback?code=…&state=…` ; l'humain colle cette adresse dans
+  l'app, qui l'envoie à `POST /v1/atlassian/callback` `{url}`.
+
+Le site (`cloudId`, son adresse) et le compte (`accountId`) sont découverts à
+l'échange, jamais écrits dans la configuration. `DELETE /v1/atlassian` débranche (le
+fichier de jetons est supprimé).
+
+**Les outils des agents.** Le serveur ajoute le `cloudId`, jamais demandé à l'agent ;
+tout texte lu revient entre les délimiteurs du contenu non fiable, au plus 12 000
+caractères.
+
+| Outil | Ce qu'il fait |
+|---|---|
+| `atlassian_search` `{query, limit?}` | recherche Rovo dans Jira et Confluence (10 à 25 résultats) |
+| `jira_search` `{jql, maxResults?}` | les tickets d'une JQL (20 par défaut, 50 au plus) : résumé, état, priorité, échéance, projet, assigné |
+| `jira_issue` `{key}` | un ticket en entier |
+| `confluence_search` `{cql, limit?}` | les pages d'une CQL |
+| `confluence_page` `{id}` ou `{url}` | une page en markdown (adresse https du site branché seulement) |
+| `corpo_recall` `{query}` | la mémoire `corpo` (le savoir de la boîte), même Atlassian débranché |
+| `jira_transition` `{key, transition, why}` | fait passer un ticket **assigné à l'utilisateur** à un autre état ; jobs du poste seulement |
+| `jira_comment_propose` `{key, body, why}` | propose un commentaire, qui attend l'approbateur ; jobs du poste seulement |
+
+Les étapes d'un run n'ont que les lectures et `corpo_recall`, et seulement pour un dépôt
+qui déclare `repos[].atlassian: true` — **jamais un dépôt public**. Les jobs du poste
+`poste-demande` et `poste-service` ont lectures et écritures.
+
+**La garde des écritures.** Rien d'autre ne s'écrit chez Atlassian : ni création, ni
+édition, ni suppression, rien sur Confluence. Une transition part sans approbation
+(décision de l'utilisateur), mais seulement si Jira lui-même rend le ticket pour
+`key = "<clé>" AND assignee = currentUser()` ; sinon « ticket non assigné à
+l'utilisateur : transition refusée ». Elle est journalisée (`GET /v1/atlassian/writes?state=sent`,
+ou `failed` avec la raison d'Atlassian). Un commentaire n'est qu'une proposition : il
+apparaît dans « À traiter » (et en alerte push `atlassian_comment` sur l'iPhone de
+l'approbateur) ; l'approbateur le publie tel quel ou modifié
+(`POST /v1/atlassian/writes/{id}/approve` `{body?}`), ou l'écarte. Un même texte proposé
+deux fois sur le même ticket n'en fait qu'un.
+
+**Le plan du jour.** À `atlassian.planHour` (heure de `schedules.timezone`, jours ouvrés
+si `planWeekdaysOnly`), ou sur `POST /v1/atlassian/plan`, le job `poste-plan` lit les
+tickets de l'utilisateur, ses réunions et ses demandes, et range un plan : un résumé et
+au plus 30 éléments (titre, pourquoi, prochaine action, source, clé Jira, lien, et pour
+un élément qui relève d'un dépôt déclaré, la demande de run proposée — l'app la lance
+d'un geste). Un dépôt non déclaré ou un lien non http(s) sont effacés. L'app le lit par
+`GET /v1/atlassian/plan` ; l'alerte push `plan` prévient le propriétaire.
+
+**Le savoir de la boîte.** Toutes les `atlassian.knowledgeEveryHours` heures, ou sur
+`POST /v1/atlassian/knowledge`, le job `poste-savoir` parcourt les projets Jira et les
+espaces Confluence de l'utilisateur et retient conventions, processus, glossaire et
+« qui fait quoi » dans la portée mémoire **`corpo`**, étanche : aucun dépôt ne l'a pour
+scope, seuls `corpo_recall` et ce job la lisent. Le compte rendu de la dernière passe se
+lit dans `GET /v1/atlassian` (`knowledge`).
+
+**Rien de la boîte dans le dépôt public.** Les textes des écritures Jira et des plans
+sont retirés mot pour mot des issues que publie la vigie (comme ceux du poste), et
+aucun outil Atlassian n'est donné aux runs d'un dépôt qui ne le déclare pas.
 
 ## Les issues (MCP)
 
@@ -2063,7 +2150,8 @@ clones (`<racine>/repos`) lui sont montés en lecture seule.
 ## API
 
 `Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health` (version
-du service, `commit` construit ou `null`, `api`, `features`). La colonne « Rôle » est le rôle minimal.
+du service, `commit` construit ou `null`, `api`, `features`) et le retour du consentement
+Atlassian (`GET /v1/atlassian/callback`). La colonne « Rôle » est le rôle minimal.
 
 `features` nomme ce que le serveur sait faire au-delà de l'API 1 d'origine
 (`API_FEATURES`, `http.ts`) : un client teste la capacité avant d'offrir le geste.
@@ -2073,8 +2161,9 @@ la relance), `run-budget` (`budgetUsd` au lancement, `POST /v1/runs/{id}/budget`
 suite complète d'un dépôt), `reload` (le rechargement de la configuration,
 `POST /v1/reload`), `push-alerts` (`POST /v1/push/devices`, les alertes push des
 appareils iOS), `session-graph` (`GET /v1/runs/{id}/graph`,
-le graphe de session d'un run, et l'événement éphémère `graph`) et `autonomy`
-(`GET /v1/autonomy`, `kind` et `labels` d'un run).
+le graphe de session d'un run, et l'événement éphémère `graph`), `autonomy`
+(`GET /v1/autonomy`, `kind` et `labels` d'un run) et `atlassian` (`/v1/atlassian*`, le
+connecteur Jira et Confluence).
 
 `GET /v1/health` vérifie aussi le service : `checks.db` (une lecture de la base),
 `checks.scheduler` (`ageSec`, l'âge du dernier tour du scheduling, borné par
@@ -2148,7 +2237,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/workstation/vps/mirror` · `POST /v1/workstation/vps/cookies` `{generation, full?, last?, set?, removed?}` | operator | Le mirroir de la session du Chrome source (`mirrorBrowser`) vers `moli-poste` : `{mirror: {generation} \| null}` pour l'extension appelante (`X-OMP-Browser`), puis ses envois (`{set, removed}` comptés ; 403 si elle n'est pas la source, 409 génération périmée, 400 cookie mal formé ou plus de 1000 entrées, 503 `moli-poste` injoignable). Tous les domaines du profil ; aucune valeur n'est rendue ni journalisée. |
 | `POST /v1/workstation/vps/login` `{url}` · `GET /v1/workstation/vps/login` · `GET …/login/frame` · `POST …/login/input` · `DELETE …/login` | operator (approbateur) | La connexion interactive d'un compte dans `moli-poste` (§ « Le navigateur du serveur »), 403 pour tout autre client ; 409 si une connexion est déjà ouverte ou si la page est sortie des hôtes permis. |
 | `POST /v1/workstation/stop` | viewer | L'arrêt d'urgence : pause, actions en attente annulées, service de l'agent coupé → `{status, cancelled: [seq…]}` ; événement `workstation_stop`. La reprise : `PUT …/settings` `paused: false` par l'approbateur. |
-| `GET /v1/workstation/session?job=profil\|digest\|service&since=&before=&limit=` | viewer | La session du job, sous la forme de `GET /v1/runs/{id}/session` (`runId` et `auditId` nuls, `job`) ; `since` : seulement les entrées de `seq` plus grande. `job` inconnu ou `since` illisible → 400. |
+| `GET /v1/workstation/session?job=profil\|digest\|service\|plan\|savoir&since=&before=&limit=` | viewer | La session du job, sous la forme de `GET /v1/runs/{id}/session` (`runId` et `auditId` nuls, `job`) ; `since` : seulement les entrées de `seq` plus grande. `job` inconnu ou `since` illisible → 400. |
 | `GET /v1/workstation/profile` · `POST /v1/workstation/profile/rebuild` | viewer · operator | Le dernier profil (`null` avant le premier) et les statistiques (`observedSeconds`, `since`, `topSites`, `activeHours`, `sequences`) ; demander une synthèse tout de suite (202 `{queued: true}`). |
 | `POST /v1/workstation/meetings` `{title, url, startedAt}` · `POST /v1/workstation/meetings/{id}/segments` `{segments}` · `POST /v1/workstation/meetings/{id}/end` | operator | Ouvrir un meeting (201), lui ajouter 200 segments au plus (`{at, speaker: moi \| autres, text}`, 409 s'il est fini ou en pause), le finir (son digest part au tour suivant). Événement `workstation_meeting`. |
 | `GET /v1/workstation/meetings?limit=` · `GET /v1/workstation/meetings/{id}` | viewer | Les meetings, récents d'abord (`state` : `live`, `ended`, `digested`, `failed` ; `summary`, `needs`, `segments`, `browserId`) ; un meeting et son transcript. |
@@ -2161,6 +2250,15 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/signals/{id}/preview` `{repo?, title?, body?}` | viewer (propriétaire) | Le texte EXACT que `confirm` enverrait à la forge : `{repo, policy: {declared, applied, note}, title, body, issue}` (`issue` : l'issue déjà créée, dont le texte n'est alors pas renvoyé). Sans `title`/`body`, la proposition ; sous `full` appliqué, le corps porte la section « Origine ». 409 dépôt en `forbid` ou sans forge, signalement déjà traité. Ne crée rien. |
 | `POST /v1/signals/{id}/confirm` `{repo, title, body}` · `POST /v1/signals/{id}/dismiss` `{reason?}` | operator (approbateur) | Confirme : crée l'issue puis le run lié (201 `{signal, issue, run, policy}`) ; 502 si la forge échoue (la proposition reste, avec `error`), 409 « le signalement est déjà <état> », dépôt `forbid`/sans forge, ou dépôt autre que celui de l'issue déjà créée ; 404 `dépôt inconnu`. Écarte (200 `{signal}`, `reason` ≤ 500) : jamais reproposé. 403 non approbateur, pilote ou client restreint. Événement `signal`. |
 | `GET /v1/runs/{id}/origin` | viewer (propriétaire) | L'origine du run (`{origin: {signalId, channel, threadRef, url, personRef, excerpt, issue: {repo, number, url}, confirmedBy, confirmedAt}}`, ou `{origin: null}`). 404 `run inconnu` hors des dépôts du client, puis 403 client restreint ou pilote. Capacité `corporate-signals`. |
+| `GET /v1/atlassian` | viewer (propriétaire) | `{atlassian}` = `{enabled, connected, site: {cloudId, url} \| null, accountId, connectedAt, connectedBy, expiresAt, lastError, redirectUri, pasteBack, pending: {authorizeUrl, expiresAt} \| null, plan: {hour, weekdaysOnly, lastAt}, knowledge: {everyHours, lastAt, lastSummary}, proposed}` ; jamais un jeton. 403 client restreint ou pilote ; 404 « Atlassian désactivé » si `atlassian.enabled` est faux (toutes les routes `/v1/atlassian*`). |
+| `POST /v1/atlassian/connect` | operator (approbateur) | Un consentement : `{authorizeUrl, redirectUri, expiresAt, pasteBack}` (10 min, remplace le précédent) ; 502 si Atlassian ne répond pas. |
+| `GET /v1/atlassian/callback?code=&state=` | aucun (publique) | Le retour du navigateur (redirection tailnet) : page HTML 200 « Atlassian est branché… », 400 « Lien de connexion invalide ou expiré. » (state inconnu, expiré ou déjà servi), 502 refus d'Atlassian ; aucun paramètre repris. Servie seulement si `atlassian.enabled`. |
+| `POST /v1/atlassian/callback` `{url}` | operator (approbateur) | L'adresse de retour collée (boucle locale) : 200 `{atlassian}` ; 400 lien invalide ou expiré ; 502 échange refusé ou aucun site. Événement `atlassian` `{connected}`. |
+| `DELETE /v1/atlassian` | operator (approbateur) | Débranche (fichier de jetons supprimé) : 200 `{atlassian}`. |
+| `GET /v1/atlassian/writes?state=&limit=` | viewer (propriétaire) | Les écritures Jira, récentes d'abord : `{writes}` = `[{id, kind: "comment" \| "transition", issueKey, body, why, state, by, error, decidedBy, createdAt, updatedAt}]` ; `state` : `proposed` (défaut), `sent`, `dismissed`, `failed` ; `limit` 50 par défaut, 200 au plus. |
+| `POST /v1/atlassian/writes/{id}/approve` `{body?}` · `POST /v1/atlassian/writes/{id}/dismiss` | operator (approbateur) | Publie le commentaire proposé (le texte édité s'il est donné, 1 à 4000 caractères) : 200 `{write}` ; 502 si Atlassian refuse (l'écriture passe `failed` avec `error`). Écarte : 200 `{write}`. 409 s'il n'est plus `proposed`. Événement `atlassian_write` `{id, state, kind}`. |
+| `GET /v1/atlassian/plan` | viewer (propriétaire) | Le dernier plan du jour : `{plan}` = `{id, createdAt, trigger: "auto" \| "manual", by, summary, items: [{title, why, next, source, key, url, repo, request}]}` ou `null`. Événement `atlassian_plan` `{id}`. |
+| `POST /v1/atlassian/plan` · `POST /v1/atlassian/knowledge` | operator (approbateur) | Demande un plan du jour (job `poste-plan`) ou une passe de savoir (job `poste-savoir`) au prochain tour : 202 `{queued: true}` ; 409 si Atlassian n'est pas branché. |
 | `GET /v1/clients` · `POST /v1/clients` `{name, role?, repos?}` · `DELETE /v1/clients/{name}` | admin | Lister (avec le drapeau `approver`), créer (le jeton n'est rendu qu'à la création ; un champ `approver` → 400 : l'approbateur ne se crée qu'en ligne de commande), révoquer. |
 | `GET /v1/providers` | admin | Les fournisseurs (déclarés par l'API ou par la configuration, `source`), leurs modèles et limites, `hasKey` et `keyHint` (4 derniers caractères) — jamais la clé ; les chaînes de modèles en vigueur (`models`, `modelsSource`), les sortes et protocoles permis. |
 | `PUT /v1/providers/{name}` `{kind, apiKey?, baseUrl?, api?, models?, capacity?, refillPerMinute?}` · `DELETE /v1/providers/{name}` | admin | Déclarer ou modifier un fournisseur (`apiKey` absent : la clé reste ; `""` : retirée), le retirer (409 tant qu'une chaîne le nomme). Événement `providers_changed`. |
@@ -2358,11 +2456,14 @@ Le serveur pousse (`apns-push-type: alert`, `push-alerts.ts`) :
 | `run_failed` · `stalled` · `budget_exceeded` | `run_failed` · `stalled` · `budget` | les clients qui voient le dépôt | `omp.open` |
 | `workstation_approval` | `approval` | l'approbateur seul (`harness.sh approver`) | `omp.approve` (Approuver / Refuser) |
 | `daily_budget_reached` · `vigie_silent` · `backup_failed` | `daily_budget` · `vigie_silent` · `backup_failed` | les clients qui voient tous les dépôts | `omp.open` |
+| `atlassian_write` (commentaire proposé) | `atlassian_comment` : « Commentaire Jira à valider », corps « <clé> : <début du texte> » | l'approbateur seul | `omp.open` |
+| `atlassian_plan` | `plan` : « Plan du jour prêt », corps : le début du résumé | les clients qui voient tous les dépôts | `omp.open` |
 
 Les droits sont ceux du client qui a enregistré l'appareil, relus à chaque envoi ;
 l'appareil d'un client révoqué est oublié. La charge est minimale : un titre, le dépôt
 et le titre du run, et `omp` `{kind, runId?, rev?, seq?}` — jamais le contenu du poste
-(ni résumé, ni destinataires, ni brouillon), ni raison d'échec. Une escalade à `card` porte
+(ni résumé, ni destinataires, ni brouillon), ni raison d'échec, sauf le début d'un
+commentaire Jira à valider et du résumé du plan du jour. Une escalade à `card` porte
 sa `headline` (titre) et son `stake` (corps), suivis de « · +N autres questions » pour un lot
 (une seule alerte par lot) : ni option, ni contexte, ni chemin ; sans `card`, l'alerte garde son
 texte générique, jamais la question brute. `rev` est

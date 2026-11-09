@@ -89,6 +89,7 @@ struct OMPConsoleApp: App {
                 drafts: drafts,
                 workstation: server.workstation,
                 signals: server.signals,
+                atlassian: server.atlassian,
                 filesModel: filesModel,
                 quit: appDelegate.quit,
                 memoryModel: memoryModel,

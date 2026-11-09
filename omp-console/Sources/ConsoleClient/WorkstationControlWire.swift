@@ -108,6 +108,10 @@ public enum WorkstationSessionJob: String, CaseIterable, Sendable, Identifiable 
     case digest
     /// Le service de l'agent 24/24.
     case service
+    /// Le plan du jour (Jira, agenda, mails).
+    case plan
+    /// La passe de savoir de la boîte (mémoire `corpo`).
+    case savoir
 
     public var id: String { rawValue }
 }

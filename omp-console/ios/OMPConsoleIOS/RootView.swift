@@ -30,6 +30,8 @@ struct RootView: View {
     @ObservedObject var workstation: WorkstationModel
     /// Les propositions des signalements de collègues (`server.signals`) : badge d'À traiter.
     @ObservedObject var signals: CorporateSignalsModel
+    /// Les commentaires Jira proposés par l'agent (`server.atlassian`) : badge d'À traiter.
+    @ObservedObject var atlassian: AtlassianModel
     /// La vigie du même serveur (`server.vigie`) : le badge de Système quand elle se tait.
     @ObservedObject var vigie: HarnessVigie
     @Environment(\.scenePhase) private var scenePhase
@@ -55,6 +57,7 @@ struct RootView: View {
         self.notifications = notifications
         self.workstation = server.workstation
         self.signals = server.signals
+        self.atlassian = server.atlassian
         self.vigie = server.vigie
         _selection = State(initialValue: IOSTabs.tab(from: .section(.inbox), to: selection))
         _state = State(initialValue: state)
@@ -189,6 +192,7 @@ struct RootView: View {
             .task(id: server.address) {
                 await workstation.refresh()
                 await signals.refresh()
+                await atlassian.refresh()
                 await server.intakes.refresh()
                 await vigie.refresh()
             }
@@ -202,6 +206,7 @@ struct RootView: View {
                     server.startLive()
                     await workstation.refresh()
                     await signals.refresh()
+                    await atlassian.refresh()
                     await server.intakes.refresh()
                 }
             }
@@ -240,7 +245,7 @@ struct RootView: View {
     private func badge(for section: ConsoleSection) -> Int {
         IOSTabs.badge(
             of: section,
-            pending: (server.inbox?.pendingCount ?? 0) + signals.pendingCount,
+            pending: (server.inbox?.pendingCount ?? 0) + signals.pendingCount + atlassian.pendingCount,
             approvals: workstation.pendingCount,
             vigieSilent: vigie.isSilent
         )

@@ -21,10 +21,12 @@ import SwiftUI
 
 public struct WorkstationSections: View {
     @ObservedObject var workstation: WorkstationModel
+    @ObservedObject var atlassian: AtlassianModel
     @ObservedObject var drafts: HarnessDrafts
 
-    public init(workstation: WorkstationModel, drafts: HarnessDrafts) {
+    public init(workstation: WorkstationModel, atlassian: AtlassianModel, drafts: HarnessDrafts) {
         self.workstation = workstation
+        self.atlassian = atlassian
         self.drafts = drafts
     }
 
@@ -55,7 +57,7 @@ public struct WorkstationSections: View {
                 WorkstationAskSection(workstation: workstation, drafts: drafts, status: status, requests: requests)
             }
             WorkstationRecentJournalSection(drafts: drafts, journal: workstation.journal)
-            WorkstationPagesSection(workstation: workstation)
+            WorkstationPagesSection(workstation: workstation, atlassian: atlassian)
         }
     }
 }
@@ -155,12 +157,13 @@ public enum WorkstationPage: String, Hashable, Identifiable, Sendable {
     case journal
     case sessions
     case requests
+    case atlassian
 
     public var id: String { rawValue }
 
     /// Les rangées de la page principale, dans l'ordre. Le journal et les demandes
     /// s'ouvrent depuis leur propre section (« Tout le journal », « Toutes les demandes »).
-    static let rows: [WorkstationPage] = [.settings, .automations, .command, .profile, .meetings, .sessions]
+    static let rows: [WorkstationPage] = [.settings, .automations, .command, .atlassian, .profile, .meetings, .sessions]
 
     public var title: String {
         switch self {
@@ -172,6 +175,7 @@ public enum WorkstationPage: String, Hashable, Identifiable, Sendable {
         case .journal: WorkstationText.journalTitle
         case .sessions: ControlText.sessionsTitle
         case .requests: ControlText.requestsTitle
+        case .atlassian: AtlassianText.title
         }
     }
 
@@ -185,6 +189,7 @@ public enum WorkstationPage: String, Hashable, Identifiable, Sendable {
         case .journal: WorkstationText.journalSymbol
         case .sessions: PipelineServerText.sessionSymbol
         case .requests: WorkstationText.requestsSymbol
+        case .atlassian: AtlassianText.pageSymbol
         }
     }
 }
@@ -195,7 +200,7 @@ extension View {
     public func workstationDestinations(server: HarnessModel, drafts: HarnessDrafts) -> some View {
         let workstation = server.workstation
         return navigationDestination(for: WorkstationPage.self) { page in
-            WorkstationPageView(workstation: workstation, drafts: drafts, page: page)
+            WorkstationPageView(server: server, workstation: workstation, drafts: drafts, page: page)
         }
     }
 }
@@ -203,6 +208,7 @@ extension View {
 /// Les rangées des pages poussées, en pied de la page principale.
 struct WorkstationPagesSection: View {
     @ObservedObject var workstation: WorkstationModel
+    @ObservedObject var atlassian: AtlassianModel
 
     var body: some View {
         Section {
@@ -230,6 +236,8 @@ struct WorkstationPagesSection: View {
             case .settings, .command: workstation.status != nil
             case .automations: workstation.automations != nil
             case .profile, .meetings, .journal, .sessions, .requests: true
+            // Masquée sur un serveur qui ne sert pas Atlassian (ou un jeton restreint).
+            case .atlassian: atlassian.availability == .available
             }
         }
     }
@@ -238,6 +246,7 @@ struct WorkstationPagesSection: View {
         switch page {
         case .automations: workstation.automations?.count
         case .meetings: workstation.meetings.count
+        case .atlassian: atlassian.pendingCount
         case .settings, .command, .profile, .journal, .sessions, .requests: nil
         }
     }
@@ -246,6 +255,7 @@ struct WorkstationPagesSection: View {
 /// Une page poussée : ses sections dans un formulaire groupé, l'échec du dernier échange
 /// en tête, et l'actualisation par le geste du système.
 struct WorkstationPageView: View {
+    let server: HarnessModel
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var drafts: HarnessDrafts
     let page: WorkstationPage
@@ -260,7 +270,13 @@ struct WorkstationPageView: View {
         .formStyle(.grouped)
         .navigationTitle(page.title)
         .consoleInlineTitle()
-        .refreshable { await workstation.load() }
+        .refreshable {
+            if page == .atlassian {
+                await server.atlassian.refresh()
+            } else {
+                await workstation.load()
+            }
+        }
     }
 
     @ViewBuilder
@@ -300,6 +316,8 @@ struct WorkstationPageView: View {
             } else {
                 loading
             }
+        case .atlassian:
+            AtlassianSections(server: server, atlassian: server.atlassian)
         }
     }
 

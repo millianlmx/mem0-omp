@@ -144,6 +144,8 @@ public enum ControlText {
         case "profil": L10n.text("Établissement du profil")
         case "digest": L10n.text("Résumé des réunions")
         case "service": L10n.text("Service de l’agent 24/24")
+        case "plan": L10n.text("Plan du jour")
+        case "savoir": L10n.text("Savoir de la boîte")
         default: raw
         }
     }

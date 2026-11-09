@@ -13,6 +13,16 @@
 //   soit l'autonomie ; ses actions lui sont rattachées, son compte rendu rendu par
 //   `workstation_request_report`. Une demande à la fois, dans l'ordre d'arrivée.
 // - `poste-signal` : le tri d'un signalement de collègue (pont corpo ↔ usine) ;
+// - `poste-plan`   : le plan du jour (tickets Jira, agenda, mails non lus), chaque jour ouvré à
+//   `atlassian.planHour` (fuseau `schedules.timezone`) ou à la demande d'une app, poste hors pause
+//   et Atlassian branché ; rendu par `atlassian_plan_write` ;
+// - `poste-savoir` : la passe de savoir de la boîte, toutes les `atlassian.knowledgeEveryHours`
+//   heures ou à la demande, Atlassian branché : ses `mem0_*` écrivent dans la scope `corpo`,
+//   son compte rendu rendu par `atlassian_knowledge_report`.
+//
+// Avec Atlassian branché, `poste-service`, `poste-demande` et `poste-plan` lisent Jira et
+// Confluence et font avancer les tickets de l'utilisateur (commentaires seulement proposés) ;
+// `poste-savoir` lit seulement. Ces outils sont interceptés une fois, dans `#open`.
 //
 // Un seul job de chaque sorte à la fois. La garde d'envoi n'est pas ici : elle est dans la
 // file (workstation.ts) et dans l'extension, et aucun outil de l'agent n'approuve.
@@ -24,7 +34,7 @@
 // - le répertoire de travail est `<worktreesDir>/workstation/_poste`, la forme
 //   `<dépôt>/<feature>` qu'exige le lanceur root (`_` comme `_audit-<id>` : aucun run n'y
 //   prend son worktree), seul dossier inscriptible du runner ;
-// - la scope mémoire est `workstation` : l'agent ne lit ni n'écrit la mémoire d'un projet ;
+// - la scope mémoire est `workstation` (`corpo` pour `poste-savoir`) : l'agent ne lit ni n'écrit la mémoire d'un projet ;
 // - sa politique de modèles est `workstation.policy` (models, providers, privacy : policy.ts),
 //   appliquée comme celle d'un dépôt — les données du poste peuvent ne jamais quitter la machine.
 import * as fs from "node:fs";
@@ -32,12 +42,17 @@ import * as path from "node:path";
 import type { HarnessConfig, RepoConfig, Tier } from "./config.ts";
 import { isRecord, repoDefaults } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
+import type { AtlassianDesk, PlanTrigger } from "./atlassian/desk.ts";
+import { CORPO_SCOPE, isAtlassianTool } from "./atlassian/desk.ts";
+import { wallClock } from "./cron.ts";
 import type { SignalDesk, SignalInput } from "./corporate/signals.ts";
 import type { Meeting, StoredObservation, WorkstationAction, WorkstationProfile, WorkstationRequest } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import {
   nudgePrompt,
   workstationDigestPrompt,
+  workstationKnowledgePrompt,
+  workstationPlanPrompt,
   workstationProfilePrompt,
   workstationRequestPrompt,
   workstationShiftPrompt,
@@ -69,6 +84,8 @@ const JOBS: readonly WorkstationJob[] = [
   "poste-service",
   "poste-demande",
   "poste-signal",
+  "poste-plan",
+  "poste-savoir",
 ];
 
 /** Le tier de chaque job : un gros modèle là où l'on juge (le profil, les actions), un moyen pour résumer ou trier. */
@@ -78,6 +95,8 @@ const JOB_TIERS: Record<WorkstationJob, Tier> = {
   "poste-service": "heavy",
   "poste-demande": "heavy",
   "poste-signal": "standard",
+  "poste-plan": "heavy",
+  "poste-savoir": "heavy",
 };
 
 /** Les jobs qui lisent des messages de collègues : ni direct, ni `intent`, ni `progress` publiés. */
@@ -97,6 +116,12 @@ const TRANSCRIPT_TAIL = 100_000;
 const TOOL_TEXT_MAX = 8000;
 /** Un snapshot (arbre de 300 éléments au plus, et 8000 caractères de texte) se rend plus long qu'un autre résultat. */
 const SNAPSHOT_TEXT_MAX = 32_000;
+/** Les faits que la passe de savoir retient au plus. */
+const KNOWLEDGE_MAX_FACTS = 30;
+/** La dernière tentative du plan automatique et de la passe de savoir (réglages) : un échec n'est pas relancé avant l'échéance suivante, même après un redémarrage. */
+const PLAN_ATTEMPT_KEY = "workstation.plan.attempt";
+const KNOWLEDGE_ATTEMPT_KEY = "workstation.knowledge.attempt";
+const DAY_MS = 24 * 3_600_000;
 
 /** Le dépôt synthétique et le répertoire de travail des jobs du poste (voir l'en-tête). */
 export function workstationTarget(config: HarnessConfig): { repo: RepoConfig; cwd: string } {
@@ -120,6 +145,19 @@ function unitOf(job: WorkstationJob): string {
 
 function minutes(ms: number): string {
   return `${Math.round(ms / 60_000)} min`;
+}
+
+/**
+ * L'instant d'aujourd'hui à `hour` heures dans `timeZone`, ou `null` si aujourd'hui n'est pas un
+ * jour de plan (samedi et dimanche quand `weekdaysOnly`). Le décalage du fuseau est celui de
+ * maintenant : un changement d'heure entre minuit et `hour` décale l'échéance d'une heure ce jour-là.
+ */
+export function planSlot(now: number, hour: number, weekdaysOnly: boolean, timeZone: string): number | null {
+  const wall = wallClock(now, timeZone);
+  const day = Math.floor(wall / DAY_MS) * DAY_MS;
+  const weekday = new Date(day).getUTCDay();
+  if (weekdaysOnly && (weekday === 0 || weekday === 6)) return null;
+  return day + hour * 3_600_000 - (wall - Math.floor(now / 1000) * 1000);
 }
 
 /** L'heure LOCALE de l'utilisateur d'une observation (`tz` : getTimezoneOffset du lot). */
@@ -235,11 +273,13 @@ export class WorkstationAgent {
   /** La demande que mène le job `poste-demande` vivant ; `null` sinon. */
   #requestId: string | null = null;
   readonly #signals: SignalDesk;
+  readonly #atlassian: AtlassianDesk;
 
-  constructor(ctx: HarnessContext, workstation: Workstation, signals: SignalDesk) {
+  constructor(ctx: HarnessContext, workstation: Workstation, signals: SignalDesk, atlassian: AtlassianDesk) {
     this.#ctx = ctx;
     this.#ws = workstation;
     this.#signals = signals;
+    this.#atlassian = atlassian;
   }
 
   /** Un tour : les échéances de la file, puis les jobs dus. */
@@ -249,11 +289,19 @@ export class WorkstationAgent {
     this.#guardShift();
     this.#guardRequest();
     this.#guardSignal();
+    this.#guardPlan();
     this.#digestNext();
     this.#profileIfDue(now);
     this.#shiftIfDue(now);
     this.#requestNext(now);
     this.#signalNext();
+    this.#planIfDue(now);
+    this.#knowledgeIfDue(now);
+  }
+
+  /** Atlassian est activé et branché : ses outils sont offerts, le plan et le savoir peuvent partir. */
+  #atlassianOn(): boolean {
+    return this.#atlassian.enabled() && this.#atlassian.connected();
   }
 
   /** Le job tourne en ce moment. */
@@ -292,7 +340,10 @@ export class WorkstationAgent {
     live: LiveJob,
     onHostTool: (name: string, args: Record<string, unknown>) => Promise<HostToolResult>,
   ): Promise<RunnerSession> {
-    const target = workstationTarget(this.#ctx.config);
+    const workstation = workstationTarget(this.#ctx.config);
+    // La passe de savoir écrit dans la mémoire de la boîte : ses `mem0_*` visent `corpo`.
+    const target =
+      job === "poste-savoir" ? { ...workstation, repo: { ...workstation.repo, scope: CORPO_SCOPE } } : workstation;
     fs.mkdirSync(target.repo.path, { recursive: true });
     // Le dossier d'envoi (`upload`) vit dans le répertoire de travail, seul dossier où le runner écrit.
     fs.mkdirSync(uploadDir(this.#ctx.config), { recursive: true });
@@ -301,9 +352,18 @@ export class WorkstationAgent {
     // `progress`. `workstation_signal` des autres jobs ne montre pas non plus son `intent` (le direct,
     // lui, est réservé au propriétaire, comme les pages que ces jobs lisent).
     const silent = MUTED_JOBS[job] === true;
+    const tools = hostToolsFor(job, { atlassian: this.#atlassianOn() });
+    // Les outils Atlassian, un seul aiguillage pour tous les jobs : seulement ceux que la session a reçus,
+    // écritures permises si elle a reçu une écriture (service, demande, plan ; jamais le savoir).
+    const offered = new Set(tools.map((tool) => tool.name));
+    const writes = offered.has("jira_transition");
     const session = new RunnerSession(this.#ctx, target, {
-      onHostTool: (name, args) =>
-        name === "progress" ? Promise.resolve(this.#progress(job, args, silent)) : onHostTool(name, args),
+      onHostTool: (name, args) => {
+        if (name === "progress") return Promise.resolve(this.#progress(job, args, silent));
+        if (!isAtlassianTool(name)) return onHostTool(name, args);
+        if (!offered.has(name)) return Promise.resolve({ text: `outil inconnu : ${name}`, isError: true });
+        return this.#atlassian.runTool(name, args, { by: `poste:${job}`, writes }, live.abort.signal);
+      },
       event: (type, payload) =>
         this.#ctx.event(
           type,
@@ -321,7 +381,7 @@ export class WorkstationAgent {
     });
     live.session = session;
     await session.open(JOB_TIERS[job], unitOf(job), live.abort.signal);
-    await session.setHostTools(hostToolsFor(job));
+    await session.setHostTools(tools);
     return session;
   }
 
@@ -628,6 +688,7 @@ export class WorkstationAgent {
           pending: awaiting.length > 0 ? awaiting.map(actionLine).join("\n") : null,
           journal: journal.length > 0 ? journal.map(actionLine).join("\n") : null,
           needs: meetingLines(store.listWorkstationMeetings({ states: ["digested"], limit: MEETINGS_SHOWN })),
+          atlassian: this.#atlassianOn(),
         }),
         live.abort.signal,
         deadlineAt,
@@ -729,6 +790,172 @@ export class WorkstationAgent {
     }
   }
 
+  // -- plan du jour et savoir de la boîte (Atlassian) -----------------------------------
+
+  /** Le plan en cours s'arrête dès que le poste passe en pause (il agit dans le navigateur). */
+  #guardPlan(): void {
+    const live = this.#live.get("poste-plan");
+    if (!live || live.abort.signal.aborted || !this.#ws.settings().paused) return;
+    live.stopReason = "interrompu : poste mis en pause";
+    live.abort.abort();
+  }
+
+  /**
+   * Le plan est dû, Atlassian branché et le poste hors pause, à la demande d'une app, ou une fois
+   * par jour (ouvré si `planWeekdaysOnly`) dès `planHour` dans `schedules.timezone`, s'il n'a été ni
+   * rendu ni tenté depuis. Une demande que le lancement refuse (runner, plafond) est reposée.
+   */
+  #planIfDue(now: number): void {
+    if (this.#live.has("poste-plan") || !this.#atlassianOn() || this.#ws.settings().paused) return;
+    const { config, store } = this.#ctx;
+    const requested = this.#atlassian.takePlanRequest();
+    if (!requested) {
+      const { planHour, planWeekdaysOnly } = config.atlassian;
+      if (planHour === null) return;
+      const slot = planSlot(now, planHour, planWeekdaysOnly, config.schedules.timezone);
+      if (slot === null || now < slot) return;
+      const attempt = store.getSetting<number>(PLAN_ATTEMPT_KEY) ?? 0;
+      if (Math.max(this.#atlassian.lastPlanAt() ?? 0, attempt) >= slot) return;
+    }
+    const trigger: PlanTrigger = requested ? "manual" : "auto";
+    if (this.#launch("poste-plan", (live) => this.#plan(live, trigger, now)) !== null) {
+      if (requested) this.#atlassian.requestPlan("poste");
+      return;
+    }
+    store.setSetting(PLAN_ATTEMPT_KEY, now, null);
+  }
+
+  async #plan(live: LiveJob, trigger: PlanTrigger, now: number): Promise<void> {
+    const { config, store } = this.#ctx;
+    const counter: Counter = { actions: 0, capped: false };
+    const out: { planId: string | null } = { planId: null };
+    const missing = "le plan n'a pas été rendu par `atlassian_plan_write`";
+    let failure: string | null = null;
+    try {
+      const session = await this.#open("poste-plan", live, (name, args) =>
+        this.#planTool(name, args, counter, live, trigger, out),
+      );
+      const deadlineAt = Date.now() + config.runner.stepTimeoutSec * 1000;
+      let result = await session.prompt(
+        workstationPlanPrompt({
+          today: new Intl.DateTimeFormat("fr-FR", {
+            timeZone: config.schedules.timezone,
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          }).format(now),
+          maxActions: config.workstation.shiftMaxActions,
+          profile: profileText(store.latestWorkstationProfile()),
+          repos: config.repos.map((repo) => ({ name: repo.name, scope: repo.scope })),
+        }),
+        live.abort.signal,
+        deadlineAt,
+      );
+      if (result.status === "completed" && out.planId === null)
+        result = await session.prompt(nudgePrompt("poste-plan", missing), live.abort.signal, deadlineAt);
+      if (result.status !== "completed") failure = result.error?.message ?? "erreur du runner";
+      else if (out.planId === null) failure = missing;
+    } catch (err) {
+      failure = err instanceof Error ? err.message : String(err);
+    }
+    if (failure !== null && !live.abort.signal.aborted)
+      this.#ctx.log(`poste : plan du jour en échec : ${failure}`, { level: "warn" });
+  }
+
+  async #planTool(
+    name: string,
+    args: Record<string, unknown>,
+    counter: Counter,
+    live: LiveJob,
+    trigger: PlanTrigger,
+    out: { planId: string | null },
+  ): Promise<HostToolResult> {
+    switch (name) {
+      case "workstation_act":
+      case "workstation_decision":
+        return this.#deposit(
+          name,
+          args,
+          counter,
+          live,
+          null,
+          "plafond d'actions de ce plan atteint : rends le plan par `atlassian_plan_write` maintenant.",
+        );
+      case "workstation_meetings":
+        return this.#shiftTool(name, args, counter, live);
+      case "atlassian_plan_write": {
+        if (out.planId !== null) return { text: `plan ${out.planId} déjà enregistré. Termine ton tour.` };
+        try {
+          const plan = this.#atlassian.savePlan(
+            { summary: args.summary, items: args.items, trigger },
+            "poste:poste-plan",
+          );
+          out.planId = plan.id;
+          return { text: `plan ${plan.id} enregistré (${plan.items.length} éléments). Termine ton tour.` };
+        } catch (err) {
+          return { text: `plan refusé : ${err instanceof Error ? err.message : String(err)}`, isError: true };
+        }
+      }
+      default:
+        return { text: `outil inconnu : ${name}`, isError: true };
+    }
+  }
+
+  /**
+   * La passe de savoir est due, Atlassian branché, à la demande d'une app ou quand
+   * `knowledgeEveryHours` ont passé depuis la dernière passe rendue ou tentée.
+   */
+  #knowledgeIfDue(now: number): void {
+    if (this.#live.has("poste-savoir") || !this.#atlassianOn()) return;
+    const { config, store } = this.#ctx;
+    const requested = this.#atlassian.takeKnowledgeRequest();
+    if (!requested) {
+      const every = config.atlassian.knowledgeEveryHours;
+      if (every === null) return;
+      const attempt = store.getSetting<number>(KNOWLEDGE_ATTEMPT_KEY) ?? 0;
+      if (now - Math.max(this.#atlassian.lastKnowledgeAt() ?? 0, attempt) < every * 3_600_000) return;
+    }
+    if (this.#launch("poste-savoir", (live) => this.#knowledge(live)) !== null) {
+      if (requested) this.#atlassian.requestKnowledge("poste");
+      return;
+    }
+    store.setSetting(KNOWLEDGE_ATTEMPT_KEY, now, null);
+  }
+
+  async #knowledge(live: LiveJob): Promise<void> {
+    const out: { reported: boolean } = { reported: false };
+    const missing = "le compte rendu n'a pas été rendu par `atlassian_knowledge_report`";
+    let failure: string | null = null;
+    try {
+      const session = await this.#open("poste-savoir", live, async (name, args) => {
+        if (name !== "atlassian_knowledge_report") return { text: `outil inconnu : ${name}`, isError: true };
+        if (typeof args.summary !== "string" || args.summary.trim() === "")
+          return { text: "summary : compte rendu non vide attendu", isError: true };
+        this.#atlassian.recordKnowledge({ summary: clip(args.summary.trim(), 4000), at: Date.now() });
+        out.reported = true;
+        return { text: "compte rendu enregistré. Termine ton tour." };
+      });
+      const deadlineAt = Date.now() + this.#ctx.config.runner.stepTimeoutSec * 1000;
+      let result = await session.prompt(
+        workstationKnowledgePrompt({
+          maxFacts: KNOWLEDGE_MAX_FACTS,
+          lastSummary: this.#atlassian.status().knowledge.lastSummary,
+        }),
+        live.abort.signal,
+        deadlineAt,
+      );
+      if (result.status === "completed" && !out.reported)
+        result = await session.prompt(nudgePrompt("poste-savoir", missing), live.abort.signal, deadlineAt);
+      if (result.status !== "completed") failure = result.error?.message ?? "erreur du runner";
+      else if (!out.reported) failure = missing;
+    } catch (err) {
+      failure = err instanceof Error ? err.message : String(err);
+    }
+    if (failure !== null && !live.abort.signal.aborted)
+      this.#ctx.log(`poste : passe de savoir en échec : ${failure}`, { level: "warn" });
+  }
+
   // -- demandes de l'humain ---------------------------------------------------------------
 
   /**
@@ -784,6 +1011,7 @@ export class WorkstationAgent {
           instruction: request.instruction,
           maxActions: config.workstation.shiftMaxActions,
           profile: profileText(store.latestWorkstationProfile()),
+          atlassian: this.#atlassianOn(),
         }),
         live.abort.signal,
         deadlineAt,
@@ -863,12 +1091,12 @@ export class WorkstationAgent {
   }
 
   /**
-   * L'arrêt d'urgence : le service et la demande en cours sont coupés tout de suite (leur
+   * L'arrêt d'urgence : le service, la demande et le plan en cours sont coupés tout de suite (leur
    * runner arrêté, leur issue `reason`). Rend `true` s'il y en avait un.
    */
   async halt(reason: string): Promise<boolean> {
     let halted = false;
-    for (const job of ["poste-service", "poste-demande"] as const) {
+    for (const job of ["poste-service", "poste-demande", "poste-plan"] as const) {
       const live = this.#live.get(job);
       if (!live || live.abort.signal.aborted) continue;
       live.stopReason = reason;

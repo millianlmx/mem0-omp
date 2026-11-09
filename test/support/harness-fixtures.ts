@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultConfig, repoDefaults } from "../../omp-harness/config.ts";
+import type { AtlassianFetch } from "../../omp-harness/atlassian/oauth.ts";
 import type { HarnessConfig } from "../../omp-harness/config.ts";
 import { Store } from "../../omp-harness/db.ts";
 import { Git } from "../../omp-harness/git.ts";
@@ -168,6 +169,8 @@ export function fakeWorld(
     vps?: OrchestratorDeps["vps"];
     /** Le journal du SERVICE (`deps.log`), lu par les tests qui prouvent qu'une donnée n'y figure pas. */
     harnessLog?: LogLine;
+    /** Le `fetch` du connecteur Atlassian (`fakeAtlassian().fetch`, atlassian-double.ts) : `OrchestratorDeps.atlassianFetch`. */
+    atlassian?: AtlassianFetch;
   } = {},
 ): FakeWorld {
   const repo = options.repo ?? harnessRepo();
@@ -214,6 +217,7 @@ export function fakeWorld(
     tickMs: 25,
     ...(options.vps ? { vps: options.vps } : {}),
     ...(options.harnessLog ? { log: options.harnessLog } : {}),
+    ...(options.atlassian ? { atlassianFetch: options.atlassian } : {}),
   };
   const orchestrator = new Orchestrator(deps);
   return {

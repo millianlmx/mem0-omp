@@ -197,6 +197,33 @@ export type WorkstationConfig = {
   vps: { url: string | null; token: string | null };
 };
 
+/** La redirection OAuth par défaut : une boucle locale, d'où l'humain recolle l'adresse de retour dans l'app. */
+export const LOOPBACK_REDIRECT = "http://127.0.0.1:53682/callback";
+
+/**
+ * Le connecteur Atlassian (omp-harness/atlassian/) : Jira et Confluence par le serveur
+ * Atlassian Rovo MCP, en OAuth 2.1 (consentement propre au harness). `enabled: false` coupe
+ * les routes `/v1/atlassian*` (404), les jobs du plan et du savoir, et les outils des agents.
+ */
+export type AtlassianConfig = {
+  enabled: boolean;
+  /** Le point MCP Streamable HTTP (https seulement). */
+  mcpUrl: string;
+  /**
+   * L'adresse de retour du consentement OAuth : `https://<hôte>:7443/v1/atlassian/callback`
+   * (tailnet) conseillée ; `null` : LOOPBACK_REDIRECT, l'adresse de retour est collée dans l'app.
+   */
+  redirectUri: string | null;
+  /** Les jetons OAuth (0600, jamais en base) ; non déclaré : `atlassian.json` à côté de `tokenFile`. */
+  tokenFile: string;
+  /** L'heure locale (`schedules.timezone`) du plan du jour ; `null` : pas de plan automatique. */
+  planHour: number | null;
+  /** Le plan automatique du lundi au vendredi seulement. */
+  planWeekdaysOnly: boolean;
+  /** La période de la passe de savoir de la boîte, en heures ; `null` : à la demande seulement. */
+  knowledgeEveryHours: number | null;
+};
+
 /** Le monitoring : plafond de coût, veille des features muettes ou lentes, santé du serveur. */
 export type MonitoringConfig = {
   /** Le coût (en dollars) d'une feature au-delà duquel l'humain est prévenu (`budget_exceeded`) ; `null` : jamais. */
@@ -334,6 +361,11 @@ export type RepoConfig = {
    * Absent : tout reste à l'humain.
    */
   autonomy?: { rules: AutonomyRule[] };
+  /**
+   * Les outils Atlassian en lecture (et `corpo_recall`) pour les étapes des runs de ce dépôt.
+   * JAMAIS sur un dépôt public : ce qu'un agent lit de Jira ou Confluence peut finir dans son code.
+   */
+  atlassian?: boolean;
 } & ModelPolicy;
 
 export type HarnessConfig = {
@@ -571,6 +603,7 @@ export type HarnessConfig = {
     idleSec: number;
     callTimeoutSec: number;
   };
+  atlassian: AtlassianConfig;
   repos: RepoConfig[];
 };
 
@@ -732,6 +765,15 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       maxContexts: 12,
       idleSec: 600,
       callTimeoutSec: 30,
+    },
+    atlassian: {
+      enabled: true,
+      mcpUrl: "https://mcp.atlassian.com/v2/mcp",
+      redirectUri: null,
+      tokenFile: path.join(base, "atlassian.json"),
+      planHour: 8,
+      planWeekdaysOnly: true,
+      knowledgeEveryHours: 24,
     },
     repos: [],
   };
@@ -1124,6 +1166,7 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   )
     fail("schedules.catchUpMin : entier de 1 à 10080 (minutes, une semaine au plus)");
   validateBrowser(config.browser);
+  validateAtlassian(config.atlassian);
   for (const repo of config.repos) {
     if (repo.tests.pattern !== null && typeof repo.tests.pattern !== "string")
       fail(`repos.${repo.name}.tests.pattern : glob ou null`);
@@ -1143,6 +1186,8 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
       );
     if (!isRecord(repo.checks) || Object.values(repo.checks).some((command) => typeof command !== "string"))
       fail(`repos.${repo.name}.checks : { nom: commande }`);
+    if (repo.atlassian !== undefined && typeof repo.atlassian !== "boolean")
+      fail(`repos.${repo.name}.atlassian : booléen`);
   }
   return config;
 }
@@ -1183,6 +1228,47 @@ function validateBrowser(browser: HarnessConfig["browser"]): void {
   integer("maxContexts", browser.maxContextsPerClient, 64);
   integer("idleSec", 1, 86_400);
   integer("callTimeoutSec", 1, 300);
+}
+
+/** Une URL lisible, sinon `null`. */
+function urlOf(value: unknown): URL | null {
+  if (typeof value !== "string") return null;
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+/** Une adresse de la boucle locale (`127.0.0.1`, `localhost`, `[::1]`). */
+export function isLoopbackUrl(url: URL): boolean {
+  return url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
+}
+
+/** Le connecteur Atlassian : refusé avec un message préfixé `atlassian.<clé> :`. */
+function validateAtlassian(atlassian: AtlassianConfig): void {
+  if (typeof atlassian.enabled !== "boolean") fail("atlassian.enabled : booléen");
+  const mcp = urlOf(atlassian.mcpUrl);
+  if (mcp === null || mcp.protocol !== "https:") fail("atlassian.mcpUrl : URL https://");
+  if (atlassian.redirectUri !== null) {
+    const redirect = urlOf(atlassian.redirectUri);
+    const fine =
+      redirect !== null &&
+      redirect.hash === "" &&
+      (redirect.protocol === "https:" || (redirect.protocol === "http:" && isLoopbackUrl(redirect)));
+    if (!fine) fail("atlassian.redirectUri : https://… (ou http:// sur la boucle locale), sans fragment, ou null");
+  }
+  if (typeof atlassian.tokenFile !== "string" || !path.isAbsolute(atlassian.tokenFile))
+    fail("atlassian.tokenFile : chemin absolu");
+  const { planHour, knowledgeEveryHours } = atlassian;
+  if (planHour !== null && !(Number.isInteger(planHour) && planHour >= 0 && planHour <= 23))
+    fail("atlassian.planHour : entier de 0 à 23 (heure locale de schedules.timezone), ou null");
+  if (typeof atlassian.planWeekdaysOnly !== "boolean") fail("atlassian.planWeekdaysOnly : booléen");
+  if (
+    knowledgeEveryHours !== null &&
+    !(Number.isInteger(knowledgeEveryHours) && knowledgeEveryHours >= 1 && knowledgeEveryHours <= 720)
+  )
+    fail("atlassian.knowledgeEveryHours : entier de 1 à 720 (heures), ou null");
 }
 
 /**
@@ -1257,6 +1343,8 @@ export function loadConfig(file: string | null): HarnessConfig {
     config.providersEnvFile = path.join(path.dirname(config.tokenFile), "providers.env");
   if (raw.providersModelsFile === undefined)
     config.providersModelsFile = path.join(path.dirname(config.tokenFile), "providers.models.yml");
+  if (!isRecord(raw.atlassian) || raw.atlassian.tokenFile === undefined)
+    config.atlassian.tokenFile = path.join(path.dirname(config.tokenFile), "atlassian.json");
   return validateConfig(config);
 }
 

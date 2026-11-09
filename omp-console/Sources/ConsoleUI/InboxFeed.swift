@@ -22,6 +22,7 @@ public struct InboxFeed: View {
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var vigie: HarnessVigie
     @ObservedObject var signals: CorporateSignalsModel
+    @ObservedObject var atlassian: AtlassianModel
     @ObservedObject var intakes: HarnessIntakes
     let inbox: HarnessInbox
 
@@ -31,6 +32,7 @@ public struct InboxFeed: View {
         self.workstation = server.workstation
         self.vigie = server.vigie
         self.signals = server.signals
+        self.atlassian = server.atlassian
         self.intakes = server.intakes
         self.inbox = inbox
     }
@@ -49,7 +51,8 @@ public struct InboxFeed: View {
         IntakeInboxSection(server: server, drafts: drafts)
         WorkstationHomeApprovals(workstation: workstation, drafts: drafts)
         SignalProposalsSection(signals: signals, drafts: drafts)
-        if items.isEmpty, workstation.approvals.isEmpty, signals.pendingCount == 0, intakes.open.isEmpty {
+        AtlassianProposalsSection(atlassian: atlassian)
+        if items.isEmpty, workstation.approvals.isEmpty, signals.pendingCount == 0, atlassian.pendingCount == 0, intakes.open.isEmpty {
             Section {
                 InboxAllClear(drafts: drafts, canAct: server.canAct)
             }

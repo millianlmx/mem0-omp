@@ -36,6 +36,7 @@ import { ProofStore, currentRound } from "./proofs.ts";
 import { TestFeeds } from "./test-feed.ts";
 import type { Lookup } from "./browser/guard.ts";
 import type { VpsOptions } from "./browser/vps.ts";
+import type { AtlassianFetch } from "./atlassian/oauth.ts";
 
 export type SpawnRunner = (
   command: string,
@@ -59,6 +60,8 @@ export type HarnessDeps = {
   browserLookup?: Lookup;
   /** Tests seulement : les réglages de l'exécuteur du VPS (délais courts, adresses de vérification, DNS). */
   vps?: Partial<Pick<VpsOptions, "lookup" | "probeUrls" | "pollSec" | "retryMs" | "probeEveryMs">>;
+  /** Tests seulement : le `fetch` du connecteur Atlassian (OAuth et serveur MCP) ; défaut : `globalThis.fetch`. */
+  atlassianFetch?: AtlassianFetch;
 };
 
 /**
