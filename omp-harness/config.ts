@@ -170,6 +170,8 @@ export type WorkstationConfig = {
   exfiltrationGuard: boolean;
   /** Les captures d'écran gardées par action, en heures (JPEG tel que capturé). */
   captureRetentionHours: number;
+  /** Le repos entre deux passages de lecture des canaux corpo (Gmail, Agenda, Slack), en minutes. */
+  channelReadEveryMin: number;
 };
 
 /** Le monitoring : plafond de coût, veille des features muettes ou lentes, santé du serveur. */
@@ -663,6 +665,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       allowedHosts: [],
       exfiltrationGuard: true,
       captureRetentionHours: 24,
+      channelReadEveryMin: 5,
     },
     issues: { label: "omp:fix", maxLaunch: 5, pollSec: 900 },
     lanes: { direct: true },
@@ -984,6 +987,8 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     fail("workstation.shiftEveryMin : minutes ≥ 1");
   if (!(Number.isInteger(workstation.shiftMaxActions) && workstation.shiftMaxActions >= 1))
     fail("workstation.shiftMaxActions : entier ≥ 1");
+  if (!(typeof workstation.channelReadEveryMin === "number" && workstation.channelReadEveryMin >= 1))
+    fail("workstation.channelReadEveryMin : minutes ≥ 1");
   if (workstation.policy !== undefined) {
     if (!isRecord(workstation.policy)) fail("workstation.policy : { models?, providers?, privacy? }");
     checkPolicy("workstation.policy", workstation.policy);

@@ -523,7 +523,11 @@ test("poste-canaux/AC-1 : l'approbateur saisit les clients, ouvre l'URL (PKCE + 
       api.routes.some((route) => /callback|oauth2callback/i.test(route.path) && route.path.includes("workstation")),
       false,
     );
-    assert.equal(api.routes.filter((route) => route.path.startsWith(CHANNELS)).length, 4);
+    // Les quatre routes de la connexion (la lecture des canaux ajoute ses canaux Slack suivis).
+    assert.equal(
+      api.routes.filter((route) => route.path.startsWith(CHANNELS) && !route.path.includes("/conversations")).length,
+      4,
+    );
   } finally {
     await teardown(world, api);
   }
