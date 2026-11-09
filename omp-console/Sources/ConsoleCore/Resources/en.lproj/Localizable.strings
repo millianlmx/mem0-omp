@@ -695,6 +695,8 @@
 "vecteur absent" = "missing vector";
 " : %@" = ": %@";
 " : %lld min" = ": %lld min";
+" : en cours depuis %lld min" = ": running for %lld min";
+" (médiane %lld s)" = " (median %lld s)";
 "« %@ » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue." = "The downloaded “%@” is corrupt (different SHA-256 checksum). Setup was interrupted.";
 "« Basculer quand même » démarre la nouvelle mémoire sans eux ; l’ancienne reste intacte sur ce Mac. « Réessayer » relance l’import." = "“Switch Anyway” starts the new memory without them; the old one stays intact on this Mac. “Try Again” restarts the import.";
 "À trancher" = "To Decide";
