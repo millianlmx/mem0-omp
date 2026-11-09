@@ -8,9 +8,15 @@
 // n'est pas celui du propriétaire, ces vues ne montrent rien. Un refus d'approbateur
 // est dit dans la feuille, jamais dans le bandeau de tête.
 
+#if canImport(AppKit)
+import AppKit
+#endif
 import ConsoleClient
 import ConsoleCore
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // MARK: - À traiter
 
@@ -349,6 +355,203 @@ struct SignalGestures: ViewModifier {
             .sheet(item: $drafts.signalShown) { signal in
                 SignalConfirmSheet(server: server, drafts: drafts, signal: signal)
             }
+            .sheet(item: $drafts.replyShown) { reply in
+                ReplySheet(server: server, drafts: drafts, reply: reply)
+            }
+    }
+}
+
+// MARK: - Réponses au collègue
+
+/// Les brouillons de réponse au collègue, seulement quand il y en a : chacun avec sa
+/// sorte, son canal, la personne et le début du texte, et le geste qui ouvre sa feuille.
+public struct ReplyDraftsSection: View {
+    @ObservedObject var signals: CorporateSignalsModel
+    @ObservedObject var drafts: HarnessDrafts
+
+    public init(signals: CorporateSignalsModel, drafts: HarnessDrafts) {
+        self.signals = signals
+        self.drafts = drafts
+    }
+
+    public var body: some View {
+        if signals.repliesAvailability == .available, !signals.replies.isEmpty {
+            Section {
+                ForEach(signals.replies) { reply in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(SignalText.replyKind(reply.kind))
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.orange)
+                        Text(reply.text)
+                            .font(.callout)
+                            .lineLimit(4)
+                        Text(ReplySheet.origin(of: reply))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let error = reply.error, !error.isEmpty {
+                            Text(error)
+                                .font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .consoleBanner(tone: .attention)
+                        }
+                        Button(SignalText.openReply, systemImage: SignalText.repliesSymbol) {
+                            drafts.replyShown = reply
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(signals.busy.contains(reply.id))
+                        .consoleID("reply.review.\(reply.id)")
+                    }
+                    .padding(.vertical, 4)
+                }
+            } header: {
+                Label(SignalText.repliesTitle, systemImage: SignalText.repliesSymbol)
+                    .foregroundStyle(.orange)
+            } footer: {
+                Text(SignalText.repliesHint)
+            }
+        }
+    }
+}
+
+/// La feuille d'un brouillon : le canal, le lien du fil et le texte à éditer. Une origine
+/// `manual` n'a pas de fil : elle se copie, sans bouton d'envoi. Le serveur décide
+/// (approbateur, poste actif) ; son refus est dit dans la feuille.
+struct ReplySheet: View {
+    @ObservedObject var server: HarnessModel
+    @ObservedObject var signals: CorporateSignalsModel
+    @ObservedObject var drafts: HarnessDrafts
+    let reply: CorporateReply
+
+    @State private var text: String
+    @State private var failure: HarnessFailure?
+    @State private var isSending = false
+    @State private var copied = false
+    /// Le texte tel que le serveur le garde : « Enregistrer » n'apparaît qu'après une modification.
+    @State private var savedText: String
+
+    init(server: HarnessModel, drafts: HarnessDrafts, reply: CorporateReply) {
+        self.server = server
+        self.signals = server.signals
+        self.drafts = drafts
+        self.reply = reply
+        _text = State(initialValue: reply.text)
+        _savedText = State(initialValue: reply.text)
+    }
+
+    /// « Slack · Réponse finale · paul@exemple.fr · 8 nov. 2026 à 14:05 ».
+    static func origin(of reply: CorporateReply) -> String {
+        var parts = [SignalText.channel(reply.channel), SignalText.replyKind(reply.kind)]
+        if let person = reply.personRef, !person.isEmpty { parts.append(person) }
+        parts.append(ConsoleFormat.dateTime(ms: reply.createdAt))
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    LabeledContent(SignalText.channelLabel, value: SignalText.channel(reply.channel))
+                    if let person = reply.personRef, !person.isEmpty {
+                        LabeledContent(SignalText.personLabel, value: person)
+                    }
+                    if let url = URL(string: reply.url), url.scheme != nil {
+                        LabeledContent(SignalText.threadLabel) {
+                            Link(destination: url) {
+                                Label(url.host() ?? reply.url, systemImage: SignalText.openThreadSymbol)
+                            }
+                        }
+                    }
+                } header: {
+                    Text(SignalText.replyKind(reply.kind))
+                }
+                Section {
+                    TextField(SignalText.replyTextLabel, text: $text, axis: .vertical)
+                        .lineLimit(4...16)
+                        .consoleID("reply.text")
+                    if text != savedText, !reply.isCopyOnly {
+                        Button(SignalText.saveReply) {
+                            run { savedText = try await signals.edit(reply, text: text).text }
+                        }
+                        .disabled(isSending || trimmed.isEmpty)
+                        .consoleID("reply.save")
+                    }
+                } footer: {
+                    Text(reply.isCopyOnly ? SignalText.copyOnlyHint : SignalText.approveReplyHint)
+                }
+                if let failure {
+                    Section {
+                        Text(failure == .approverOnly ? SignalText.replyApproverOnly : failure.message)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .consoleBanner(tone: .attention)
+                            .consoleID("reply.failure")
+                    }
+                }
+                Section {
+                    Button(SignalText.archiveReply, role: .destructive) {
+                        run(closing: true) { try await signals.archive(reply) }
+                    }
+                    .disabled(isSending)
+                    .consoleID("reply.archive")
+                } footer: {
+                    Text(SignalText.archiveReplyHint)
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle(SignalText.replySheetTitle)
+            .consoleInlineTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(PipelineServerText.cancel) { drafts.replyShown = nil }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if reply.isCopyOnly {
+                        Button(copied ? SignalText.copiedReply : SignalText.copyReply, systemImage: SignalText.copySymbol) {
+                            ReplyPasteboard.copy(text)
+                            copied = true
+                        }
+                        .consoleID("reply.copy")
+                    } else {
+                        Button(SignalText.approveReply) {
+                            run(closing: true) { try await signals.approve(reply, text: text) }
+                        }
+                        .disabled(isSending || trimmed.isEmpty)
+                        .consoleID("reply.approve")
+                    }
+                }
+            }
+        }
+        .consoleSheetSize(minWidth: 520, minHeight: 480)
+    }
+
+    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// Un geste du serveur : la feuille se ferme s'il aboutit (`closing`), dit son refus sinon.
+    private func run<Done>(closing: Bool = false, _ gesture: @escaping @MainActor () async throws -> Done) {
+        isSending = true
+        failure = nil
+        Task {
+            defer { isSending = false }
+            do {
+                _ = try await gesture()
+                if closing { drafts.replyShown = nil }
+            } catch {
+                failure = error as? HarnessFailure
+            }
+        }
+    }
+}
+
+/// Le presse-papiers du système, sur le Mac comme sur l'iPhone/iPad.
+enum ReplyPasteboard {
+    @MainActor
+    static func copy(_ text: String) {
+        #if canImport(AppKit)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #elseif canImport(UIKit)
+        UIPasteboard.general.string = text
+        #endif
     }
 }
 
@@ -397,6 +600,10 @@ public struct RunOriginSection: View {
                 Text(SignalText.confirmed(by: origin.confirmedBy, at: origin.confirmedAt.map { ConsoleFormat.dateTime(ms: $0) }))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let state = origin.reply {
+                    LabeledContent(SignalText.replyLabel, value: Self.replyState(state))
+                        .consoleID("run.origin.reply")
+                }
             } header: {
                 Text(SignalText.originTitle)
             }
@@ -407,5 +614,16 @@ public struct RunOriginSection: View {
     /// « demo · Issue n° 12 ».
     private func issueLine(_ issue: CorporateSignalIssue) -> String {
         issue.repo + " · " + ControlText.issueNumber(issue.number)
+    }
+
+    /// L'état de la réponse au collègue ; un état inconnu de cette version se rend tel quel.
+    static func replyState(_ state: CorporateReplyStatus) -> String {
+        switch state {
+        case .none: SignalText.replyNone
+        case .draft: SignalText.replyDraft
+        case .awaitingApproval: SignalText.replyAwaiting
+        case .sent: SignalText.replySent
+        case let .other(raw): raw
+        }
     }
 }

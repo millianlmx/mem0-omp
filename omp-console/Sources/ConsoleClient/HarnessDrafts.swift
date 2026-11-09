@@ -132,6 +132,8 @@ public final class HarnessDrafts: ObservableObject {
     @Published public var workstationIdentities: String?
     /// La proposition d'un signalement dont la feuille de confirmation est ouverte.
     @Published public var signalShown: CorporateSignal?
+    /// Le brouillon de réponse au collègue dont la feuille est ouverte.
+    @Published public var replyShown: CorporateReply?
     /// La feuille « Demande » est ouverte, sa saisie et le dépôt imposé (vide : déduit).
     @Published public var intakeSheetShown = false
     @Published public var intakeText = ""

@@ -52,6 +52,7 @@ public struct InboxFeed: View {
         IntakeInboxSection(server: server, drafts: drafts)
         WorkstationHomeApprovals(workstation: workstation, drafts: drafts)
         SignalProposalsSection(signals: signals, drafts: drafts)
+        ReplyDraftsSection(signals: signals, drafts: drafts)
         WorkstationWatchSection(watch: watch)
         if items.isEmpty, workstation.approvals.isEmpty, signals.pendingCount == 0, watch.pendingCount == 0, intakes.open.isEmpty {
             Section {
