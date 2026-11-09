@@ -22,6 +22,7 @@
 // L'admission est ÉQUITABLE : priorité d'abord, puis le dépôt et le projet qui ont le
 // moins de runs vivants, puis l'ancienneté — aucun projet ne prend tous les runners.
 import { Channels } from "./canaux/channels.ts";
+import { ChannelReader } from "./canaux/lecture.ts";
 import { AutonomyGates } from "./autonomy-gates.ts";
 import type { WorkKind } from "./autonomy-rules.ts";
 import { Auditor } from "./audits.ts";
@@ -176,6 +177,8 @@ export class Orchestrator {
   readonly workstationAgent: WorkstationAgent;
   /** Les canaux corpo lus par API (Gmail, Agenda, Slack) : connexion OAuth, état, client HTTP en liste blanche. */
   readonly channels: Channels;
+  /** Le passage de lecture des canaux corpo (contenus gardés en base) et les canaux Slack suivis. */
+  readonly channelReader: ChannelReader;
   /** Les signalements des collègues et leurs propositions (pont corpo ↔ usine) : `reportSignal` est le point d'entrée des canaux. */
   readonly signals: SignalDesk;
   /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
@@ -247,6 +250,14 @@ export class Orchestrator {
       event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
       log: this.#ctx.log,
       fetch: deps.fetch ?? ((url, init) => globalThis.fetch(url, init)),
+    });
+    this.channelReader = new ChannelReader({
+      config: this.#ctx.config,
+      store: this.#ctx.store,
+      channels: this.channels,
+      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
+      log: this.#ctx.log,
+      active: () => this.workstation.enabled && !this.workstation.settings().paused,
     });
     this.digest = new DigestSender({
       config: this.#ctx.config,
@@ -394,6 +405,7 @@ export class Orchestrator {
     // Les attentes du poste (long-polls de l'extension) rendent tout de suite.
     this.workstation.close();
     await this.workstationAgent.stop();
+    await this.channelReader.stop();
     await this.#ctx.logins.stop();
     // Un merge en cours n'est pas attendu (sa suite complète peut durer) : le run reste
     // `merging` en base et son merge repart au démarrage suivant.
@@ -521,6 +533,12 @@ export class Orchestrator {
       this.workstationAgent.tick();
     } catch (err) {
       this.#ctx.log(`poste de travail : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
+    }
+    // La lecture des canaux corpo : un passage dû part sans attendre (aucun runner).
+    try {
+      this.channelReader.tick();
+    } catch (err) {
+      this.#ctx.log(`lecture des canaux : ${err instanceof Error ? err.name : "inconnu"}`, { level: "error" });
     }
     this.#admit();
     // Après les runs : un dépôt ne rêve que sur un slot que nul run n'attend.

@@ -608,6 +608,7 @@ canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `syste
 | `workstation.allowedHosts` | `[]` | les hôtes où l'on navigue sans approbation (`open`, `navigate`), sous-domaines compris (`exemple.fr` couvre `crm.exemple.fr`) ; vide : tout hôte, hors sites exclus par l'extension. Une adresse hors de la liste attend l'approbateur, quelle que soit l'origine de l'action |
 | `workstation.exfiltrationGuard` | `true` | la garde anti-exfiltration de l'agent 24/24 : une adresse vers un hôte jamais observé ni listé dans `allowedHosts`, ou dont la query (ou le fragment `#a=b`) porte une valeur de plus de 100 caractères ou un jeton opaque (≥ 24 caractères alphanumériques mêlant lettres et chiffres), attend l'approbateur ; `false` la coupe |
 | `workstation.captureRetentionHours` | `24` | les captures d'écran gardées par action (le JPEG tel que capturé, table `workstation_captures`), effacées passé ce délai (à chaque tour) |
+| `workstation.channelReadEveryMin` | `5` | le repos entre deux passages de lecture des canaux corpo (Gmail, Agenda, Slack ; § « Lire les canaux ») : hors pause du poste et poste désactivé, sans runner ; minutes ≥ 1 |
 | `issues.label` | `omp:fix` | le label des issues qu'`issues_fix_labeled` et la relève automatique lancent (§ « Les issues (MCP) ») |
 | `issues.maxLaunch` | `5` | les runs qu'un appel d'`issues_fix_labeled` (ou une relève, par dépôt) lance au plus ; le reste attend l'appel suivant |
 | `issues.pollSec` | `900` | la relève automatique : toutes les 15 min, les issues ouvertes du label de chaque dépôt qui a un distant (`repos[].remote`) partent en run, sans appel MCP ; entier ≥ 60, ou `null` : seulement à la demande |
@@ -1530,6 +1531,56 @@ sert qu'à déclencher une relecture de `GET /v1/workstation/channels` : l'état
 n'est pas la source. Les lignes de journal des canaux ne portent que le canal, l'état et un
 code.
 
+#### Lire les canaux
+
+Toutes les `workstation.channelReadEveryMin` minutes (5 par défaut), hors pause du poste (arrêt
+d'urgence compris) et poste désactivé, le serveur lit les canaux `connected` ou `error`
+(`canaux/lecture.ts`) par `Channels.request` et garde ce qu'il lit en base. Ce passage
+n'appelle jamais un runner ni un modèle. Points de lecture ajoutés à la liste blanche, tous
+en `GET` de leur canal : `users/me/history`, `users/me/messages` et `users/me/messages/{id}`
+(Gmail), `calendars/primary/events` (Agenda), `conversations.list`, `conversations.history`,
+`conversations.replies`, `search.messages` et `users.info` (Slack).
+
+- **Gmail** (`lecture-google.ts`) : `users.history.list` depuis le dernier `historyId`, puis
+  `users.messages.get` des messages ajoutés (brouillons sautés). Le curseur n'avance qu'une
+  page entièrement gardée, et un message déjà gardé n'est pas relu : une lecture coupée au
+  milieu d'une page reprend cette page sans perte ni doublon. La première lecture, et un
+  historique expiré (404), relisent au plus 200 messages des 7 derniers jours (au plus
+  `retentionDays`). L'historique repart ensuite du `historyId` relevé avant cette liste.
+- **Agenda** : `events.list` du calendrier principal (`singleEvents`), d'abord sur les 60
+  jours à venir, puis par `nextSyncToken`. Un événement déplacé est mis à jour sur place, un
+  annulé est retiré. Un 410 vide les événements gardés et relit la fenêtre.
+- **Slack** (`lecture-slack.ts`, jeton utilisateur) : les DM (`im`, `mpim`), les canaux
+  suivis (`conversations.history`, puis `conversations.replies` des fils qui ont bougé), les
+  mentions de l'utilisateur partout, canaux non suivis compris (`search.messages` sur
+  `<@moi>`), puis l'identité des auteurs (`users.info`, adresse comprise). Le curseur d'une
+  conversation ou de la recherche n'avance qu'une fois sa lecture finie. Un canal archivé,
+  quitté ou introuvable est sauté.
+- **Limites de débit** : un 429 (`Retry-After`) ou un 403 `rateLimitExceeded` suspend la
+  lecture de CE canal jusqu'à l'échéance. Les curseurs n'ayant avancé que sur des pages
+  finies, rien n'est perdu ni doublé. Les autres canaux continuent.
+- **Canaux suivis** : `GET /v1/workstation/channels/slack/conversations` liste les canaux
+  publics et privés de l'espace (lus en direct). `PUT …/conversations/{id} {followed}` coche ou
+  décoche un canal (appareil approbateur), et la lecture suivante l'applique.
+- **Rétention** : messages, événements finis et auteurs Slack plus vieux que
+  `workstation.retentionDays` sont effacés par la purge horaire du poste. La vigie retire ces
+  contenus (sujets, corps, en-têtes, auteurs, participants, noms de canaux) des issues
+  qu'elle publie (`workstationTexts`). Le journal ne porte que le canal et un code. Les
+  événements `workstation_channel_read` (`{channel, added, removed}`) et
+  `workstation_channel_follow` (`{id, followed}`) ne portent aucun contenu.
+
+**Le stockage, pour les couches suivantes** (graphe des personnes, veille). Il vit dans
+`db/channel-contents.ts`, méthodes du `Store`. Tout y est du texte NON FIABLE : il passe par
+`untrusted()` (`workstation-guards.ts`) avant d'être montré à un agent, et ne va jamais dans
+un log, une issue ni la mémoire d'un dépôt.
+
+| Méthode | Rend |
+| --- | --- |
+| `listChannelMessages({channel?, afterSeq?, threadId?, limit?})` | Les messages Gmail et Slack par `seq` croissant : `{seq, id, channel, sourceId, threadId, conversation, conversationKind, origin, author, authorName, authorEmail, at, subject, text, headers, labels, mentionsMe, bot, readAt}`. `id` vaut `gmail:<id>` ou `slack:<conversation>:<ts>`. `seq` croît à chaque message NOUVEAU : les nouveautés depuis une veille sont `afterSeq: <dernier vu>`. Gmail : `author` = `From` tel quel, `headers` = From, To, Cc, Subject, List-Id, List-Unsubscribe, Auto-Submitted, Precedence, Message-ID, In-Reply-To, References, et `labels` (`SENT`, `INBOX`…). Slack : `author` = `U…`, avec son nom et son adresse s'ils sont lus. `origin` : `history`, `resync`, `dm`, `followed` ou `search`. |
+| `listChannelEvents({from?, to?})` | Les événements de l'Agenda qui finissent après `from` et commencent avant `to` : `{id, summary, startAt, endAt, allDay, organizer, attendees: [{email, name, response, self, organizer}], meetUrl, recurringEventId, updatedAt, readAt}`. `meetUrl` = `hangoutLink` ou le point d'entrée vidéo de `conferenceData`. |
+| `getSlackUser(id)` · `listSlackConversations()` | Un auteur Slack `{id, name, realName, email, bot}` ; les canaux de l'espace `{id, name, kind: public \| private, archived, followed}`. |
+| `getChannelCursor(key)` · `setChannelCursor(key, value, at)` | Les curseurs de lecture : `gmail`, `calendar`, `slack.self`, `slack.conv:<id>`, `slack.search`. Les clés propres aux couches suivantes s'y ajoutent sans toucher à celles-là. |
+
 ## Les issues (MCP)
 
 `POST /v1/mcp` est un serveur MCP (transport « Streamable HTTP », réponses JSON, sans
@@ -1806,9 +1857,10 @@ Parmi elles, `instructions` (`POST /v1/runs/{id}/instructions`, et `instructions
 la relance), `run-budget` (`budgetUsd` au lancement, `POST /v1/runs/{id}/budget`),
 `admin-repos` (`POST /v1/repos`), `reload` (le rechargement de la configuration,
 `POST /v1/reload`), `push-alerts` (`POST /v1/push/devices`, les alertes push des
-appareils iOS) et `workstation-channels` (`GET /v1/workstation/channels` et le geste de
-connexion des canaux corpo).
-appareils iOS) et `autonomy` (`GET /v1/autonomy`, `kind` et `labels` d'un run).
+appareils iOS), `workstation-channels` (`GET /v1/workstation/channels` et le geste de
+connexion des canaux corpo), `workstation-channel-reads` (la lecture des canaux et les canaux
+Slack suivis, `GET /v1/workstation/channels/slack/conversations`) et `autonomy`
+(`GET /v1/autonomy`, `kind` et `labels` d'un run).
 
 `GET /v1/health` vérifie aussi le service : `checks.db` (une lecture de la base),
 `checks.scheduler` (`ageSec`, l'âge du dernier tour du scheduling, borné par
@@ -1889,6 +1941,8 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `PUT /v1/workstation/channels/{id}/client` `{clientId, clientSecret}` \| `{json}` \| `{clientId}` | operator (approbateur) | Saisit le client OAuth de la connexion `{id}` = `google` (identifiant et secret, ou le JSON « Application de bureau » téléchargé, clé `installed`) ou `slack` (identifiant seul : PKCE, aucun secret) : 200 `{connection}`, 400 corps illisible, 404 connexion inconnue. Un identifiant différent efface les jetons de la connexion. |
 | `POST /v1/workstation/channels/{id}/login` `{channels?}` | operator (approbateur) | Démarre la connexion `google` ou `slack` : 201 `{login}` dont `url` est l'URL d'autorisation (PKCE + `state`) ; 409 sans client. `channels` (`gmail`, `calendar`) ne demande que les scopes de ces canaux (défaut : tous). |
 | `POST /v1/workstation/channels/{id}/login/answer` `{value}` \| `{blocked: true, channels?}` | operator (approbateur) | Recolle l'URL de retour (ou le code, ou le texte d'erreur affiché) : 200 `{login, channels}`, 400 (`state` étranger, texte non reconnu, connexion expirée), 409 (aucune connexion en cours, refus du fournisseur, scope en trop ou manquant, jeton de bot). `blocked: true` déclare que l'administrateur bloque (seul chemin pour Slack, dont la demande d'approbation ne redirige pas) ; `channels` ne bloque que ces canaux. Événement `workstation_channel`. |
+| `GET /v1/workstation/channels/slack/conversations` | viewer | Les canaux publics et privés de l'espace Slack, relus en direct (`conversations.list`) : `{conversations: [{id, name, kind: public \| private, archived, followed}]}`, par nom. 409 Slack non connecté ou bloqué, 429 limite de débit (`Retry-After`), 502 refus ou coupure du fournisseur. Propriétaire seulement (403), 404 si le poste est désactivé. Capacité `workstation-channel-reads`. |
+| `PUT /v1/workstation/channels/slack/conversations/{id}` `{followed}` | operator (approbateur) | Coche (`true`) ou décoche un canal Slack suivi : 200 `{conversation}`. La lecture suivante lit ses messages et fils (les DM et les mentions sont lus partout). 400 corps illisible, 404 conversation absente de la dernière liste. Événement `workstation_channel_follow`. |
 | `GET /v1/signals?state=&limit=` · `GET /v1/signals/{id}` | viewer (propriétaire) | Les signalements des collègues, récents d'abord (`state` : `received`, `proposed` par défaut, `ignored`, `dismissed`, `confirmed`, séparés par des virgules ; `limit` ≤ 200) : `{signals}` ; un signalement : `{signal}` = `{id, createdAt, updatedAt, channel, threadRef, url, personRef, excerpt, state, reason, error, repo, kind, title, body, issue, runId, confirmedBy, confirmedAt}`. 403 client restreint (« le poste est réservé au propriétaire ») ou pilote ; 404 inconnu ; 400 `state` inconnu. Même sans poste actif. |
 | `POST /v1/signals/{id}/preview` `{repo?, title?, body?}` | viewer (propriétaire) | Le texte EXACT que `confirm` enverrait à la forge : `{repo, policy: {declared, applied, note}, title, body, issue}` (`issue` : l'issue déjà créée, dont le texte n'est alors pas renvoyé). Sans `title`/`body`, la proposition ; sous `full` appliqué, le corps porte la section « Origine ». 409 dépôt en `forbid` ou sans forge, signalement déjà traité. Ne crée rien. |
 | `POST /v1/signals/{id}/confirm` `{repo, title, body}` · `POST /v1/signals/{id}/dismiss` `{reason?}` | operator (approbateur) | Confirme : crée l'issue puis le run lié (201 `{signal, issue, run, policy}`) ; 502 si la forge échoue (la proposition reste, avec `error`), 409 « le signalement est déjà <état> », dépôt `forbid`/sans forge, ou dépôt autre que celui de l'issue déjà créée ; 404 `dépôt inconnu`. Écarte (200 `{signal}`, `reason` ≤ 500) : jamais reproposé. 403 non approbateur, pilote ou client restreint. Événement `signal`. |

@@ -99,6 +99,7 @@ export const API_FEATURES = [
   "workstation-captures",
   "workstation-files",
   "workstation-channels",
+  "workstation-channel-reads",
   "mcp",
   "digest",
   "instructions",
@@ -1069,6 +1070,17 @@ export function apiRoutes(
     route("POST", "/v1/workstation/channels/{id}/login/answer", "operator", async (call) => {
       approverOf(call);
       send(call.res, 200, await orchestrator.channels.answer(call.match[1] as string, await readBody(call.req)));
+    }),
+    // La lecture des canaux : les canaux Slack de l'espace (lus en direct) et la case « suivi »,
+    // que la lecture suivante applique (les DM et les mentions sont lus partout).
+    route("GET", "/v1/workstation/channels/slack/conversations", "viewer", async (call) => {
+      workstationOf(call);
+      send(call.res, 200, await orchestrator.channelReader.slackConversations());
+    }),
+    route("PUT", "/v1/workstation/channels/slack/conversations/{id}", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(call.res, 200, orchestrator.channelReader.followSlackConversation(call.match[1] as string, body));
     }),
     // La vigie (vigie/) : ses réglages (admin), son battement de cœur et ses incidents (son client pilote).
     route("GET", "/v1/vigie", "viewer", (call) => send(call.res, 200, orchestrator.vigie.view(call.repos, Date.now()))),

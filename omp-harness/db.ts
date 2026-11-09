@@ -12,13 +12,26 @@
 //   core → runs → journal → steps → decisions → heavy → projects → providers
 //        → sessions → usage → push → push-devices → workstation → workstation-meetings
 //        → workstation-captures → workstation-browsers → workstation-requests
-//        → issues → schedules → observability → vigie → corporate-signals → intakes → Store
+//        → issues → schedules → observability → vigie → corporate-signals → intakes
+//        → channel-contents → Store
 //
 // Ainsi `Store` garde l'API d'un seul objet pour tous ses appelants, et une couche
 // qui a besoin d'une autre (le journal lit le dépôt d'un run) la trouve en dessous.
-import { IntakeStore } from "./db/intakes.ts";
+import { ChannelContentStore } from "./db/channel-contents.ts";
 
-export class Store extends IntakeStore {}
+export class Store extends ChannelContentStore {}
+
+export type {
+  CalendarAttendee,
+  ChannelEventInput,
+  ChannelEventRow,
+  ChannelMessageInput,
+  ChannelMessageRow,
+  ContentChannel,
+  MessageOrigin,
+  SlackConversationRow,
+  SlackUserRow,
+} from "./db/channel-contents.ts";
 
 export { MIGRATIONS } from "./db/schema.ts";
 export type { RepoFilter } from "./db/sql.ts";

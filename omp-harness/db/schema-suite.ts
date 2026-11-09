@@ -204,4 +204,64 @@ export const MIGRATIONS_SUITE: readonly string[] = [
      updated_at INTEGER NOT NULL
    );
    CREATE INDEX intakes_state ON intakes (state, created_at);`,
+  // Les contenus lus des canaux corpo (canaux/lecture.ts, db/channel-contents.ts) : messages
+  // Gmail et Slack (un par identifiant de source, `seq` croissant à chaque nouveau), événements
+  // de l'Agenda (un par événement, mis à jour sur place), curseurs de lecture, conversations
+  // Slack (suivies ou non) et auteurs Slack. Purgés après `workstation.retentionDays`.
+  `CREATE TABLE channel_messages (
+     seq INTEGER PRIMARY KEY,
+     id TEXT NOT NULL UNIQUE,
+     channel TEXT NOT NULL,
+     source_id TEXT NOT NULL,
+     thread_id TEXT,
+     conversation TEXT,
+     conversation_kind TEXT,
+     origin TEXT NOT NULL,
+     author TEXT,
+     at INTEGER NOT NULL,
+     subject TEXT,
+     text TEXT NOT NULL DEFAULT '',
+     headers TEXT NOT NULL DEFAULT '{}',
+     labels TEXT NOT NULL DEFAULT '[]',
+     mentions_me INTEGER NOT NULL DEFAULT 0,
+     bot INTEGER NOT NULL DEFAULT 0,
+     read_at INTEGER NOT NULL
+   );
+   CREATE INDEX channel_messages_at ON channel_messages (at);
+   CREATE INDEX channel_messages_thread ON channel_messages (channel, thread_id);
+   CREATE TABLE channel_events (
+     id TEXT PRIMARY KEY,
+     summary TEXT,
+     start_at INTEGER NOT NULL,
+     end_at INTEGER NOT NULL,
+     all_day INTEGER NOT NULL DEFAULT 0,
+     organizer TEXT,
+     attendees TEXT NOT NULL DEFAULT '[]',
+     meet_url TEXT,
+     recurring_event_id TEXT,
+     updated_at INTEGER NOT NULL,
+     read_at INTEGER NOT NULL
+   );
+   CREATE INDEX channel_events_start ON channel_events (start_at);
+   CREATE TABLE channel_cursors (
+     key TEXT PRIMARY KEY,
+     value TEXT NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE TABLE slack_conversations (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     archived INTEGER NOT NULL DEFAULT 0,
+     followed INTEGER NOT NULL DEFAULT 0,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE TABLE slack_users (
+     id TEXT PRIMARY KEY,
+     name TEXT,
+     real_name TEXT,
+     email TEXT,
+     bot INTEGER NOT NULL DEFAULT 0,
+     updated_at INTEGER NOT NULL
+   );`,
 ];
