@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.27.0 — 2026-11-09
+
+- feat(harness): autonomie par paliers par dépôt et type de travail (79201ca)
+
 ## omp-harness 1.26.0 — 2026-11-09
 
 - feat(harness): pont corpo ↔ usine, du signalement à l'issue liée (61b0f68)
