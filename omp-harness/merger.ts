@@ -24,6 +24,7 @@
 // l'humain avec la raison (une coupure réseau est réessayée).
 import * as path from "node:path";
 import { testsJudge } from "./config.ts";
+import { newFailuresText } from "./baseline.ts";
 import type { RepoConfig } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
 import type { DecisionRow, DecisionStatus, RunRow } from "./db.ts";
@@ -165,8 +166,19 @@ export class Merger {
           files: [],
           priority: run.priority,
         });
-        if (result.outcome !== "pass")
-          return this.#stopped(run, "fix", `suite complète ${result.outcome} après rebase sur main`);
+        if (result.outcome !== "pass") {
+          // Les échecs que main a déjà ne renvoient pas en correction ; seuls les nouveaux comptent.
+          const baseline = await this.#ctx.baseline.judge(run, repo, result);
+          if (baseline) this.#ctx.baseline.record(run.id, "merge", baseline);
+          if (baseline === null || baseline.new.length > 0)
+            return this.#stopped(
+              run,
+              "fix",
+              baseline
+                ? `suite complète rouge après rebase sur main : ${newFailuresText(baseline)}`
+                : `suite complète ${result.outcome} après rebase sur main`,
+            );
+        }
       }
       const decisions = store.listDecisions({ runId, status: DECIDED });
       // Le message vient du verdict (`commit`) ; un verdict rendu avant ce champ garde le titre du run.

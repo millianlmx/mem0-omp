@@ -264,4 +264,64 @@ export const MIGRATIONS_SUITE: readonly string[] = [
      bot INTEGER NOT NULL DEFAULT 0,
      updated_at INTEGER NOT NULL
    );`,
+  // Le graphe des personnes du poste (db/people.ts, canaux/personnes.ts) : une personne par
+  // ligne, ses champs, ceux que l'humain a corrigés (figés contre l'alimentation automatique)
+  // et sa révision ; `workstation_person_keys` rattache chaque adresse (`email:…`) et chaque
+  // identifiant Slack (`slack:…`) à UNE personne.
+  `CREATE TABLE workstation_people (
+     id TEXT PRIMARY KEY,
+     name TEXT,
+     emails TEXT NOT NULL DEFAULT '[]',
+     slack_ids TEXT NOT NULL DEFAULT '[]',
+     role TEXT,
+     team TEXT,
+     projects TEXT NOT NULL DEFAULT '[]',
+     tone TEXT,
+     delegation TEXT NOT NULL DEFAULT 'jamais',
+     topics TEXT NOT NULL DEFAULT '[]',
+     corrected TEXT NOT NULL DEFAULT '[]',
+     rev INTEGER NOT NULL DEFAULT 1,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE TABLE workstation_person_keys (
+     key TEXT PRIMARY KEY,
+     person_id TEXT NOT NULL REFERENCES workstation_people (id) ON DELETE CASCADE
+   );
+   CREATE INDEX workstation_person_keys_person ON workstation_person_keys (person_id);`,
+  // La veille proactive du poste (db/watch-items.ts, canaux/veille.ts) : ce que la veille dépose
+  // dans « À traiter » — réponse proposée, relance, préparation de réunion, brief du matin. `key`
+  // (`reply:<message>`, `followup:<message>`, `prep:<événement>`, `brief:<jour>`) ne produit
+  // chaque élément qu'une fois ; `draft_id` est le brouillon Gmail créé par API (une réponse
+  // Slack garde son brouillon ici, dans `text`). Données de collègues : purgées avec le poste.
+  `CREATE TABLE workstation_watch_items (
+     id TEXT PRIMARY KEY,
+     key TEXT NOT NULL UNIQUE,
+     kind TEXT NOT NULL,
+     state TEXT NOT NULL DEFAULT 'open',
+     ready INTEGER NOT NULL DEFAULT 0,
+     channel TEXT,
+     message_id TEXT,
+     event_id TEXT,
+     person_id TEXT,
+     topic TEXT,
+     subject TEXT,
+     text TEXT NOT NULL,
+     context TEXT NOT NULL DEFAULT '{}',
+     draft_id TEXT,
+     draft_error TEXT,
+     rev INTEGER NOT NULL DEFAULT 1,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE INDEX workstation_watch_items_state ON workstation_watch_items (state, created_at);`,
+  // La validation des réponses proposées (canaux/reponses.ts) : la demande du poste rattachée à
+  // une réponse validée, l'empreinte SHA-256 des destinataires et du texte figée à la validation,
+  // l'action d'envoi qu'elle a autorisée (une seule), et la raison d'un envoi non abouti.
+  `ALTER TABLE workstation_watch_items ADD COLUMN request_id TEXT;
+   ALTER TABLE workstation_watch_items ADD COLUMN fingerprint TEXT;
+   ALTER TABLE workstation_watch_items ADD COLUMN send_seq INTEGER;
+   ALTER TABLE workstation_watch_items ADD COLUMN send_error TEXT;
+   ALTER TABLE workstation_watch_items ADD COLUMN validated_at INTEGER;
+   CREATE INDEX workstation_watch_items_request ON workstation_watch_items (request_id);`,
 ];

@@ -31,6 +31,15 @@ const ERROR_LOG_EVERY_MS = 60 * 60 * 1000;
 
 const SEND_TIMEOUT_MS = 10_000;
 
+/** La médiane d'une alerte `step_slow` : en secondes sous une minute ; `medianMin` pour un ancien événement. */
+function slowMedian(payload: Record<string, unknown>): string {
+  if (typeof payload.medianMs === "number") {
+    const seconds = Math.round(payload.medianMs / 1000);
+    return seconds < 60 ? `${seconds} s` : `${Math.round(seconds / 60)} min`;
+  }
+  return typeof payload.medianMin === "number" ? `${payload.medianMin} min` : "?";
+}
+
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : fallback;
 }
@@ -172,7 +181,7 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
       return {
         title: `Étape lente — ${feature}`,
         body: short(
-          `/${text(payload.step, "?")} dure depuis ${typeof payload.minutes === "number" ? payload.minutes : "?"} min (médiane ${typeof payload.medianMin === "number" ? payload.medianMin : "?"} min)`,
+          `/${text(payload.step, "?")} dépasse largement sa durée habituelle dans ce dépôt (médiane ${slowMedian(payload)})`,
         ),
         priority: 3,
         tags: ["snail"],
@@ -206,6 +215,18 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
         tags: ["moneybag"],
         click: null,
       };
+    // Le compte d'un navigateur du poste dont la session n'ouvre plus : l'humain doit se reconnecter ; les autres passages ne notifient pas.
+    case "workstation_account":
+      if (payload.state !== "expired") return null;
+      return {
+        title: "Poste — session expirée",
+        body: short(
+          `${text(payload.domain, "un compte")} : reconnecte le compte du navigateur du serveur (écran Poste).`,
+        ),
+        priority: 4,
+        tags: ["key", "warning"],
+        click: null,
+      };
     case "workstation_approval": {
       // Un envoi à quelqu'un d'autre que toi, ou une action de l'agent en `propose` : rien ne part sans ton geste.
       const recipients = Array.isArray(payload.recipients)
@@ -221,6 +242,18 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
         click: null,
       };
     }
+    // La veille du poste : à ajouter à `notify.events`. Ni texte, ni sujet, ni personne : ce sont des
+    // messages de collègues, ils se lisent dans « À traiter ». Les gestes de la validation (validée,
+    // envoyée, écartée) ne notifient pas.
+    case "workstation_watch":
+      if (payload.state !== "open") return null;
+      return {
+        title: payload.ready === true ? "Poste — réponse prête à valider" : "Poste — nouvel élément dans À traiter",
+        body: "La veille du poste a quelque chose pour toi : rien ne part sans ton geste.",
+        priority: 3,
+        tags: ["inbox_tray"],
+        click: null,
+      };
     // Les planifications : à ajouter à `notify.events` pour être prévenu de chaque échéance.
     case "schedule_fired":
     case "schedule_skipped": {

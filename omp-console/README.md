@@ -8,7 +8,7 @@ groupes, raccourcis ⌘1…⌘7, et un panneau de détail :
 |---|---|---|
 | Travail | **À traiter** | La file unique de ce qui attend l'humain (questions, specs et revues à valider, envois du poste à approuver, alertes, audits à trier, décisions à relire), la plus vieille attente d'abord, sous une ligne de pouls (direct, en cours, en file, coût de la semaine). Vide : « Rien ne vous attend ». |
 | Travail | **Features** | Une ligne dense par feature, groupée « À vous », « En cours », « En file », « Terminées » ; la choisir ouvre sa **page** (en-tête, jalons Besoins → Specs → Implémentation → Revue → Fusion, onglets Aperçu, Preuves, Direct, Fichiers, Tests, Frise, consigne à l'agent en pied). Portées : Features, Projets, Audits, Issues. |
-| Travail | **Poste** | Le poste de travail (extension Chrome et agent 24/24) : état, arrêt d'urgence, envois à approuver, demandes ; réglages, automatisations, profil, réunions et journal en sous-pages. |
+| Travail | **Poste** | Le poste de travail (extension Chrome et agent 24/24) : état, arrêt d'urgence, envois à approuver, demandes ; réglages, automatisations, profil, réunions et journal en sous-pages. Sur le Mac seulement, réservé à l'appareil approbateur : « Navigateur du serveur » — l'état des comptes Slack et Google du navigateur que l'agent pilote sur le VPS, l'import de la session de votre Chrome (l'extension répond seule) et la connexion interactive dans une feuille (image de la page rafraîchie chaque seconde, clics, frappes, « Terminer »). |
 | Outils | **Mémoire**, **Terminal**, **Fichiers** | Locaux au Mac : la mémoire du projet, le terminal intégré, la visionneuse de fichiers et de différences. |
 | Système | **Système** | Ce qui se règle rarement, en sous-pages : Vigie, Planifications, Statistiques et santé, Administration (jeton admin seulement), Serveur. |
 
@@ -618,6 +618,13 @@ poste, **Demandes**. Ce que ces pages montrent :
   recevoir l'URL d'autorisation) ; un refus du serveur revient au geste. L'écran
   est relu à chaque événement `workstation_channel` ; sur un serveur sans la route
   (404) ou pour un jeton restreint (403), il n'existe pas.
+  En fin d'écran, quand Slack est connecté ou en erreur : **Canaux Slack suivis**
+  (`channels.slackConversations`, `GET /v1/workstation/channels/slack/conversations`,
+  capacité `workstation-channel-reads`), une case par canal public ou privé de
+  l'espace. Cocher (`PUT …/conversations/{id} {followed}`, appareil approbateur
+  seul, cases grisées ailleurs) fait entrer le canal dans la lecture suivante du
+  serveur, qui lit déjà les messages privés et les mentions partout. Relue à
+  l'événement `workstation_channel_follow` ; absente sur 404 ou 409.
 - **Extension et agent 24/24** (`GET /v1/workstation`) : extension en ligne ou
   hors ligne et son dernier contact, sa version, les heures observées sur le seuil
   (barre de progression), le dernier et le prochain passage de l'agent.

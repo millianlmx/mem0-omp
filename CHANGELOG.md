@@ -1,5 +1,41 @@
 # Journal des versions
 
+## omp-harness 1.31.0 — 2026-11-09
+
+- feat(harness): Obscura conteneurisé sur le VPS (socle, agent corpo, QA de /review) (#411) (b402ad3)
+- fix(harness): alerte « étape lente » par dépôt, sans durée figée (#408) (86b4901)
+- fix(harness): set_modules refuse les artefacts .harness/ (#407) (3efa9e7)
+- feat(harness,chrome,console): validation et envoi des réponses proposées (écarter, modifier, valider, envoi par omp-chrome sous empreinte) (#406) (4fb3727)
+- fix(harness): reconnaître et prévenir le runner tué faute de mémoire (code 137) (#409) (9d20539)
+
+## omp-chrome 0.5.0 — 2026-11-09
+
+- feat(harness): Obscura conteneurisé sur le VPS (socle, agent corpo, QA de /review) (#411) (b402ad3)
+- feat(harness,chrome,console): validation et envoi des réponses proposées (écarter, modifier, valider, envoi par omp-chrome sous empreinte) (#406) (4fb3727)
+
+## omp-harness 1.30.0 — 2026-11-09
+
+- feat(harness,console): veille proactive du poste (job poste-veille, À traiter, notifications) (#404) (85fc129)
+
+## omp-harness 1.29.0 — 2026-11-09
+
+- feat(harness,console): graphe des personnes du poste (GET et PATCH /v1/workstation/people, page Personnes) (#401) (38806f0)
+
+## omp-mem0-req 2.6.0 — 2026-11-09
+
+- feat(req): /demande et outil harness_intake pour la Demande du harness (#393) (bb77448)
+
+## omp-harness 1.28.0 — 2026-11-09
+
+- feat(harness): rouge de base — un échec de la suite complète ne bloque que s'il est nouveau par rapport à main (#398) (c00d360)
+- feat(harness): lecture des canaux Gmail, Agenda et Slack par API (#396) (aa20e6d)
+- feat(harness): demande, point d'entrée unique en langage naturel (#389) (83877f1)
+- feat(harness): socle serveur des canaux Gmail, Agenda et Slack (#388) (f0297b3)
+
+## omp-chrome 0.4.0 — 2026-11-09
+
+- feat(chrome): Demande dans le popup via le service worker (#391) (cffe270)
+
 ## omp-harness 1.27.0 — 2026-11-09
 
 - feat(harness): autonomie par paliers par dépôt et type de travail (79201ca)

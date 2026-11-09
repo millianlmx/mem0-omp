@@ -71,6 +71,9 @@ public final class HarnessModel: ObservableObject {
     /// Le poste de travail (extension Chrome, agent 24/24), servi par le même serveur :
     /// il passe par l'échange de ce modèle et reçoit les événements de son flux.
     public private(set) lazy var workstation = WorkstationModel(harness: self, reloadDelay: refreshDelay)
+    /// Le navigateur du serveur du poste (écran Poste du Mac) : import de la session de
+    /// Chrome et connexion interactive d'un compte, réservés à l'appareil approbateur.
+    public private(set) lazy var serverBrowser = ServerBrowserModel(harness: self)
     /// Les signalements des collègues devenus propositions, et l'origine d'une feature
     /// (pont corpo ↔ usine) : même échange, même flux.
     public private(set) lazy var signals = CorporateSignalsModel(harness: self, reloadDelay: refreshDelay)
@@ -79,6 +82,12 @@ public final class HarnessModel: ObservableObject {
     /// Les canaux corpo du poste (Gmail, Agenda, Slack) : état et connexion, même échange,
     /// relus à l'événement `workstation_channel`.
     public private(set) lazy var channels = WorkstationChannelsModel(harness: self, reloadDelay: refreshDelay)
+    /// Le graphe des personnes du poste : liste et correction champ par champ, même échange,
+    /// relu à l'événement `workstation_person`.
+    public private(set) lazy var people = WorkstationPeopleModel(harness: self, reloadDelay: refreshDelay)
+    /// La veille proactive du poste : ses éléments dans « À traiter », relus à l'événement
+    /// `workstation_watch`.
+    public private(set) lazy var watch = WorkstationWatchModel(harness: self, reloadDelay: refreshDelay)
     /// L'historique des features (`GET /v1/runs`), terminées comprises.
     public private(set) lazy var history = HarnessRunsHistory(harness: self)
     /// La vigie (surveillance 24/24 du harness) : réglages, battement, incidents.
@@ -284,9 +293,12 @@ public final class HarnessModel: ObservableObject {
     /// Ce qui appartient au serveur relié : poste, historique, services, remontée.
     private func resetServerState() {
         workstation.reset()
+        serverBrowser.reset()
         signals.reset()
         intakes.reset()
         channels.reset()
+        people.reset()
+        watch.reset()
         history.reset()
         vigie.reset()
         schedules.reset()
@@ -398,6 +410,8 @@ public final class HarnessModel: ObservableObject {
                         signals.receive(names)
                         intakes.receive(names)
                         channels.receive(names)
+                        people.receive(names)
+                        watch.receive(names)
                         vigie.receive(names)
                         schedules.receive(names)
                         autonomy.receive(names)

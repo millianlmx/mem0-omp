@@ -16,15 +16,16 @@ struct IOSWorkstationScreen: View {
 
     var body: some View {
         IOSHarnessScreen(server: server, drafts: drafts, section: .workstation, catalog: false, reloadAlso: { await load() }) {
-            WorkstationSections(workstation: workstation, channels: server.channels, drafts: drafts)
+            WorkstationSections(workstation: workstation, channels: server.channels, people: server.people, drafts: drafts)
         }
         .workstationDestinations(server: server, drafts: drafts)
         .task { await load() }
     }
 
-    /// Le poste, puis ses canaux corpo (dont la rangée n'existe que s'ils sont servis).
+    /// Le poste, puis ses canaux corpo et ses personnes (dont les rangées n’existent que s’ils sont servis).
     private func load() async {
         await workstation.load()
         await server.channels.refresh()
+        await server.people.refresh()
     }
 }

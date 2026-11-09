@@ -16,11 +16,12 @@ import type { ChannelFetch } from "../../omp-harness/canaux/channels.ts";
 import { ChannelRefused } from "../../omp-harness/canaux/errors.ts";
 import { GMAIL_RESYNC_MAX } from "../../omp-harness/canaux/lecture-google.ts";
 import type { ReadOutcome } from "../../omp-harness/canaux/lecture.ts";
-import { createHandler } from "../../omp-harness/http.ts";
+import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/http.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 import type { SlackConversationRow } from "../../omp-harness/db.ts";
-import { tmpdir } from "../support/repo.ts";
+import { ROOT, tmpdir } from "../support/repo.ts";
+import { covers, swiftFields } from "../support/swift-contract.ts";
 
 const ADMIN = "a".repeat(64);
 const GOOGLE_ACCESS = "ya29.access-lecture";
@@ -737,4 +738,69 @@ test("lecture-canaux/AC-8 : les points de lecture ajoutés sont des GET de leur 
   for (const [channel, method, url] of refused)
     await assert.rejects(w.orchestrator.channels.request(channel, { method, url }), ChannelRefused, `${method} ${url}`);
   assert.equal(provider.calls.length, 0);
+});
+
+// -- AC-5 côté omp-console : la case de l'écran Canaux, Mac et iOS ------------------------------
+
+const CONSOLE = path.join(ROOT, "omp-console", "Sources");
+/** Le code Swift sans ses commentaires : un nom cité en commentaire ne câble rien. */
+const swift = (...parts: string[]) =>
+  fs
+    .readFileSync(path.join(CONSOLE, ...parts), "utf8")
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
+
+test("lecture-canaux/AC-9 : l'écran Canaux d'omp-console (Mac et iOS) a la case « suivi » de chaque canal Slack, sur les routes servies et les champs réels du serveur", async () => {
+  const model = swift("ConsoleClient", "WorkstationSlackConversations.swift");
+  const views = swift("ConsoleUI", "WorkstationSlackFollowViews.swift");
+  const screen = swift("ConsoleUI", "WorkstationChannelViews.swift");
+  // Les routes appelées par le client sont servies, au rôle attendu.
+  assert.ok(model.includes('HarnessCall(method: "GET", path: "/v1/workstation/channels/slack/conversations")'));
+  assert.ok(model.includes('method: "PUT",'));
+  assert.ok(model.includes('path: "/v1/workstation/channels/slack/conversations/\\(HarnessModel.pathComponent(id))"'));
+  const { world: w, provider } = world();
+  slackWorkspace(provider);
+  const routes = apiRoutes(w.orchestrator, new ClientRegistry(null, "t".repeat(64)));
+  const served = (method: string, sample: string) =>
+    routes.find((route) => route.method === method && route.pattern.test(sample))?.role;
+  assert.equal(served("GET", "/v1/workstation/channels/slack/conversations"), "viewer");
+  assert.equal(served("PUT", "/v1/workstation/channels/slack/conversations/C1"), "operator");
+  assert.ok(API_FEATURES.includes("workstation-channel-reads"));
+
+  // Chaque champ décodé existe dans le JSON RÉEL du serveur.
+  const api = await serve(w);
+  try {
+    const listed = await api.call("GET", CONVERSATIONS, undefined, api.viewer);
+    assert.equal(listed.status, 200);
+    const fields = swiftFields(model, "WorkstationSlackConversation");
+    for (const conversation of listed.json.conversations ?? [])
+      covers(conversation as unknown as Record<string, unknown>, fields, "conversation");
+    covers(listed.json as Record<string, unknown>, swiftFields(model, "WorkstationSlackConversationsReply"), "liste");
+    const followed = await api.call("PUT", `${CONVERSATIONS}/C1`, { followed: true });
+    covers(followed.json as Record<string, unknown>, swiftFields(model, "WorkstationSlackConversationReply"), "geste");
+    covers(followed.json.conversation as unknown as Record<string, unknown>, fields, "conversation");
+  } finally {
+    await api.close();
+  }
+
+  // L'écran : la section en fin de page, seulement quand Slack est lisible ; une case par canal,
+  // grisée hors de l'appareil approbateur ; le refus revient sous la liste.
+  assert.match(
+    screen,
+    /if channels\.channels\.contains\(where: \{ \$0\.id == "slack" && \(\$0\.state == "connected" \|\| \$0\.state == "error"\) \}\) \{\s*SlackFollowSection\(conversations: channels\.slackConversations, isApprover: channels\.isApprover\)/,
+  );
+  assert.ok(views.includes("Toggle(isOn: followed(conversation))"));
+  assert.ok(views.includes(".disabled(!isApprover || conversations.busy.contains(conversation.id))"));
+  assert.ok(views.includes("try await conversations.setFollowed(conversation.id, next)"));
+  assert.ok(views.includes("failure == .approverOnly ? ChannelText.approverOnly : failure.message"));
+  for (const text of ["SlackFollowText.header", "SlackFollowText.hint", "SlackFollowText.empty"])
+    assert.ok(views.includes(text), text);
+  assert.match(swift("ConsoleCore", "Design", "WorkstationText.swift"), /public enum SlackFollowText \{/);
+  // Le modèle est porté par celui des canaux (Mac et iOS le partagent), relit sur l'événement du serveur.
+  const channels = swift("ConsoleClient", "WorkstationChannels.swift");
+  assert.match(channels, /lazy var slackConversations = WorkstationSlackConversationsModel\(harness: harness\)/);
+  assert.match(channels, /slackConversations\.receive\(names\)/);
+  assert.match(channels, /slackConversations\.reset\(\)/);
+  assert.ok(model.includes('names.contains("workstation_channel_follow")'));
 });

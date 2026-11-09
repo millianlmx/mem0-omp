@@ -269,36 +269,50 @@ export class Monitor {
       return;
     }
     if (current && current.detail.stepId !== run.step.id) this.#clear(run.runId, "step_slow");
-    const medianMs = this.#median(run.step.kind);
+    const medianMs = this.#median(this.#deps.store.getRun(run.runId)?.repo ?? null, run.step.kind);
     if (medianMs === null) return;
     const elapsed = now - run.step.startedAt;
     if (elapsed >= factor * medianMs && this.#alerts.get(run.runId)?.get("step_slow") === undefined) {
       this.#raise(run.runId, "step_slow", {
         stepId: run.step.id,
         step: run.step.kind,
+        // `minutes`/`medianMin` : lus par les anciens clients ; `startedAt`/`medianMs` : la durée se calcule à l'affichage.
         minutes: Math.floor(elapsed / MINUTE_MS),
         medianMin: Math.round(medianMs / MINUTE_MS),
+        startedAt: run.step.startedAt,
+        medianMs,
       });
     }
   }
 
-  /** La durée médiane des étapes finies d'un type, en ms (cache de 10 min) ; `null` sous MEDIAN_MIN_SAMPLES. */
-  #median(kind: string): number | null {
+  /**
+   * La durée médiane des étapes finies d'un type dans un dépôt, en ms (cache de 10 min) ;
+   * `null` sous MEDIAN_MIN_SAMPLES pour ce dépôt — jamais de repli sur les autres dépôts.
+   */
+  #median(repo: string | null, kind: string): number | null {
+    if (repo === null) return null;
     const now = this.#now();
     if (!this.#medians || now - this.#medians.at >= MEDIANS_TTL_MS) {
+      const repos = new Map<string, string | null>();
       const durations = new Map<string, number[]>();
       for (const step of this.#deps.store.allSteps()) {
         if (step.endedAt === null || step.status !== "done") continue;
-        durations.set(step.kind, [...(durations.get(step.kind) ?? []), step.endedAt - step.startedAt]);
+        if (!repos.has(step.runId)) repos.set(step.runId, this.#deps.store.getRun(step.runId)?.repo ?? null);
+        const stepRepo = repos.get(step.runId);
+        if (stepRepo === null || stepRepo === undefined) continue;
+        const key = `${stepRepo}\u0000${step.kind}`;
+        const list = durations.get(key);
+        if (list) list.push(step.endedAt - step.startedAt);
+        else durations.set(key, [step.endedAt - step.startedAt]);
       }
       const byKind = new Map<string, number>();
-      for (const [name, list] of durations) {
+      for (const [key, list] of durations) {
         const value = list.length >= MEDIAN_MIN_SAMPLES ? median(list) : null;
-        if (value !== null && value > 0) byKind.set(name, value);
+        if (value !== null && value > 0) byKind.set(key, value);
       }
       this.#medians = { at: now, byKind };
     }
-    return this.#medians.byKind.get(kind) ?? null;
+    return this.#medians.byKind.get(`${repo}\u0000${kind}`) ?? null;
   }
 
   // -- alertes ------------------------------------------------------------------

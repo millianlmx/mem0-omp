@@ -284,6 +284,7 @@ async function confined(
       recipients: [],
       preview: params.kind === "type" ? params.text : "",
       fingerprint: null,
+      replyFingerprint: null,
     },
   };
 }

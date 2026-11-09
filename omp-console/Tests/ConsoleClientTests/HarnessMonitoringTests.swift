@@ -208,4 +208,17 @@ struct HarnessMonitoringTests {
         #expect(MonitoringText.event(MonitoringCodes.merged) == "Fusionnée")
         #expect(MonitoringText.event("inconnu") == "Événement")
     }
+
+    @Test("etape-lente : l'étape lente se mesure à l'affichage depuis startedAt, la médiane brève en secondes ; un serveur ancien garde minutes et medianMin")
+    func slowStepLine() throws {
+        let json = #"""
+        [{"runId":"r1","kind":"step_slow","since":1,"detail":{"stepId":7,"step":"review","minutes":4,"medianMin":1,"startedAt":1700000000000,"medianMs":36000}},
+         {"runId":"r2","kind":"step_slow","since":1,"detail":{"step":"review","minutes":4,"medianMin":2}}]
+        """#
+        let alerts = try JSONDecoder().decode([HarnessAlert].self, from: Data(json.utf8))
+        let review = HarnessRun.label(forStep: "review")
+        let now = Date(timeIntervalSince1970: 1_700_000_000 + 61 * 60)
+        #expect(alerts[0].line(at: now) == "Étape \(review) lente : en cours depuis 61 min (médiane 36 s)")
+        #expect(alerts[1].line(at: now) == "Étape \(review) lente : 4 min (médiane 2 min)")
+    }
 }

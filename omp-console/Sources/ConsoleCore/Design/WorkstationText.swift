@@ -480,3 +480,96 @@ public enum ChannelText {
     public static let slackHint = L10n.text("Créez l’app depuis le manifeste omp-harness/deploy/slack-app-manifest.json : en PKCE, aucun secret.")
     public static let save = L10n.text("Enregistrer")
 }
+
+/// Les canaux Slack suivis, dans l’écran Canaux : la case « suivi » de chaque canal de l’espace.
+public enum SlackFollowText {
+    public static let header = L10n.text("Canaux Slack suivis")
+    public static let hint = L10n.text("La veille lit vos messages privés et vos mentions partout, et en entier les canaux cochés.")
+    public static let empty = L10n.text("Aucun canal dans l’espace Slack")
+    public static let privateChannel = L10n.text("Canal privé")
+    public static let privateSymbol = "lock"
+}
+
+/// La page Personnes du Poste : le graphe des collègues que le serveur tient (canaux lus,
+/// observations du poste), et la correction de chaque champ par l’appareil approbateur.
+public enum PeopleText {
+    public static let title = L10n.text("Personnes")
+    public static let pageSymbol = "person.2"
+    public static let empty = L10n.text("Aucune personne : le graphe se remplit à la lecture des canaux.")
+    public static let hint = L10n.text("Une personne vue dans les canaux naît au niveau Jamais : rien ne lui est proposé tant que vous ne changez pas son niveau.")
+    public static let unnamed = L10n.text("Sans nom")
+    public static let corrected = L10n.text("Corrigé")
+    public static let correctedSymbol = "pencil.circle.fill"
+    public static let release = L10n.text("Relâcher")
+    public static let releaseHint = L10n.text("Un champ corrigé est figé : la lecture des canaux ne le change plus. Relâcher le rend aux suggestions.")
+    public static let listHint = L10n.text("Plusieurs valeurs : séparez-les par des virgules.")
+    public static let save = L10n.text("Enregistrer la correction")
+    public static let approverOnly = L10n.text("Seul l’appareil approbateur corrige les personnes : appairez cette app avec le code approbateur (harness.sh approver sur le VPS).")
+
+    /// Le nom d’un champ, brut (`name`, `emails`…) ; un champ inconnu se rend tel quel.
+    public static func field(_ raw: String) -> String {
+        switch raw {
+        case "name": L10n.text("Nom")
+        case "emails": L10n.text("Adresses")
+        case "slackIds": L10n.text("Identifiants Slack")
+        case "role": L10n.text("Rôle")
+        case "team": L10n.text("Équipe")
+        case "projects": L10n.text("Projets")
+        case "tone": L10n.text("Style à adopter")
+        case "delegation": L10n.text("Délégation")
+        case "topics": L10n.text("Sujets de réponse")
+        default: raw
+        }
+    }
+
+    /// Le niveau de délégation, brut (`jamais`, `brouillon`, `réponse`).
+    public static func delegation(_ raw: String) -> String {
+        switch raw {
+        case "jamais": L10n.text("Jamais")
+        case "brouillon": L10n.text("Brouillon")
+        case "réponse": L10n.text("Réponse sur les sujets listés")
+        default: raw
+        }
+    }
+}
+
+/// Le vocabulaire de la VEILLE PROACTIVE du poste dans « À traiter » : réponses proposées,
+/// relances, préparations de réunions et brief du matin. Un code inconnu se rend tel quel.
+public enum WatchText {
+    public static let sectionTitle = L10n.text("Veille du poste")
+    public static let sectionSymbol = "tray.full"
+    public static let sectionHint = L10n.text("Ce que la veille a trouvé dans vos canaux. Rien ne part sans votre geste.")
+    public static let ready = L10n.text("Prête à valider")
+    public static let toReview = L10n.text("À relire")
+    public static let gmailDraft = L10n.text("Brouillon Gmail créé")
+    public static let gmailDraftPending = L10n.text("Brouillon Gmail pas encore créé")
+    public static let internalDraft = L10n.text("Brouillon gardé par le serveur")
+
+    // MARK: - Validation d’une réponse proposée
+
+    public static let validate = L10n.text("Valider")
+    public static let edit = L10n.text("Modifier")
+    public static let validateEdited = L10n.text("Valider ce texte")
+    public static let cancelEdit = L10n.text("Annuler")
+    public static let dismiss = L10n.text("Écarter")
+    public static let editorLabel = L10n.text("Texte de la réponse")
+    /// Validée : la demande du poste rattachée l’enverra (sa raison d’attente suit, s’il y en a une).
+    public static let validated = L10n.text("Validée, en attente d’envoi")
+    public static let validatedSymbol = "paperplane"
+    /// L’envoi n’a pas abouti (la raison du serveur suit) : la réponse se revalide.
+    public static let failed = L10n.text("Envoi non abouti")
+    public static let failedSymbol = "exclamationmark.triangle"
+    /// 412 : la réponse a changé depuis sa lecture ; rien n’est validé, la liste est relue.
+    public static let changed = L10n.text("Cette réponse a changé depuis votre lecture : la liste vient d’être relue, relisez-la avant de la valider.")
+    public static let approverOnly = L10n.text("Seul l’appareil approbateur peut valider, modifier ou écarter une réponse proposée : appairez cette app avec le code approbateur (harness.sh approver sur le VPS).")
+
+    public static func kind(_ raw: String) -> String {
+        switch raw {
+        case "reply": L10n.text("Réponse proposée")
+        case "followup": L10n.text("Rappel proposé")
+        case "prep": L10n.text("Préparation de réunion")
+        case "brief": L10n.text("Brief du matin")
+        default: raw
+        }
+    }
+}

@@ -6,8 +6,8 @@
 // — ou la reprise quand le poste est arrêté ; les envois à approuver, seulement s'il y
 // en a ; « Demander au poste » et les demandes en cours ; les dernières décisions du
 // journal ; puis une rangée par page poussée (`WorkstationPage`) : réglages, canaux corpo
-// (seulement si le serveur les sert à ce jeton), automatisations, commande du navigateur,
-// profil, réunions, sessions de l'agent 24/24.
+// et personnes (seulement si le serveur les sert à ce jeton), automatisations, commande du
+// navigateur, profil, réunions, sessions de l'agent 24/24.
 //
 // Chaque app pose la page principale dans son cadre (formulaire du Mac, liste groupée
 // d'iOS) et les pages poussées par `workstationDestinations` dans sa pile de navigation.
@@ -23,11 +23,13 @@ import SwiftUI
 public struct WorkstationSections: View {
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var channels: WorkstationChannelsModel
+    @ObservedObject var people: WorkstationPeopleModel
     @ObservedObject var drafts: HarnessDrafts
 
-    public init(workstation: WorkstationModel, channels: WorkstationChannelsModel, drafts: HarnessDrafts) {
+    public init(workstation: WorkstationModel, channels: WorkstationChannelsModel, people: WorkstationPeopleModel, drafts: HarnessDrafts) {
         self.workstation = workstation
         self.channels = channels
+        self.people = people
         self.drafts = drafts
     }
 
@@ -58,7 +60,7 @@ public struct WorkstationSections: View {
                 WorkstationAskSection(workstation: workstation, drafts: drafts, status: status, requests: requests)
             }
             WorkstationRecentJournalSection(drafts: drafts, journal: workstation.journal)
-            WorkstationPagesSection(workstation: workstation, channels: channels)
+            WorkstationPagesSection(workstation: workstation, channels: channels, people: people)
         }
     }
 }
@@ -152,6 +154,7 @@ struct WorkstationHeaderSection: View {
 public enum WorkstationPage: String, Hashable, Identifiable, Sendable {
     case settings
     case channels
+    case people
     case automations
     case command
     case profile
@@ -164,12 +167,13 @@ public enum WorkstationPage: String, Hashable, Identifiable, Sendable {
 
     /// Les rangées de la page principale, dans l'ordre. Le journal et les demandes
     /// s'ouvrent depuis leur propre section (« Tout le journal », « Toutes les demandes »).
-    static let rows: [WorkstationPage] = [.settings, .channels, .automations, .command, .profile, .meetings, .sessions]
+    static let rows: [WorkstationPage] = [.settings, .channels, .people, .automations, .command, .profile, .meetings, .sessions]
 
     public var title: String {
         switch self {
         case .settings: WorkstationText.settingsTitle
         case .channels: ChannelText.title
+        case .people: PeopleText.title
         case .automations: ControlText.automationsTitle
         case .command: ControlText.commandTitle
         case .profile: WorkstationText.profileTitle
@@ -184,6 +188,7 @@ public enum WorkstationPage: String, Hashable, Identifiable, Sendable {
         switch self {
         case .settings: WorkstationText.settingsSymbol
         case .channels: ChannelText.pageSymbol
+        case .people: PeopleText.pageSymbol
         case .automations: WorkstationText.automatableSymbol
         case .command: WorkstationText.commandSymbol
         case .profile: WorkstationText.profileSymbol
@@ -201,8 +206,9 @@ extension View {
     public func workstationDestinations(server: HarnessModel, drafts: HarnessDrafts) -> some View {
         let workstation = server.workstation
         let channels = server.channels
+        let people = server.people
         return navigationDestination(for: WorkstationPage.self) { page in
-            WorkstationPageView(workstation: workstation, channels: channels, drafts: drafts, page: page)
+            WorkstationPageView(workstation: workstation, channels: channels, people: people, drafts: drafts, page: page)
         }
     }
 }
@@ -211,6 +217,7 @@ extension View {
 struct WorkstationPagesSection: View {
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var channels: WorkstationChannelsModel
+    @ObservedObject var people: WorkstationPeopleModel
 
     var body: some View {
         Section {
@@ -231,13 +238,14 @@ struct WorkstationPagesSection: View {
         }
     }
 
-    /// Une page dont le serveur ne sert pas le contenu n'a pas de rangée : les canaux sont
-    /// absents d'un serveur sans la route (404) et pour un jeton restreint (403).
+    /// Une page dont le serveur ne sert pas le contenu n'a pas de rangée : les canaux et les
+    /// personnes sont absents d'un serveur sans la route (404) et pour un jeton restreint (403).
     private var pages: [WorkstationPage] {
         WorkstationPage.rows.filter { page in
             switch page {
             case .settings, .command: workstation.status != nil
             case .channels: channels.availability == .available
+            case .people: people.availability == .available
             case .automations: workstation.automations != nil
             case .profile, .meetings, .journal, .sessions, .requests: true
             }
@@ -249,6 +257,7 @@ struct WorkstationPagesSection: View {
         case .automations: workstation.automations?.count
         case .meetings: workstation.meetings.count
         case .channels: channels.attentionCount
+        case .people: people.people.count
         case .settings, .command, .profile, .journal, .sessions, .requests: nil
         }
     }
@@ -259,6 +268,7 @@ struct WorkstationPagesSection: View {
 struct WorkstationPageView: View {
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var channels: WorkstationChannelsModel
+    @ObservedObject var people: WorkstationPeopleModel
     @ObservedObject var drafts: HarnessDrafts
     let page: WorkstationPage
 
@@ -275,6 +285,7 @@ struct WorkstationPageView: View {
         .refreshable {
             await workstation.load()
             if page == .channels { await channels.refresh() }
+            if page == .people { await people.refresh() }
         }
     }
 
@@ -291,6 +302,8 @@ struct WorkstationPageView: View {
             }
         case .channels:
             WorkstationChannelsSections(channels: channels)
+        case .people:
+            WorkstationPeopleSections(people: people)
         case .automations:
             if let automations = workstation.automations {
                 WorkstationAutomationsSection(workstation: workstation, drafts: drafts, automations: automations)

@@ -83,8 +83,14 @@ export function timelineOf(ctx: HarnessContext, run: RunRow, live: boolean): Rec
     endedAt: step.endedAt,
   }));
   const events: Record<string, unknown>[] = [];
+  // Le dernier jugement contre main : combien d'échecs de la suite complète sont préexistants, combien sont nouveaux.
+  let baseline: Record<string, unknown> | null = null;
   for (let after = 0, batch = store.eventsSince(after, run.id, 500); batch.length > 0; ) {
     for (const event of batch) {
+      if (event.type === "heavy_baseline") {
+        const { where, failing, preexisting, new: fresh, newTests } = event.payload;
+        baseline = { at: event.at, where, failing, preexisting, new: fresh, newTests };
+      }
       if (!TIMELINE_EVENTS.has(event.type)) continue;
       events.push({
         at: event.at,
@@ -106,6 +112,7 @@ export function timelineOf(ctx: HarnessContext, run: RunRow, live: boolean): Rec
     updatedAt: run.updatedAt,
     now: Date.now(),
     steps,
+    baseline,
     tests: store.listTestRuns(run.id).map((test) => ({
       at: test.at,
       scope: test.scope,

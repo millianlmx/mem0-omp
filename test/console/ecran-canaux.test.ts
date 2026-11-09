@@ -45,7 +45,7 @@ test("ecran-canaux/AC-1 : sous Poste, sur Mac et iOS, l'écran liste les trois c
   assert.match(sections, /case \.channels:\s*WorkstationChannelsSections\(channels: channels\)/);
   assert.match(
     sections,
-    /WorkstationPageView\(workstation: workstation, channels: channels, drafts: drafts, page: page\)/,
+    /WorkstationPageView\(workstation: workstation, channels: channels, people: people, drafts: drafts, page: page\)/,
   );
   // Les deux apps posent la page principale avec le modèle des canaux et le lisent.
   for (const frame of [
@@ -54,7 +54,9 @@ test("ecran-canaux/AC-1 : sous Poste, sur Mac et iOS, l'écran liste les trois c
   ]) {
     const source = code(read(...frame));
     assert.ok(
-      source.includes("WorkstationSections(workstation: workstation, channels: server.channels, drafts: drafts)"),
+      source.includes(
+        "WorkstationSections(workstation: workstation, channels: server.channels, people: server.people, drafts: drafts)",
+      ),
       `${frame.join("/")} : la page du Poste n'a pas les canaux`,
     );
     assert.ok(source.includes("await server.channels.refresh()"), `${frame.join("/")} : les canaux ne sont pas lus`);

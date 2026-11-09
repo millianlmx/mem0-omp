@@ -17,6 +17,7 @@
 // du client ou l'arrêt du service. Rien ne bloque les autres requêtes.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { REPLY_APPROVER, replyAfterSend, settledReply, validatedSend, watchEvent } from "./canaux/reponses.ts";
 import type { Client } from "./auth.ts";
 import { isRecord } from "./config.ts";
 import type { HarnessConfig } from "./config.ts";
@@ -48,6 +49,8 @@ import { newId } from "./ids.ts";
 import { redact, workstationOwner } from "./session-feed.ts";
 import type { SessionEntry } from "./session-feed.ts";
 import { TAB_KINDS, URL_KINDS, hostListed, hostOf, opaqueQueryParam, parseAgentTabs } from "./workstation-guards.ts";
+import { ACCOUNT_DOMAINS, ACCOUNT_STATES, VPS_BROWSER } from "./browser/vps-policy.ts";
+import type { AccountDomain, AccountState, AccountView } from "./browser/vps-policy.ts";
 
 export type Autonomy = "auto" | "observe" | "propose" | "act";
 export type EffectiveAutonomy = "observe" | "propose" | "act";
@@ -86,6 +89,8 @@ export type BrowserView = {
   firstSeenAt: number;
   extensionVersion: string | null;
   isDefault: boolean;
+  /** Les comptes du navigateur `vps` seulement : leur état, jamais un cookie ni un jeton. */
+  accounts?: AccountView[];
 };
 
 export type ProfileStats = {
@@ -131,7 +136,10 @@ export type ActionInput = {
 export type ResultInput =
   | { outcome: "done"; result: WorkstationAction["result"]; image: string | null }
   | { outcome: "failed"; error: string }
-  | { outcome: "needs_approval"; approval: Pick<Approval, "summary" | "recipients" | "preview" | "fingerprint"> };
+  | {
+      outcome: "needs_approval";
+      approval: Pick<Approval, "summary" | "recipients" | "preview" | "fingerprint" | "replyFingerprint">;
+    };
 
 /** Le dernier contact de l'extension date de moins de 60 s : elle est en ligne. */
 export const ONLINE_MS = 60_000;
@@ -241,6 +249,8 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 const SETTINGS_KEY = "workstation";
+/** L'état des comptes du navigateur `vps` (table `settings`) : domaine → { state, at }. */
+const ACCOUNTS_KEY = "workstation.vps.accounts";
 /** Le temps observé CUMULÉ (il survit à la rétention des observations) et la première observation. */
 const OBSERVED_KEY = "workstation.observed";
 
@@ -304,6 +314,7 @@ export function parseBrowserHello(rawId: unknown, rawLabel: unknown, rawVersion:
   let id: string | null = null;
   if (typeof rawId === "string" && rawId.trim() !== "") {
     if (!BROWSER_ID.test(rawId.trim())) bad("X-OMP-Browser : identifiant de 1 à 64 caractères [A-Za-z0-9_.-] attendu");
+    if (rawId.trim() === VPS_BROWSER) bad("X-OMP-Browser : « vps » est réservé au navigateur du serveur");
     id = rawId.trim();
   }
   let label: string | null = null;
@@ -650,6 +661,12 @@ export function parseResult(body: Record<string, unknown>): ResultInput {
       (typeof approval.fingerprint !== "string" || !FINGERPRINT.test(approval.fingerprint))
     )
       bad("approval.fingerprint : SHA-256 en hexadécimal (64 caractères) attendu");
+    if (
+      approval.replyFingerprint !== undefined &&
+      approval.replyFingerprint !== null &&
+      (typeof approval.replyFingerprint !== "string" || !FINGERPRINT.test(approval.replyFingerprint))
+    )
+      bad("approval.replyFingerprint : SHA-256 en hexadécimal (64 caractères) attendu");
     return {
       outcome,
       approval: {
@@ -663,6 +680,8 @@ export function parseResult(body: Record<string, unknown>): ResultInput {
         preview: clip(redact(typeof approval.preview === "string" ? approval.preview : ""), MAX_PREVIEW),
         // Telle que reçue : l'extension n'exécute un envoi approuvé que si l'empreinte recalculée est identique.
         fingerprint: typeof approval.fingerprint === "string" ? approval.fingerprint : null,
+        // L'empreinte de la réponse (destinataires et texte complet) : comparée à celle figée à la validation.
+        ...(typeof approval.replyFingerprint === "string" ? { replyFingerprint: approval.replyFingerprint } : {}),
       },
     };
   }
@@ -1053,6 +1072,8 @@ export class Workstation {
   /** Une synthèse du profil demandée depuis une app (`POST …/profile/rebuild`) : l'agent la lance au prochain tour, puis l'efface. */
   profileRequested = false;
   #closed = false;
+  /** Ceux que l'annulation d'une action en cours (arrêt d'urgence, `cancel`) prévient : l'exécuteur du VPS. */
+  readonly #halted = new Set<(seqs: number[] | null) => void>();
 
   constructor(ctx: HarnessContext) {
     this.#ctx = ctx;
@@ -1138,7 +1159,8 @@ export class Workstation {
     const { store } = this.#ctx;
     const chosen = this.settings().defaultBrowser;
     if (chosen !== null && store.getWorkstationBrowser(chosen)) return chosen;
-    return store.listWorkstationBrowsers()[0]?.id ?? null;
+    // Le navigateur du serveur n'est le défaut que si l'approbateur l'a choisi : une extension ancienne (sans identifiant) ne doit jamais tomber sur lui.
+    return store.listWorkstationBrowsers().find((browser) => browser.id !== VPS_BROWSER)?.id ?? null;
   }
 
   /** Un navigateur désigné doit être connu (une extension s'est présentée avec cet identifiant). */
@@ -1181,6 +1203,39 @@ export class Workstation {
     return false;
   }
 
+  /** Le navigateur n'est plus joignable : hors ligne tout de suite (sans attendre `ONLINE_MS`). Il reste connu. */
+  forget(browserId: string): void {
+    this.#presence.delete(browserId);
+  }
+
+  onHalt(listener: (seqs: number[] | null) => void): void {
+    this.#halted.add(listener);
+  }
+
+  /** L'état de chaque compte du navigateur `vps` : non connecté tant que rien ne dit le contraire. */
+  vpsAccounts(): AccountView[] {
+    const stored = this.#ctx.store.getSetting<Record<string, { state?: unknown; at?: unknown }>>(ACCOUNTS_KEY) ?? {};
+    return ACCOUNT_DOMAINS.map((domain) => {
+      const entry = stored[domain];
+      const state = (ACCOUNT_STATES as readonly unknown[]).includes(entry?.state)
+        ? (entry?.state as AccountState)
+        : "disconnected";
+      return { domain, state, changedAt: typeof entry?.at === "number" ? entry.at : null };
+    });
+  }
+
+  /** Pose l'état d'un compte ; un changement émet `workstation_account` (la notification ne part que pour `expired`). */
+  setVpsAccount(domain: AccountDomain, state: AccountState): boolean {
+    const { store } = this.#ctx;
+    return store.transaction(() => {
+      if (this.vpsAccounts().find((account) => account.domain === domain)?.state === state) return false;
+      const stored = store.getSetting<Record<string, unknown>>(ACCOUNTS_KEY) ?? {};
+      store.setSetting(ACCOUNTS_KEY, { ...stored, [domain]: { state, at: Date.now() } }, null);
+      this.#ctx.event("workstation_account", null, { domain, state }, null);
+      return true;
+    });
+  }
+
   /** Les navigateurs connus, du premier vu au dernier. */
   browsers(now = Date.now()): BrowserView[] {
     const fallback = this.defaultBrowserId();
@@ -1192,6 +1247,7 @@ export class Workstation {
       firstSeenAt: row.firstSeenAt,
       extensionVersion: row.version,
       isDefault: row.id === fallback,
+      ...(row.id === VPS_BROWSER ? { accounts: this.vpsAccounts() } : {}),
     }));
   }
 
@@ -1213,10 +1269,12 @@ export class Workstation {
     const effective = effectiveAutonomy(settings.autonomy, observedSeconds, settings.thresholdHours);
     const last = store.lastWorkstationShift();
     const browsers = this.browsers(now);
-    const latest = browsers.reduce<BrowserView | null>(
-      (best, browser) => (best === null || browser.lastSeenAt > best.lastSeenAt ? browser : best),
-      null,
-    );
+    const latest = browsers
+      .filter((browser) => browser.id !== VPS_BROWSER)
+      .reduce<BrowserView | null>(
+        (best, browser) => (best === null || browser.lastSeenAt > best.lastSeenAt ? browser : best),
+        null,
+      );
     const seen = [...this.#presence.values()].reduce<number | null>(
       (max, presence) => (max === null || presence.lastSeenAt > max ? presence.lastSeenAt : max),
       null,
@@ -1297,6 +1355,9 @@ export class Workstation {
       },
       null,
     );
+    // L'envoi d'une réponse validée a abouti (« envoyée ») ou s'est fini sans partir, sa demande close.
+    const reply = replyAfterSend(this.#ctx.store, action, Date.now());
+    if (reply) this.#ctx.event("workstation_watch", null, watchEvent(reply), null);
     if (action.state === "awaiting_approval")
       this.#ctx.event(
         "workstation_approval",
@@ -1595,17 +1656,25 @@ export class Workstation {
         leasedAt: null,
       });
     } else {
-      // La garde d'envoi : seul un message à SOI (destinataires connus, tous à l'utilisateur) repart sans geste humain.
+      // La garde d'envoi : seul un message à SOI (destinataires connus, tous à l'utilisateur) repart
+      // sans geste humain, ou l'envoi de la demande rattachée à une réponse validée dont l'empreinte
+      // (destinataires et texte complet) est STRICTEMENT celle figée à la validation (canaux/reponses.ts).
       const self = isSelfOnly(input.approval.recipients, this.settings().selfIdentities);
+      const reply = this.#ctx.store.transaction(() => {
+        const outcome = validatedSend(this.#ctx.store, action, input.approval.replyFingerprint, Date.now());
+        if (outcome.item) this.#ctx.event("workstation_watch", null, watchEvent(outcome.item), null);
+        return outcome.approved;
+      });
+      const approved = self || reply;
       const approval: Approval = {
         ...input.approval,
-        decidedBy: self ? "soi" : null,
-        decidedAt: self ? Date.now() : null,
+        decidedBy: self ? "soi" : reply ? REPLY_APPROVER : null,
+        decidedAt: approved ? Date.now() : null,
         reason: null,
       };
       updated = this.#transition(seq, ["running"], {
-        state: self ? "queued" : "awaiting_approval",
-        approved: self,
+        state: approved ? "queued" : "awaiting_approval",
+        approved,
         approval,
         leasedAt: null,
       });
@@ -1671,6 +1740,7 @@ export class Workstation {
     const action = this.getAction(seq);
     const cancelled = this.#cancel(action, `annulée par ${actor.by ?? "un client"}`);
     if (!cancelled) throw new HarnessError(409, `l'action #${seq} a déjà abouti (état ${this.getAction(seq).state})`);
+    for (const listener of [...this.#halted]) listener([seq]);
     return cancelled;
   }
 
@@ -1702,6 +1772,7 @@ export class Workstation {
       return seqs.sort((a, b) => a - b);
     });
     this.#ctx.log(`poste : arrêt d'urgence par ${by}, ${cancelled.length} action(s) annulée(s)`);
+    for (const listener of [...this.#halted]) listener(cancelled);
     return { status: this.status(), cancelled };
   }
 
@@ -1780,10 +1851,12 @@ export class Workstation {
       const cleared = store.clearWorkstationResultsBefore(before);
       if (cleared > 0)
         this.#ctx.log(`poste : ${cleared} résultat(s) d'action de plus de ${config.retentionDays} j vidé(s)`);
-      // Les contenus lus des canaux corpo (messages, événements, auteurs Slack).
-      const read = store.pruneChannelContents(before);
+      // Les contenus lus des canaux corpo (messages, événements, auteurs Slack) et les éléments de la veille.
+      const read = store.pruneChannelContents(before) + store.pruneWatchItems(before);
       if (read > 0)
-        this.#ctx.log(`poste : ${read} contenu(s) des canaux de plus de ${config.retentionDays} j purgé(s)`);
+        this.#ctx.log(
+          `poste : ${read} contenu(s) des canaux ou élément(s) de veille de plus de ${config.retentionDays} j purgé(s)`,
+        );
     }
     // Les captures, à chaque tour : leur rétention se compte en heures.
     store.pruneWorkstationCaptures(now - config.captureRetentionHours * 3_600_000);
@@ -1917,6 +1990,9 @@ export class Workstation {
       { id: request.id, state: request.state, reason: request.reason },
       null,
     );
+    // Une demande close sans que l'envoi de sa réponse parte : « envoi non abouti », revalidable.
+    const settled = settledReply(this.#ctx.store, request, Date.now());
+    if (settled) this.#ctx.event("workstation_watch", null, watchEvent(settled), null);
   }
 
   /** L'erreur d'une action dont la demande est close (annulée ou échouée) ; `null` sinon. */

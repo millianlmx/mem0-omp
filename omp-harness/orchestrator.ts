@@ -23,6 +23,7 @@
 // moins de runs vivants, puis l'ancienneté — aucun projet ne prend tous les runners.
 import { Channels } from "./canaux/channels.ts";
 import { ChannelReader } from "./canaux/lecture.ts";
+import { PeopleGraph } from "./canaux/personnes.ts";
 import { AutonomyGates } from "./autonomy-gates.ts";
 import type { WorkKind } from "./autonomy-rules.ts";
 import { Auditor } from "./audits.ts";
@@ -62,6 +63,7 @@ import type { LostWrites } from "./oracle.ts";
 import type { Proof } from "./proofs.ts";
 import { knownModules, modulesViaOracle, schedulable } from "./planner.ts";
 import { inboxOf, loadOf, runView } from "./queries.ts";
+import { forceStopQa } from "./browser/qa.ts";
 import { forceStop } from "./runner.ts";
 import { auditOwner } from "./session-feed.ts";
 import { Schedules } from "./schedules.ts";
@@ -73,8 +75,12 @@ import { Splitter, waitReason } from "./split.ts";
 import { Workstation } from "./workstation.ts";
 import { IssueDesk } from "./issues.ts";
 import { SignalDesk } from "./corporate/signals.ts";
+import { Replies } from "./canaux/reponses.ts";
+import { Watch } from "./canaux/veille.ts";
 import { WorkstationAgent } from "./workstation-agent.ts";
 import { VigieDesk } from "./vigie/desk.ts";
+import { BrowserDesk } from "./browser/desk.ts";
+import { VpsBrowser } from "./browser/vps.ts";
 
 export { HarnessError } from "./errors.ts";
 export type { Actor, SpawnRunner } from "./context.ts";
@@ -179,12 +185,22 @@ export class Orchestrator {
   readonly channels: Channels;
   /** Le passage de lecture des canaux corpo (contenus gardés en base) et les canaux Slack suivis. */
   readonly channelReader: ChannelReader;
+  /** Le graphe des personnes du poste : alimenté par les canaux lus et les signalements, corrigé par l'humain. */
+  readonly people: PeopleGraph;
+  /** La veille proactive du poste : ses éléments d'« À traiter » (réponses, relances, préparations, brief). */
+  readonly watch: Watch;
+  /** La validation des réponses proposées : écarter, modifier, valider (envoi par le navigateur seul). */
+  readonly replies: Replies;
   /** Les signalements des collègues et leurs propositions (pont corpo ↔ usine) : `reportSignal` est le point d'entrée des canaux. */
   readonly signals: SignalDesk;
   /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
   readonly metrics: Metrics;
   /** Les issues GitHub des dépôts déclarés, lancées en run (`POST /v1/mcp`). */
   readonly issues: IssueDesk;
+  /** Les contextes de navigation des outils MCP `browser_*` (Obscura éphémère). */
+  readonly browsers: BrowserDesk;
+  /** L'exécuteur du poste sur le VPS (`browserId: "vps"`, `obscura-poste`) : il loue la file comme une extension. */
+  readonly vps: VpsBrowser;
   /** Le rapport du matin, posté chaque jour à `notify.digestHour`. */
   readonly digest: DigestSender;
   /** Les planifications récurrentes, déclenchées par le tour de scheduling. */
@@ -235,6 +251,10 @@ export class Orchestrator {
     });
     this.issues = new IssueDesk(this.#ctx, { createRun: (input, actor) => this.createRun(input, actor) });
     this.vigie = new VigieDesk(this.#ctx, this.issues);
+    this.browsers = new BrowserDesk(() => this.#ctx.config.browser, {
+      log: this.#ctx.log,
+      ...(deps.browserLookup ? { lookup: deps.browserLookup } : {}),
+    });
     this.#autonomy = new AutonomyGates(this.#ctx, {
       validate: (runId, approve, reason, actor, inscribe) =>
         this.#human.validate(runId, approve, reason, actor, inscribe),
@@ -243,7 +263,6 @@ export class Orchestrator {
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
     this.signals = new SignalDesk(this.#ctx, { workstation: this.workstation, issues: this.issues });
-    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation, this.signals);
     this.channels = new Channels({
       config: this.#ctx.config,
       store: this.#ctx.store,
@@ -258,6 +277,37 @@ export class Orchestrator {
       event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
       log: this.#ctx.log,
       active: () => this.workstation.enabled && !this.workstation.settings().paused,
+    });
+    this.people = new PeopleGraph({
+      store: this.#ctx.store,
+      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
+      self: () => [
+        ...this.workstation.settings().selfIdentities,
+        ...this.channels
+          .view(false)
+          .channels.map((c) => c.account)
+          .filter((a): a is string => a !== null),
+      ],
+    });
+    this.watch = new Watch({
+      config: this.#ctx.config,
+      store: this.#ctx.store,
+      workstation: this.workstation,
+      channels: this.channels,
+      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
+    });
+    this.replies = new Replies({
+      store: this.#ctx.store,
+      workstation: this.workstation,
+      channels: this.channels,
+      watch: this.watch,
+      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
+    });
+    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation, this.signals, this.watch);
+    this.vps = new VpsBrowser(this.workstation, {
+      config: () => this.#ctx.config.workstation.vps,
+      log: this.#ctx.log,
+      ...deps.vps,
     });
     this.digest = new DigestSender({
       config: this.#ctx.config,
@@ -389,6 +439,7 @@ export class Orchestrator {
     this.digest.stop();
     this.#stopMetrics?.();
     await this.issues.stop();
+    await this.browsers.stop();
     await this.#ticking;
     // Une relève d'issues partie d'une échéance finit (ses runs sont créés ou non, jamais à moitié).
     await this.schedules.stop();
@@ -402,6 +453,8 @@ export class Orchestrator {
     await this.intake.stop();
     await this.pilot.stop();
     await this.dreams.stop();
+    // L'exécuteur du VPS lâche son long-poll et ferme sa connexion avant que le poste ne se ferme.
+    await this.vps.stop();
     // Les attentes du poste (long-polls de l'extension) rendent tout de suite.
     this.workstation.close();
     await this.workstationAgent.stop();
@@ -423,6 +476,9 @@ export class Orchestrator {
       // Le contradicteur d'une étape de contrat a sa propre unité, absente de la ligne de l'étape.
       if (step.kind === "req" || step.kind === "specs")
         await forceStop(config, exec, challengeUnit(step.runId, step.id));
+      // La QA de /review (prévisualisation et navigateur) n'a pas pu s'arrêter avec son process.
+      if (step.kind === "review" && config.heavy.isolation === "container")
+        await forceStopQa(config, exec, step.runId, step.id);
     }
     // Chaque worktree encore vivant est re-reconnu côté clone (jamais par son `.git`).
     for (const run of store.listRuns({ state: ["queued", "running", "escalated", "awaiting_human", "merging"] })) {
@@ -459,7 +515,9 @@ export class Orchestrator {
     await this.intake.recover();
     await this.pilot.recover();
     await this.dreams.recover();
+    await this.#ctx.baseline.recover();
     await this.workstationAgent.recover();
+    if (this.#ctx.config.workstation.enabled) this.vps.start();
   }
 
   /** La rétention du journal : au démarrage, puis au plus une fois par heure. */
@@ -540,6 +598,13 @@ export class Orchestrator {
     } catch (err) {
       this.#ctx.log(`lecture des canaux : ${err instanceof Error ? err.name : "inconnu"}`, { level: "error" });
     }
+    // Le graphe des personnes reprend ce que les canaux et les signalements ont gardé depuis.
+    if (this.workstation.enabled)
+      try {
+        this.people.feed();
+      } catch (err) {
+        this.#ctx.log(`graphe des personnes : ${err instanceof Error ? err.name : "inconnu"}`, { level: "error" });
+      }
     this.#admit();
     // Après les runs : un dépôt ne rêve que sur un slot que nul run n'attend.
     this.dreams.tick();
