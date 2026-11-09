@@ -30,7 +30,8 @@ services:
       - ${OMP_HARNESS_SECRETS}/harness.env
     volumes:
       - ${OMP_HARNESS_ROOT}:${OMP_HARNESS_ROOT}
-      - ${OMP_HARNESS_ROOT}/config.json:/etc/omp-harness/config.json:ro
+      # En écriture : les routes d'administration de l'API (`POST /v1/repos`, `PATCH /v1/repos/{name}`) la réécrivent sur place.
+      - ${OMP_HARNESS_ROOT}/config.json:/etc/omp-harness/config.json
       - ${OMP_HARNESS_SOCKET}:/var/run/docker.sock
     # La santé du service (`/v1/health` : base, scheduling, disque ; 503 au moindre
     # échec). L'image a node, pas curl.

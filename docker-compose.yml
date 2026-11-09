@@ -107,7 +107,9 @@ services:
       OMP_HARNESS_ENV_FILE: /run/secrets/omp-harness/harness.env
     volumes:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}:${OMP_HARNESS_ROOT:-/var/lib/omp-harness}
-      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/config.json:/etc/omp-harness/config.json:ro
+      # En écriture : `POST /v1/repos` et `PATCH /v1/repos/{name}` réécrivent ce fichier sur place
+      # (le dossier au-dessus est déjà monté en écriture ; `:ro` ne protégeait rien et les faisait échouer en EROFS).
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/config.json:/etc/omp-harness/config.json
       - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/harness:/run/secrets/omp-harness:ro
       - ${OMP_HARNESS_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
     # `default` d'abord : sans lui, le service quitterait le réseau des runners.
