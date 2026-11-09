@@ -43,7 +43,7 @@ import { APPROVER_ONLY } from "./workstation.ts";
 /** Les cibles servies. */
 export const TARGET_KINDS = ["run", "audit", "issues", "automation"] as const;
 
-const NAME_MAX = 120;
+export const NAME_MAX = 120;
 /** Au-delà, les échéances manquées pendant un arrêt ne sont plus comptées une à une. */
 const MISSED_CAP = 1000;
 const MINUTE = 60_000;

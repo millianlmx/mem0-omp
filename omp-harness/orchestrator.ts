@@ -23,6 +23,8 @@
 // moins de runs vivants, puis l'ancienneté — aucun projet ne prend tous les runners.
 import { Auditor } from "./audits.ts";
 import { Dreamer } from "./dreams.ts";
+import { createFromPlan } from "./intake-create.ts";
+import { Intaker } from "./intake.ts";
 import { AuditPilot } from "./pilot.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
 import { retryBackoff } from "./config.ts";
@@ -53,6 +55,7 @@ import type { FailCause, StepOutcome } from "./machine.ts";
 import { Merger } from "./merger.ts";
 import { briefOfReq } from "./oracle.ts";
 import type { LostWrites } from "./oracle.ts";
+import type { Proof } from "./proofs.ts";
 import { knownModules, modulesViaOracle, schedulable } from "./planner.ts";
 import { inboxOf, loadOf, runView } from "./queries.ts";
 import { forceStop } from "./runner.ts";
@@ -65,6 +68,7 @@ import { SPECS_BASELINE, StepExecutor, challengeUnit, directSpecs, liveRun } fro
 import { Splitter, waitReason } from "./split.ts";
 import { Workstation } from "./workstation.ts";
 import { IssueDesk } from "./issues.ts";
+import { SignalDesk } from "./corporate/signals.ts";
 import { WorkstationAgent } from "./workstation-agent.ts";
 import { VigieDesk } from "./vigie/desk.ts";
 
@@ -164,6 +168,8 @@ export class Orchestrator {
   readonly workstation: Workstation;
   /** L'agent 24/24 du poste et ses jobs (profil, digest des meetings, services). */
   readonly workstationAgent: WorkstationAgent;
+  /** Les signalements des collègues et leurs propositions (pont corpo ↔ usine) : `reportSignal` est le point d'entrée des canaux. */
+  readonly signals: SignalDesk;
   /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
   readonly metrics: Metrics;
   /** Les issues GitHub des dépôts déclarés, lancées en run (`POST /v1/mcp`). */
@@ -172,6 +178,8 @@ export class Orchestrator {
   readonly digest: DigestSender;
   /** Les planifications récurrentes, déclenchées par le tour de scheduling. */
   readonly schedules: Schedules;
+  /** Les Demandes : une phrase libre classée par un job léger, confirmée en un objet par les chemins existants. */
+  readonly intake: Intaker;
   /** La vigie : réglages, battement de cœur, incidents, publications et corrections gardées. */
   readonly vigie: VigieDesk;
   #stopMetrics: (() => void) | null = null;
@@ -215,7 +223,8 @@ export class Orchestrator {
     this.vigie = new VigieDesk(this.#ctx, this.issues);
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
-    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation);
+    this.signals = new SignalDesk(this.#ctx, { workstation: this.workstation, issues: this.issues });
+    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation, this.signals);
     this.digest = new DigestSender({
       config: this.#ctx.config,
       store: this.#ctx.store,
@@ -228,6 +237,9 @@ export class Orchestrator {
       createAudit: (repo, focus, actor) => this.audits.create(repo, focus, actor),
       fixLabeled: (repo, label, actor) => this.issues.fixLabeled(this.#ctx.repo(repo), label, actor),
       runAutomation: (automationId, actor) => this.workstation.runAutomation(automationId, actor),
+    });
+    this.intake = new Intaker(this.#ctx, {
+      create: (plan, client, actor) => createFromPlan(this, client, actor, plan),
     });
   }
 
@@ -353,6 +365,7 @@ export class Orchestrator {
     }
     await Promise.allSettled(lives.map((live) => live.done));
     await this.audits.stop();
+    await this.intake.stop();
     await this.pilot.stop();
     await this.dreams.stop();
     // Les attentes du poste (long-polls de l'extension) rendent tout de suite.
@@ -408,6 +421,7 @@ export class Orchestrator {
       });
     }
     await this.audits.recover();
+    await this.intake.recover();
     await this.pilot.recover();
     await this.dreams.recover();
     await this.workstationAgent.recover();
@@ -465,6 +479,11 @@ export class Orchestrator {
       this.#ctx.log(`planifications : ${err instanceof Error ? err.message : String(err)}`);
     }
     this.audits.tick();
+    try {
+      this.intake.tick();
+    } catch (err) {
+      this.#ctx.log(`demandes : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
+    }
     try {
       this.pilot.tick();
     } catch (err) {
@@ -1158,6 +1177,17 @@ export class Orchestrator {
   liveTests(runId: string, repos: RepoFilter = null): Record<string, unknown> {
     const run = this.visibleRun(runId, repos);
     return { runId: run.id, cursor: this.store.lastEventId(), jobs: this.#ctx.tests.jobs(run.id) };
+  }
+
+  /** Les preuves d'un run (le dossier d'un dépôt invisible n'est jamais lu : 404 avant). */
+  proofsView(runId: string, repos: RepoFilter = null): { runId: string; proofs: Proof[] } {
+    const run = this.visibleRun(runId, repos);
+    return { runId: run.id, proofs: this.#ctx.proofs.list(run.id) };
+  }
+
+  /** Le contenu d'une preuve par son rang. */
+  proofContent(runId: string, n: number, repos: RepoFilter = null): { proof: Proof; data: Buffer } {
+    return this.#ctx.proofs.read(this.visibleRun(runId, repos).id, n);
   }
 
   /** La veille : coût, budget et alertes des features. */

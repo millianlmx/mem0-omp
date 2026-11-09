@@ -44,6 +44,7 @@ import { PolicyRefusal } from "./policy.ts";
 import type { PromptError, PromptResult } from "./rpc.ts";
 import { RunnerExited } from "./rpc.ts";
 import { hostToolsFor, runnerUnit } from "./runner.ts";
+import { reportSlugs, testReport } from "./test-report.ts";
 import { RunnerSession, STEP_TIMEOUT_PREFIX, providerOfLabel } from "./runner-session.ts";
 import { ensureArtifactsDir, expectedDir, readArtifact, writeArtifact } from "./safefs.ts";
 import type { CriterionDrift, MergeDecision, Verdict } from "./verdict.ts";
@@ -91,6 +92,7 @@ export function liveRun(runId: string): LiveRun {
     verdict: null,
     fullRunsThisStep: 0,
     lastFull: null,
+    lastTests: null,
     pendingRebase: false,
     conflicts: [],
     fullSuite: null,
@@ -328,6 +330,7 @@ export class StepExecutor {
     live.verdict = null;
     live.fullRunsThisStep = 0;
     live.lastFull = null;
+    live.lastTests = null;
     live.fullSuite = null;
     // L'échéance de l'étape : prompts, relance et bascules compris.
     const deadlineAt = Date.now() + config.runner.stepTimeoutSec * 1000;
@@ -782,6 +785,8 @@ export class StepExecutor {
     const step = run.step as StepKind;
     const repo = this.#ctx.repo(run.repo);
     this.#ingest(run, stepRow.id);
+    if ((step === "impl" || step === "fix") && live.lastTests !== null)
+      await this.#reportTests(live.lastTests, run, step);
 
     if (step === "req") {
       // Seuls les titres de besoins (`B-n`) rejoignent l'oracle : un souvenir court, qui se rappelle bien.
@@ -825,10 +830,7 @@ export class StepExecutor {
           ],
         };
       // Le contrat est celui des specs gelées, plus les critères ajoutés depuis.
-      const current = store.getArtifact(run.id, "specs.md") ?? "";
-      const acIds = [
-        ...new Set([...parseAcIds(store.getArtifact(run.id, SPECS_BASELINE) ?? current), ...parseAcIds(current)]),
-      ];
+      const acIds = this.#specsAcIds(run.id);
       const merge = mergeDecision(verdict, {
         fullTests,
         diffLines: await git.diffLines(worktree, base, config.review.diffCount),
@@ -875,6 +877,53 @@ export class StepExecutor {
       });
     });
     return outcome;
+  }
+
+  /** Les critères du contrat d'un run : ceux des specs gelées, plus ceux ajoutés depuis. */
+  #specsAcIds(runId: string): string[] {
+    const current = this.#ctx.store.getArtifact(runId, "specs.md") ?? "";
+    const baseline = this.#ctx.store.getArtifact(runId, SPECS_BASELINE) ?? current;
+    return [...new Set([...parseAcIds(baseline), ...parseAcIds(current)])];
+  }
+
+  /**
+   * Joint à l'étape /impl ou /impl --fix son rapport de tests, tiré du dernier passage `run_tests`. Une preuve
+   * refusée (borne) ou un diff illisible se journalise : une preuve ne fait jamais échouer l'étape.
+   */
+  async #reportTests(tests: NonNullable<LiveRun["lastTests"]>, run: RunRow, step: "impl" | "fix"): Promise<void> {
+    const { git, proofs } = this.#ctx;
+    try {
+      const repo = this.#ctx.repo(run.repo);
+      const touched = await git.touchedFiles(run.worktree as string, run.baseSha ?? repo.mainBranch);
+      const report = testReport(tests.result, tests.scope, step, {
+        slugs: reportSlugs(repo, touched),
+        acIds: this.#specsAcIds(run.id),
+      });
+      const added = proofs.add(run.id, {
+        kind: "test_report",
+        title: report.title,
+        step,
+        mime: "application/json",
+        data: report.data,
+        acRef: null,
+        side: null,
+      });
+      if (!added.ok)
+        this.#ctx.log(`run ${run.id} : rapport de tests refusé — ${added.reason}`, {
+          level: "warn",
+          runId: run.id,
+          repo: run.repo,
+        });
+    } catch (err) {
+      this.#ctx.log(
+        `run ${run.id} : rapport de tests impossible — ${err instanceof Error ? err.message : String(err)}`,
+        {
+          level: "warn",
+          runId: run.id,
+          repo: run.repo,
+        },
+      );
+    }
   }
 
   /**

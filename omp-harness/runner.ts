@@ -147,6 +147,8 @@ export type RunnerSpec = {
   memoryEnvFile?: string | null;
   /** Le dépôt est `local-only` : aucune clé de fournisseur distant chez le runner. */
   localOnly?: boolean;
+  /** `false` : aucun plugin mémoire — le classement des Demandes (intake.ts). */
+  memory?: false;
 };
 
 /** Le runner en conteneur frère : ses seuls montages sont son worktree, le clone en lecture, l'overlay, son HOME et ses clés. */
@@ -217,7 +219,10 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
     "--cwd",
     spec.cwd,
     ...(spec.model ? ["--model", `${spec.model.provider}/${spec.model.model}`] : []),
-    ...runnerExtensions(config).flatMap((extension) => ["-e", extension]),
+    ...(spec.memory === false
+      ? config.runner.extensions.filter((extension) => !isMemoryExtension(extension))
+      : runnerExtensions(config)
+    ).flatMap((extension) => ["-e", extension]),
   ];
   if (config.runner.isolation === "none") return { command: omp[0] as string, args: omp.slice(1) };
   if (config.runner.isolation === "container") return containerRunnerArgv(config, spec, omp);
@@ -498,6 +503,29 @@ const VERDICT_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+const RECORD_PROOF_TOOL: HostToolDefinition = {
+  name: "qa_record_proof",
+  label: "Harness — preuve de revue",
+  description:
+    "Joindre une preuve à la revue : un log texte, ou une capture prise par qa_screenshot ; jamais un fichier. " +
+    "`acRef` (AC-n) lie la preuve à un critère, `side` dit si elle vient de la base (`before`) ou du worktree du run (`after`). " +
+    "Le service borne le nombre et la taille des preuves et refuse la suivante au-delà, avec la raison.",
+  parameters: {
+    type: "object",
+    properties: {
+      kind: { type: "string", enum: ["log", "screenshot"] },
+      title: { type: "string", description: "Ce que la preuve montre, 200 caractères au plus." },
+      text: { type: "string", description: "Le texte du log (kind: log), 64 Kio au plus." },
+      capture: { type: "string", description: "L'identifiant rendu par qa_screenshot (kind: screenshot)." },
+      acRef: { type: "string", description: "AC-n" },
+      side: { type: "string", enum: ["before", "after"] },
+    },
+    required: ["kind", "title"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 const RECALL_TOOL: HostToolDefinition = {
   name: "oracle_recall",
   label: "Harness — oracle",
@@ -667,9 +695,34 @@ const CHALLENGE_TOOL: HostToolDefinition = {
 };
 
 /** Les jobs du poste de travail menés par un runner (workstation-agent.ts) : le nom est l'en-tête de leur prompt. */
-export type WorkstationJob = "poste-profil" | "poste-digest" | "poste-service" | "poste-demande";
+export type WorkstationJob = "poste-profil" | "poste-digest" | "poste-service" | "poste-demande" | "poste-signal";
 
 const NULLABLE_STRING = { type: ["string", "null"] } as const;
+
+/** Le rendu du classement d'une Demande (intake.ts) : tout est jugé par le serveur après la session. */
+const INTAKE_TOOL: HostToolDefinition = {
+  name: "intake_classify",
+  label: "Harness — classement de la demande",
+  description:
+    "Rend le classement de la demande, UNE fois : `clarification` seule si la demande est ambiguë ; sinon `kind` et les champs du plan, ou `answer` pour une `question`.",
+  parameters: {
+    type: "object",
+    properties: {
+      kind: { type: "string", enum: ["feature", "bug", "audit", "workstation_request", "schedule", "question"] },
+      clarification: { ...NULLABLE_STRING, description: "La question à poser, seule, si la demande est ambiguë." },
+      answer: { ...NULLABLE_STRING, description: "La réponse directe d'une `question`." },
+      repo: { ...NULLABLE_STRING, description: "Le dépôt déclaré ; null pour une workstation_request." },
+      title: { ...NULLABLE_STRING, description: "Le titre court du plan." },
+      statement: { ...NULLABLE_STRING, description: "La demande reformulée, autoportante." },
+      focus: { ...NULLABLE_STRING, description: "Le focus d'un audit, ou d'une planification d'audit." },
+      cron: { ...NULLABLE_STRING, description: "La planification cron à 5 champs d'une `schedule`." },
+      target: { ...NULLABLE_STRING, description: "La cible d'une `schedule` : run, audit ou issues." },
+      label: { ...NULLABLE_STRING, description: "Le label des issues d'une `schedule` de cible issues." },
+    },
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
 
 const WORKSTATION_ACT_TOOL: HostToolDefinition = {
   name: "workstation_act",
@@ -853,34 +906,103 @@ const WORKSTATION_DIGEST_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+const WORKSTATION_SIGNAL_TOOL: HostToolDefinition = {
+  name: "workstation_signal",
+  label: "Poste — signaler un bug ou une feature",
+  description:
+    "Remet au service un signalement de bug ou une demande de feature ADRESSÉ À L'UTILISATEUR, lu dans une page : le service le fait juger puis le propose à l'humain, qui décide seul d'ouvrir une issue. " +
+    "N'ouvre JAMAIS d'issue toi-même. `url` : l'adresse de la page ou du fil lu ; `excerpt` : ce que la page dit du problème, cité mot pour mot et court ; `personRef` : qui l'a signalé, tel que la page l'affiche (adresse ou pseudo), si c'est lisible. " +
+    "Dans une demande de l'humain, sans `url`, la consigne de l'humain sert de signalement (`excerpt` est ignoré).",
+  parameters: {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "L'adresse de la page ou du fil." },
+      excerpt: { type: "string", description: "Ce que la page dit du problème, mot pour mot, court." },
+      personRef: { type: "string", description: "Qui l'a signalé, tel qu'affiché (adresse, pseudo)." },
+    },
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_SIGNAL_PROPOSE_TOOL: HostToolDefinition = {
+  name: "workstation_signal_propose",
+  label: "Poste — proposer une issue",
+  description:
+    "Verdict : ce signalement est un bug ou une demande de feature adressé à l'utilisateur. Propose-le à l'humain avec le dépôt le plus probable (parmi les candidats), un titre et un corps d'issue GÉNÉRIQUES — sans nom, adresse, lien ni citation du message. " +
+    "Cet outil ne crée rien : l'humain relit puis confirme. Une fois, à la fin.",
+  parameters: {
+    type: "object",
+    properties: {
+      signalId: { type: "string", description: "L'identifiant du signalement jugé." },
+      repo: { type: "string", description: "Le nom d'un dépôt candidat." },
+      kind: { type: "string", enum: ["bug", "feature"] },
+      title: { type: "string", description: "Le titre de l'issue, générique, une ligne." },
+      body: {
+        type: "string",
+        description: "Le corps de l'issue : le problème ou le besoin reformulé, ce qui est attendu.",
+      },
+    },
+    required: ["signalId", "repo", "kind", "title", "body"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_SIGNAL_IGNORE_TOOL: HostToolDefinition = {
+  name: "workstation_signal_ignore",
+  label: "Poste — écarter un signalement",
+  description:
+    "Verdict : ce signalement n'est ni un bug ni une demande de feature adressé à l'utilisateur (conversation, remerciement, demande sans rapport avec un dépôt). Rien n'est créé. Une fois, à la fin.",
+  parameters: {
+    type: "object",
+    properties: {
+      signalId: { type: "string", description: "L'identifiant du signalement jugé." },
+      reason: { type: "string", description: "Pourquoi, en une phrase, sans citer le message." },
+    },
+    required: ["signalId", "reason"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 /**
  * Les outils hôtes d'une étape (ou de l'audit, du contradicteur et du rêve, qui ne
  * décident ni ne testent rien, ou d'un job du poste de travail) : `save_checkpoint` et
  * `set_modules` partout, `split_feature` en specs et impl, `run_tests` dès /impl,
- * `review_verdict` en revue seulement.
+ * `review_verdict` et `qa_record_proof` en revue seulement.
  */
 export function hostToolsFor(
-  step: StepKind | "audit" | "pilot" | "challenge" | "dream" | WorkstationJob,
+  step: StepKind | "audit" | "intake" | "pilot" | "challenge" | "dream" | WorkstationJob,
 ): HostToolDefinition[] {
+  if (step === "intake") return [PROGRESS_TOOL, INTAKE_TOOL];
   if (step === "audit") return [PROGRESS_TOOL, RECALL_TOOL, AUDIT_TOOL];
   if (step === "pilot") return [PROGRESS_TOOL, RECALL_TOOL, PILOT_TOOL];
   if (step === "dream") return [PROGRESS_TOOL, RECALL_TOOL, DREAM_TOOL];
   if (step === "challenge") return [PROGRESS_TOOL, RECALL_TOOL, CHALLENGE_TOOL];
   if (step === "poste-profil") return [PROGRESS_TOOL, WORKSTATION_PROFILE_TOOL];
   if (step === "poste-digest") return [PROGRESS_TOOL, WORKSTATION_DIGEST_TOOL];
+  if (step === "poste-signal") return [PROGRESS_TOOL, WORKSTATION_SIGNAL_PROPOSE_TOOL, WORKSTATION_SIGNAL_IGNORE_TOOL];
   if (step === "poste-demande")
-    return [PROGRESS_TOOL, WORKSTATION_ACT_TOOL, WORKSTATION_DECISION_TOOL, WORKSTATION_REQUEST_REPORT_TOOL];
+    return [
+      PROGRESS_TOOL,
+      WORKSTATION_ACT_TOOL,
+      WORKSTATION_DECISION_TOOL,
+      WORKSTATION_SIGNAL_TOOL,
+      WORKSTATION_REQUEST_REPORT_TOOL,
+    ];
   if (step === "poste-service")
     return [
       PROGRESS_TOOL,
       WORKSTATION_ACT_TOOL,
       WORKSTATION_DECISION_TOOL,
+      WORKSTATION_SIGNAL_TOOL,
       WORKSTATION_ACTIVITY_TOOL,
       WORKSTATION_MEETINGS_TOOL,
     ];
   const tools = [DECISION_TOOL, PROGRESS_TOOL, RECALL_TOOL, CHECKPOINT_TOOL, SET_MODULES_TOOL];
   if (step === "specs" || step === "impl") tools.push(SPLIT_TOOL);
   if (step === "impl" || step === "fix" || step === "review") tools.push(runTestsTool(step));
-  if (step === "review") tools.push(VERDICT_TOOL);
+  if (step === "review") tools.push(VERDICT_TOOL, RECORD_PROOF_TOOL);
   return tools;
 }

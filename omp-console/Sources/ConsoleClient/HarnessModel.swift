@@ -551,6 +551,12 @@ public final class HarnessModel: ObservableObject {
         await read("/v1/runs/\(Self.encoded(runId))/timeline")
     }
 
+    /// Les preuves d'une feature. `nil` sur un 404 : serveur sans cette route, ou feature invisible.
+    /// Une erreur de transport ou de décodage LÈVE : une clé mal nommée ne passe pas pour un serveur sans preuves.
+    public func proofs(runId: String) async throws -> HarnessProofs? {
+        try await readIfServed("/v1/runs/\(Self.encoded(runId))/proofs")
+    }
+
     /// Les fichiers touchés par une feature.
     public func changes(runId: String) async -> HarnessChanges? {
         await read("/v1/runs/\(Self.encoded(runId))/changes")

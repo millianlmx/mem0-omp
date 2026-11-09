@@ -13,6 +13,7 @@ import type { HarnessConfig, NotifyTarget } from "./config.ts";
 import type { EventRow, RunRow, Store } from "./db.ts";
 import { scheduleStatus } from "./digest.ts";
 import type { LogLine } from "./logger.ts";
+import { proofCountText } from "./proofs.ts";
 
 export type Notification = {
   title: string;
@@ -81,9 +82,14 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
       const verdict = payload.verdict;
       const summary =
         verdict !== null && typeof verdict === "object" && "summary" in verdict ? text(verdict.summary) : "";
+      const base = short(
+        [text(payload.reason), summary].filter(Boolean).join(" — ") || "la revue attend ta validation",
+      );
+      // Le nombre de preuves vient APRÈS `short` : il n'est jamais coupé.
+      const proofs = typeof payload.proofs === "number" ? ` · ${proofCountText(payload.proofs)}` : "";
       return {
         title: `Verdict à valider — ${feature}`,
-        body: short([text(payload.reason), summary].filter(Boolean).join(" — ") || "la revue attend ta validation"),
+        body: `${base}${proofs}`,
         priority: 4,
         tags: ["eyes"],
         click: null,

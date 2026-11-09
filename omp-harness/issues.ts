@@ -121,7 +121,10 @@ export class IssueDesk {
     return issues.map((issue) => {
       const runId = links.get(issue.number);
       const run = runId === undefined ? null : this.#ctx.store.getRun(runId);
-      return { ...issue, run: run ? { id: run.id, state: run.state, slug: run.slug } : null };
+      // Une issue d'origine corpo montre le titre caviardé du harness, non celui de la forge (`full` : privé, avec des noms).
+      const origin = this.#ctx.store.signalOfIssue(repo.name, issue.number);
+      const title = origin?.title ?? issue.title;
+      return { ...issue, title, run: run ? { id: run.id, state: run.state, slug: run.slug } : null };
     });
   }
 
@@ -133,9 +136,20 @@ export class IssueDesk {
     });
   }
 
-  /** Lance un run pour une issue ouverte ; une issue déjà liée à un run vivant ou mergé le rend tel quel. */
-  fix(repo: RepoConfig, number: number, actor: Actor): Promise<FixOutcome> {
+  /**
+   * Lance un run pour une issue ouverte ; une issue déjà liée à un run vivant ou mergé le rend tel quel.
+   * Une issue née d'un signalement d'un collègue ne se lance que par sa confirmation (`options.origin`,
+   * passée par `SignalDesk.confirm` seule) : refusée avant la promesse partagée, sinon un lancement
+   * concurrent (`issue_fix`) y répondrait à la place de l'approbateur.
+   */
+  fix(repo: RepoConfig, number: number, actor: Actor, options: { origin?: true } = {}): Promise<FixOutcome> {
     if (!Number.isInteger(number) || number < 1) throw new HarnessError(400, "number : numéro d'issue attendu");
+    const origin = this.#ctx.store.signalOfIssue(repo.name, number);
+    if (origin && origin.state !== "confirmed" && !options.origin)
+      throw new HarnessError(
+        409,
+        `l'issue #${number} vient d'un signalement ${origin.state} : seul l'appareil approbateur la lance, en confirmant la proposition`,
+      );
     const key = `${repo.name}#${number}`;
     const pending = this.#pending.get(key);
     if (pending) return pending;
@@ -156,12 +170,18 @@ export class IssueDesk {
     const issue = await forge.issue(number);
     if (issue.state !== "OPEN") throw new HarnessError(409, `l'issue #${number} n'est pas ouverte (${issue.state})`);
     const { store } = this.#ctx;
+    const origin = store.signalOfIssue(repo.name, number);
     const run = store.transaction(() => {
+      // Une issue d'origine corpo : titre et demande gardés par le harness (jamais relus sur la forge, où
+      // le corps et les commentaires peuvent porter ce que le caviardage retire).
       const created = this.#createRun(
-        { repo: repo.name, title: `Issue #${number} : ${issue.title}`, request: issueRequest(forge, issue) },
+        origin
+          ? { repo: repo.name, title: origin.runTitle ?? "", request: origin.runRequest ?? "" }
+          : { repo: repo.name, title: `Issue #${number} : ${issue.title}`, request: issueRequest(forge, issue) },
         actor,
       );
       store.linkIssue({ repo: repo.name, number, runId: created.id, url: issue.url, by: actor.by });
+      if (origin) store.linkSignalRun(created.id, origin.id);
       return created;
     });
     this.#ctx.log(
@@ -184,6 +204,8 @@ export class IssueDesk {
     for (const issue of issues) {
       const link = this.#ctx.store.issueRun(repo.name, issue.number);
       if (link) outcome.skipped.push({ issue: issue.number, runId: link.runId });
+      // Une issue d'origine corpo ne se lance que par la confirmation de sa proposition, jamais par label.
+      else if (this.#ctx.store.signalOfIssue(repo.name, issue.number)) continue;
       else if (outcome.launched.length < this.#ctx.config.issues.maxLaunch)
         outcome.launched.push(await this.fix(repo, issue.number, actor));
       else outcome.remaining.push(issue.number);

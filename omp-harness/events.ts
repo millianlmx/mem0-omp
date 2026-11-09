@@ -70,6 +70,8 @@ export const EVENT_TYPES = [
   "audit_state",
   "pilot",
   "dream_state",
+  // les Demandes (intake.ts) : dépôt de la demande, null s'il n'y en a pas
+  "intake_state",
   // planifications récurrentes (le dépôt de leur cible)
   "schedule_fired",
   "schedule_skipped",
@@ -103,6 +105,8 @@ export const EVENT_TYPES = [
   // et son silence (plus de battement de cœur depuis vigie.SILENT_MS)
   "vigie_incident",
   "vigie_silent",
+  // le pont corpo ↔ usine : l'état d'un signalement d'un collègue (`{id, state}` seulement ; repo null : poste réservé au propriétaire)
+  "signal",
   // éphémères
   "activity",
   "session",

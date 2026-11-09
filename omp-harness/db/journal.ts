@@ -84,8 +84,11 @@ export class JournalStore extends RunStore {
       params.push(runId);
     }
     if (repos !== null) {
-      if (repos.length === 0) return [];
-      where.push(`repo IN (${repos.map(() => "?").join(", ")})`);
+      // Un client restreint rejoue aussi les `intake_state` sans dépôt : `visible` (http.ts)
+      // ne garde que ceux dont il est l'auteur.
+      const orphan = "(repo IS NULL AND type = 'intake_state')";
+      if (repos.length === 0) where.push(orphan);
+      else where.push(`(repo IN (${repos.map(() => "?").join(", ")}) OR ${orphan})`);
       params.push(...repos);
     }
     return this.selectAll(
