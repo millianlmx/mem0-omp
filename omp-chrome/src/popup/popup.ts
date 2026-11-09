@@ -3,7 +3,9 @@
 // locale du poste, la transcription de l'onglet actif (l'ouverture du popup accorde
 // activeTab ; le service worker demande alors le flux par chrome.tabCapture.getMediaStreamId),
 // le lien vers OMP Console quand des actions attendent l'approbation, la Demande (posée,
-// relue à chaque ouverture, précisée, confirmée ou annulée par le service worker) et les réglages.
+// relue à chaque ouverture, précisée, confirmée ou annulée par le service worker), les questions
+// en attente du harness (leur carte, puis le schéma de bifurcation en SVG construit en code ; un clic
+// sur une option y répond) et les réglages.
 //
 // Il se tient à jour tout seul : chaque écriture du service worker dans `chrome.storage`
 // (action en cours, journal, liaison, meeting, réglages) le redessine, et l'état du serveur
@@ -12,6 +14,14 @@
 import { element } from "../dom.ts";
 import { describeIntake, INTAKE_KEY, type Intake } from "../lib/intake.ts";
 import type { ActionLog, LinkState, MeetingState, PopupStatus, Reply } from "../lib/messages.ts";
+import {
+  layoutSchema,
+  optionLine,
+  type PendingQuestion,
+  SCHEMA_LINE_HEIGHT,
+  SCHEMA_PAD,
+  type SchemaLayout,
+} from "../lib/questions.ts";
 import { ask } from "../store.ts";
 
 const STATES: Record<LinkState["state"], { title: string; detail: string }> = {
@@ -308,6 +318,115 @@ intakeCancel.addEventListener("click", () => {
   void ask<Intake | null>({ to: "background", type: "intake-cancel", id: shownIntake.id }).then(applyIntake);
 });
 
+// ── Questions en attente : la carte (headline, enjeu, options), puis le schéma de bifurcation en SVG ──
+
+const SVG = "http://www.w3.org/2000/svg";
+const questionsBox = element("questions", HTMLElement);
+const questionsList = element("questions-list", HTMLDivElement);
+const questionsMessage = element("questions-message", HTMLParagraphElement);
+
+function svg<K extends keyof SVGElementTagNameMap>(tag: K, attributes: Record<string, string | number>) {
+  const node = document.createElementNS(SVG, tag);
+  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
+  return node;
+}
+
+/** Le schéma dessiné en code : rectangles, arcs et `textContent`, jamais de balisage venu du serveur. */
+function schemaSvg(layout: SchemaLayout, answer: (option: string) => void): SVGSVGElement {
+  const root = svg("svg", { viewBox: `0 0 ${layout.width} ${layout.height}`, width: "100%", role: "img" });
+  root.classList.add("schema");
+  for (const link of layout.links) {
+    const line = svg("line", { x1: link.x1, y1: link.y1, x2: link.x2, y2: link.y2 });
+    line.classList.add("schema-link");
+    if (link.recommended) line.classList.add("recommended");
+    root.append(line);
+  }
+  for (const box of layout.boxes) {
+    const group = svg("g", {});
+    group.classList.add("schema-node", box.kind);
+    if (box.recommended) group.classList.add("recommended");
+    const rect = svg("rect", { x: box.x, y: box.y, width: box.width, height: box.height, rx: 6 });
+    const label = svg("text", { x: box.x + SCHEMA_PAD, y: box.y + SCHEMA_PAD });
+    box.lines.forEach((line, index) => {
+      const span = svg("tspan", {
+        x: box.x + SCHEMA_PAD,
+        dy: index === 0 ? SCHEMA_LINE_HEIGHT - 3 : SCHEMA_LINE_HEIGHT,
+      });
+      span.textContent = line;
+      label.append(span);
+    });
+    const title = svg("title", {});
+    title.textContent = box.lines.join(" ");
+    group.append(title, rect, label);
+    const option = box.answer;
+    if (option !== null) {
+      group.setAttribute("tabindex", "0");
+      group.setAttribute("role", "button");
+      group.addEventListener("click", () => answer(option));
+      group.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") answer(option);
+      });
+    }
+    root.append(group);
+  }
+  return root;
+}
+
+function questionCard(question: PendingQuestion): HTMLElement {
+  const card = document.createElement("article");
+  card.className = "question";
+  const feature = document.createElement("p");
+  feature.className = "muted";
+  feature.textContent = question.feature;
+  const headline = document.createElement("h3");
+  headline.textContent = question.headline;
+  card.append(feature, headline);
+  if (question.stake !== "") {
+    const stake = document.createElement("p");
+    stake.textContent = `Enjeu : ${question.stake}`;
+    card.append(stake);
+  }
+  const answer = (option: string) => {
+    void ask<PendingQuestion[]>({
+      to: "background",
+      type: "question-answer",
+      runId: question.runId,
+      id: question.id,
+      answer: option,
+    }).then(applyQuestions);
+  };
+  const options = document.createElement("ul");
+  options.className = "options";
+  for (const option of question.options) {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = option.recommended ? "" : "secondary";
+    button.textContent = optionLine(option);
+    button.addEventListener("click", () => answer(option.label));
+    item.append(button);
+    options.append(item);
+  }
+  card.append(options);
+  if (question.schema !== null) card.append(schemaSvg(layoutSchema(question.schema), answer));
+  return card;
+}
+
+function applyQuestions(reply: Reply<PendingQuestion[]>): void {
+  if (!reply.ok) {
+    questionsBox.hidden = false;
+    showMessage(questionsMessage, reply.error, "error");
+    return;
+  }
+  showMessage(questionsMessage, "");
+  questionsBox.hidden = reply.value.length === 0;
+  questionsList.replaceChildren(...reply.value.map(questionCard));
+}
+
+function loadQuestions(): void {
+  void ask<PendingQuestion[]>({ to: "background", type: "questions-get" }).then(applyQuestions);
+}
+
 // Le direct : les écritures du service worker qui changent ce que montre le popup le redessinent
 // (pas `serverPaused`, que la lecture du statut écrit elle-même : ce serait une boucle).
 const LIVE_KEYS: Record<string, true> = {
@@ -329,3 +448,4 @@ setInterval(() => {
 
 void refresh();
 loadIntake();
+loadQuestions();

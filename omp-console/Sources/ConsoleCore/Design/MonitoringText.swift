@@ -484,6 +484,10 @@ public enum NotificationText {
     public static func questions(_ count: Int) -> String {
         count == 1 ? L10n.text("Une question attend votre réponse") : L10n.format("%lld questions attendent votre réponse", count)
     }
+    /// Les autres questions d’un lot, après le `stake` de la première : « +2 autres questions ».
+    public static func otherQuestions(_ count: Int) -> String {
+        count == 1 ? L10n.text("+1 autre question") : L10n.format("+%lld autres questions", count)
+    }
     public static let approval = L10n.text("Poste — envoi à approuver")
     public static let approvalBody = L10n.text("Rien ne part sans votre accord.")
     public static let failed = L10n.text("Feature en échec")

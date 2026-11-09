@@ -97,7 +97,9 @@ export type ToBackground =
   | { to: "background"; type: "intake-get" }
   | { to: "background"; type: "intake-confirm"; id: string }
   | { to: "background"; type: "intake-cancel"; id: string }
-  | { to: "background"; type: "intake-answer"; id: string; text: string };
+  | { to: "background"; type: "intake-answer"; id: string; text: string }
+  | { to: "background"; type: "questions-get" }
+  | { to: "background"; type: "question-answer"; runId: string; id: number; answer: string };
 
 export type ToOffscreen =
   | { to: "offscreen"; type: "config"; config: OffscreenConfig }
