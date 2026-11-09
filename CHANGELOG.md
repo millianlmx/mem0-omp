@@ -1,5 +1,14 @@
 # Journal des versions
 
+## omp-harness 1.35.0 — 2026-11-09
+
+- feat(harness): usine autonome — file débloquée, pilote pour tous les runs, juge des tests par l'API (#432) (670ae98)
+- feat(harness): Moli remplace Obscura comme navigateur de la pile, derrière une porte CDP à jeton (#433) (daafa0b)
+
+## omp-chrome 0.8.0 — 2026-11-09
+
+- feat(harness): Moli remplace Obscura comme navigateur de la pile, derrière une porte CDP à jeton (#433) (daafa0b)
+
 ## omp-harness 1.34.0 — 2026-11-09
 
 - feat(poste): mirroir continu du profil Chrome vers obscura-poste, fin des connecteurs (#430) (9913310)
