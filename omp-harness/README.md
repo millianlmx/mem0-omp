@@ -504,6 +504,10 @@ tests (`test/harness/`) font tourner le service complet avec de vrais process, d
 vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 (`test/support/fake-omp-rpc.ts`).
 
+En isolation `none`, un runner a les droits du service : aucun isolement des jetons des
+canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `systemd` ou
+`container`.
+
 ## Configuration
 
 `/etc/omp-harness/config.json` ne fait que surcharger les défauts
@@ -609,6 +613,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `schedules.timezone` | `Europe/Paris` | le fuseau IANA dans lequel se lisent les expressions cron des planifications (§ « Les planifications ») ; un fuseau inconnu refuse la configuration |
 | `schedules.catchUpMin` | `60` | le rattrapage après un arrêt du service : la plus récente échéance passée de moins de N minutes part une fois, les plus vieilles sont notées manquées (`missed`) ; entier de 1 à 10080 |
 | `clientsFile` | à côté de `tokenFile` | les clients nommés (empreintes de jetons, rôles, dépôts), relu à chaque changement ; illisible (JSON cassé à la main), le dernier jeu lu reste en vigueur, l'erreur est journalisée une fois et `add`/`revoke` refusent de l'écraser |
+| `channelsFile` | à côté de `tokenFile` | les canaux corpo (§ « Les canaux du poste ») : identifiants des clients OAuth, jetons Gmail, Agenda et Slack ; 0600, écrit de façon atomique par le seul service, jamais en base ni dans l'environnement. Illisible, les trois canaux sont « en erreur » et aucune écriture ne l'écrase |
 
 Un `kill -HUP` du service (`harness.sh reload`, ou `systemctl kill -s HUP
 omp-harness`), ou `POST /v1/reload` depuis un client admin, relit la configuration et
@@ -1458,6 +1463,72 @@ répertoire de travail est `<worktreesDir>/workstation/_poste`, la forme
 `<dépôt>/<feature>` qu'exige le lanceur. La scope mémoire est `workstation` : l'agent
 ne touche à la mémoire d'aucun projet.
 
+### Les canaux du poste (Gmail, Agenda, Slack)
+
+Le serveur lit Gmail, l'Agenda et Slack par API, côté serveur (les données ne sortent
+pas) ; il n'**envoie** jamais rien par API. Google n'a aucun scope « brouillons seulement » :
+`gmail.compose`, nécessaire aux brouillons, permet aussi l'envoi. La garde est donc
+tenue par le serveur : `omp-harness/canaux/` est le seul module qui parle à ces API, par
+un client (`Channels.request`) à **liste blanche exacte** de points (méthode, hôte, chemin
+complet, canal propriétaire) où aucun point d'envoi ne figure ; tout scope accordé hors de
+`gmail.readonly`, `gmail.compose` et `calendar.readonly` (Google), ou hors des `user_scopes`
+du manifeste (Slack) refuse la connexion. L'envoi d'une réponse reste un geste du poste dans
+le navigateur, sous la garde d'envoi. Un test parcourt les sources et échoue si un point
+d'envoi y apparaît.
+
+**Google.** Dans un projet Google Cloud à toi : active Gmail API et Google Calendar API,
+configure l'écran de consentement (« Interne » pour un Workspace), crée un client OAuth
+« Application de bureau », télécharge son JSON et colle-le dans l'écran Canaux (ou saisis
+identifiant et secret) : `PUT /v1/workstation/channels/google/client`. Ouvre l'URL rendue par
+`POST …/google/login` (PKCE + `state`) ; Google redirige vers
+`http://127.0.0.1/omp-canaux?code=…&state=…`, une page qui ne se charge pas : recolle son URL
+dans l'écran (`POST …/login/answer {value}`). Aucune route de rappel n'existe.
+
+**Slack.** Crée l'app depuis `omp-harness/deploy/slack-app-manifest.json` (jeton utilisateur
+seul, aucun bot, scopes de lecture, PKCE et rotation des jetons : irréversibles, les jetons de
+rafraîchissement valent alors 30 jours), saisis son identifiant client (aucun secret en PKCE),
+ouvre l'URL rendue et recolle l'URL de retour `http://localhost/omp-canaux?code=…&state=…`.
+Si l'espace exige l'approbation d'un administrateur, Slack ne redirige pas : déclare le
+blocage (`{blocked: true}`).
+
+**Où vivent les jetons.** Dans `channelsFile` (`channels.json`, 0600, à côté de `tokenFile`),
+écrit de façon atomique : identifiants des clients, jetons d'accès et de rafraîchissement,
+scopes accordés. Jamais en base, dans l'environnement, un événement, un log ou une réponse.
+L'état non secret (état, compte, dernière lecture, erreur) est le réglage
+`workstation.channels`. En `systemd`, le dossier d'état est caché aux runners
+(`RUNNER_HIDDEN`) ; en `container`, il n'est jamais monté ; en isolation `none`, le runner a
+les droits du service : aucun isolement n'est garanti.
+
+**L'état d'un canal.** `disconnected`, `connected`, `reconnect` (« à reconnecter » : le point
+de jeton refuse, ex. `invalid_grant`, `invalid_client`, jeton Slack révoqué ; plus aucun appel
+tant qu'une connexion n'a pas réussi), `blocked` (« bloqué par l'administrateur ») et `error`.
+Une coupure (réseau, délai, 5xx, code Slack passager), une limite de débit (429,
+`Retry-After`) et une erreur propre à une ressource (404 d'un message effacé, canal Slack
+archivé) laissent l'état en place ; un refus qui n'est rien de cela (ex. API Agenda non
+activée) met le canal en `error`, qui **reste lu** et repasse `connected` au premier succès.
+Les jetons sont renouvelés d'avance (une minute) ou sur 401 / `token_expired`, un seul
+renouvellement à la fois par connexion.
+
+**Connexion partielle.** Si l'humain décoche des scopes au consentement Google, la connexion
+est gardée pour les canaux entièrement couverts (Gmail = `gmail.readonly` + `gmail.compose`,
+Agenda = `calendar.readonly`) ; l'autre canal reste `disconnected` avec le scope manquant.
+`POST …/google/login {channels: ["calendar"]}` connecte l'Agenda seul.
+
+**Blocage par l'administrateur.** `admin_policy_enforced` ou `access_not_configured` dans la
+page recollée (Google), `unapproved_scope` ou `scope_not_allowed_on_enterprise` (Slack), ou
+`{blocked: true}` : les canaux demandés passent `blocked`, la veille ne les lit pas et le
+poste continue par le navigateur. Google refuse la demande entière dès qu'un scope est
+interdit : une demande complète bloque Gmail et Agenda ensemble ; relance avec
+`channels: ["calendar"]` pour l'Agenda seul (Gmail reste bloqué), ou déclare
+`{blocked: true, channels: ["gmail"]}` si tu sais que seul Gmail est restreint. Un texte
+recollé sans code de blocage ni forme de code est refusé « texte non reconnu ». Le reste du
+poste (agent, demandes, observations) ne dépend d'aucun canal.
+
+L'événement `workstation_channel` (`{id, state}`, `id` = `gmail`, `calendar` ou `slack`) ne
+sert qu'à déclencher une relecture de `GET /v1/workstation/channels` : l'état qu'il porte
+n'est pas la source. Les lignes de journal des canaux ne portent que le canal, l'état et un
+code.
+
 ## Les issues (MCP)
 
 `POST /v1/mcp` est un serveur MCP (transport « Streamable HTTP », réponses JSON, sans
@@ -1701,6 +1772,8 @@ Parmi elles, `instructions` (`POST /v1/runs/{id}/instructions`, et `instructions
 la relance), `run-budget` (`budgetUsd` au lancement, `POST /v1/runs/{id}/budget`),
 `admin-repos` (`POST /v1/repos`), `reload` (le rechargement de la configuration,
 `POST /v1/reload`), `push-alerts` (`POST /v1/push/devices`, les alertes push des
+appareils iOS) et `workstation-channels` (`GET /v1/workstation/channels` et le geste de
+connexion des canaux corpo).
 appareils iOS) et `autonomy` (`GET /v1/autonomy`, `kind` et `labels` d'un run).
 
 `GET /v1/health` vérifie aussi le service : `checks.db` (une lecture de la base),
@@ -1776,6 +1849,10 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/workstation/requests/{id}/cancel` | operator (approbateur) | Annule une demande en file ou en cours : 200 `{request}` `cancelled` ; 409 « la demande est déjà <état> ». |
 | `GET /v1/workstation/automations` · `POST /v1/workstation/automations` `{version, task, browserId?, schedule?}` | viewer · operator (approbateur) | Les automatisations (`{id, createdAt, by, title, frequency, steps, profileVersion, browserId, schedule}`) ; en crée une depuis la tâche `task` de la version `version` du profil : 201, ou 200 l'existante (même titre et étapes) ; 404 profil ou tâche inconnus ; 409 tâche non automatisable ; 400 `schedule` illisible. Avec `schedule`, la création pose sa planification liée. |
 | `POST /v1/workstation/automations/{id}/launch` · `DELETE /v1/workstation/automations/{id}` | operator (approbateur) | Lance l'automatisation (201 `{request}`, 409 en pause) ; la supprime (200 `{removed}`), avec ses planifications ; ses demandes restent. |
+| `GET /v1/workstation/channels` | viewer | L'état des canaux corpo : `{channels: [{id: gmail \| calendar \| slack, connection, state: disconnected \| connected \| reconnect \| blocked \| error, account, lastReadAt, error}], connections: [{id: google \| slack, clientId, clientConfigured, login}]}` ; `login` (`{id, connection, state: waiting \| done \| failed, url, startedAt, expiresAt, error}`) porte l'URL d'autorisation au seul appareil approbateur (`null` pour tout autre client). Jamais de jeton ni de secret. Propriétaire seulement (403), 404 si le poste est désactivé. Capacité `workstation-channels`. |
+| `PUT /v1/workstation/channels/{id}/client` `{clientId, clientSecret}` \| `{json}` \| `{clientId}` | operator (approbateur) | Saisit le client OAuth de la connexion `{id}` = `google` (identifiant et secret, ou le JSON « Application de bureau » téléchargé, clé `installed`) ou `slack` (identifiant seul : PKCE, aucun secret) : 200 `{connection}`, 400 corps illisible, 404 connexion inconnue. Un identifiant différent efface les jetons de la connexion. |
+| `POST /v1/workstation/channels/{id}/login` `{channels?}` | operator (approbateur) | Démarre la connexion `google` ou `slack` : 201 `{login}` dont `url` est l'URL d'autorisation (PKCE + `state`) ; 409 sans client. `channels` (`gmail`, `calendar`) ne demande que les scopes de ces canaux (défaut : tous). |
+| `POST /v1/workstation/channels/{id}/login/answer` `{value}` \| `{blocked: true, channels?}` | operator (approbateur) | Recolle l'URL de retour (ou le code, ou le texte d'erreur affiché) : 200 `{login, channels}`, 400 (`state` étranger, texte non reconnu, connexion expirée), 409 (aucune connexion en cours, refus du fournisseur, scope en trop ou manquant, jeton de bot). `blocked: true` déclare que l'administrateur bloque (seul chemin pour Slack, dont la demande d'approbation ne redirige pas) ; `channels` ne bloque que ces canaux. Événement `workstation_channel`. |
 | `GET /v1/signals?state=&limit=` · `GET /v1/signals/{id}` | viewer (propriétaire) | Les signalements des collègues, récents d'abord (`state` : `received`, `proposed` par défaut, `ignored`, `dismissed`, `confirmed`, séparés par des virgules ; `limit` ≤ 200) : `{signals}` ; un signalement : `{signal}` = `{id, createdAt, updatedAt, channel, threadRef, url, personRef, excerpt, state, reason, error, repo, kind, title, body, issue, runId, confirmedBy, confirmedAt}`. 403 client restreint (« le poste est réservé au propriétaire ») ou pilote ; 404 inconnu ; 400 `state` inconnu. Même sans poste actif. |
 | `POST /v1/signals/{id}/preview` `{repo?, title?, body?}` | viewer (propriétaire) | Le texte EXACT que `confirm` enverrait à la forge : `{repo, policy: {declared, applied, note}, title, body, issue}` (`issue` : l'issue déjà créée, dont le texte n'est alors pas renvoyé). Sans `title`/`body`, la proposition ; sous `full` appliqué, le corps porte la section « Origine ». 409 dépôt en `forbid` ou sans forge, signalement déjà traité. Ne crée rien. |
 | `POST /v1/signals/{id}/confirm` `{repo, title, body}` · `POST /v1/signals/{id}/dismiss` `{reason?}` | operator (approbateur) | Confirme : crée l'issue puis le run lié (201 `{signal, issue, run, policy}`) ; 502 si la forge échoue (la proposition reste, avec `error`), 409 « le signalement est déjà <état> », dépôt `forbid`/sans forge, ou dépôt autre que celui de l'issue déjà créée ; 404 `dépôt inconnu`. Écarte (200 `{signal}`, `reason` ≤ 500) : jamais reproposé. 403 non approbateur, pilote ou client restreint. Événement `signal`. |

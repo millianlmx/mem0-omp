@@ -96,6 +96,7 @@ export const API_FEATURES = [
   "workstation-session",
   "workstation-captures",
   "workstation-files",
+  "workstation-channels",
   "mcp",
   "digest",
   "instructions",
@@ -1022,6 +1023,25 @@ export function apiRoutes(
       const removed = approverOf(call).deleteAutomation(call.match[1] as string);
       orchestrator.schedules.unlinkAutomation(removed);
       send(call.res, 200, { removed });
+    }),
+    // Les canaux corpo (Gmail, Agenda, Slack) : l'état se lit (propriétaire), la connexion se mène
+    // depuis l'appareil approbateur seul (client OAuth, URL d'autorisation, URL de retour recollée).
+    route("GET", "/v1/workstation/channels", "viewer", (call) => {
+      workstationOf(call);
+      send(call.res, 200, orchestrator.channels.view(call.client.approver));
+    }),
+    route("PUT", "/v1/workstation/channels/{id}/client", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(call.res, 200, orchestrator.channels.setClient(call.match[1] as string, body, call.actor.by));
+    }),
+    route("POST", "/v1/workstation/channels/{id}/login", "operator", async (call) => {
+      approverOf(call);
+      send(call.res, 201, orchestrator.channels.startLogin(call.match[1] as string, await readBody(call.req)));
+    }),
+    route("POST", "/v1/workstation/channels/{id}/login/answer", "operator", async (call) => {
+      approverOf(call);
+      send(call.res, 200, await orchestrator.channels.answer(call.match[1] as string, await readBody(call.req)));
     }),
     // La vigie (vigie/) : ses réglages (admin), son battement de cœur et ses incidents (son client pilote).
     route("GET", "/v1/vigie", "viewer", (call) => send(call.res, 200, orchestrator.vigie.view(call.repos, Date.now()))),
