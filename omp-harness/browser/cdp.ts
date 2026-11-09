@@ -1,11 +1,12 @@
-// Une connexion CDP à Obscura (`/devtools/browser`) : appels bornés, évènements, fermeture
-// garantie. Obscura donne un BrowserContext isolé à CHAQUE connexion : la fermer détruit
-// ses pages. Aucun message d'erreur ne contient le jeton.
+// Une connexion CDP à Moli (`/devtools/browser`, que la porte CDP de l'image réécrit vers le
+// chemin publié par Moli) : appels bornés, évènements, fermeture garantie. Moli ne détruit rien
+// à la fermeture d'une connexion : les pages et les cookies d'un contexte restent tant qu'on ne
+// le supprime pas (voir session.ts). Aucun message d'erreur ne contient le jeton.
 import { WebSocketError, WebSocketHandshakeError, openWebSocket } from "./websocket.ts";
 import type { WebSocketLink } from "./websocket.ts";
 import type { Duplex } from "node:stream";
 
-/** Une erreur CDP : `remote` quand le texte vient d'Obscura ou de la page (contenu non fiable). */
+/** Une erreur CDP : `remote` quand le texte vient de Moli ou de la page (contenu non fiable). */
 export class CdpError extends Error {
   readonly method: string;
   readonly remote: boolean;

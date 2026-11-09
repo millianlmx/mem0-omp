@@ -971,7 +971,7 @@ export function apiRoutes(
       await orchestrator.workstationAgent.halt("interrompu : arrêt d'urgence");
       send(call.res, 200, stopped);
     }),
-    // Le navigateur du poste sur le VPS (`obscura-poste`) : le mirroir de la session du Chrome source
+    // Le navigateur du poste sur le VPS (`moli-poste`) : le mirroir de la session du Chrome source
     // (l'extension choisie par `mirrorBrowser`) et la connexion interactive (approbateur seulement).
     route("GET", "/v1/workstation/vps/mirror", "operator", async (call) => {
       workstationOf(call);

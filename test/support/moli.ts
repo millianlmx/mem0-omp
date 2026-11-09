@@ -1,7 +1,7 @@
-// Outillage des tests qui exigent un vrai `obscura serve` (binaire v0.2.6 épinglé par
-// `bash scripts/obscura.sh --prepare`) : le lancer, le jouer devant un relais qui compte les
-// connexions, servir des pages de test (qui font aussi proxy témoin pour `--proxy`), et un
-// serveur CDP muet.
+// Outillage des tests qui exigent un vrai `moli serve` (binaire v1.1.22 épinglé par
+// `bash scripts/moli.sh --prepare`) derrière la porte CDP de l'image (moli-gate.ts) : le
+// lancer, le jouer devant un relais qui compte les connexions, servir des pages de test (qui
+// font aussi proxy témoin pour `--http-proxy`), et un serveur CDP muet.
 //
 // Ce module n'est pas un fichier de test (pas de suffixe `.test.ts`).
 import test from "node:test";
@@ -13,24 +13,28 @@ import * as http from "node:http";
 import * as net from "node:net";
 import type { Duplex } from "node:stream";
 import * as path from "node:path";
+import { startGate } from "../../omp-harness/deploy/container/moli-gate.ts";
+import type { Gate } from "../../omp-harness/deploy/container/moli-gate.ts";
 import { prerequisAbsent } from "./prerequis.ts";
 import { ROOT, tmpdir } from "./repo.ts";
 
 const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 const running = new Set<ChildProcess>();
-test.after(() => {
+const gates = new Set<Gate>();
+test.after(async () => {
   for (const child of running) child.kill("SIGKILL");
+  for (const gate of gates) await gate.close();
 });
 
-/** Le binaire Obscura des tests : `OBSCURA_BIN`, sinon celui que prépare scripts/obscura.sh. */
-export function obscuraBin(t: { skip(message: string): void }): string | null {
-  const bin = process.env.OBSCURA_BIN || path.join(ROOT, ".obscura", "v0.2.6", "obscura");
+/** Le binaire Moli des tests : `MOLI_BIN`, sinon celui que prépare scripts/moli.sh. */
+export function moliBin(t: { skip(message: string): void }): string | null {
+  const bin = process.env.MOLI_BIN || path.join(ROOT, ".moli", "v1.1.22", "moli");
   if (fs.existsSync(bin)) return bin;
   prerequisAbsent(
     t,
-    "obscura v0.2.6 épinglé",
-    "client CDP et outils browser_* non éprouvés — bash scripts/obscura.sh --prepare",
+    "moli v1.1.22 épinglé",
+    "client CDP et outils browser_* non éprouvés — bash scripts/moli.sh --prepare",
   );
   return null;
 }
@@ -44,31 +48,28 @@ export async function freePort(): Promise<number> {
   return port;
 }
 
-export type RunningObscura = { url: string; token: string; port: number; stop: () => Promise<void> };
+export type RunningMoli = { url: string; token: string; port: number; stop: () => Promise<void> };
 
 /**
- * `obscura serve` sur la boucle locale, prêt quand `/json/version` répond. Derrière un relais
- * (countingProxy), Obscura refuse l'en-tête Host du relais (403) sauf s'il connaît son port :
- * ouvrir le relais d'abord, puis passer `port` (celui visé par le relais) et `relayPort`.
+ * `moli serve --layout` sur un port libre de la boucle locale, derrière la porte CDP de l'image
+ * (jeton Bearer, Host et chemin du navigateur réécrits) qui écoute sur `port` : `url` et `port`
+ * sont ceux de la porte. Prêt quand `/json/version` répond à travers elle. Le réseau privé est
+ * permis par défaut (comme dans Moli) ; `blockPrivateNetworks` pose `--block-private-networks`.
+ * Avec `proxy`, Moli envoie TOUT au proxy, adresses privées comprises (`--block-private-networks`
+ * ne vise que les connexions directes) : `noProxy` (`--http-no-proxy`) en rend une partie directe.
  */
-export async function startObscura(
+export async function startMoli(
   bin: string,
-  options: { token?: string; allowPrivateNetwork?: boolean; proxy?: string; port?: number; relayPort?: number } = {},
-): Promise<RunningObscura> {
+  options: { token?: string; blockPrivateNetworks?: boolean; proxy?: string; noProxy?: string; port?: number } = {},
+): Promise<RunningMoli> {
   const token = options.token ?? randomBytes(32).toString("hex");
-  const port = options.port ?? (await freePort());
-  const args = ["serve", "--host", "127.0.0.1", "--port", String(port)];
-  if (options.allowPrivateNetwork) args.push("--allow-private-network");
-  if (options.proxy) args.push("--proxy", options.proxy);
+  const upstreamPort = await freePort();
+  const args = ["serve", "--host", "127.0.0.1", "--port", String(upstreamPort), "--layout"];
+  if (options.blockPrivateNetworks) args.push("--block-private-networks");
+  if (options.proxy) args.push("--http-proxy", options.proxy);
+  if (options.noProxy) args.push("--http-no-proxy", options.noProxy);
   const child = spawn(bin, args, {
-    env: {
-      PATH: process.env.PATH ?? "/usr/bin:/bin",
-      OBSCURA_CDP_TOKEN: token,
-      HOME: tmpdir("obscura-home-"),
-      ...(options.relayPort
-        ? { OBSCURA_CDP_FORWARDED_HOST: "127.0.0.1", OBSCURA_CDP_FORWARDED_PORT: String(options.relayPort) }
-        : {}),
-    },
+    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir("moli-home-") },
     stdio: ["ignore", "ignore", "pipe"],
   });
   running.add(child);
@@ -77,10 +78,29 @@ export async function startObscura(
     stderr = (stderr + chunk.toString()).slice(-2000);
   });
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-  const url = `http://127.0.0.1:${port}`;
+  const gate = await startGate({
+    token,
+    upstream: { host: "127.0.0.1", port: upstreamPort },
+    host: "127.0.0.1",
+    port: options.port ?? 0,
+  });
+  gates.add(gate);
+  const url = `http://127.0.0.1:${gate.port}`;
+  const stop = async (): Promise<void> => {
+    gates.delete(gate);
+    await gate.close();
+    child.kill("SIGTERM");
+    const forced = setTimeout(() => child.kill("SIGKILL"), 3000);
+    await exited;
+    clearTimeout(forced);
+    running.delete(child);
+  };
   const deadline = Date.now() + 15_000;
   for (;;) {
-    if (child.exitCode !== null) throw new Error(`obscura s'est arrêté : ${stderr}`);
+    if (child.exitCode !== null) {
+      await stop();
+      throw new Error(`moli s'est arrêté : ${stderr}`);
+    }
     try {
       const reply = await fetch(`${url}/json/version`, { headers: { Authorization: `Bearer ${token}` } });
       if (reply.status === 200) break;
@@ -89,22 +109,12 @@ export async function startObscura(
     }
     if (Date.now() > deadline) {
       child.kill("SIGKILL");
-      throw new Error(`obscura n'est pas prêt en 15 s : ${stderr}`);
+      await stop();
+      throw new Error(`moli n'est pas prêt en 15 s : ${stderr}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return {
-    url,
-    token,
-    port,
-    stop: async () => {
-      child.kill("SIGTERM");
-      const forced = setTimeout(() => child.kill("SIGKILL"), 3000);
-      await exited;
-      clearTimeout(forced);
-      running.delete(child);
-    },
-  };
+  return { url, token, port: gate.port, stop };
 }
 
 export type CountingProxy = { port: number; live: () => number; total: () => number; stop: () => Promise<void> };

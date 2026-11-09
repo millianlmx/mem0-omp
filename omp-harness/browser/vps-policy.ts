@@ -6,7 +6,7 @@ import { hostListed } from "../workstation-guards.ts";
 
 /** L'identifiant du navigateur serveur dans le mécanisme multi-navigateurs du poste. */
 export const VPS_BROWSER = "vps";
-export const VPS_LABEL = "VPS (Obscura)";
+export const VPS_LABEL = "VPS (Moli)";
 
 /** Les comptes dont l'état est suivi, et les seuls domaines où une connexion interactive peut démarrer. */
 export const ACCOUNT_DOMAINS = ["slack.com", "google.com"] as const;
@@ -63,7 +63,10 @@ function entries(raw: unknown, key: string): Record<string, unknown>[] {
   });
 }
 
-/** Le nom, le domaine (sans point, en minuscules) et le chemin d'un cookie, validés. */
+/**
+ * Le nom, le domaine (en minuscules, point de tête compris, comme `chrome.cookies` le donne) et
+ * le chemin d'un cookie, validés.
+ */
 function identity(cookie: Record<string, unknown>, where: string): { name: string; domain: string; path: string } {
   for (const key of ["name", "domain", "path"] as const)
     if (typeof cookie[key] !== "string" || (cookie[key] as string).length > MAX_COOKIE_TEXT)
@@ -74,13 +77,13 @@ function identity(cookie: Record<string, unknown>, where: string): { name: strin
   if (!DOMAIN.test(raw)) bad(`${where}.domain : nom d'hôte attendu`);
   const path = cookie.path as string;
   if (path !== "" && !path.startsWith("/")) bad(`${where}.path : chemin absolu attendu`);
-  return { name, domain: raw.replace(/^\./, ""), path: path === "" ? "/" : path };
+  return { name, domain: raw, path: path === "" ? "/" : path };
 }
 
 /**
  * Les cookies du mirroir, tels que `chrome.cookies` les décrit : TOUS les domaines du profil
  * sont acceptés (décision de l'utilisateur), seule la forme est contrôlée. Un cookie host-only
- * part avec `url` et sans `domain` : Obscura traite un `domain` explicite comme un cookie de
+ * part avec `url` et sans `domain` : Moli traite un `domain` explicite comme un cookie de
  * domaine et rejette alors en silence les `__Host-…`. Les messages ne reprennent JAMAIS une valeur.
  */
 export function parseMirrorCookies(raw: unknown): MirrorCookie[] {
@@ -90,8 +93,9 @@ export function parseMirrorCookies(raw: unknown): MirrorCookie[] {
     if (typeof cookie.value !== "string" || cookie.value.length > MAX_COOKIE_TEXT)
       bad(`${where}.value : chaîne de ${MAX_COOKIE_TEXT} caractères au plus attendue`);
     const secure = cookie.secure === true;
+    const host = domain.replace(/^\./, "");
     const scope =
-      cookie.hostOnly === true ? { url: `${secure ? "https" : "http"}://${domain}${path}` } : { domain: `.${domain}` };
+      cookie.hostOnly === true ? { url: `${secure ? "https" : "http"}://${host}${path}` } : { domain: `.${host}` };
     const result: MirrorCookie = {
       name,
       value: cookie.value,
@@ -109,7 +113,11 @@ export function parseMirrorCookies(raw: unknown): MirrorCookie[] {
   });
 }
 
-/** Les cookies disparus du Chrome de l'utilisateur : `{name, domain, path}`. */
+/**
+ * Les cookies disparus du Chrome de l'utilisateur : `{name, domain, path}`, le domaine tel que
+ * Chrome le donne (`.slack.com` pour un cookie de domaine, `app.slack.com` pour un host-only) :
+ * `Network.deleteCookies` de Moli ne retire que le cookie de ce domaine exact.
+ */
 export function parseMirrorRemovals(raw: unknown): MirrorRemoval[] {
   return entries(raw, "removed").map((cookie, index) => identity(cookie, `removed[${index}]`));
 }

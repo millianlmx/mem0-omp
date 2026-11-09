@@ -52,20 +52,17 @@ x-paths: &paths
   OMP_HARNESS_SECRETS: ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}
   HOME: ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/home
 
-# Les navigateurs Obscura : l'image officielle plus un shell (elle n'en a pas, et Obscura
-# ne lit son jeton que dans OBSCURA_CDP_TOKEN).
-x-obscura-image: &obscura-image
+# Les navigateurs Moli : le binaire épinglé derrière la porte CDP (moli-gate.ts), qui
+# exige le jeton MOLI_CDP_TOKEN que Moli, sans authentification, ne vérifie pas.
+x-moli-image: &moli-image
   build:
     context: .
-    dockerfile: omp-harness/deploy/container/Dockerfile.obscura
-  image: omp-harness-obscura:local
+    dockerfile: omp-harness/deploy/container/Dockerfile.moli
+  image: omp-harness-moli:local
   pull_policy: build
   restart: unless-stopped
   depends_on:
     setup: { condition: service_completed_successfully }
-  environment:
-    OBSCURA_NAV_TIMEOUT_MS: "20000"
-    OBSCURA_CDP_COMMAND_TIMEOUT_MS: "25000"
 
 services:
   # Une fois par démarrage : dossiers, secrets (le jeton de la mémoire est gardé),
@@ -116,8 +113,8 @@ services:
     # `default` d'abord : sans lui, le service quitterait le réseau des runners.
     networks:
       - default
-      - obscura
-      - obscura-poste
+      - moli
+      - moli-poste
     # La santé du service (`/v1/health` : base, scheduling, disque ; 503 au moindre
     # échec). L'image a node, pas curl.
     healthcheck:
@@ -243,28 +240,29 @@ services:
       # fichier absent deviendrait un dossier.
       - ${OMP_HARNESS_TAILSCALE_RUN:-/var/run/tailscale}:/var/run/tailscale
 
-  # Les navigateurs Obscura, construits depuis l'image officielle épinglée par digest plus
-  # un shell (omp-harness/deploy/container/Dockerfile.obscura). Jamais publiés sur l'hôte :
-  # `obscura` (éphémère, sans identité) sert les outils `browser_*` du harness ;
-  # `obscura-poste` (stockage persistant) est celui de l'agent corpo, joignable par le seul
-  # `harness`. Les jetons CDP sont des fichiers des secrets, écrits par `setup`.
-  obscura:
-    <<: *obscura-image
+  # Les navigateurs Moli, construits avec le binaire épinglé et la porte CDP
+  # (omp-harness/deploy/container/Dockerfile.moli). Jamais publiés sur l'hôte :
+  # `moli` (sans identité, un contexte jetable par session) sert les outils `browser_*` du
+  # harness ; `moli-poste` (profil persistant) est celui de l'agent corpo, joignable par le
+  # seul `harness`. Les jetons CDP sont des fichiers des secrets, écrits par `setup`.
+  moli:
+    <<: *moli-image
+    command: ["--block-private-networks"]
     volumes:
-      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/obscura:/run/secrets/obscura:ro
+      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/moli:/run/secrets/moli:ro
     networks:
-      - obscura
-      - obscura-sortie
+      - moli
+      - moli-sortie
 
-  obscura-poste:
-    <<: *obscura-image
-    command: ["--storage-dir", "/var/lib/obscura-poste"]
+  moli-poste:
+    <<: *moli-image
+    command: ["--block-private-networks", "--profile-dir", "/var/lib/moli-poste"]
     volumes:
-      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/obscura-poste:/run/secrets/obscura:ro
-      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/obscura-poste/storage:/var/lib/obscura-poste
+      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/moli-poste:/run/secrets/moli:ro
+      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/moli-poste/profile:/var/lib/moli-poste
     networks:
-      - obscura-poste
-      - obscura-poste-sortie
+      - moli-poste
+      - moli-poste-sortie
 
   # Les images que le service lance à la demande : construites ou tirées avec la
   # pile, puis arrêtées (état « exited » : c'est normal).
@@ -316,21 +314,21 @@ networks:
   default:
     # Le réseau que rejoignent les runners (`container.network`) : ils y joignent `mem0`.
     name: omp-harness
-  # Les navigateurs Obscura (jamais publiés) : chacun a un réseau interne qu'il ne partage
+  # Les navigateurs Moli (jamais publiés) : chacun a un réseau interne qu'il ne partage
   # qu'avec `harness`, et un réseau de sortie dont il est le seul membre.
-  obscura:
-    name: omp-obscura
+  moli:
+    name: omp-moli
     internal: true
-  obscura-sortie:
-    name: omp-obscura-sortie
+  moli-sortie:
+    name: omp-moli-sortie
     driver_opts:
       # Nom fixe du pont sur l'hôte : les règles pare-feu du README (« Couper l'hôte du navigateur ») le visent.
-      com.docker.network.bridge.name: omp-obs-sortie
-  obscura-poste:
-    name: omp-obscura-poste
+      com.docker.network.bridge.name: omp-moli-sortie
+  moli-poste:
+    name: omp-moli-poste
     internal: true
-  obscura-poste-sortie:
-    name: omp-obscura-poste-sortie
+  moli-poste-sortie:
+    name: omp-moli-poste-sortie
     driver_opts:
       # Idem : le pont du navigateur du poste, visé par les mêmes règles.
-      com.docker.network.bridge.name: omp-obsp-sort
+      com.docker.network.bridge.name: omp-molp-sort

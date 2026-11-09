@@ -5,11 +5,13 @@
 // Il ne lance AUCUN vrai conteneur :
 // - `run` d'un job heavy (sans `-d`) exécute la commande ICI, dans son `--workdir`, avec ses `--env` ;
 // - `run -d` de la prévisualisation (image des tests) crée un « conteneur » d'état ;
-// - `run -d` du navigateur de QA (image `omp-harness-obscura:local`) lance un VRAI `obscura serve` (le
-//   binaire épinglé, `control.obscuraBin`) dont le réseau est modélisé par `--proxy` : il n'atteint que le
-//   serveur de test de SA prévisualisation (`control.netns[<prévisualisation>]`, sinon `control.defaultNetns`),
-//   tout autre hôte reçoit 404 de ce serveur ; le jeton vient de l'environnement du CLI (`--env OBSCURA_CDP_TOKEN`) ;
-// - `exec <navigateur> /busybox nc 127.0.0.1 9222` relie stdin/stdout à ce vrai Obscura ;
+// - `run -d` du navigateur de QA (image `omp-harness-moli:local`) lance, comme l'entrée de l'image, la VRAIE
+//   porte CDP (moli-gate.ts) qui démarre un VRAI `moli serve --layout` (le binaire épinglé, `control.moliBin`)
+//   et rend la main aussitôt, comme `docker run -d` : la porte n'écoute qu'une fois Moli prêt. Le réseau du
+//   navigateur est modélisé par `--http-proxy` : il n'atteint que le serveur de test de SA prévisualisation
+//   (`control.netns[<prévisualisation>]`, sinon `control.defaultNetns`), tout autre hôte reçoit 404 de ce
+//   serveur ; le jeton vient de l'environnement du CLI (`--env MOLI_CDP_TOKEN`) ;
+// - `exec <navigateur> /busybox nc 127.0.0.1 9222` relie stdin/stdout à cette porte ;
 // - `exec <navigateur> /busybox wget …` sonde le serveur de la prévisualisation ;
 // - `inspect`, `logs`, `rm` répondent d'après l'état ; chaque appel est journalisé.
 // `control.json` (écrit par le test) pilote les pannes : `failRun` (`preview` | `browser`), `neverReady`, `previewExited`,
@@ -19,11 +21,17 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as net from "node:net";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const GATE = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../omp-harness/deploy/container/moli-gate.ts",
+);
 
 const [stateDir, ...argv] = process.argv.slice(2) as [string, ...string[]];
 
 type Control = {
-  obscuraBin?: string;
+  moliBin?: string;
   netns?: Record<string, number>;
   defaultNetns?: number;
   failRun?: "preview" | "browser";
@@ -44,7 +52,7 @@ const stateFile = (name: string): string => path.join(stateDir, `${name}.json`);
 
 fs.appendFileSync(
   path.join(stateDir, "log.jsonl"),
-  `${JSON.stringify({ argv, tokenEnv: process.env.OBSCURA_CDP_TOKEN ?? null })}\n`,
+  `${JSON.stringify({ argv, tokenEnv: process.env.MOLI_CDP_TOKEN ?? null })}\n`,
 );
 
 function fail(message: string, code = 1): never {
@@ -55,7 +63,7 @@ function fail(message: string, code = 1): never {
 type Container = {
   role: "preview" | "browser";
   network: string | null;
-  /** Navigateur : le process Obscura et son port d'écoute réel. */
+  /** Navigateur : le process de la porte (chef de son groupe, Moli compris) et son port d'écoute. */
   pid?: number;
   port?: number;
   preview?: string;
@@ -104,7 +112,7 @@ async function run(args: string[]): Promise<void> {
   const image = args[i] as string;
   const rest = args.slice(i + 1);
   if (label === "omp-harness=qa") {
-    const role = image === "omp-harness-obscura:local" ? "browser" : "preview";
+    const role = image === "omp-harness-moli:local" ? "browser" : "preview";
     if (control().failRun === role) fail("faux moteur : démarrage refusé", 125);
     if (!detached) fail("faux moteur : la QA part en -d", 2);
     if (role === "preview") {
@@ -114,51 +122,49 @@ async function run(args: string[]): Promise<void> {
     }
     const preview = network?.startsWith("container:") ? network.slice(10) : "";
     if (read(preview)?.role !== "preview") fail(`faux moteur : No such container: ${preview}`, 125);
-    // Sans binaire (`obscuraBin` absent) : un navigateur « inerte », que les tests de panne n'ont pas besoin de joindre.
-    if (control().obscuraBin === undefined) {
+    // Sans binaire (`moliBin` absent) : un navigateur « inerte », que les tests de panne n'ont pas besoin de joindre.
+    const bin = control().moliBin;
+    if (bin === undefined) {
       fs.writeFileSync(stateFile(name), JSON.stringify({ role, network, preview } satisfies Container));
       process.stdout.write(`${name}\n`);
       return;
     }
     const proxyPort = control().netns?.[preview] ?? control().defaultNetns;
     if (proxyPort === undefined) fail("faux moteur : aucun serveur pour cette prévisualisation", 125);
-    const token = env.OBSCURA_CDP_TOKEN ?? "";
-    const port = await freePort();
+    const [port, upstream] = [await freePort(), await freePort()];
+    // `--` puis `--layout` et les arguments du conteneur : la ligne de moli-entrypoint.
     const child = spawn(
-      control().obscuraBin as string,
-      ["serve", "--host", "127.0.0.1", "--port", String(port), ...rest, "--proxy", `http://127.0.0.1:${proxyPort}`],
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--no-warnings",
+        GATE,
+        "--",
+        "--layout",
+        ...rest,
+        "--http-proxy",
+        `http://127.0.0.1:${proxyPort}`,
+      ],
       {
         env: {
           PATH: process.env.PATH ?? "/usr/bin:/bin",
-          HOME: fs.mkdtempSync(path.join(stateDir, "obscura-home-")),
-          OBSCURA_CDP_TOKEN: token,
-          // La page n'est pas sur le port d'écoute réel : Obscura doit accepter l'en-tête Host du CDP (127.0.0.1:9222).
-          OBSCURA_CDP_FORWARDED_HOST: "127.0.0.1",
-          OBSCURA_CDP_FORWARDED_PORT: "9222",
+          HOME: fs.mkdtempSync(path.join(stateDir, "moli-home-")),
+          MOLI_BIN: bin,
+          MOLI_CDP_TOKEN: env.MOLI_CDP_TOKEN ?? "",
+          MOLI_UPSTREAM_PORT: String(upstream),
+          MOLI_GATE_PORT: String(port),
         },
         stdio: "ignore",
+        // Chef d'un groupe : `rm` tue la porte ET Moli d'un seul signal.
         detached: true,
       },
     );
     child.unref();
-    const deadline = Date.now() + 15_000;
-    for (;;) {
-      try {
-        const reply = await fetch(`http://127.0.0.1:${port}/json/version`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (reply.status === 200) break;
-      } catch {
-        // Pas encore à l'écoute.
-      }
-      if (Date.now() > deadline) fail("faux moteur : obscura n'est pas prêt en 15 s", 125);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
     fs.writeFileSync(
       stateFile(name),
       JSON.stringify({ role, network, pid: child.pid, port, preview } satisfies Container),
     );
-    // Le test retrouve ainsi le process Obscura réel même une fois le conteneur retiré.
+    // Le test retrouve ainsi le navigateur réel même une fois le conteneur retiré.
     fs.appendFileSync(path.join(stateDir, "log.jsonl"), `${JSON.stringify({ started: { name, pid: child.pid } })}\n`);
     process.stdout.write(`${name}\n`);
     return;
@@ -219,7 +225,7 @@ function rm(args: string[]): void {
     }
     if (container.pid !== undefined) {
       try {
-        process.kill(container.pid, "SIGKILL");
+        process.kill(-container.pid, "SIGKILL");
       } catch {
         // Déjà parti.
       }

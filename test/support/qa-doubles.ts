@@ -25,9 +25,12 @@ export type FakeDocker = {
   qaCalls: () => DockerCall[];
   /** Les `docker run` de la QA : nom, réseau, image, arguments. */
   qaRuns: () => QaRun[];
-  /** Les navigateurs de QA que le faux moteur a lancés et que personne n'a retirés : nom et pid du vrai Obscura. */
-  browsers: () => { name: string; pid: number }[];
-  /** Les process Obscura de QA lancés, retirés ou non, dans l'ordre. */
+  /**
+   * Les navigateurs de QA que le faux moteur a lancés et que personne n'a retirés : nom, pid de la vraie porte CDP
+   * (chef du groupe de Moli) et son port d'écoute (le 9222 du conteneur).
+   */
+  browsers: () => { name: string; pid: number; port: number }[];
+  /** Les navigateurs de QA lancés, retirés ou non, dans l'ordre. */
   started: () => { name: string; pid: number }[];
 };
 
@@ -47,26 +50,32 @@ export function isAlive(pid: number): boolean {
 
 const dirs = new Set<string>();
 
-function stateOf(dir: string): { name: string; pid?: number }[] {
+function stateOf(dir: string): { name: string; pid?: number; port?: number }[] {
   return fs
     .readdirSync(dir)
     .filter((file) => file.endsWith(".json") && file !== "control.json")
     .map((file) => ({
       name: file.slice(0, -5),
-      ...(JSON.parse(fs.readFileSync(path.join(dir, file), "utf8")) as { pid?: number }),
+      ...(JSON.parse(fs.readFileSync(path.join(dir, file), "utf8")) as { pid?: number; port?: number }),
     }));
 }
 
-/** Les process Obscura que le faux moteur a laissés (un test qui échoue n'a pas nettoyé) sont tués à la fin. */
+/** Les navigateurs que le faux moteur a laissés (un test qui échoue n'a pas nettoyé) sont tués à la fin, Moli compris. */
 test.after(() => {
   for (const dir of dirs) {
-    for (const { pid } of stateOf(dir)) if (pid !== undefined && isAlive(pid)) process.kill(pid, "SIGKILL");
+    for (const { pid } of stateOf(dir))
+      if (pid !== undefined && isAlive(pid))
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          // Déjà parti.
+        }
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-/** Un faux moteur de conteneurs ; `obscuraBin` : le vrai binaire que lance le navigateur de QA. */
-export function fakeDocker(obscuraBin: string | null): FakeDocker {
+/** Un faux moteur de conteneurs ; `moliBin` : le vrai binaire que lance le navigateur de QA. */
+export function fakeDocker(moliBin: string | null): FakeDocker {
   // Hors de `tmpdir()` : son nettoyage passe avant `test.after`, qui a besoin des pid pour tuer ce qui reste.
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "fake-docker-"));
   dirs.add(dir);
@@ -77,7 +86,7 @@ export function fakeDocker(obscuraBin: string | null): FakeDocker {
       : {};
     fs.writeFileSync(controlFile, JSON.stringify({ ...current, ...patch }));
   };
-  write(obscuraBin === null ? {} : { obscuraBin });
+  write(moliBin === null ? {} : { moliBin });
   const lines = (): Record<string, unknown>[] => {
     const file = path.join(dir, "log.jsonl");
     if (!fs.existsSync(file)) return [];
@@ -100,12 +109,12 @@ export function fakeDocker(obscuraBin: string | null): FakeDocker {
           name: argv.find((arg) => arg.startsWith("--name="))?.slice(7) ?? "",
           argv,
           network: argv.find((arg) => arg.startsWith("--network="))?.slice(10) ?? null,
-          image: argv.find((arg) => /^(omp-harness-obscura:local|docker\.io\/)/.test(arg)) ?? "",
+          image: argv.find((arg) => /^(omp-harness-moli:local|docker\.io\/)/.test(arg)) ?? "",
         })),
     browsers: () =>
       stateOf(dir)
-        .filter((entry): entry is { name: string; pid: number } => entry.pid !== undefined)
-        .map(({ name, pid }) => ({ name, pid })),
+        .filter((entry): entry is { name: string; pid: number; port: number } => entry.pid !== undefined)
+        .map(({ name, pid, port }) => ({ name, pid, port })),
     started: () =>
       lines()
         .map((line) => line.started as { name: string; pid: number } | undefined)

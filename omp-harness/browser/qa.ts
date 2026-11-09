@@ -1,13 +1,14 @@
-// La QA de /review : la prévisualisation du worktree d'un run et SON navigateur Obscura.
+// La QA de /review : la prévisualisation du worktree d'un run et SON navigateur Moli.
 //
 // Deux conteneurs frères, par étape /review, nommés d'après le run :
 // - la prévisualisation : l'image des tests du dépôt, `--network=none` (comme un job heavy, seul `lo`
 //   existe), le worktree monté en lecture seule, `preview.command` lancé par `bash -c` ;
-// - le navigateur : l'image épinglée `omp-harness-obscura:local`, `--network=container:<prévisualisation>`
-//   — le SEUL réseau qu'il a —, `--allow-private-network` (la page est sur 127.0.0.1 : le drapeau vaut
-//   pour tout le processus, et ce réseau ne contient que la prévisualisation).
-// Le harness n'est sur aucun de ces réseaux : le CDP passe par `docker exec -i <navigateur> nc
-// 127.0.0.1 9222` (stdin/stdout du CLI), jamais par un réseau partagé. Aucun port n'est publié.
+// - le navigateur : l'image épinglée `omp-harness-moli:local`, `--network=container:<prévisualisation>`
+//   — le SEUL réseau qu'il a. Moli y garde le réseau privé permis (son défaut) : la page est sur
+//   127.0.0.1, et ce réseau ne contient que la prévisualisation.
+// Le harness n'est sur aucun de ces réseaux : le CDP passe par `docker exec -i <navigateur> /busybox nc
+// 127.0.0.1 9222` (stdin/stdout du CLI) vers la porte CDP de l'image, jamais par un réseau partagé. Aucun
+// port n'est publié.
 //
 // La QA ne bloque jamais la revue : un échec laisse une preuve `log` qui dit pourquoi. La page
 // d'accueil est capturée d'office par le harness dès que la prévisualisation répond.
@@ -24,7 +25,7 @@ import { MAX_PROOF_BYTES, MAX_PROOF_TITLE } from "../proofs.ts";
 import type { ProofSide, ProofStore } from "../proofs.ts";
 import type { HostToolResult } from "../rpc.ts";
 import { containerUser, engine } from "../runner.ts";
-import { CdpClosedError, CdpConnectError, CdpTimeoutError } from "./cdp.ts";
+import { CdpClosedError, CdpConnectError, CdpConnection, CdpTimeoutError } from "./cdp.ts";
 import { browserError } from "./desk.ts";
 import { GuardRefusal } from "./guard.ts";
 import { QA_TOOL_ARGS } from "./qa-tools.ts";
@@ -35,14 +36,16 @@ import { renderPage } from "./snapshot.ts";
 import { runBrowserTask } from "./task.ts";
 
 /** L'image du navigateur de QA : celle de la pile (S-1), jamais une autre. */
-export const QA_IMAGE = "omp-harness-obscura:local";
+export const QA_IMAGE = "omp-harness-moli:local";
 
-/** La mention des preuves de la QA : un rendu Obscura n'est pas un rendu de navigateur grand public. */
-export const QA_CAPTION = "rendu Obscura, fidélité visuelle non garantie";
+/** La mention des preuves de la QA : un rendu Moli n'est pas un rendu de navigateur grand public. */
+export const QA_CAPTION = "rendu Moli, fidélité visuelle non garantie";
 
 const BROWSER_MEMORY = "512m";
 const POLL_MS = 500;
 const CALL_TIMEOUT_MS = 30_000;
+/** Le délai de la porte CDP du navigateur de QA (celle de l'image attend Moli 30 s au plus). */
+const BROWSER_READY_MS = 30_000;
 const RUN_TIMEOUT_MS = 120_000;
 const SHORT_TIMEOUT_MS = 10_000;
 const REMOVE_TIMEOUT_MS = 30_000;
@@ -103,8 +106,8 @@ export function previewArgv(
 
 /**
  * Le navigateur : l'image épinglée avec son entrypoint, dans l'espace réseau de la prévisualisation et nulle
- * part ailleurs. Le jeton n'est pas dans la ligne de commande : `--env OBSCURA_CDP_TOKEN` le lit dans
- * l'environnement du CLI (`QaPreview` le lui donne).
+ * part ailleurs. Pas de fichier de secrets (`MOLI_ENV_FILE=/dev/null`) : `--env MOLI_CDP_TOKEN` lit le jeton
+ * dans l'environnement du CLI (`QaPreview` le lui donne), jamais dans la ligne de commande.
  */
 export function browserArgv(config: HarnessConfig, previewUnit: string, unit: string): Argv {
   return engine(config, [
@@ -115,11 +118,10 @@ export function browserArgv(config: HarnessConfig, previewUnit: string, unit: st
     `--memory-swap=${BROWSER_MEMORY}`,
     "--cpus=1",
     "--env",
-    "OBSCURA_ENV_FILE=/dev/null",
+    "MOLI_ENV_FILE=/dev/null",
     "--env",
-    "OBSCURA_CDP_TOKEN",
+    "MOLI_CDP_TOKEN",
     QA_IMAGE,
-    "--allow-private-network",
   ]);
 }
 
@@ -145,7 +147,7 @@ export const inspectArgv = (config: HarnessConfig, previewUnit: string): Argv =>
 export const logsArgv = (config: HarnessConfig, previewUnit: string): Argv =>
   engine(config, ["logs", "--tail=20", previewUnit]);
 
-/** Le canal CDP : stdin/stdout de ce process sont une socket vers Obscura, dans l'espace réseau de la QA. */
+/** Le canal CDP : stdin/stdout de ce process sont une socket vers la porte CDP de Moli, dans l'espace réseau de la QA. */
 export const bridgeArgv = (config: HarnessConfig, browserUnit: string): Argv =>
   engine(config, ["exec", "-i", browserUnit, "/busybox", "nc", "127.0.0.1", String(QA_CDP_PORT)]);
 
@@ -291,8 +293,10 @@ export class QaPreview {
   stop(): Promise<void> {
     this.#stopping ??= (async () => {
       this.#abort.abort();
-      this.#session?.close();
+      // L'abandon a déjà coupé la connexion : pas de reconnexion, les conteneurs sont retirés juste après.
+      const session = this.#session;
       this.#session = null;
+      await session?.close();
       await this.#done;
       if (!this.#touched) return;
       const removed = await forceStopQa(this.#deps.config, this.#deps.exec, this.#target.runId, this.#target.stepId);
@@ -360,13 +364,13 @@ export class QaPreview {
     }
     const browser = await this.#run(browserArgv(config, this.#previewUnit, this.#browserUnit), {
       timeoutMs: RUN_TIMEOUT_MS,
-      env: { ...clientEnv(), OBSCURA_CDP_TOKEN: this.#token },
+      env: { ...clientEnv(), MOLI_CDP_TOKEN: this.#token },
     });
     if (browser.code !== 0) {
       this.#fail(`le navigateur de QA n'a pas démarré : ${tail(browser.stderr || browser.stdout)}`);
       return;
     }
-    if (!(await this.#waitReady())) return;
+    if (!(await this.#waitReady()) || !(await this.#waitBrowser())) return;
     markReady(true);
     await this.#capture();
   }
@@ -390,6 +394,36 @@ export class QaPreview {
       }
       if (Date.now() >= deadline)
         return this.#fail(`la prévisualisation n'a pas répondu sur le port ${port} (${path}) en ${readyTimeoutSec} s`);
+      await sleep(pollMs, signal);
+    }
+  }
+
+  /**
+   * La porte CDP de l'image n'écoute qu'une fois Moli prêt (quelques centaines de ms après `docker run`) :
+   * une prévisualisation plus rapide ne doit pas faire échouer la capture d'office.
+   */
+  async #waitBrowser(): Promise<boolean> {
+    const { pollMs = POLL_MS } = this.#deps;
+    const { url, token, connect } = this.#sessionTarget();
+    const signal = this.#abort.signal;
+    const deadline = Date.now() + BROWSER_READY_MS;
+    for (;;) {
+      try {
+        const connection = await CdpConnection.connect({
+          url,
+          token,
+          callTimeoutMs: CALL_TIMEOUT_MS,
+          signal,
+          ...(connect ? { connect } : {}),
+        });
+        connection.close();
+        return true;
+      } catch (error) {
+        if (signal.aborted) return false;
+        if (!(error instanceof CdpConnectError)) throw error;
+        if (Date.now() >= deadline)
+          return this.#fail(`le navigateur de QA ne répond pas en ${BROWSER_READY_MS / 1000} s : ${error.message}`);
+      }
       await sleep(pollMs, signal);
     }
   }
@@ -505,8 +539,9 @@ export class QaPreview {
         error instanceof CdpClosedError ||
         error instanceof CdpConnectError
       ) {
-        this.#session?.close();
+        const session = this.#session;
         this.#session = null;
+        await session?.close();
       }
       let mapped: HarnessError;
       try {

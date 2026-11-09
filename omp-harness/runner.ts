@@ -264,8 +264,8 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
  */
 export const SERVICE_SECRETS = [
   "HARNESS_TOKEN",
-  "OBSCURA_CDP_TOKEN",
-  "OBSCURA_POSTE_CDP_TOKEN",
+  "MOLI_CDP_TOKEN",
+  "MOLI_POSTE_CDP_TOKEN",
   ...GH_TOKEN_VARS,
   ...GITLAB_TOKEN_VARS,
 ] as const;

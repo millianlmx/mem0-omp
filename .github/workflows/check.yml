@@ -118,9 +118,9 @@ jobs:
         run: bash scripts/mem0-http-contrat.sh --prepare
       - name: Préparer la toolchain Rust (clippy)
         run: rustup component add clippy
-      # Le binaire Obscura des tests du client CDP du harness (test/harness/obscura-socle.test.ts).
-      - name: Préparer Obscura épinglé
-        run: bash scripts/obscura.sh --prepare
+      # Le binaire Moli des tests du client CDP du harness (test/harness/moli-*.test.ts).
+      - name: Préparer Moli épinglé
+        run: bash scripts/moli.sh --prepare
       - name: Valider le catalogue, le manifeste et l'extension
         env:
           # En CI, un prérequis manquant (bun, hôte, cargo ou clippy) est un échec,

@@ -1,9 +1,10 @@
 // Le pré-contrôle du harness avant qu'une page ne soit ouverte : l'adresse demandée (et ses
 // adresses résolues) puis l'URL finale d'une navigation. Il ne voit PAS les sous-ressources
-// d'une page : l'autorité pour chaque requête est la garde intégrée d'Obscura (crate
-// obscura-ssrf, au moment de la connexion), que le service `obscura` garde active ; l'adresse
-// publique de l'hôte relève de la règle pare-feu du README. Ce que ce module ajoute : le
-// message clair, et le refus du tailnet même quand `allowPrivateNetwork` est levé.
+// d'une page : l'autorité pour chaque requête est la garde intégrée de Moli
+// (`--block-private-networks`, appliquée à l'adresse de chaque connexion directe), que le
+// service `moli` active ; l'adresse publique de l'hôte relève de la règle pare-feu du README.
+// Ce que ce module ajoute : le message clair, et le refus du tailnet même quand
+// `allowPrivateNetwork` est levé.
 import { isIP } from "node:net";
 import { lookup as dnsLookup } from "node:dns/promises";
 

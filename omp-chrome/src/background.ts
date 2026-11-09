@@ -714,7 +714,7 @@ async function mirrorWith(work: (target: HarnessTarget) => Promise<void>): Promi
   try {
     await work(await identified(paired, browserLabel));
   } catch {
-    // Serveur injoignable, obscura-poste absent ou génération périmée : le tick suivant reprend.
+    // Serveur injoignable, moli-poste absent ou génération périmée : le tick suivant reprend.
   }
 }
 

@@ -1,5 +1,5 @@
 // Le côté page de l'extension (`omp-chrome/src/page/agent.ts` et ses modules `lib/`),
-// rendu injectable dans une page d'Obscura : UNE seule source pour le snapshot, les gestes
+// rendu injectable dans une page de Moli : UNE seule source pour le snapshot, les gestes
 // et la garde d'envoi (`classifyOutbound`, `inspectGesture`, empreinte). Pas d'étape de
 // build : au premier usage, les types sont effacés par `stripTypeScriptTypes` (comme le
 // fait scripts/chrome-extension/build.ts), puis les modules sont assemblés en un seul
@@ -72,21 +72,6 @@ function load(entry: string, root: string, seen: Map<string, Module>): Module[] 
   return order;
 }
 
-/**
- * Ce que le DOM d'Obscura v0.2.6 n'a pas et que le côté page de l'extension lit : `isContentEditable`
- * (absent ou non booléen) se déduit de l'attribut `contenteditable` de l'élément ou d'un ancêtre.
- */
-const OBSCURA_COMPAT = `if (typeof document.createElement("div").isContentEditable !== "boolean") {
-  Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
-    configurable: true,
-    get() {
-      const host = this.closest("[contenteditable]");
-      const value = host === null ? null : host.getAttribute("contenteditable");
-      return value !== null && value.toLowerCase() !== "false";
-    },
-  });
-}`;
-
 let cached: string | undefined;
 
 /** Le script à évaluer dans une page : pose `globalThis.__ompAgent` (idempotent). */
@@ -101,6 +86,6 @@ export function agentScript(): string {
     return `const ${module.name} = (() => {\n${uses}\n${module.code}\nreturn { ${module.exports.join(", ")} };\n})();`;
   });
   const entry = seen.get(AGENT_ENTRY) as Module;
-  cached = `(() => {\nif (globalThis.__ompAgent) return;\n${OBSCURA_COMPAT}\n${parts.join("\n")}\nglobalThis.__ompAgent = ${entry.name};\n})();`;
+  cached = `(() => {\nif (globalThis.__ompAgent) return;\n${parts.join("\n")}\nglobalThis.__ompAgent = ${entry.name};\n})();`;
   return cached;
 }
