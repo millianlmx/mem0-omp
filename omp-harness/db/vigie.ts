@@ -6,7 +6,7 @@
 // La couche lit aussi, en SQL brut, les textes du poste de travail (pages observées,
 // meetings, actions) : le caviardage d'une issue publique les retire tous.
 import { ObservabilityStore } from "./observability.ts";
-import { json, num, numOrNull, str, strOrNull } from "./sql.ts";
+import { REPLY_INSTRUCTION_HEAD, json, num, numOrNull, str, strOrNull } from "./sql.ts";
 import type { Row, SqlValue } from "./sql.ts";
 
 export const VIGIE_STATUSES = [
@@ -342,6 +342,15 @@ export class VigieStore extends ObservabilityStore {
       add(parsed(row.profile));
     const settings = this.selectOne("SELECT value FROM settings WHERE key = 'workstation'");
     if (settings) add((parsed(settings.value) as { selfIdentities?: unknown } | null)?.selfIdentities);
+    // Les réponses au collègue (brouillons et consignes des demandes qui les saisissent) : un texte
+    // de réponse publié par erreur dans une issue y serait reconnu et retiré.
+    for (const row of this.selectAll("SELECT text FROM corporate_replies")) add(row.text);
+    for (const row of this.selectAll(
+      "SELECT instruction FROM workstation_requests WHERE substr(instruction, 1, ?) = ?",
+      REPLY_INSTRUCTION_HEAD.length + 1,
+      `${REPLY_INSTRUCTION_HEAD}\n`,
+    ))
+      add(row.instruction);
     return [...texts];
   }
 }

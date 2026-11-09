@@ -97,6 +97,8 @@ const WATCH_ATTEMPTS = 3;
 
 /** L'issue d'une demande coupée par l'arrêt ou le redémarrage du service : jamais relancée. */
 const SERVICE_STOPPED = "interrompu : service arrêté";
+/** La raison d'échec du runner d'une demande de réponse à un collègue : le message d'erreur pourrait citer le texte ou le fil. */
+const REPLY_RUNNER_FAILED = "échec du runner (détail masqué : réponse à un collègue)";
 
 /** Le compteur des dépôts d'un job (service ou demande) : le plafond `shiftMaxActions`. */
 type Counter = { actions: number; capped: boolean };
@@ -183,8 +185,9 @@ function profileText(profile: WorkstationProfile | null): string | null {
   return JSON.stringify(body, null, 2);
 }
 
-function actionLine(action: WorkstationAction): string {
-  return `- #${action.seq} ${action.kind} (${action.state}, ${action.origin}) : ${action.approval?.summary ?? action.rationale}`;
+function actionLine(action: WorkstationAction, masked: boolean): string {
+  const detail = masked ? "réponse à un collègue (détail masqué)" : (action.approval?.summary ?? action.rationale);
+  return `- #${action.seq} ${action.kind} (${action.state}, ${action.origin}) : ${detail}`;
 }
 
 const AWAITING = (seq: number): string => `action #${seq} en attente de l'approbation de l'humain : ne réessaie pas.`;
@@ -312,19 +315,21 @@ export class WorkstationAgent {
     job: WorkstationJob,
     live: LiveJob,
     onHostTool: (name: string, args: Record<string, unknown>) => Promise<HostToolResult>,
+    { muted } = { muted: false },
   ): Promise<RunnerSession> {
     const target = workstationTarget(this.#ctx.config);
     fs.mkdirSync(target.repo.path, { recursive: true });
     // Le dossier d'envoi (`upload`) vit dans le répertoire de travail, seul dossier où le runner écrit.
     fs.mkdirSync(uploadDir(this.#ctx.config), { recursive: true });
-    // Les jobs muets (`poste-signal`, `poste-veille`) lisent des messages de collègues : rien de ce
-    // qu'ils font ne sort vers un journal. Ni direct (aucune trame transmise), ni `intent` des
-    // outils, ni `progress`. `workstation_signal` des autres jobs ne montre pas non plus son
-    // `intent` (le direct, lui, est réservé au propriétaire, comme les pages que ces jobs lisent).
-    const muted = MUTED_JOBS[job] === true;
+    // Les jobs muets (`poste-signal`, `poste-veille`) lisent des messages de collègues, et une demande
+    // de réponse à un collègue (`muted`) porte le texte et le fil d'une réponse : rien de ce qu'ils
+    // font ne sort vers un journal. Ni direct (aucune trame transmise), ni `intent` des outils, ni
+    // `progress`. `workstation_signal` des autres jobs ne montre pas non plus son `intent` (le direct,
+    // lui, est réservé au propriétaire, comme les pages que ces jobs lisent).
+    const silent = muted || MUTED_JOBS[job] === true;
     const session = new RunnerSession(this.#ctx, target, {
       onHostTool: (name, args) =>
-        name === "progress" ? Promise.resolve(this.#progress(job, args)) : onHostTool(name, args),
+        name === "progress" ? Promise.resolve(this.#progress(job, args, silent)) : onHostTool(name, args),
       event: (type, payload) =>
         this.#ctx.event(
           type,
@@ -332,11 +337,11 @@ export class WorkstationAgent {
           {
             workstation: job,
             ...payload,
-            ...(type === "activity" && (muted || payload.tool === "workstation_signal") ? { intent: null } : {}),
+            ...(type === "activity" && (silent || payload.tool === "workstation_signal") ? { intent: null } : {}),
           },
           null,
         ),
-      ...(muted
+      ...(silent
         ? {}
         : { frame: (frame: Record<string, unknown>) => this.#ctx.sessions.frame(workstationOwner(job), job, frame) }),
     });
@@ -346,11 +351,16 @@ export class WorkstationAgent {
     return session;
   }
 
-  #progress(job: WorkstationJob, args: Record<string, unknown>): HostToolResult {
-    if (MUTED_JOBS[job]) return { text: "noté" };
+  #progress(job: WorkstationJob, args: Record<string, unknown>, silent: boolean): HostToolResult {
+    if (silent) return { text: "noté" };
     const message = typeof args.message === "string" ? args.message.slice(0, 500) : "";
     this.#ctx.event("progress", null, { workstation: job, message }, null);
     return { text: "noté" };
+  }
+
+  /** Une action du poste pour le prompt du service 24/24 ; celles d'une demande de réponse à un collègue sont masquées. */
+  #line(action: WorkstationAction): string {
+    return actionLine(action, this.#ws.isReplyRequest(action.requestId));
   }
 
   // -- digest des meetings ---------------------------------------------------------
@@ -646,8 +656,8 @@ export class WorkstationAgent {
           maxActions: config.workstation.shiftMaxActions,
           profile: profileText(store.latestWorkstationProfile()),
           activity: recent.length > 0 ? recent.map(observationLine).join("\n") : null,
-          pending: awaiting.length > 0 ? awaiting.map(actionLine).join("\n") : null,
-          journal: journal.length > 0 ? journal.map(actionLine).join("\n") : null,
+          pending: awaiting.length > 0 ? awaiting.map((action) => this.#line(action)).join("\n") : null,
+          journal: journal.length > 0 ? journal.map((action) => this.#line(action)).join("\n") : null,
           needs: meetingLines(store.listWorkstationMeetings({ states: ["digested"], limit: MEETINGS_SHOWN })),
         }),
         live.abort.signal,
@@ -792,12 +802,17 @@ export class WorkstationAgent {
     if (this.#ws.startRequest(request.id) === null) return;
     this.#requestId = request.id;
     const { config, store } = this.#ctx;
+    // Une demande de réponse à un collègue est muette : son texte et son fil ne sortent vers aucun journal.
+    const muted = this.#ws.isReplyRequest(request.id);
     const counter: Counter = { actions: 0, capped: false };
     const out: { report: string | null } = { report: null };
     let failure: string | null = null;
     try {
-      const session = await this.#open("poste-demande", live, (name, args) =>
-        this.#requestTool(name, args, counter, live, request.id, out),
+      const session = await this.#open(
+        "poste-demande",
+        live,
+        (name, args) => this.#requestTool(name, args, counter, live, request.id, out),
+        { muted },
       );
       const deadlineAt = Date.now() + config.runner.stepTimeoutSec * 1000;
       // Une demande rattachée à une réponse validée : la marche à suivre et la réponse (non fiable).
@@ -818,9 +833,10 @@ export class WorkstationAgent {
           live.abort.signal,
           deadlineAt,
         );
-      if (result.status !== "completed") failure = `échec du runner : ${result.error?.message ?? "erreur du runner"}`;
+      if (result.status !== "completed")
+        failure = muted ? REPLY_RUNNER_FAILED : `échec du runner : ${result.error?.message ?? "erreur du runner"}`;
     } catch (err) {
-      failure = `échec du runner : ${err instanceof Error ? err.message : String(err)}`;
+      failure = muted ? REPLY_RUNNER_FAILED : `échec du runner : ${err instanceof Error ? err.message : String(err)}`;
     } finally {
       await live.session?.stop();
       live.session = null;

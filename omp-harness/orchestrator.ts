@@ -75,6 +75,7 @@ import { Splitter, waitReason } from "./split.ts";
 import { Workstation } from "./workstation.ts";
 import { IssueDesk } from "./issues.ts";
 import { SignalDesk } from "./corporate/signals.ts";
+import { ReplyDesk } from "./corporate/replies.ts";
 import { Replies } from "./canaux/reponses.ts";
 import { Watch } from "./canaux/veille.ts";
 import { WorkstationAgent } from "./workstation-agent.ts";
@@ -193,6 +194,8 @@ export class Orchestrator {
   readonly replies: Replies;
   /** Les signalements des collègues et leurs propositions (pont corpo ↔ usine) : `reportSignal` est le point d'entrée des canaux. */
   readonly signals: SignalDesk;
+  /** Les brouillons de réponse au collègue : rédigés au tour de l'orchestrateur, envoyés seulement après deux gestes humains. */
+  readonly corporateReplies: ReplyDesk;
   /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
   readonly metrics: Metrics;
   /** Les issues GitHub des dépôts déclarés, lancées en run (`POST /v1/mcp`). */
@@ -263,6 +266,7 @@ export class Orchestrator {
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
     this.signals = new SignalDesk(this.#ctx, { workstation: this.workstation, issues: this.issues });
+    this.corporateReplies = new ReplyDesk(this.#ctx, { workstation: this.workstation });
     this.channels = new Channels({
       config: this.#ctx.config,
       store: this.#ctx.store,
@@ -591,6 +595,15 @@ export class Orchestrator {
       this.workstationAgent.tick();
     } catch (err) {
       this.#ctx.log(`poste de travail : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
+    }
+    // Les brouillons de réponse au collègue suivent l'état des runs liés, même poste désactivé.
+    try {
+      this.corporateReplies.reconcile();
+    } catch (err) {
+      this.#ctx.log(`réponses aux collègues : ${err instanceof Error ? err.message : String(err)}`, {
+        level: "error",
+        err,
+      });
     }
     // La lecture des canaux corpo : un passage dû part sans attendre (aucun runner).
     try {
