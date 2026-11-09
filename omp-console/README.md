@@ -618,6 +618,13 @@ poste, **Demandes**. Ce que ces pages montrent :
   recevoir l'URL d'autorisation) ; un refus du serveur revient au geste. L'écran
   est relu à chaque événement `workstation_channel` ; sur un serveur sans la route
   (404) ou pour un jeton restreint (403), il n'existe pas.
+  En fin d'écran, quand Slack est connecté ou en erreur : **Canaux Slack suivis**
+  (`channels.slackConversations`, `GET /v1/workstation/channels/slack/conversations`,
+  capacité `workstation-channel-reads`), une case par canal public ou privé de
+  l'espace. Cocher (`PUT …/conversations/{id} {followed}`, appareil approbateur
+  seul, cases grisées ailleurs) fait entrer le canal dans la lecture suivante du
+  serveur, qui lit déjà les messages privés et les mentions partout. Relue à
+  l'événement `workstation_channel_follow` ; absente sur 404 ou 409.
 - **Extension et agent 24/24** (`GET /v1/workstation`) : extension en ligne ou
   hors ligne et son dernier contact, sa version, les heures observées sur le seuil
   (barre de progression), le dernier et le prochain passage de l'agent.

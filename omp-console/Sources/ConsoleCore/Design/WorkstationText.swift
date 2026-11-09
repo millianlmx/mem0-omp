@@ -480,3 +480,12 @@ public enum ChannelText {
     public static let slackHint = L10n.text("Créez l’app depuis le manifeste omp-harness/deploy/slack-app-manifest.json : en PKCE, aucun secret.")
     public static let save = L10n.text("Enregistrer")
 }
+
+/// Les canaux Slack suivis, dans l’écran Canaux : la case « suivi » de chaque canal de l’espace.
+public enum SlackFollowText {
+    public static let header = L10n.text("Canaux Slack suivis")
+    public static let hint = L10n.text("La veille lit vos messages privés et vos mentions partout, et en entier les canaux cochés.")
+    public static let empty = L10n.text("Aucun canal dans l’espace Slack")
+    public static let privateChannel = L10n.text("Canal privé")
+    public static let privateSymbol = "lock"
+}
