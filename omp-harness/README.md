@@ -1598,6 +1598,33 @@ un log, une issue ni la mémoire d'un dépôt.
 | `getSlackUser(id)` · `listSlackConversations()` | Un auteur Slack `{id, name, realName, email, bot}` ; les canaux de l'espace `{id, name, kind: public \| private, archived, followed}`. |
 | `getChannelCursor(key)` · `setChannelCursor(key, value, at)` | Les curseurs de lecture : `gmail`, `calendar`, `slack.self`, `slack.conv:<id>`, `slack.search`. Les clés propres aux couches suivantes s'y ajoutent sans toucher à celles-là. |
 
+#### Le graphe des personnes
+
+Le poste tient un graphe des collègues (`canaux/personnes.ts`, table `workstation_people` de
+`db/people.ts`). Une personne porte un nom, ses adresses, ses identifiants Slack, un rôle, une
+équipe, des projets, le ton à employer, un niveau de délégation (`jamais`, `brouillon`,
+`réponse`) et les sujets sur lesquels une réponse peut être prête. Elle a une révision, et
+chaque champ dit s'il est corrigé par l'humain.
+
+- **Alimentation automatique** : à chaque tour (poste activé), `PeopleGraph.feed()` reprend
+  ce que la lecture des canaux a gardé depuis son passage précédent (curseurs `people.*` de
+  `channel_cursors`) : `From`, `To` et `Cc` des mails (hors listes et messages automatiques),
+  participants de l'Agenda, auteurs Slack (hors bots), et la personne des signalements du poste
+  quand c'est une adresse. L'utilisateur lui-même (`selfIdentities`, comptes des canaux)
+  n'entre pas. Une adresse ou un identifiant Slack déjà rattaché désigne la même personne :
+  un auteur Slack de même adresse qu'un correspondant Gmail la rejoint, sans doublon.
+- **Ce qu'elle écrit** : `name` (s'il manque), `emails`, `slackIds`, `role`, `team`,
+  `projects` et `tone`, jamais un champ corrigé. Une personne qu'elle crée naît au niveau
+  `jamais`, sans sujet. Un niveau ou des sujets qu'elle porterait sont ignorés.
+- **Pour les couches suivantes** (veille, réponses) : `orchestrator.people.observe({emails?,
+  slackIds?, name?, role?, team?, projects?, tone?})` propose une suggestion sous les mêmes
+  règles ; `store.listPeople()` et `store.personIdOfKey(emailKey(adresse))` lisent le graphe.
+- **Correction** : `PATCH /v1/workstation/people/{id}` depuis l'appareil approbateur, avec
+  la révision lue en `If-Match` (§ API). C'est le seul chemin qui écrit le niveau et les sujets.
+
+Noms et adresses ne vont dans aucun log. L'événement `workstation_person` ne porte que `{id}`
+(dépôt `null`). La vigie retire ces textes des issues qu'elle publie (`workstationTexts`).
+
 ## Les issues (MCP)
 
 `POST /v1/mcp` est un serveur MCP (transport « Streamable HTTP », réponses JSON, sans
@@ -1876,7 +1903,8 @@ la relance), `run-budget` (`budgetUsd` au lancement, `POST /v1/runs/{id}/budget`
 `POST /v1/reload`), `push-alerts` (`POST /v1/push/devices`, les alertes push des
 appareils iOS), `workstation-channels` (`GET /v1/workstation/channels` et le geste de
 connexion des canaux corpo), `workstation-channel-reads` (la lecture des canaux et les canaux
-Slack suivis, `GET /v1/workstation/channels/slack/conversations`) et `autonomy`
+Slack suivis, `GET /v1/workstation/channels/slack/conversations`), `workstation-people` (le
+graphe des personnes, `GET /v1/workstation/people` et `PATCH …/people/{id}`) et `autonomy`
 (`GET /v1/autonomy`, `kind` et `labels` d'un run).
 
 `GET /v1/health` vérifie aussi le service : `checks.db` (une lecture de la base),
@@ -1960,6 +1988,8 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/workstation/channels/{id}/login/answer` `{value}` \| `{blocked: true, channels?}` | operator (approbateur) | Recolle l'URL de retour (ou le code, ou le texte d'erreur affiché) : 200 `{login, channels}`, 400 (`state` étranger, texte non reconnu, connexion expirée), 409 (aucune connexion en cours, refus du fournisseur, scope en trop ou manquant, jeton de bot). `blocked: true` déclare que l'administrateur bloque (seul chemin pour Slack, dont la demande d'approbation ne redirige pas) ; `channels` ne bloque que ces canaux. Événement `workstation_channel`. |
 | `GET /v1/workstation/channels/slack/conversations` | viewer | Les canaux publics et privés de l'espace Slack, relus en direct (`conversations.list`) : `{conversations: [{id, name, kind: public \| private, archived, followed}]}`, par nom. 409 Slack non connecté ou bloqué, 429 limite de débit (`Retry-After`), 502 refus ou coupure du fournisseur. Propriétaire seulement (403), 404 si le poste est désactivé. Capacité `workstation-channel-reads`. |
 | `PUT /v1/workstation/channels/slack/conversations/{id}` `{followed}` | operator (approbateur) | Coche (`true`) ou décoche un canal Slack suivi : 200 `{conversation}`. La lecture suivante lit ses messages et fils (les DM et les mentions sont lus partout). 400 corps illisible, 404 conversation absente de la dernière liste. Événement `workstation_channel_follow`. |
+| `GET /v1/workstation/people` | viewer | Le graphe des personnes du poste : `{people: [{id, name, emails, slackIds, role, team, projects, tone, delegation, topics, corrected, rev, createdAt, updatedAt}]}`. `delegation` : `jamais` \| `brouillon` \| `réponse` ; `corrected` dit, pour chaque champ, s'il est corrigé par l'humain (figé). Propriétaire seulement (403), 404 si le poste est désactivé. Capacité `workstation-people`. |
+| `PATCH /v1/workstation/people/{id}` `{name?, emails?, slackIds?, role?, team?, projects?, tone?, delegation?, topics?}` + `If-Match: <rev>` | operator (approbateur) | Corrige une personne : un champ absent reste, un champ donné est écrit et figé contre l'alimentation automatique, un champ à `null` est relâché (sa valeur reste, la suggestion suivante peut la remplacer). 200 `{person}`, révision +1. 428 sans `If-Match`, 412 révision dépassée (rien n'est écrit), 400 champ inconnu, corps vide ou valeur invalide (niveau hors `jamais \| brouillon \| réponse`), 404 personne inconnue, 409 adresse ou identifiant Slack déjà à une autre personne. Seul geste qui écrit `delegation` et `topics`. Pas de PUT de collection. Événement `workstation_person` (`{id}`). |
 | `GET /v1/signals?state=&limit=` · `GET /v1/signals/{id}` | viewer (propriétaire) | Les signalements des collègues, récents d'abord (`state` : `received`, `proposed` par défaut, `ignored`, `dismissed`, `confirmed`, séparés par des virgules ; `limit` ≤ 200) : `{signals}` ; un signalement : `{signal}` = `{id, createdAt, updatedAt, channel, threadRef, url, personRef, excerpt, state, reason, error, repo, kind, title, body, issue, runId, confirmedBy, confirmedAt}`. 403 client restreint (« le poste est réservé au propriétaire ») ou pilote ; 404 inconnu ; 400 `state` inconnu. Même sans poste actif. |
 | `POST /v1/signals/{id}/preview` `{repo?, title?, body?}` | viewer (propriétaire) | Le texte EXACT que `confirm` enverrait à la forge : `{repo, policy: {declared, applied, note}, title, body, issue}` (`issue` : l'issue déjà créée, dont le texte n'est alors pas renvoyé). Sans `title`/`body`, la proposition ; sous `full` appliqué, le corps porte la section « Origine ». 409 dépôt en `forbid` ou sans forge, signalement déjà traité. Ne crée rien. |
 | `POST /v1/signals/{id}/confirm` `{repo, title, body}` · `POST /v1/signals/{id}/dismiss` `{reason?}` | operator (approbateur) | Confirme : crée l'issue puis le run lié (201 `{signal, issue, run, policy}`) ; 502 si la forge échoue (la proposition reste, avec `error`), 409 « le signalement est déjà <état> », dépôt `forbid`/sans forge, ou dépôt autre que celui de l'issue déjà créée ; 404 `dépôt inconnu`. Écarte (200 `{signal}`, `reason` ≤ 500) : jamais reproposé. 403 non approbateur, pilote ou client restreint. Événement `signal`. |

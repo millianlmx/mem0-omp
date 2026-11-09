@@ -100,6 +100,7 @@ export const API_FEATURES = [
   "workstation-files",
   "workstation-channels",
   "workstation-channel-reads",
+  "workstation-people",
   "mcp",
   "digest",
   "instructions",
@@ -304,7 +305,7 @@ type Call = {
 };
 
 export type Route = {
-  method: "GET" | "POST" | "PUT" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   role: Role;
   pattern: RegExp;
@@ -1082,6 +1083,17 @@ export function apiRoutes(
       const body = await readBody(call.req);
       send(call.res, 200, orchestrator.channelReader.followSlackConversation(call.match[1] as string, body));
     }),
+    // Le graphe des personnes du poste : lu par le propriétaire, corrigé champ par champ depuis
+    // l'appareil approbateur (If-Match : la révision de la personne). Pas de PUT de collection.
+    route("GET", "/v1/workstation/people", "viewer", (call) => {
+      workstationOf(call);
+      send(call.res, 200, orchestrator.people.list());
+    }),
+    route("PATCH", "/v1/workstation/people/{id}", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(call.res, 200, orchestrator.people.patch(call.match[1] as string, body, ifMatch(call.req)));
+    }),
     // La vigie (vigie/) : ses réglages (admin), son battement de cœur et ses incidents (son client pilote).
     route("GET", "/v1/vigie", "viewer", (call) => send(call.res, 200, orchestrator.vigie.view(call.repos, Date.now()))),
     route("PUT", "/v1/vigie", "admin", async (call) =>
@@ -1351,7 +1363,9 @@ export function createHandler(options: HttpOptions): http.RequestListener {
       } catch {
         pathname = "";
       }
-      const method = ["GET", "POST", "PUT", "DELETE"].includes(req.method ?? "") ? (req.method as string) : "AUTRE";
+      const method = ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(req.method ?? "")
+        ? (req.method as string)
+        : "AUTRE";
       stats.record(routeLabel(pathname), method, res.statusCode, Number(process.hrtime.bigint() - started) / 1e9);
     });
     void (async () => {

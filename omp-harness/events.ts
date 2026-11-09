@@ -107,6 +107,8 @@ export const EVENT_TYPES = [
   // un canal Slack coché ou décoché comme suivi (`{id, followed}`) ; jamais de contenu
   "workstation_channel_read",
   "workstation_channel_follow",
+  // le graphe des personnes du poste : une personne créée, complétée ou corrigée (`{id}` seul)
+  "workstation_person",
   // la vigie (vigie/) : un incident qui bouge (relevé, trié, publié, corrigé, rendu à l'humain),
   // et son silence (plus de battement de cœur depuis vigie.SILENT_MS)
   "vigie_incident",

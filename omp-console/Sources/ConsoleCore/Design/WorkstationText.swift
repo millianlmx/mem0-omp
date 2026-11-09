@@ -489,3 +489,46 @@ public enum SlackFollowText {
     public static let privateChannel = L10n.text("Canal privé")
     public static let privateSymbol = "lock"
 }
+
+/// La page Personnes du Poste : le graphe des collègues que le serveur tient (canaux lus,
+/// observations du poste), et la correction de chaque champ par l’appareil approbateur.
+public enum PeopleText {
+    public static let title = L10n.text("Personnes")
+    public static let pageSymbol = "person.2"
+    public static let empty = L10n.text("Aucune personne : le graphe se remplit à la lecture des canaux.")
+    public static let hint = L10n.text("Une personne vue dans les canaux naît au niveau Jamais : rien ne lui est proposé tant que vous ne changez pas son niveau.")
+    public static let unnamed = L10n.text("Sans nom")
+    public static let corrected = L10n.text("Corrigé")
+    public static let correctedSymbol = "pencil.circle.fill"
+    public static let release = L10n.text("Relâcher")
+    public static let releaseHint = L10n.text("Un champ corrigé est figé : la lecture des canaux ne le change plus. Relâcher le rend aux suggestions.")
+    public static let listHint = L10n.text("Plusieurs valeurs : séparez-les par des virgules.")
+    public static let save = L10n.text("Enregistrer la correction")
+    public static let approverOnly = L10n.text("Seul l’appareil approbateur corrige les personnes : appairez cette app avec le code approbateur (harness.sh approver sur le VPS).")
+
+    /// Le nom d’un champ, brut (`name`, `emails`…) ; un champ inconnu se rend tel quel.
+    public static func field(_ raw: String) -> String {
+        switch raw {
+        case "name": L10n.text("Nom")
+        case "emails": L10n.text("Adresses")
+        case "slackIds": L10n.text("Identifiants Slack")
+        case "role": L10n.text("Rôle")
+        case "team": L10n.text("Équipe")
+        case "projects": L10n.text("Projets")
+        case "tone": L10n.text("Style à adopter")
+        case "delegation": L10n.text("Délégation")
+        case "topics": L10n.text("Sujets de réponse")
+        default: raw
+        }
+    }
+
+    /// Le niveau de délégation, brut (`jamais`, `brouillon`, `réponse`).
+    public static func delegation(_ raw: String) -> String {
+        switch raw {
+        case "jamais": L10n.text("Jamais")
+        case "brouillon": L10n.text("Brouillon")
+        case "réponse": L10n.text("Réponse sur les sujets listés")
+        default: raw
+        }
+    }
+}

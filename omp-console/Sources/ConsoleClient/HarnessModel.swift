@@ -79,6 +79,9 @@ public final class HarnessModel: ObservableObject {
     /// Les canaux corpo du poste (Gmail, Agenda, Slack) : état et connexion, même échange,
     /// relus à l'événement `workstation_channel`.
     public private(set) lazy var channels = WorkstationChannelsModel(harness: self, reloadDelay: refreshDelay)
+    /// Le graphe des personnes du poste : liste et correction champ par champ, même échange,
+    /// relu à l'événement `workstation_person`.
+    public private(set) lazy var people = WorkstationPeopleModel(harness: self, reloadDelay: refreshDelay)
     /// L'historique des features (`GET /v1/runs`), terminées comprises.
     public private(set) lazy var history = HarnessRunsHistory(harness: self)
     /// La vigie (surveillance 24/24 du harness) : réglages, battement, incidents.
@@ -287,6 +290,7 @@ public final class HarnessModel: ObservableObject {
         signals.reset()
         intakes.reset()
         channels.reset()
+        people.reset()
         history.reset()
         vigie.reset()
         schedules.reset()
@@ -398,6 +402,7 @@ public final class HarnessModel: ObservableObject {
                         signals.receive(names)
                         intakes.receive(names)
                         channels.receive(names)
+                        people.receive(names)
                         vigie.receive(names)
                         schedules.receive(names)
                         autonomy.receive(names)
