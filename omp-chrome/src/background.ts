@@ -14,6 +14,7 @@ import { detachAll } from "./cdp.ts";
 import { agentTabIds, agentWindowId, execute } from "./executor.ts";
 import type { ActionOutcome, WorkstationAction } from "./lib/actions.ts";
 import { HarnessError, harnessCall } from "./lib/harness.ts";
+import { INTAKE_KEY, type Intake, settled } from "./lib/intake.ts";
 import type {
   ActionLog,
   LinkState,
@@ -511,6 +512,49 @@ async function status(): Promise<PopupStatus> {
   };
 }
 
+// ── Demande (popup) ───────────────────────────────────────────────────────
+
+/** Appelle `/v1/intake*` avec l'appairage ; un refus du serveur garde son message français. */
+async function intakeCall(method: "GET" | "POST", route: string, body?: unknown): Promise<Reply<Intake | null>> {
+  const settings = await loadSettings();
+  if (settings.pairing === null) return { ok: false, error: "navigateur non appairé : ouvrez les réglages" };
+  try {
+    const reply = await harnessCall<{ intake?: Intake }>(settings.pairing, method, route, body, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    const intake = reply?.intake ?? null;
+    // Une demande confirmée ou annulée n'est plus relue à l'ouverture du popup.
+    if (intake !== null && settled(intake)) await forgetIntake(intake.id);
+    return { ok: true, value: intake };
+  } catch (error) {
+    if (error instanceof HarnessError && error.status === 404 && route === "/v1/intake")
+      return { ok: false, error: "le serveur ne connaît pas encore la Demande : mettez omp-harness à jour" };
+    return { ok: false, error: message(error) };
+  }
+}
+
+async function forgetIntake(id: string): Promise<void> {
+  if ((await chrome.storage.local.get(INTAKE_KEY))[INTAKE_KEY] === id) await chrome.storage.local.remove(INTAKE_KEY);
+}
+
+async function postIntake(text: string): Promise<Reply<Intake | null>> {
+  if (text.trim() === "") return { ok: false, error: "la demande est vide" };
+  const reply = await intakeCall("POST", "/v1/intake", { text, source: "chrome" });
+  if (reply.ok && reply.value !== null) await chrome.storage.local.set({ [INTAKE_KEY]: reply.value.id });
+  return reply;
+}
+
+/** La dernière demande posée depuis ce navigateur, relue au serveur ; `null` s'il n'y en a pas. */
+async function readIntake(): Promise<Reply<Intake | null>> {
+  const id = (await chrome.storage.local.get(INTAKE_KEY))[INTAKE_KEY];
+  if (typeof id !== "string") return { ok: true, value: null };
+  const reply = await intakeCall("GET", `/v1/intake/${encodeURIComponent(id)}`);
+  if (!reply.ok && reply.error.startsWith("demande inconnue")) await forgetIntake(id);
+  return reply;
+}
+
+const intakeRoute = (id: string, verb: string) => `/v1/intake/${encodeURIComponent(id)}/${verb}`;
+
 // ── Messages ──────────────────────────────────────────────────────────────
 
 function isToBackground(value: unknown): value is ToBackground {
@@ -568,6 +612,17 @@ async function handle(request: ToBackground, sender: chrome.runtime.MessageSende
       await refocus();
       return OK;
     }
+    case "intake-post":
+      return postIntake(request.text);
+    case "intake-get":
+      return readIntake();
+    case "intake-confirm":
+      return intakeCall("POST", intakeRoute(request.id, "confirm"), {});
+    case "intake-cancel":
+      return intakeCall("POST", intakeRoute(request.id, "cancel"), {});
+    case "intake-answer":
+      if (request.text.trim() === "") return { ok: false, error: "la réponse est vide" };
+      return intakeCall("POST", intakeRoute(request.id, "answer"), { text: request.text });
   }
 }
 

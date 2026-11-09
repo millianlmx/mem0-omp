@@ -2,14 +2,16 @@
 // bouton Stop, l'action en cours et les dernières actions avec leur raison, la pause
 // locale du poste, la transcription de l'onglet actif (l'ouverture du popup accorde
 // activeTab ; le service worker demande alors le flux par chrome.tabCapture.getMediaStreamId),
-// le lien vers OMP Console quand des actions attendent l'approbation, et les réglages.
+// le lien vers OMP Console quand des actions attendent l'approbation, la Demande (posée,
+// relue à chaque ouverture, précisée, confirmée ou annulée par le service worker) et les réglages.
 //
 // Il se tient à jour tout seul : chaque écriture du service worker dans `chrome.storage`
 // (action en cours, journal, liaison, meeting, réglages) le redessine, et l'état du serveur
 // est relu toutes les 5 s tant qu'il est ouvert.
 
 import { element } from "../dom.ts";
-import type { ActionLog, LinkState, MeetingState, PopupStatus } from "../lib/messages.ts";
+import { describeIntake, INTAKE_KEY, type Intake } from "../lib/intake.ts";
+import type { ActionLog, LinkState, MeetingState, PopupStatus, Reply } from "../lib/messages.ts";
 import { ask } from "../store.ts";
 
 const STATES: Record<LinkState["state"], { title: string; detail: string }> = {
@@ -222,12 +224,108 @@ meetingButton.addEventListener("click", () => {
 
 element("options", HTMLButtonElement).addEventListener("click", () => void chrome.runtime.openOptionsPage());
 
+// ── Demande : posée, relue, confirmée, annulée ou précisée par le service worker ──
+
+const intakeText = element("intake-text", HTMLTextAreaElement);
+const intakeSend = element("intake-send", HTMLButtonElement);
+const intakeBox = element("intake", HTMLDivElement);
+const intakeStatus = element("intake-status", HTMLParagraphElement);
+const intakeLines = element("intake-lines", HTMLUListElement);
+const intakeNote = element("intake-note", HTMLParagraphElement);
+const intakeReply = element("intake-reply", HTMLDivElement);
+const intakeAnswerText = element("intake-answer-text", HTMLTextAreaElement);
+const intakeAnswer = element("intake-answer", HTMLButtonElement);
+const intakeConfirm = element("intake-confirm", HTMLButtonElement);
+const intakeCancel = element("intake-cancel", HTMLButtonElement);
+const intakeMessage = element("intake-message", HTMLParagraphElement);
+
+let shownIntake: Intake | null = null;
+
+function renderIntake(intake: Intake | null): void {
+  shownIntake = intake;
+  intakeBox.hidden = intake === null;
+  if (intake === null) return;
+  const display = describeIntake(intake);
+  intakeStatus.textContent = display.status;
+  intakeLines.replaceChildren(
+    ...display.lines.map((line) => {
+      const item = document.createElement("li");
+      item.textContent = line;
+      return item;
+    }),
+  );
+  intakeNote.textContent = display.note;
+  intakeReply.hidden = !display.answer;
+  intakeConfirm.hidden = !display.confirm;
+  intakeCancel.hidden = !display.cancel;
+}
+
+/** Applique la réponse du service worker : la demande, ou le refus en français. */
+function applyIntake(reply: Reply<Intake | null>): void {
+  if (reply.ok) {
+    showMessage(intakeMessage, "");
+    renderIntake(reply.value);
+  } else showMessage(intakeMessage, reply.error, "error");
+}
+
+function loadIntake(): void {
+  void ask<Intake | null>({ to: "background", type: "intake-get" }).then(applyIntake);
+}
+
+intakeSend.addEventListener("click", () => {
+  const text = intakeText.value;
+  intakeSend.disabled = true;
+  void ask<Intake | null>({ to: "background", type: "intake-post", text })
+    .then((reply) => {
+      applyIntake(reply);
+      if (reply.ok) intakeText.value = "";
+    })
+    .finally(() => {
+      intakeSend.disabled = false;
+    });
+});
+
+intakeAnswer.addEventListener("click", () => {
+  if (shownIntake === null) return;
+  void ask<Intake | null>({
+    to: "background",
+    type: "intake-answer",
+    id: shownIntake.id,
+    text: intakeAnswerText.value,
+  }).then((reply) => {
+    applyIntake(reply);
+    if (reply.ok) intakeAnswerText.value = "";
+  });
+});
+
+intakeConfirm.addEventListener("click", () => {
+  if (shownIntake === null) return;
+  void ask<Intake | null>({ to: "background", type: "intake-confirm", id: shownIntake.id }).then(applyIntake);
+});
+
+intakeCancel.addEventListener("click", () => {
+  if (shownIntake === null) return;
+  void ask<Intake | null>({ to: "background", type: "intake-cancel", id: shownIntake.id }).then(applyIntake);
+});
+
 // Le direct : les écritures du service worker qui changent ce que montre le popup le redessinent
 // (pas `serverPaused`, que la lecture du statut écrit elle-même : ce serait une boucle).
-const LIVE_KEYS: Record<string, true> = { current: true, recent: true, link: true, meeting: true, settings: true };
+const LIVE_KEYS: Record<string, true> = {
+  current: true,
+  recent: true,
+  link: true,
+  meeting: true,
+  settings: true,
+  [INTAKE_KEY]: true,
+};
 chrome.storage.onChanged.addListener((changes) => {
   if (Object.keys(changes).some((key) => LIVE_KEYS[key] === true)) void refresh();
 });
-setInterval(() => void refresh(), SERVER_REFRESH_MS);
+setInterval(() => {
+  void refresh();
+  // Une demande en classement est relue jusqu'à son plan, sa question, sa réponse ou son échec.
+  if (shownIntake?.state === "classifying") loadIntake();
+}, SERVER_REFRESH_MS);
 
 void refresh();
+loadIntake();
