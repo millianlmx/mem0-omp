@@ -6,6 +6,7 @@
 // - `event` : un événement au journal (ou poussé en direct s'il est éphémère) ;
 // - `transition` : un changement d'état validé par la table de `machine.ts`, écrit
 //   par compare-and-swap, ses événements dans la MÊME transaction SQLite.
+import { Baseline } from "./baseline.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
 import { repoByName } from "./config.ts";
 import type { RunPatch, RunRow, Store } from "./db.ts";
@@ -72,6 +73,8 @@ export class HarnessContext {
   readonly scheduler: Scheduler;
   readonly git: Git;
   readonly heavy: HeavyRunner;
+  /** Le rouge de base : ce que la suite complète de main échoue déjà (un échec connu ne bloque pas). */
+  readonly baseline: Baseline;
   readonly proofs: ProofStore;
   readonly oracle: Oracle;
   readonly spawn: SpawnRunner;
@@ -152,6 +155,14 @@ export class HarnessContext {
     });
     this.tests = new TestFeeds({ publish: (runId, payload) => this.event("test_output", runId, payload) });
     this.heavy.attachOutput(this.tests);
+    this.baseline = new Baseline({
+      config: () => this.config,
+      store: this.store,
+      git: this.git,
+      heavy: this.heavy,
+      log: this.log,
+      event: (runId, payload) => this.event("heavy_baseline", runId, payload),
+    });
     const apns = new ApnsClient({ config: () => this.config.apns, log: this.log });
     this.push = new ActivityPusher({
       store: this.store,
