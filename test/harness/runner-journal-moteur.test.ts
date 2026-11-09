@@ -114,7 +114,13 @@ test("runner-journal-moteur/AC-111 : heavy, QA et login OAuth gardent le journal
   const repo = repoDefaults({ name: "demo", path: REPO });
   const lines = {
     heavy: heavyArgv(config, WT, "omp-heavy-r1-2", "npm test", heavyEnv(config, WT), repo),
-    preview: previewArgv(config, repo, { command: "npm run dev", port: 3000, path: "/" }, WT, "omp-qa-r1-2-preview"),
+    preview: previewArgv(
+      config,
+      repo,
+      { command: "npm run dev", port: 3000, path: "/", readyTimeoutSec: 60 },
+      WT,
+      "omp-qa-r1-2-preview",
+    ),
     browser: browserArgv(config, "omp-qa-r1-2-preview", "omp-qa-r1-2-browser"),
     login: loginArgv(config, "omp-login-1"),
   };
