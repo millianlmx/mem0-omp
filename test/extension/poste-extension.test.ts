@@ -438,20 +438,18 @@ test("poste-extension/AC-6 : un envoi ne part qu'approuvé et identique à ce qu
     recipients: verdict.recipients,
     text: "Le devis est prêt.",
   });
-  const reply = "f".repeat(64);
 
-  assert.deepEqual(approvalGate(verdict, { approved: false, approval: null }, seen, reply), {
+  assert.deepEqual(approvalGate(verdict, { approved: false, approval: null }, seen), {
     outcome: "needs_approval",
     approval: {
       summary: verdict.summary,
       recipients: ["b@client.fr", "a@client.fr"],
       preview: "Le devis est prêt.",
       fingerprint: seen,
-      replyFingerprint: reply,
     },
   });
   // approved: true et la même empreinte que l'envoi recalculé : le geste part.
-  assert.equal(approvalGate(verdict, { approved: true, approval: { fingerprint: seen } }, seen, null), null);
+  assert.equal(approvalGate(verdict, { approved: true, approval: { fingerprint: seen } }, seen), null);
   // Envoi changé (autre empreinte), approbation sans empreinte (nulle, ou absente comme la
   // rend Chrome après executeScript), ou empreinte sans approbation : nouvelle demande.
   const other = sendFingerprint({
@@ -469,11 +467,11 @@ test("poste-extension/AC-6 : un envoi ne part qu'approuvé et identique à ce qu
     { approved: true },
     { approved: false, approval: { fingerprint: seen } },
   ]) {
-    assert.equal(approvalGate(verdict, gate, seen, reply)?.outcome, "needs_approval", JSON.stringify(gate));
+    assert.equal(approvalGate(verdict, gate, seen)?.outcome, "needs_approval", JSON.stringify(gate));
   }
   // Un geste qui n'envoie rien n'attend rien.
   const link = classifyOutbound(ctx({ target: el({ tag: "a", role: "link", label: "Accueil" }) }));
-  assert.equal(approvalGate(link, { approved: false, approval: null }, seen, null), null);
+  assert.equal(approvalGate(link, { approved: false, approval: null }, seen), null);
 });
 
 /** Une doublure minimale du DOM : attributs, visibilité, enfants, et le sous-ensemble des sélecteurs CSS du module. */
@@ -1001,10 +999,10 @@ test("poste-extension/AC-12 : l'empreinte lie l'approbation à l'onglet, à la c
   const sentAs = sendFingerprint({ ...base, recipients: [], text: "" });
   const proposeMode = { summary: "Cliquer sur e2 dans l'onglet 123", recipients: [], preview: "", fingerprint: null };
   for (const approval of [proposeMode, { ...proposeMode, fingerprint: undefined }]) {
-    assert.equal(approvalGate(send, { approved: true, approval }, sentAs, null)?.outcome, "needs_approval");
+    assert.equal(approvalGate(send, { approved: true, approval }, sentAs)?.outcome, "needs_approval");
   }
   // La demande porte l'empreinte, et l'humain voit la destination : service, hôte, chemin, conversation.
-  assert.equal(approvalGate(send, { approved: false }, sentAs, null)?.approval.fingerprint, sentAs);
+  assert.equal(approvalGate(send, { approved: false }, sentAs)?.approval.fingerprint, sentAs);
   assert.match(send.summary, /Slack/);
   assert.ok(send.summary.includes("acme.slack.com/client/T1/C42"), send.summary);
   assert.ok(send.summary.includes("« #clients - Acme - Slack »"), send.summary);
@@ -1045,7 +1043,6 @@ test("poste-extension/AC-13 : le texte d'un champ <input> du compositeur entre d
       rewritten.verdict,
       { approved: true, approval: { fingerprint: first.fingerprint } },
       rewritten.fingerprint,
-      rewritten.replyFingerprint,
     )?.outcome,
     "needs_approval",
   );

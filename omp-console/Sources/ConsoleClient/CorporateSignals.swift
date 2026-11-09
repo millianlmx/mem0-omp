@@ -97,83 +97,10 @@ public struct CorporateRunOrigin: Codable, Equatable, Sendable {
     public var issue: CorporateSignalIssue
     public var confirmedBy: String?
     public var confirmedAt: Double?
-    /// L'état de la réponse au collègue ; absent d'un serveur antérieur aux réponses.
-    public var reply: CorporateReplyStatus?
 }
 
 public struct CorporateRunOriginReply: Codable, Equatable, Sendable {
     public var origin: CorporateRunOrigin?
-}
-
-/// L'état de la réponse d'une feature (`origin.reply`), tel que le serveur l'écrit en
-/// français. Un état apparu après cette version se lit sans échouer (`.other`).
-public enum CorporateReplyStatus: Codable, Equatable, Sendable {
-    case none
-    case draft
-    case awaitingApproval
-    case sent
-    case other(String)
-
-    public init(raw: String) {
-        switch raw {
-        case "aucune": self = .none
-        case "brouillon": self = .draft
-        case "en attente d'approbation": self = .awaitingApproval
-        case "envoyée": self = .sent
-        default: self = .other(raw)
-        }
-    }
-
-    public var raw: String {
-        switch self {
-        case .none: "aucune"
-        case .draft: "brouillon"
-        case .awaitingApproval: "en attente d'approbation"
-        case .sent: "envoyée"
-        case let .other(raw): raw
-        }
-    }
-
-    public init(from decoder: Decoder) throws {
-        self.init(raw: try decoder.singleValueContainer().decode(String.self))
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(raw)
-    }
-}
-
-/// Un brouillon de réponse au collègue (`GET /v1/replies`) : rédigé par le serveur après la
-/// fusion (`final`) ou l'échec (`attente`) d'une feature née d'un signalement.
-public struct CorporateReply: Codable, Equatable, Sendable, Identifiable {
-    public var id: String
-    public var createdAt: Double
-    public var updatedAt: Double
-    public var runId: String
-    public var signalId: String
-    /// `final` ou `attente`.
-    public var kind: String
-    /// `draft`, `pending`, `sent` ou `archived`.
-    public var state: String
-    public var text: String
-    public var error: String?
-    /// `slack`, `gmail`, `chrome` ou `manual`.
-    public var channel: String
-    /// Le lien du fil (vide pour une origine `manual`).
-    public var url: String
-    public var personRef: String?
-
-    /// Une origine `manual` n'a pas de fil : la réponse se copie, le poste ne l'envoie pas.
-    public var isCopyOnly: Bool { channel == "manual" }
-}
-
-public struct CorporateReplyList: Codable, Equatable, Sendable {
-    public var replies: [CorporateReply]
-}
-
-public struct CorporateReplyEnvelope: Codable, Equatable, Sendable {
-    public var reply: CorporateReply
 }
 
 // MARK: - Modèle
@@ -204,11 +131,6 @@ public final class CorporateSignalsModel: ObservableObject {
     @Published public private(set) var failure: HarnessFailure?
     /// Les signalements dont un geste (confirmation, rejet) attend la réponse du serveur.
     @Published public private(set) var busy: Set<String> = []
-    /// Ce que le serveur relié dit des réponses au collègue (`/v1/replies`, capacité
-    /// `corporate-replies`) : un serveur du pont antérieur aux réponses rend 404.
-    @Published public private(set) var repliesAvailability: Availability = .unknown
-    /// Les brouillons de réponse au collègue (`draft`), qui attendent l'humain.
-    @Published public private(set) var replies: [CorporateReply] = []
 
     weak var harness: HarnessModel?
     private let reloadDelay: Duration
@@ -219,22 +141,16 @@ public final class CorporateSignalsModel: ObservableObject {
         self.reloadDelay = reloadDelay
     }
 
-    /// Le badge : les propositions et les brouillons de réponse qui attendent l'humain (0
-    /// hors d'un serveur qui les sert).
+    /// Le badge : les propositions qui attendent l'humain (0 hors d'un serveur qui les sert).
     public var pendingCount: Int {
-        (availability == .available ? proposals.count : 0) + (repliesAvailability == .available ? replies.count : 0)
+        availability == .available ? proposals.count : 0
     }
 
     // MARK: - Lecture
 
-    /// Relit les propositions ouvertes et les brouillons de réponse. Un serveur antérieur
-    /// (404) ou un jeton qui n'est pas celui du propriétaire (403) ne montre rien, sans échec.
+    /// Relit les propositions ouvertes. Un serveur antérieur (404) ou un jeton qui n'est
+    /// pas celui du propriétaire (403) ne montre rien, sans échec.
     public func refresh() async {
-        await refreshProposals()
-        await refreshReplies()
-    }
-
-    private func refreshProposals() async {
         guard let harness, harness.isConfigured else { return }
         let call = HarnessCall(method: "GET", path: "/v1/signals?state=proposed&limit=\(Self.proposalsLimit)")
         do {
@@ -249,26 +165,6 @@ public final class CorporateSignalsModel: ObservableObject {
             failure = nil
         } catch HarnessFailure.forbidden {
             clear(.reserved)
-        } catch {
-            failure = HarnessModel.failure(of: error)
-        }
-    }
-
-    /// Relit les brouillons de réponse (`state=draft`, l'état par défaut du serveur).
-    private func refreshReplies() async {
-        guard let harness, harness.isConfigured else { return }
-        let call = HarnessCall(method: "GET", path: "/v1/replies?state=draft&limit=\(Self.proposalsLimit)")
-        do {
-            let reply = try await harness.exchange(call)
-            if reply.status == 404 {
-                clearReplies(.absent)
-                return
-            }
-            let list: CorporateReplyList = try harness.decode(reply, for: call)
-            replies = list.replies.filter { $0.state == "draft" }
-            repliesAvailability = .available
-        } catch HarnessFailure.forbidden {
-            clearReplies(.reserved)
         } catch {
             failure = HarnessModel.failure(of: error)
         }
@@ -291,12 +187,11 @@ public final class CorporateSignalsModel: ObservableObject {
         origins[runId] = read.origin
     }
 
-    /// Les noms des événements reçus par le flux de la boîte : `signal` et `reply` font
-    /// relire (regroupé : une rafale ne coûte qu'une relecture).
+    /// Les noms des événements reçus par le flux de la boîte : `signal` fait relire
+    /// (regroupé : une rafale ne coûte qu'une relecture).
     func receive(_ names: [String]) {
-        guard names.contains("signal") || names.contains("reply") else { return }
-        let silent: [Availability] = [.absent, .reserved]
-        if silent.contains(availability), silent.contains(repliesAvailability) { return }
+        guard names.contains("signal") else { return }
+        if availability == .absent || availability == .reserved { return }
         guard reloadTask == nil else { return }
         let delay = reloadDelay
         reloadTask = Task { [weak self] in
@@ -312,7 +207,6 @@ public final class CorporateSignalsModel: ObservableObject {
         reloadTask?.cancel()
         reloadTask = nil
         clear(.unknown)
-        clearReplies(.unknown)
         origins = [:]
         busy = []
     }
@@ -321,11 +215,6 @@ public final class CorporateSignalsModel: ObservableObject {
         availability = next
         proposals = []
         failure = nil
-    }
-
-    private func clearReplies(_ next: Availability) {
-        repliesAvailability = next
-        replies = []
     }
 
     // MARK: - Gestes de l'humain
@@ -368,58 +257,11 @@ public final class CorporateSignalsModel: ObservableObject {
         }
     }
 
-    // MARK: - Réponses au collègue
-
-    /// Enregistre le texte modifié du brouillon (rien ne part).
-    @discardableResult
-    public func edit(_ reply: CorporateReply, text: String) async throws -> CorporateReply {
-        let saved: CorporateReplyEnvelope = try await replyGesture(on: reply) {
-            try await self.send("PUT", "/v1/replies/\(HarnessModel.pathComponent(reply.id))", body: ReplyTextBody(text: text))
-        }
-        return saved.reply
-    }
-
-    /// Approuve ce texte : le serveur pose une demande du poste qui le saisira dans le fil,
-    /// l'envoi attendant encore l'approbation ordinaire. Une origine `manual` se copie : la
-    /// feuille n'offre pas ce geste (`isCopyOnly`) et le serveur le refuserait (409).
-    @discardableResult
-    public func approve(_ reply: CorporateReply, text: String) async throws -> CorporateReply {
-        let approved: CorporateReplyEnvelope = try await replyGesture(on: reply) {
-            try await self.send("POST", "/v1/replies/\(HarnessModel.pathComponent(reply.id))/approve", body: ReplyTextBody(text: text))
-        }
-        return approved.reply
-    }
-
-    /// Classe le brouillon : il quitte « À traiter » sans rien envoyer.
-    public func archive(_ reply: CorporateReply) async throws {
-        let _: CorporateReplyEnvelope = try await replyGesture(on: reply) {
-            try await self.send("POST", "/v1/replies/\(HarnessModel.pathComponent(reply.id))/archive", body: EmptyBody())
-        }
-    }
-
-    /// Un geste sur un brouillon : marqué en cours, puis la liste relue, succès ou échec.
-    private func replyGesture<Reply>(on reply: CorporateReply, _ send: () async throws -> Reply) async throws -> Reply {
-        busy.insert(reply.id)
-        defer { busy.remove(reply.id) }
-        do {
-            let done = try await send()
-            await refreshReplies()
-            return done
-        } catch {
-            await refreshReplies()
-            throw error
-        }
-    }
-
     /// Un envoi décodé ; l'erreur levée est toujours un `HarnessFailure`, sauf une annulation.
     private func post<Body: Encodable, Reply: Decodable>(_ path: String, body: Body) async throws -> Reply {
-        try await send("POST", path, body: body)
-    }
-
-    private func send<Body: Encodable, Reply: Decodable>(_ method: String, _ path: String, body: Body) async throws -> Reply {
         guard let harness, harness.isConfigured else { throw HarnessFailure.unreachable }
         guard let encoded = try? JSONEncoder().encode(body) else { throw HarnessFailure.unreadable }
-        let call = HarnessCall(method: method, path: path, body: encoded)
+        let call = HarnessCall(method: "POST", path: path, body: encoded)
         do {
             return try harness.decode(try await harness.exchange(call), for: call)
         } catch {
@@ -428,12 +270,6 @@ public final class CorporateSignalsModel: ObservableObject {
         }
     }
 }
-
-private struct ReplyTextBody: Encodable {
-    var text: String
-}
-
-private struct EmptyBody: Encodable {}
 
 /// `repo`, `title`, `body` : un champ `nil` est absent du JSON (aperçu de la proposition).
 private struct TextBody: Encodable {

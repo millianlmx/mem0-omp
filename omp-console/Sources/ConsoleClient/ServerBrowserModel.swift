@@ -1,49 +1,35 @@
-// Le modèle observable du NAVIGATEUR DU SERVEUR (écran Poste du Mac) : l'import de la
-// session du Chrome de l'utilisateur et la connexion interactive d'un compte (Slack,
-// Google), portés par `HarnessModel` comme le poste (même transport, même jeton).
+// Le modèle observable du NAVIGATEUR DU SERVEUR (écran Poste du Mac) : la connexion
+// interactive d'un compte (Slack, Google), portée par `HarnessModel` comme le poste (même
+// transport, même jeton).
 //
-// L'état des comptes n'est pas ici : il arrive avec `GET /v1/workstation` dans le
-// navigateur `vps` (`WorkstationStatus.serverBrowser`), relu par `WorkstationModel`.
+// L'état des comptes et la source de la copie du profil Chrome ne sont pas ici : ils
+// arrivent avec `GET /v1/workstation` (`WorkstationStatus.serverBrowser`,
+// `mirrorBrowser`), relus et réglés par `WorkstationModel`.
 //
-// Import ET connexion sont réservés à l'appareil APPROBATEUR : avec un autre jeton, le
-// serveur répond 403 et l'échec est `.approverOnly`. Comme pour le reste du poste, c'est
-// le serveur qui décide, jamais l'app. Seule la lecture de la connexion déjà ouverte
+// La connexion est réservée à l'appareil APPROBATEUR : avec un autre jeton, le serveur
+// répond 403 et l'échec est `.approverOnly`. Comme pour le reste du poste, c'est le
+// serveur qui décide, jamais l'app. Seule la lecture de la connexion déjà ouverte
 // (`resumeLogin`) se tait pour un autre jeton : il n'a rien à reprendre.
 //
-// Les boucles (`watchImport`, `followLogin`) vivent aussi longtemps que la tâche de la vue
-// qui les lance : fermer la vue les arrête. Chaque pas est une méthode à part, sans attente.
+// La boucle `followLogin` vit aussi longtemps que la tâche de la vue qui la lance : fermer
+// la vue l'arrête. Chaque pas est une méthode à part, sans attente.
 //
 // Aucun texte ici : un échec est un `HarnessFailure`, que les écrans traduisent.
 
 import Combine
 import Foundation
 
-/// Ce que devient un import une fois refermé.
-public enum ServerBrowserImportOutcome: Equatable, Sendable {
-    /// L'extension a répondu avant l'échéance : le serveur a relu l'état du compte.
-    case received(String)
-    /// L'échéance est passée sans réponse de l'extension.
-    case expired(String)
-}
-
 @MainActor
 public final class ServerBrowserModel: ObservableObject {
     /// Le rythme de rafraîchissement de l'image d'une connexion ouverte.
     public nonisolated static let frameInterval: Duration = .seconds(1)
-    /// Le rythme de relecture d'un import ouvert.
-    public nonisolated static let importInterval: Duration = .seconds(2)
-
-    /// L'import ouvert, en attente de l'extension ; `nil` : aucun.
-    @Published public private(set) var pendingImport: ServerBrowserImport?
-    /// Comment le dernier import s'est refermé ; effacé par le suivant.
-    @Published public private(set) var importOutcome: ServerBrowserImportOutcome?
     /// La connexion ouverte sur le serveur ; `nil` : aucune.
     @Published public private(set) var login: ServerBrowserLogin?
     /// La dernière image de la page de la connexion.
     @Published public private(set) var frame: ServerBrowserFrame?
     /// Le dernier échec, effacé par le prochain geste réussi.
     @Published public private(set) var failure: HarnessFailure?
-    /// Un geste (import, connexion, clic, frappe) attend la réponse du serveur.
+    /// Un geste (connexion, clic, frappe) attend la réponse du serveur.
     @Published public private(set) var isBusy = false
 
     private unowned let harness: HarnessModel
@@ -53,52 +39,6 @@ public final class ServerBrowserModel: ObservableObject {
 
     init(harness: HarnessModel) {
         self.harness = harness
-    }
-
-    // MARK: - Import de la session de Chrome
-
-    /// Ouvre l'import d'un compte : l'extension Chrome y répond seule, dans les deux minutes.
-    @discardableResult
-    public func openImport(domain: String) async -> Bool {
-        guard let body = try? JSONEncoder().encode(ServerBrowserDomainBody(domain: domain)),
-              let reply: ServerBrowserImportReply = await perform("POST", Self.importPath, body: body)
-        else { return false }
-        pendingImport = reply.opened
-        importOutcome = nil
-        return true
-    }
-
-    /// Relit l'import ouvert. Refermé avant l'échéance : l'extension a répondu ; refermé
-    /// après : le délai est passé. Dans les deux cas l'état des comptes est relu.
-    public func pollImport(now: Date = Date()) async {
-        guard let asked = pendingImport, harness.isConfigured else { return }
-        let past = now.timeIntervalSince1970 * 1000 >= asked.expiresAt
-        do {
-            let read: ServerBrowserImportStatus = try await harness.fetch(HarnessCall(method: "GET", path: Self.importPath))
-            if let current = read.current {
-                pendingImport = current
-                return
-            }
-            pendingImport = nil
-            importOutcome = past ? .expired(asked.domain) : .received(asked.domain)
-            await harness.workstation.refresh()
-        } catch {
-            guard !Task.isCancelled else { return }
-            failure = HarnessModel.failure(of: error)
-            if past {
-                pendingImport = nil
-                importOutcome = .expired(asked.domain)
-            }
-        }
-    }
-
-    /// Relit l'import ouvert tant qu'il l'est.
-    public func watchImport() async {
-        while pendingImport != nil, !Task.isCancelled {
-            try? await Task.sleep(for: Self.importInterval)
-            guard !Task.isCancelled else { return }
-            await pollImport()
-        }
     }
 
     // MARK: - Connexion interactive
@@ -191,8 +131,6 @@ public final class ServerBrowserModel: ObservableObject {
 
     /// Oublie tout ce qui a été lu : le serveur a changé (ou a été oublié).
     func reset() {
-        pendingImport = nil
-        importOutcome = nil
         clearLogin()
         failure = nil
         frameFailed = false
@@ -200,7 +138,6 @@ public final class ServerBrowserModel: ObservableObject {
 
     // MARK: - Échange
 
-    nonisolated static let importPath = "/v1/workstation/vps/cookie-import"
     nonisolated static let loginPath = "/v1/workstation/vps/login"
     nonisolated static let framePath = "/v1/workstation/vps/login/frame"
     nonisolated static let inputPath = "/v1/workstation/vps/login/input"

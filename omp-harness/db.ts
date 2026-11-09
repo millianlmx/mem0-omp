@@ -12,32 +12,13 @@
 //   core → runs → journal → steps → decisions → heavy → projects → providers
 //        → sessions → usage → push → push-devices → workstation → workstation-meetings
 //        → workstation-captures → workstation-browsers → workstation-requests
-//        → issues → schedules → observability → vigie → corporate-signals → intakes
-//        → channel-contents → people → watch-items → corporate-replies → Store
+//        → issues → schedules → observability → vigie → corporate-signals → intakes → Store
 //
 // Ainsi `Store` garde l'API d'un seul objet pour tous ses appelants, et une couche
 // qui a besoin d'une autre (le journal lit le dépôt d'un run) la trouve en dessous.
-import { CorporateReplyStore } from "./db/corporate-replies.ts";
+import { IntakeStore } from "./db/intakes.ts";
 
-export class Store extends CorporateReplyStore {}
-
-export { WATCH_KINDS } from "./db/watch-items.ts";
-export type { WatchItemInput, WatchItemRow, WatchKind } from "./db/watch-items.ts";
-
-export { DELEGATIONS, PERSON_FIELDS, emailKey, slackKey } from "./db/people.ts";
-export type { Delegation, PersonField, PersonRow, PersonValues } from "./db/people.ts";
-
-export type {
-  CalendarAttendee,
-  ChannelEventInput,
-  ChannelEventRow,
-  ChannelMessageInput,
-  ChannelMessageRow,
-  ContentChannel,
-  MessageOrigin,
-  SlackConversationRow,
-  SlackUserRow,
-} from "./db/channel-contents.ts";
+export class Store extends IntakeStore {}
 
 export { MIGRATIONS } from "./db/schema.ts";
 export type { RepoFilter } from "./db/sql.ts";
@@ -100,7 +81,6 @@ export type {
 } from "./db/workstation-meetings.ts";
 export type { WorkstationCapture } from "./db/workstation-captures.ts";
 export type { WorkstationBrowserRow } from "./db/workstation-browsers.ts";
-export { REPLY_INSTRUCTION_HEAD } from "./db/sql.ts";
 export { REQUEST_STATES } from "./db/workstation-requests.ts";
 export type {
   RequestPatch,
@@ -108,5 +88,3 @@ export type {
   WorkstationAutomation,
   WorkstationRequest,
 } from "./db/workstation-requests.ts";
-export { REPLY_KINDS, REPLY_STATES } from "./db/corporate-replies.ts";
-export type { LinkedRun, ReplyKind, ReplyPatch, ReplyRow, ReplyState } from "./db/corporate-replies.ts";

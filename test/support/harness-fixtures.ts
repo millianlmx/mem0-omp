@@ -164,8 +164,6 @@ export function fakeWorld(
     memAvailableMiB?: () => number | null;
     /** Les réglages de l'exécuteur du VPS (délais courts, adresses de vérification, DNS) : `OrchestratorDeps.vps`. */
     vps?: OrchestratorDeps["vps"];
-    /** Les doublures de Google et Slack des canaux corpo (aucun réseau) ; absent : `fetch` de la plateforme. */
-    fetch?: OrchestratorDeps["fetch"];
     /** Le journal du SERVICE (`deps.log`), lu par les tests qui prouvent qu'une donnée n'y figure pas. */
     harnessLog?: LogLine;
   } = {},
@@ -213,7 +211,6 @@ export function fakeWorld(
     exec,
     tickMs: 25,
     ...(options.vps ? { vps: options.vps } : {}),
-    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     ...(options.harnessLog ? { log: options.harnessLog } : {}),
   };
   const orchestrator = new Orchestrator(deps);

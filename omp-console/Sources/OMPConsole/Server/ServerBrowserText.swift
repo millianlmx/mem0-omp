@@ -1,7 +1,7 @@
 // Les textes du NAVIGATEUR DU SERVEUR dans la section « Poste » du Mac : l'état des
-// comptes (Slack, Google), l'import de la session du Chrome de l'utilisateur et la
-// connexion interactive. Réservés à l'appareil approbateur : les gestes restent offerts à
-// tout jeton qui peut agir, le serveur décide et son refus se dit par `HarnessFailure`.
+// comptes (Slack, Google), la source de la copie continue du profil Chrome et la connexion
+// interactive. Réservés à l'appareil approbateur : les gestes restent offerts à tout jeton
+// qui peut agir, le serveur décide et son refus se dit par `HarnessFailure`.
 //
 // Les codes du serveur (domaine d'un compte, état) se traduisent ici ; un code inconnu de
 // cette version se rend tel quel. Les mots qui existent ailleurs (Fermer) se reprennent de
@@ -21,8 +21,8 @@ enum ServerBrowserText {
     static let sectionSymbol = "globe"
     static let online = L10n.text("En ligne")
     static let offline = L10n.text("Hors ligne")
-    static let sectionHint = L10n.text("Le serveur garde ses propres sessions Slack et Google : l’agent s’en sert sans passer par votre Chrome. Seul l’appareil approbateur peut les importer ou s’y connecter.")
-    static let importHint = L10n.text("L’extension Chrome envoie au serveur la session ouverte dans votre Chrome pour ce compte ; elle répond seule, dans les deux minutes.")
+    static let sectionHint = L10n.text("Le serveur garde ses propres sessions, dont l’agent se sert sans passer par votre Chrome. Seul l’appareil approbateur choisit la source de la copie ou s’y connecte.")
+    static let mirrorHint = L10n.text("L’extension du navigateur choisi copie en continu tout le profil Chrome dans le navigateur du serveur, tous sites confondus. La connexion reste le secours quand un compte apparaît Bloqué.")
     static let loginHint = L10n.text("Vous remplissez vous-même la page de connexion, ouverte dans le navigateur du serveur, validation en deux étapes comprise.")
 
     // MARK: - Comptes
@@ -50,8 +50,8 @@ enum ServerBrowserText {
     /// Ce qu'on peut faire d'un compte expiré ou bloqué ; `nil` pour les autres états.
     static func stateHint(_ account: ServerBrowserAccount) -> String? {
         switch account.phase {
-        case .expired: L10n.text("La session a expiré : importez-la de nouveau ou reconnectez-vous.")
-        case .blocked: L10n.text("Le site a refusé la session : importez-la de nouveau ou connectez-vous ici.")
+        case .expired: L10n.text("La session a expiré. La copie de Chrome la renouvelle, sinon reconnectez-vous ici.")
+        case .blocked: L10n.text("Le site a refusé la session copiée. Connectez-vous ici.")
         case .connected, .disconnected, nil: nil
         }
     }
@@ -59,26 +59,13 @@ enum ServerBrowserText {
     /// « Mis à jour il y a 3 minutes ».
     static func changed(_ relative: String) -> String { L10n.format("Mis à jour %@", relative) }
 
-    // MARK: - Import de la session de Chrome
+    // MARK: - Copie du profil Chrome
 
-    static let importAction = L10n.text("Importer depuis Chrome")
-
-    /// L'import est ouvert : l'extension répond depuis le Chrome de l'utilisateur.
-    static func importOpened(_ account: String) -> String {
-        L10n.format("Import de %@ ouvert : l’extension répond depuis votre Chrome…", account)
-    }
-
-    /// « Il se referme à 14:05 si rien n’arrive. »
-    static func importDeadline(_ time: String) -> String { L10n.format("Il se referme à %@ si rien n’arrive.", time) }
-
-    static func outcome(_ outcome: ServerBrowserImportOutcome) -> String {
-        switch outcome {
-        case .received(let domain):
-            L10n.format("Import de %@ reçu : l’état du compte est relu.", accountName(domain))
-        case .expired(let domain):
-            L10n.format("Import de %@ expiré : l’extension n’a pas répondu. Vérifiez que Chrome est ouvert et que l’extension est en ligne.", accountName(domain))
-        }
-    }
+    static let mirrorSource = L10n.text("Copie du profil Chrome")
+    static let mirrorNone = L10n.text("Aucune copie")
+    static let mirrorPending = L10n.text("Aucune copie reçue depuis le démarrage du serveur")
+    /// « Dernière copie il y a 3 minutes ».
+    static func mirroredAt(_ relative: String) -> String { L10n.format("Dernière copie %@", relative) }
 
     // MARK: - Connexion interactive
 

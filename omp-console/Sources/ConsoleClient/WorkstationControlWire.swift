@@ -40,10 +40,13 @@ public struct WorkstationBrowser: Codable, Equatable, Sendable, Identifiable {
     public var isDefault: Bool
     /// Les comptes du navigateur du serveur (`id == "vps"`) : leur état ; vide pour tout autre navigateur.
     public var accounts: [ServerBrowserAccount]
+    /// La dernière copie du profil Chrome reçue par le navigateur du serveur (ms, depuis le
+    /// démarrage du serveur) ; `nil` pour tout autre navigateur, ou avant la première copie.
+    public var mirroredAt: Double?
 
     public init(
         id: String, label: String? = nil, online: Bool = false, lastSeenAt: Double = 0, firstSeenAt: Double = 0,
-        extensionVersion: String? = nil, isDefault: Bool = false, accounts: [ServerBrowserAccount] = []
+        extensionVersion: String? = nil, isDefault: Bool = false, accounts: [ServerBrowserAccount] = [], mirroredAt: Double? = nil
     ) {
         self.id = id
         self.label = label
@@ -53,10 +56,11 @@ public struct WorkstationBrowser: Codable, Equatable, Sendable, Identifiable {
         self.extensionVersion = extensionVersion
         self.isDefault = isDefault
         self.accounts = accounts
+        self.mirroredAt = mirroredAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, label, online, lastSeenAt, firstSeenAt, extensionVersion, isDefault, accounts
+        case id, label, online, lastSeenAt, firstSeenAt, extensionVersion, isDefault, accounts, mirroredAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -69,6 +73,7 @@ public struct WorkstationBrowser: Codable, Equatable, Sendable, Identifiable {
         extensionVersion = try container.decodeIfPresent(String.self, forKey: .extensionVersion)
         isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
         accounts = try container.decodeIfPresent([ServerBrowserAccount].self, forKey: .accounts) ?? []
+        mirroredAt = try container.decodeIfPresent(Double.self, forKey: .mirroredAt)
     }
 
     /// Le nom montré : son libellé, sinon son identifiant.
@@ -293,19 +298,22 @@ public enum WorkstationSettingChange<Value: Encodable & Equatable & Sendable>: E
     case reset
 }
 
-/// Le corps de `PUT /v1/workstation/settings` pour la navigation et le navigateur par défaut.
+/// Le corps de `PUT /v1/workstation/settings` pour la navigation, le navigateur par défaut
+/// et la source de la copie du profil Chrome.
 struct WorkstationNavigationBody: Encodable {
     var allowedHosts: WorkstationSettingChange<[String]> = .keep
     var exfiltrationGuard: WorkstationSettingChange<Bool> = .keep
     var defaultBrowser: WorkstationSettingChange<String> = .keep
+    var mirrorBrowser: WorkstationSettingChange<String> = .keep
 
-    private enum CodingKeys: String, CodingKey { case allowedHosts, exfiltrationGuard, defaultBrowser }
+    private enum CodingKeys: String, CodingKey { case allowedHosts, exfiltrationGuard, defaultBrowser, mirrorBrowser }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try Self.encode(allowedHosts, .allowedHosts, in: &container)
         try Self.encode(exfiltrationGuard, .exfiltrationGuard, in: &container)
         try Self.encode(defaultBrowser, .defaultBrowser, in: &container)
+        try Self.encode(mirrorBrowser, .mirrorBrowser, in: &container)
     }
 
     private static func encode<Value>(

@@ -1,13 +1,13 @@
 // Le contrat du NAVIGATEUR DU SERVEUR : le navigateur du poste de travail qui vit sur le
 // VPS (`browserId: "vps"`) et que l'agent 24/24 pilote sans passer par le Chrome de
-// l'utilisateur. Ses comptes (Slack, Google) y sont ouverts de deux façons, toutes deux
-// réservées à l'appareil APPROBATEUR : l'import de la session du Chrome de l'utilisateur
-// (`/v1/workstation/vps/cookie-import`, une réponse de l'extension) et la connexion
-// interactive (`/v1/workstation/vps/login` : des images de la page, des clics et des
-// frappes renvoyés au serveur, deux facteurs compris).
+// l'utilisateur. Ses comptes (Slack, Google) y sont ouverts par la copie continue de tout
+// le profil Chrome (l'extension choisie comme source, `mirrorBrowser`) et, en secours,
+// par la connexion interactive réservée à l'appareil APPROBATEUR
+// (`/v1/workstation/vps/login` : des images de la page, des clics et des frappes renvoyés
+// au serveur, deux facteurs compris).
 //
 // Chaque type décode un serveur antérieur sans échouer : un champ absent prend la valeur
-// qui dit « rien » (aucun compte, aucun import ouvert, aucune connexion).
+// qui dit « rien » (aucun compte, aucune connexion).
 
 import Foundation
 
@@ -70,43 +70,12 @@ extension WorkstationStatus {
     public var serverBrowser: WorkstationBrowser? {
         browsers.first { $0.id == WorkstationBrowser.serverID }
     }
-}
 
-// MARK: - Import de la session de Chrome
-
-/// Un import ouvert : l'extension Chrome y répond seule, avant `expiresAt`.
-public struct ServerBrowserImport: Codable, Equatable, Sendable {
-    public var domain: String
-    /// Quand l'import se referme s'il n'a pas reçu de réponse (ms).
-    public var expiresAt: Double
-
-    public init(domain: String, expiresAt: Double) {
-        self.domain = domain
-        self.expiresAt = expiresAt
+    /// Les navigateurs qui peuvent être la source de la copie du profil Chrome : toute
+    /// extension appairée, jamais le navigateur du serveur lui-même.
+    public var mirrorSources: [WorkstationBrowser] {
+        browsers.filter { $0.id != WorkstationBrowser.serverID }
     }
-}
-
-/// `POST /v1/workstation/vps/cookie-import` : `{import: {domain, expiresAt}}` (201).
-struct ServerBrowserImportReply: Decodable {
-    var opened: ServerBrowserImport
-
-    private enum CodingKeys: String, CodingKey {
-        case opened = "import"
-    }
-}
-
-/// `GET /v1/workstation/vps/cookie-import` : `{open: {domain, expiresAt} | null}`.
-struct ServerBrowserImportStatus: Decodable {
-    var current: ServerBrowserImport?
-
-    private enum CodingKeys: String, CodingKey {
-        case current = "open"
-    }
-}
-
-/// Le corps de `POST /v1/workstation/vps/cookie-import`.
-struct ServerBrowserDomainBody: Encodable {
-    var domain: String
 }
 
 // MARK: - Connexion interactive

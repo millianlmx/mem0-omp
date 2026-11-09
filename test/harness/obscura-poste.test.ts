@@ -1,10 +1,10 @@
 // Feature « Obscura conteneurisé sur le VPS », agent corpo : l'exécuteur `vps` du poste (il loue
 // la file comme une extension et l'exécute par CDP dans `obscura-poste`), ses gardes (les mêmes
-// que l'extension : hôtes permis, garde d'envoi et empreinte, arrêt d'urgence, pause), l'import
-// de cookies, la connexion interactive et l'état des comptes. Tout tourne contre un VRAI
-// `obscura serve` v0.2.6 (bash scripts/obscura.sh --prepare) ; les pages « slack » et « gmail »
-// sont servies sous leurs noms par un proxy témoin (`--proxy`), jamais par le réseau. Les valeurs
-// de cookies sont des sentinelles ; aucun hôte, jeton ni donnée réels.
+// que l'extension : hôtes permis, garde d'envoi et empreinte, arrêt d'urgence, pause), le mirroir
+// de la session du Chrome source, la connexion interactive et l'état des comptes. Tout tourne
+// contre un VRAI `obscura serve` v0.2.6 (bash scripts/obscura.sh --prepare) ; les pages « slack »
+// et « gmail » sont servies sous leurs noms par un proxy témoin (`--proxy`), jamais par le réseau.
+// Les valeurs de cookies sont des sentinelles ; aucun hôte, jeton ni donnée réels.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -15,12 +15,14 @@ import * as path from "node:path";
 import { ClientRegistry } from "../../omp-harness/auth.ts";
 import { agentScript, bundleFiles } from "../../omp-harness/browser/agent-bundle.ts";
 import type { Lookup } from "../../omp-harness/browser/guard.ts";
+import { parseMirrorCookies } from "../../omp-harness/browser/vps-policy.ts";
 import { validateConfig, browserFromEnv, defaultConfig } from "../../omp-harness/config.ts";
 import type { WorkstationAction } from "../../omp-harness/db.ts";
 import { createHandler } from "../../omp-harness/http.ts";
 import { notificationFor } from "../../omp-harness/notify.ts";
 import type { WorkstationStatus } from "../../omp-harness/workstation.ts";
-import { answerCookieImport } from "../../omp-chrome/src/lib/cookie-import.ts";
+import { CookieMirror } from "../../omp-chrome/src/lib/cookie-mirror.ts";
+import type { MirrorState } from "../../omp-chrome/src/lib/cookie-mirror.ts";
 import { classifyOutbound, sendFingerprint } from "../../omp-chrome/src/lib/outbound.ts";
 import type { OutboundContext } from "../../omp-chrome/src/lib/outbound.ts";
 import { fakeWorld, waitFor } from "../support/harness-fixtures.ts";
@@ -88,7 +90,6 @@ type Rig = {
 
 type RigOptions = {
   allowedHosts?: string[];
-  importTtlMs?: number;
   probe?: Partial<Record<"slack.com" | "google.com", string>>;
 };
 
@@ -110,7 +111,6 @@ async function rig(t: { skip(message: string): void }, options: RigOptions = {})
         lookup: PUBLIC_LOOKUP,
         pollSec: 1,
         retryMs: 200,
-        importTtlMs: options.importTtlMs ?? 60_000,
         probeUrls: options.probe ?? {},
         probeEveryMs: 3_600_000,
       },
@@ -548,7 +548,7 @@ test("obscura-poste/AC-23 : le navigateur par défaut du poste (`vps` ou une ext
   }
 });
 
-/** Un cookie de Chrome, valeur sentinelle. */
+/** Un cookie tel que `chrome.cookies` le rend (domaine pointé : cookie de domaine ; sinon host-only), valeur sentinelle. */
 const cookie = (domain: string, name = "d", value = SENTINEL) => ({
   name,
   value,
@@ -556,122 +556,148 @@ const cookie = (domain: string, name = "d", value = SENTINEL) => ({
   path: "/",
   secure: false,
   httpOnly: true,
-  sameSite: "lax",
-  expirationDate: Math.floor(Date.now() / 1000) + 3600,
+  hostOnly: !domain.startsWith("."),
+  sameSite: "lax" as const,
+  expirationDate: Date.now() / 1000 + 3600.5,
 });
 
-test("obscura-poste/AC-24 : un import ouvert par l'approbateur pose les cookies du domaine et de ses sous-domaines dans `obscura-poste` ; il se clôt et un second envoi est refusé", async (t) => {
+const putSettings = (r: Rig, body: Record<string, unknown>, token = r.approver) =>
+  r.call(token, "PUT", "/v1/workstation/settings", body);
+const mirrorOf = (r: Rig, headers: Record<string, string> = EXT) =>
+  r.call<{ mirror: { generation: string } | null }>(
+    r.ordinary,
+    "GET",
+    "/v1/workstation/vps/mirror",
+    undefined,
+    headers,
+  );
+const push = (r: Rig, body: Record<string, unknown>, headers: Record<string, string> = EXT) =>
+  r.call<{ set: number; removed: number }>(r.ordinary, "POST", "/v1/workstation/vps/cookies", body, headers);
+
+/** L'extension `b-ext` se présente, l'approbateur la choisit comme source : rend la génération du mirroir. */
+async function mirrorFrom(r: Rig): Promise<string> {
+  await extensionPoll(r, EXT);
+  assert.equal((await putSettings(r, { mirrorBrowser: "b-ext" })).status, 200);
+  const generation = (await mirrorOf(r)).json.mirror?.generation;
+  assert.equal(typeof generation, "string", "la source lit une génération");
+  return generation as string;
+}
+
+/** Les en-têtes Cookie des requêtes servies pour `host` + `path`, dans l'ordre. */
+const cookiesSeen = (r: Rig, host: string, pathname: string) =>
+  r.pages
+    .requests()
+    .filter((request) => request.host === host && request.path === pathname)
+    .map((request) => request.cookie);
+
+async function navigate(r: Rig, tabId: number, url: string): Promise<void> {
+  const done = await settled(r, (await deposit(r, { kind: "navigate", params: { tabId, url } })).seq);
+  assert.equal(done.state, "done", JSON.stringify(done));
+}
+
+test("obscura-poste/AC-24 : la session du Chrome source (tous ses domaines, cookies host-only compris) est posée dans `obscura-poste`, ses suppressions y sont reportées, et l'état des comptes est relu après la copie entière", async (t) => {
   const r = await rig(t, { probe: { "slack.com": "http://app.slack.com/client" } });
   if (r === null) return;
   try {
-    const opened = await r.call<{ import: { domain: string } }>(
-      r.approver,
-      "POST",
-      "/v1/workstation/vps/cookie-import",
-      { domain: "slack.com" },
-    );
-    assert.equal(opened.status, 201);
-    // L'extension (jeton ordinaire) lit l'import ouvert et y répond avec les cookies de son Chrome.
-    const sources: string[] = [];
-    const answered = await answerCookieImport(
-      { url: r.url, token: r.ordinary },
-      {
-        getAll: async ({ domain }) => {
-          sources.push(domain);
-          return [cookie(".slack.com", "d"), cookie("app.slack.com", "sub", `${SENTINEL}-sub`)];
-        },
+    await extensionPoll(r, EXT);
+    assert.equal((await putSettings(r, { mirrorBrowser: "b-ext" })).status, 200);
+    // L'extension source, par son propre module : copie entière au premier tour, puis les changements.
+    let stored: MirrorState | null = null;
+    const mirror = new CookieMirror({
+      getAll: async () => [
+        cookie(".slack.com", "d"),
+        cookie("app.slack.com", "sub", `${SENTINEL}-sub`),
+        cookie("evil.test", "autre", `${SENTINEL}-autre`),
+      ],
+      load: async () => stored,
+      save: async (state) => {
+        stored = state;
       },
-    );
-    assert.deepEqual(answered, { domain: "slack.com", sent: 2 });
-    assert.deepEqual(sources, ["slack.com"]);
-    assert.deepEqual((await r.call(r.ordinary, "GET", "/v1/workstation/vps/cookie-import")).json, { open: null });
-
-    // Une page sous un sous-domaine, servie par le proxy témoin, présente ces cookies.
-    await openTab(r, "http://app.slack.com/hello");
-    const seen = r.pages.requests().filter((request) => request.host === "app.slack.com" && request.path === "/hello");
-    assert.ok(
-      seen.some(
-        (request) => request.cookie.includes(`d=${SENTINEL}`) && request.cookie.includes(`sub=${SENTINEL}-sub`),
-      ),
-      JSON.stringify(seen),
-    );
-    assert.equal(
-      workstation(r)
-        .vpsAccounts()
-        .find((account) => account.domain === "slack.com")?.state,
-      "connected",
-    );
-
-    // Clos : un second envoi est refusé.
-    const again = await r.call(r.ordinary, "POST", "/v1/workstation/vps/cookies", {
-      domain: "slack.com",
-      cookies: [cookie(".slack.com")],
     });
-    assert.equal(again.status, 409);
+    const target = { url: r.url, token: r.ordinary, browser: { id: "b-ext", label: "Chrome" } };
+    await mirror.tick(target);
+    assert.notEqual(stored, null, "la génération est rangée après la copie entière");
+    await waitFor(
+      () =>
+        workstation(r)
+          .vpsAccounts()
+          .find((account) => account.domain === "slack.com")?.state === "connected",
+      () => `compte slack non relu : ${JSON.stringify(workstation(r).vpsAccounts())}`,
+      20_000,
+    );
+
+    // Sans filtre de domaine : la page Slack porte ses deux cookies (domaine et host-only), un hôte quelconque le sien.
+    const tab = await openTab(r, "http://app.slack.com/hello");
+    const slack = cookiesSeen(r, "app.slack.com", "/hello").at(-1) ?? "";
+    assert.ok(slack.includes(`d=${SENTINEL}`) && slack.includes(`sub=${SENTINEL}-sub`), slack);
+    await navigate(r, tab, "http://evil.test/");
+    assert.ok((cookiesSeen(r, "evil.test", "/").at(-1) ?? "").includes(`autre=${SENTINEL}-autre`));
+
+    // Un cookie disparu de Chrome disparaît d'Obscura.
+    mirror.recordChange({ removed: true, cause: "explicit", cookie: cookie(".slack.com", "d") });
+    await mirror.flush(target);
+    assert.equal(mirror.pending, 0);
+    await navigate(r, tab, "http://app.slack.com/hello");
+    const after = cookiesSeen(r, "app.slack.com", "/hello").at(-1) ?? "";
+    assert.ok(!after.includes(`d=${SENTINEL}`) && after.includes(`sub=${SENTINEL}-sub`), after);
+
+    const status = (await r.call<WorkstationStatus>(r.approver, "GET", "/v1/workstation")).json;
+    assert.equal(status.mirrorBrowser, "b-ext");
+    assert.equal(typeof status.browsers.find((browser) => browser.id === "vps")?.mirroredAt, "number");
   } finally {
     await r.stop();
   }
 });
 
-test("obscura-poste/AC-25 : sans import ouvert, import expiré, domaine hors liste ou cookie hors du domaine de l'import, l'envoi est refusé (4xx) et aucun cookie n'est posé", async (t) => {
-  const r = await rig(t, { importTtlMs: 600 });
+test("obscura-poste/AC-25 : sans source choisie, depuis une autre extension, avec une génération périmée ou un cookie mal formé, l'envoi est refusé et rien n'est posé ; `vps` ne peut pas être sa propre source", async (t) => {
+  const r = await rig(t);
   if (r === null) return;
-  const send = (domain: string, cookies: unknown[]) =>
-    r.call(r.ordinary, "POST", "/v1/workstation/vps/cookies", { domain, cookies });
+  const OTHER = { "X-OMP-Browser": "b-autre", "X-OMP-Browser-Label": "Chrome perso" };
   try {
-    assert.equal((await send("slack.com", [cookie(".slack.com")])).status, 409, "aucun import ouvert");
+    await extensionPoll(r, EXT);
+    assert.deepEqual((await mirrorOf(r)).json, { mirror: null }, "aucune source choisie");
+    assert.equal((await push(r, { generation: "x", set: [cookie(".slack.com")] })).status, 403);
+    assert.equal((await putSettings(r, { mirrorBrowser: "vps" })).status, 400);
+    assert.equal((await putSettings(r, { mirrorBrowser: "inconnu" })).status, 404);
 
-    // Un import expiré.
-    assert.equal(
-      (await r.call(r.approver, "POST", "/v1/workstation/vps/cookie-import", { domain: "slack.com" })).status,
-      201,
-    );
-    await sleep(900);
-    assert.equal((await send("slack.com", [cookie(".slack.com")])).status, 409, "import expiré");
-    assert.deepEqual((await r.call(r.ordinary, "GET", "/v1/workstation/vps/cookie-import")).json, { open: null });
+    const generation = await mirrorFrom(r);
+    await extensionPoll(r, OTHER);
+    assert.deepEqual((await mirrorOf(r, OTHER)).json, { mirror: null }, "une autre extension n'est pas la source");
+    assert.equal((await push(r, { generation, set: [cookie(".slack.com")] }, OTHER)).status, 403);
+    assert.equal((await push(r, { generation: "perimee", set: [cookie(".slack.com")] })).status, 409);
 
-    // Des domaines hors de la liste ne s'ouvrent pas.
-    for (const domain of ["example.com", "evil-slack.com", "slack.com.evil.test", "app.slack.com"])
-      assert.equal(
-        (await r.call(r.approver, "POST", "/v1/workstation/vps/cookie-import", { domain })).status,
-        400,
-        domain,
-      );
+    // Un cookie mal formé refuse tout l'envoi.
+    const valid = cookie(".slack.com");
+    for (const broken of [
+      { ...valid, domain: "http://slack.com" },
+      { ...valid, path: "relatif" },
+      { ...valid, name: "" },
+      { ...valid, value: 3 },
+    ])
+      assert.equal((await push(r, { generation, set: [valid, broken] })).status, 400, JSON.stringify(broken));
+    const many = Array.from({ length: 1001 }, (_, index) => cookie(".slack.com", `c${index}`));
+    assert.equal((await push(r, { generation, set: many })).status, 400, "plus de 1000 cookies");
 
-    // Un import ouvert pour slack.com : un autre domaine, ou un cookie qui en sort, est refusé en bloc.
-    const open = async () =>
-      assert.equal(
-        (await r.call(r.approver, "POST", "/v1/workstation/vps/cookie-import", { domain: "slack.com" })).status,
-        201,
-      );
-    await open();
-    assert.equal(
-      (await send("google.com", [cookie(".google.com")])).status,
-      400,
-      "domaine autre que celui de l'import",
-    );
-    for (const outside of ["example.com", "evil-slack.com", "slack.com.evil.test", ".google.com"]) {
-      await open();
-      assert.equal((await send("slack.com", [cookie(".slack.com"), cookie(outside)])).status, 400, outside);
-    }
+    // Coupé : plus de génération, plus d'envoi.
+    assert.equal((await putSettings(r, { mirrorBrowser: null })).status, 200);
+    assert.deepEqual((await mirrorOf(r)).json, { mirror: null });
+    assert.equal((await push(r, { generation, set: [valid] })).status, 403);
 
     // Aucun cookie n'a été posé : la page présente un en-tête Cookie vide.
     await openTab(r, "http://app.slack.com/hello");
-    const seen = r.pages.requests().filter((request) => request.path === "/hello");
-    assert.ok(seen.length > 0 && seen.every((request) => request.cookie === ""), JSON.stringify(seen));
+    const seen = cookiesSeen(r, "app.slack.com", "/hello");
+    assert.ok(seen.length > 0 && seen.every((header) => header === ""), JSON.stringify(seen));
   } finally {
     await r.stop();
   }
 });
 
-test("obscura-poste/AC-26 : un client non approbateur (jeton ordinaire de l'extension) ne peut ouvrir ni import ni connexion : 403", async (t) => {
+test("obscura-poste/AC-26 : un client non approbateur (jeton ordinaire de l'extension) ne peut ni choisir la source du mirroir ni ouvrir une connexion : 403", async (t) => {
   const r = await rig(t);
   if (r === null) return;
   try {
-    assert.equal(
-      (await r.call(r.ordinary, "POST", "/v1/workstation/vps/cookie-import", { domain: "slack.com" })).status,
-      403,
-    );
+    await extensionPoll(r, EXT);
+    assert.equal((await putSettings(r, { mirrorBrowser: "b-ext" }, r.ordinary)).status, 403);
     assert.equal(
       (await r.call(r.ordinary, "POST", "/v1/workstation/vps/login", { url: "http://accounts.google.com/signin" }))
         .status,
@@ -683,33 +709,22 @@ test("obscura-poste/AC-26 : un client non approbateur (jeton ordinaire de l'exte
       403,
     );
     assert.equal((await r.call(r.ordinary, "DELETE", "/v1/workstation/vps/login")).status, 403);
-    assert.deepEqual((await r.call(r.ordinary, "GET", "/v1/workstation/vps/cookie-import")).json, { open: null });
   } finally {
     await r.stop();
   }
 });
 
-test("obscura-poste/AC-27 : aucune valeur de cookie dans la base (WAL compris), les journaux, les événements, les réponses d'API ni les appels à la mémoire, après un import réussi puis un import refusé", async (t) => {
+test("obscura-poste/AC-27 : aucune valeur de cookie dans la base (WAL compris), les journaux, les événements, les réponses d'API ni les appels à la mémoire, après un envoi du mirroir accepté puis un envoi refusé", async (t) => {
   const r = await rig(t, { probe: { "slack.com": "http://app.slack.com/client" } });
   if (r === null) return;
   const refusedValue = `${SENTINEL}-refuse`;
   try {
-    assert.equal(
-      (await r.call(r.approver, "POST", "/v1/workstation/vps/cookie-import", { domain: "slack.com" })).status,
-      201,
-    );
-    const ok = await r.call(r.ordinary, "POST", "/v1/workstation/vps/cookies", {
-      domain: "slack.com",
-      cookies: [cookie(".slack.com")],
-    });
+    const generation = await mirrorFrom(r);
+    const ok = await push(r, { generation, full: true, last: true, set: [cookie(".slack.com")] });
     assert.equal(ok.status, 200, JSON.stringify(ok.json));
-    assert.equal(
-      (await r.call(r.approver, "POST", "/v1/workstation/vps/cookie-import", { domain: "slack.com" })).status,
-      201,
-    );
-    const refused = await r.call(r.ordinary, "POST", "/v1/workstation/vps/cookies", {
-      domain: "slack.com",
-      cookies: [cookie(".slack.com"), cookie("evil.test", "x", refusedValue)],
+    const refused = await push(r, {
+      generation,
+      set: [cookie(".slack.com"), { ...cookie("evil.test", "x", refusedValue), path: "relatif" }],
     });
     assert.equal(refused.status, 400);
     await openTab(r, "http://app.slack.com/hello");
@@ -729,6 +744,38 @@ test("obscura-poste/AC-27 : aucune valeur de cookie dans la base (WAL compris), 
   } finally {
     await r.stop();
   }
+});
+
+test("obscura-poste/AC-36 : un cookie host-only du mirroir part en `url` sans `domain` (Obscura rejette sinon les `__Host-…`), un cookie de domaine garde son domaine pointé et son échéance entière", () => {
+  const [hostOnly, domain] = parseMirrorCookies([
+    {
+      ...cookie("accounts.google.com", "__Host-GAPS"),
+      secure: true,
+      sameSite: "no_restriction",
+      expirationDate: 1_900_000_000.25,
+    },
+    { ...cookie(".google.com", "SID"), expirationDate: 1_900_000_000.75 },
+  ]);
+  assert.deepEqual(hostOnly, {
+    name: "__Host-GAPS",
+    value: SENTINEL,
+    path: "/",
+    secure: true,
+    httpOnly: true,
+    url: "https://accounts.google.com/",
+    sameSite: "None",
+    expires: 1_900_000_000,
+  });
+  assert.deepEqual(domain, {
+    name: "SID",
+    value: SENTINEL,
+    path: "/",
+    secure: false,
+    httpOnly: true,
+    domain: ".google.com",
+    sameSite: "Lax",
+    expires: 1_900_000_000,
+  });
 });
 
 const PNG_BASE64 = "iVBORw0KGgo";
@@ -826,21 +873,18 @@ test("obscura-poste/AC-29 : chaque compte porte un état (non connecté, connect
         ["google.com", "blocked"],
       ],
     );
-    // L'import réussi (la page d'accueil s'ouvre) : connecté.
-    assert.equal(
-      (await r.call(r.approver, "POST", "/v1/workstation/vps/cookie-import", { domain: "slack.com" })).status,
-      201,
+    // Une copie entière du mirroir dont la page d'accueil s'ouvre : connecté.
+    const generation = await mirrorFrom(r);
+    const copied = await push(r, { generation, full: true, last: true, set: [cookie(".slack.com")] });
+    assert.equal(copied.status, 200, JSON.stringify(copied.json));
+    await waitFor(
+      () =>
+        workstation(r)
+          .vpsAccounts()
+          .find((account) => account.domain === "slack.com")?.state === "connected",
+      () => "slack.com n'est pas passé connecté après la copie",
+      20_000,
     );
-    const imported = await r.call<{ imported: number; state: string }>(
-      r.ordinary,
-      "POST",
-      "/v1/workstation/vps/cookies",
-      {
-        domain: "slack.com",
-        cookies: [cookie(".slack.com")],
-      },
-    );
-    assert.deepEqual([imported.status, imported.json.state], [200, "connected"], JSON.stringify(imported.json));
     assert.ok(!/cookie|token|jeton|valeur/i.test(JSON.stringify(await accounts())), "ni cookie ni jeton dans l'état");
 
     // La session ne s'ouvre plus : la page de connexion remplace la page attendue — expiré, une seule alerte.

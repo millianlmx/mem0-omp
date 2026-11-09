@@ -8,6 +8,7 @@
 // Une connexion CDP = un contexte (jar de cookies) : l'exécuteur garde UNE connexion ouverte,
 // dont les onglets sont les onglets de l'agent. Un geste qu'Obscura ne sait pas faire rend
 // `failed` avec une raison qui le dit : jamais un succès simulé.
+import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { WorkstationAction } from "../db.ts";
 import { HarnessError } from "../errors.ts";
@@ -27,10 +28,10 @@ import {
   ACCOUNT_DOMAINS,
   VPS_BROWSER,
   VPS_LABEL,
-  accountDomain,
   accountOfHost,
   isLoginUrl,
-  parseCookies,
+  parseMirrorCookies,
+  parseMirrorRemovals,
 } from "./vps-policy.ts";
 import type { AccountDomain, AccountState } from "./vps-policy.ts";
 
@@ -45,8 +46,6 @@ export type VpsOptions = {
   /** L'attente d'un long-poll (s) : courte, pour qu'une connexion tombée se voie vite. */
   pollSec?: number;
   retryMs?: number;
-  /** La durée d'un import de cookies ouvert par l'approbateur. */
-  importTtlMs?: number;
   /** Les pages qui disent si un compte est ouvert (tests : adresses locales). */
   probeUrls?: Partial<Record<AccountDomain, string>>;
   probeEveryMs?: number;
@@ -94,7 +93,8 @@ export class VpsBrowser {
   #nextTab = 1;
   #current: { seq: number; controller: AbortController } | null = null;
   #poll: AbortController | null = null;
-  #import: { domain: AccountDomain; expiresAt: number } | null = null;
+  /** Le jeu de cookies de la connexion en cours : un mirroir d'une autre génération doit tout renvoyer. */
+  #generation: string | null = null;
   #loop: Promise<void> | null = null;
   #stopping = new AbortController();
   #probedAt = Date.now();
@@ -162,6 +162,8 @@ export class VpsBrowser {
       });
       await connection.send("Page.enable", {}, { sessionId });
       this.#home = sessionId;
+      // Une connexion neuve repart de l'instantané d'Obscura : le mirroir de Chrome est à renvoyer en entier.
+      this.#generation = randomBytes(8).toString("hex");
     } catch (error) {
       connection.close();
       throw error;
@@ -171,6 +173,7 @@ export class VpsBrowser {
     connection.onClose(() => {
       if (this.#connection !== connection) return;
       this.#connection = null;
+      this.#generation = null;
       this.#tabs.clear();
       this.#poll?.abort();
       this.#workstation.forget(VPS_BROWSER);
@@ -501,46 +504,48 @@ export class VpsBrowser {
     return { outcome: "done", result: { text: `onglet ${tab.id} : ${after.title} · ${after.url}` } };
   }
 
-  // -- comptes : import de cookies, connexion, état ----------------------------------
+  // -- comptes : mirroir de la session de Chrome, connexion, état ---------------------
 
-  /** L'import ouvert par l'approbateur pour UN domaine ; remplace le précédent. */
-  openImport(rawDomain: unknown): { domain: AccountDomain; expiresAt: number } {
-    const domain = accountDomain(rawDomain);
-    if (domain === null) throw new HarnessError(400, `domain : ${ACCOUNT_DOMAINS.join(" | ")}`);
-    this.#import = { domain, expiresAt: Date.now() + (this.#options.importTtlMs ?? 120_000) };
-    return this.#import;
-  }
-
-  /** Ce que l'extension lit pour savoir si elle doit répondre : le domaine ouvert, sinon rien. */
-  importStatus(): { open: { domain: AccountDomain; expiresAt: number } | null } {
-    return { open: this.#import !== null && this.#import.expiresAt > Date.now() ? this.#import : null };
+  /**
+   * Ce que l'extension lit pour savoir si elle est la source du mirroir : la génération du jeu de
+   * cookies d'`obscura-poste`, ou `null` (ce navigateur n'est pas la source, ou Obscura est injoignable).
+   */
+  async mirrorStatus(hello: BrowserHello): Promise<{ mirror: { generation: string } | null }> {
+    if (!this.configured || hello.id === null || this.#workstation.settings().mirrorBrowser !== hello.id)
+      return { mirror: null };
+    try {
+      await this.#connect();
+    } catch {
+      return { mirror: null };
+    }
+    return { mirror: this.#generation === null ? null : { generation: this.#generation } };
   }
 
   /**
-   * Les cookies d'un domaine, envoyés UNE fois par l'extension pour l'import ouvert : posés dans
-   * `obscura-poste` par `Network.setCookies`, jamais écrits ailleurs. Rend le nombre posé et l'état
-   * du compte après vérification de la session.
+   * Un envoi du mirroir : les cookies du Chrome de l'utilisateur, de TOUS les domaines, posés dans
+   * `obscura-poste` par `Network.setCookies`, et ceux qui y ont disparu, retirés. Jamais écrits
+   * ailleurs (ni base, ni journal, ni événement). Après le dernier envoi d'une copie entière, l'état
+   * des comptes est relu : une page de connexion donne `blocked` (session copiée refusée).
    */
-  async acceptCookies(
-    rawDomain: unknown,
-    rawCookies: unknown,
-  ): Promise<{ imported: number; state: AccountState | null }> {
-    const open = this.importStatus().open;
-    if (open === null)
-      throw new HarnessError(409, "aucun import de cookies n'est ouvert (l'appareil approbateur l'ouvre)");
-    const domain = accountDomain(rawDomain);
-    if (domain === null) throw new HarnessError(400, `domain : ${ACCOUNT_DOMAINS.join(" | ")}`);
-    if (domain !== open.domain) throw new HarnessError(400, `domain : l'import ouvert vise ${open.domain}`);
-    const cookies = parseCookies(domain, rawCookies);
-    this.#import = null;
+  async acceptMirror(hello: BrowserHello, body: Record<string, unknown>): Promise<{ set: number; removed: number }> {
+    const source = this.#workstation.settings().mirrorBrowser;
+    if (source === null || hello.id !== source)
+      throw new HarnessError(403, "ce navigateur n'est pas la source du mirroir (réglage `mirrorBrowser` du poste)");
+    const cookies = parseMirrorCookies(body.set);
+    const removals = parseMirrorRemovals(body.removed);
     let connection: CdpConnection;
     try {
       connection = await this.#connect();
     } catch {
       throw new HarnessError(503, "navigateur du poste injoignable");
     }
+    if (typeof body.generation !== "string" || body.generation !== this.#generation)
+      throw new HarnessError(409, "génération périmée : le mirroir doit renvoyer la session entière");
     try {
-      await connection.send("Network.setCookies", { cookies }, { sessionId: this.#home as string });
+      for (const removal of removals)
+        await connection.send("Network.deleteCookies", removal, { sessionId: this.#home as string });
+      if (cookies.length > 0)
+        await connection.send("Network.setCookies", { cookies }, { sessionId: this.#home as string });
     } catch (error) {
       // Le message d'Obscura n'est pas rendu : il pourrait citer un cookie.
       throw new HarnessError(
@@ -548,7 +553,12 @@ export class VpsBrowser {
         `navigateur du poste : cookies refusés (${error instanceof Error ? error.name : "erreur"})`,
       );
     }
-    return { imported: cookies.length, state: await this.#probe(domain, "blocked") };
+    this.#workstation.markMirrored();
+    if (body.full === true && body.last === true)
+      void (async () => {
+        for (const domain of ACCOUNT_DOMAINS) await this.#probe(domain, "blocked");
+      })();
+    return { set: cookies.length, removed: removals.length };
   }
 
   get login(): VpsLogin {

@@ -279,6 +279,9 @@ public struct WorkstationStatus: Codable, Equatable, Sendable {
     public var browsers: [WorkstationBrowser]
     /// Le navigateur qui reçoit ce qui n'en cible aucun ; `nil` : aucun connu.
     public var defaultBrowser: String?
+    /// Le navigateur dont l'extension copie en continu tout le profil Chrome dans le
+    /// navigateur du serveur ; `nil` : aucune copie (ou serveur antérieur à la copie).
+    public var mirrorBrowser: String?
     /// Les hôtes où l'on navigue sans approbation (vide : tout hôte), valeurs en vigueur.
     public var allowedHosts: [String]
     /// La garde anti-exfiltration de l'agent 24/24, en vigueur.
@@ -291,8 +294,8 @@ public struct WorkstationStatus: Codable, Equatable, Sendable {
         thresholdHours: Double = 8, autonomy: WorkstationAutonomy = WorkstationAutonomy(setting: "auto", effective: "observe"),
         paused: Bool = false, selfIdentities: [String] = [], pending: Int = 0, profileUpdatedAt: Double? = nil,
         lastShift: WorkstationShift? = nil, nextShiftAt: Double? = nil, stopped: WorkstationStop? = nil,
-        browsers: [WorkstationBrowser] = [], defaultBrowser: String? = nil, allowedHosts: [String] = [],
-        exfiltrationGuard: Bool = true, navigationSource: WorkstationNavigationSource? = nil
+        browsers: [WorkstationBrowser] = [], defaultBrowser: String? = nil, mirrorBrowser: String? = nil,
+        allowedHosts: [String] = [], exfiltrationGuard: Bool = true, navigationSource: WorkstationNavigationSource? = nil
     ) {
         self.online = online
         self.lastSeenAt = lastSeenAt
@@ -309,6 +312,7 @@ public struct WorkstationStatus: Codable, Equatable, Sendable {
         self.stopped = stopped
         self.browsers = browsers
         self.defaultBrowser = defaultBrowser
+        self.mirrorBrowser = mirrorBrowser
         self.allowedHosts = allowedHosts
         self.exfiltrationGuard = exfiltrationGuard
         self.navigationSource = navigationSource
@@ -317,7 +321,7 @@ public struct WorkstationStatus: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case online, lastSeenAt, extensionVersion, observedSeconds, thresholdHours, autonomy, paused
         case selfIdentities, pending, profileUpdatedAt, lastShift, nextShiftAt
-        case stopped, browsers, defaultBrowser, allowedHosts, exfiltrationGuard, navigationSource
+        case stopped, browsers, defaultBrowser, mirrorBrowser, allowedHosts, exfiltrationGuard, navigationSource
     }
 
     /// Un serveur antérieur à l'arrêt d'urgence, aux navigateurs ou à la navigation gardée
@@ -339,6 +343,7 @@ public struct WorkstationStatus: Codable, Equatable, Sendable {
         stopped = try container.decodeIfPresent(WorkstationStop.self, forKey: .stopped)
         browsers = try container.list([WorkstationBrowser].self, .browsers)
         defaultBrowser = try container.decodeIfPresent(String.self, forKey: .defaultBrowser)
+        mirrorBrowser = try container.decodeIfPresent(String.self, forKey: .mirrorBrowser)
         allowedHosts = try container.list([String].self, .allowedHosts)
         exfiltrationGuard = try container.decodeIfPresent(Bool.self, forKey: .exfiltrationGuard) ?? true
         navigationSource = try container.decodeIfPresent(WorkstationNavigationSource.self, forKey: .navigationSource)

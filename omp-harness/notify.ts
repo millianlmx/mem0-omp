@@ -246,18 +246,6 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
         click: null,
       };
     }
-    // La veille du poste : à ajouter à `notify.events`. Ni texte, ni sujet, ni personne : ce sont des
-    // messages de collègues, ils se lisent dans « À traiter ». Les gestes de la validation (validée,
-    // envoyée, écartée) ne notifient pas.
-    case "workstation_watch":
-      if (payload.state !== "open") return null;
-      return {
-        title: payload.ready === true ? "Poste — réponse prête à valider" : "Poste — nouvel élément dans À traiter",
-        body: "La veille du poste a quelque chose pour toi : rien ne part sans ton geste.",
-        priority: 3,
-        tags: ["inbox_tray"],
-        click: null,
-      };
     // Les planifications : à ajouter à `notify.events` pour être prévenu de chaque échéance.
     case "schedule_fired":
     case "schedule_skipped": {

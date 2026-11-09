@@ -8,7 +8,7 @@ groupes, raccourcis ⌘1…⌘7, et un panneau de détail :
 |---|---|---|
 | Travail | **À traiter** | La file unique de ce qui attend l'humain (questions, specs et revues à valider, envois du poste à approuver, alertes, audits à trier, décisions à relire), la plus vieille attente d'abord, sous une ligne de pouls (direct, en cours, en file, coût de la semaine). Vide : « Rien ne vous attend ». |
 | Travail | **Features** | Une ligne dense par feature, groupée « À vous », « En cours », « En file », « Terminées » ; la choisir ouvre sa **page** (en-tête, jalons Besoins → Specs → Implémentation → Revue → Fusion, onglets Aperçu, Preuves, Carte, Direct, Fichiers, Tests, Frise, consigne à l'agent en pied). Portées : Features, Projets, Audits, Issues. |
-| Travail | **Poste** | Le poste de travail (extension Chrome et agent 24/24) : état, arrêt d'urgence, envois à approuver, demandes ; réglages, automatisations, profil, réunions et journal en sous-pages. Sur le Mac seulement, réservé à l'appareil approbateur : « Navigateur du serveur » — l'état des comptes Slack et Google du navigateur que l'agent pilote sur le VPS, l'import de la session de votre Chrome (l'extension répond seule) et la connexion interactive dans une feuille (image de la page rafraîchie chaque seconde, clics, frappes, « Terminer »). |
+| Travail | **Poste** | Le poste de travail (extension Chrome et agent 24/24) : état, arrêt d'urgence, envois à approuver, demandes ; réglages, automatisations, profil, réunions et journal en sous-pages. Sur le Mac seulement, réservé à l'appareil approbateur : « Navigateur du serveur » — l'état des comptes Slack et Google du navigateur que l'agent pilote sur le VPS, la source de la copie continue de tout votre profil Chrome (une extension appairée, ou aucune ; `PUT /v1/workstation/settings {mirrorBrowser}`) avec la date de la dernière copie reçue, et, en secours quand un compte est « Bloqué », la connexion interactive dans une feuille (image de la page rafraîchie chaque seconde, clics, frappes, « Terminer »). |
 | Outils | **Mémoire**, **Terminal**, **Fichiers** | Locaux au Mac : la mémoire du projet, le terminal intégré, la visionneuse de fichiers et de différences. |
 | Système | **Système** | Ce qui se règle rarement, en sous-pages : Vigie, Planifications, Statistiques et santé, Administration (jeton admin seulement), Serveur. |
 
@@ -420,7 +420,6 @@ elle-même.
     jamais. Seul l'appareil approbateur confirme ou écarte : le refus du serveur est dit
     dans la feuille, pas dans le bandeau de tête. Les signalements sont au
     propriétaire : un jeton restreint à des dépôts (403) n'en voit rien, sans erreur.
-    Le serveur ne sert pas encore les brouillons de réponse au collègue : l'app n'en montre aucun.
 - **Features** — un sélecteur de portée en tête (`RunsScope`) :
   - **Features** : une ligne dense par feature (`RunListRow` : point d'état, animé
     si elle tourne, titre, `dépôt · étape · âge`, coût si connu), groupée « À vous »,
@@ -619,36 +618,10 @@ approuver seulement s'il y en a, « Demander au poste » (un champ, le navigateu
 l'envoi ; les demandes en cours et la plus récente terminée, « Toutes les
 demandes »), les cinq dernières décisions (« Tout le journal »), puis une rangée
 par sous-page (`WorkstationPage`, `workstation.page.<page>`) : **Réglages**
-(autonomie, adresses et pseudos, navigateurs, navigation gardée), **Canaux**
-(seulement si le serveur les sert à ce jeton), **Automatisations**, **Commander
-le navigateur**, **Profil**, **Réunions**, **Journal**, **Sessions** des jobs du
-poste, **Demandes**. Ce que ces pages montrent :
+(autonomie, adresses et pseudos, navigateurs, navigation gardée),
+**Automatisations**, **Commander le navigateur**, **Profil**, **Réunions**,
+**Journal**, **Sessions** des jobs du poste, **Demandes**. Ce que ces pages montrent :
 
-- **Canaux** (`server.channels`, `GET /v1/workstation/channels`) : Gmail, Agenda et
-  Slack, chacun avec son état (non connecté, connecté, à reconnecter, bloqué par
-  l'administrateur, en erreur), son compte, sa dernière lecture et la phrase du
-  serveur (blocage, scope manquant, refus du fournisseur) ; la rangée compte les
-  canaux à reconnecter ou en erreur. En tête, une connexion en cours : « Ouvrir la
-  page d'autorisation » (l'URL que rend le serveur), un champ où recoller l'adresse
-  de retour, le code ou le texte d'erreur affiché (`POST …/{id}/login/answer
-  {value}`), et « L'administrateur bloque l'app » (`{blocked: true}`, ou un seul
-  canal Google : `channels: ["gmail"]` ou `["calendar"]`). Puis une section par
-  connexion : le client OAuth et « Configurer le client… » (feuille : JSON du
-  client « Application de bureau » ou identifiant et secret pour Google,
-  identifiant seul pour Slack, `PUT …/{id}/client`), et « Connecter » (Google :
-  Gmail et l'Agenda, Gmail seul ou l'Agenda seul, `POST …/{id}/login {channels?}`).
-  Le secret ne vit que dans la feuille, vidé à l'envoi : l'app ne le réaffiche ni
-  ne le garde. Les gestes n'existent que pour l'appareil approbateur (seul à
-  recevoir l'URL d'autorisation) ; un refus du serveur revient au geste. L'écran
-  est relu à chaque événement `workstation_channel` ; sur un serveur sans la route
-  (404) ou pour un jeton restreint (403), il n'existe pas.
-  En fin d'écran, quand Slack est connecté ou en erreur : **Canaux Slack suivis**
-  (`channels.slackConversations`, `GET /v1/workstation/channels/slack/conversations`,
-  capacité `workstation-channel-reads`), une case par canal public ou privé de
-  l'espace. Cocher (`PUT …/conversations/{id} {followed}`, appareil approbateur
-  seul, cases grisées ailleurs) fait entrer le canal dans la lecture suivante du
-  serveur, qui lit déjà les messages privés et les mentions partout. Relue à
-  l'événement `workstation_channel_follow` ; absente sur 404 ou 409.
 - **Extension et agent 24/24** (`GET /v1/workstation`) : extension en ligne ou
   hors ligne et son dernier contact, sa version, les heures observées sur le seuil
   (barre de progression), le dernier et le prochain passage de l'agent.

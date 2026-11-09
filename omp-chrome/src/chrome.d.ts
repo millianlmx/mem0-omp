@@ -164,6 +164,7 @@ declare namespace chrome {
     const onChanged: ChromeEvent<(delta: DownloadDelta) => void>;
   }
   namespace cookies {
+    type SameSiteStatus = "no_restriction" | "lax" | "strict" | "unspecified";
     interface Cookie {
       name: string;
       value: string;
@@ -171,10 +172,22 @@ declare namespace chrome {
       path: string;
       secure: boolean;
       httpOnly: boolean;
-      sameSite?: string;
+      hostOnly: boolean;
+      session: boolean;
+      sameSite: SameSiteStatus;
       expirationDate?: number;
+      storeId: string;
+      partitionKey?: { topLevelSite?: string; hasCrossSiteAncestor?: boolean };
     }
-    function getAll(details: { domain: string }): Promise<Cookie[]>;
+    type OnChangedCause = "evicted" | "expired" | "explicit" | "expired_overwrite" | "overwrite";
+    interface CookieChangeInfo {
+      removed: boolean;
+      cookie: Cookie;
+      cause: OnChangedCause;
+    }
+    /** `{}` : tous les cookies du magasin du contexte (le profil, hors navigation privée). */
+    function getAll(details: Record<string, never>): Promise<Cookie[]>;
+    const onChanged: ChromeEvent<(changeInfo: CookieChangeInfo) => void>;
   }
 
   namespace idle {

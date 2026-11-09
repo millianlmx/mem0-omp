@@ -195,30 +195,6 @@ export type WorkstationConfig = {
    * le fichier ne les donne pas. `url` null : l'exécuteur `vps` ne démarre pas.
    */
   vps: { url: string | null; token: string | null };
-  /** Le repos entre deux passages de lecture des canaux corpo (Gmail, Agenda, Slack), en minutes. */
-  channelReadEveryMin: number;
-  /** La veille proactive (job `poste-veille`, canaux/veille.ts). */
-  watch: WatchConfig;
-};
-
-/** Les jours de la semaine des heures ouvrées, dans l'ordre de `Date.getUTCDay()`. */
-export const WEEK_DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
-export type WeekDay = (typeof WEEK_DAYS)[number];
-
-/**
- * La veille proactive du poste : un passage toutes les `intervalMinutes` minutes aux heures
- * ouvrées (`days`, de `start` à `end`, heure murale de `schedules.timezone`), plus les passages
- * des 15 minutes avant l'ouverture, qui ne préparent que les réunions du début de plage.
- */
-export type WatchConfig = {
-  /** De 1 à 15. */
-  intervalMinutes: number;
-  days: WeekDay[];
-  /** `HH:MM`, avant `end`. */
-  start: string;
-  end: string;
-  /** Le silence (en jours ouvrés) après lequel un mail de l'utilisateur sans réponse est relancé. */
-  followUpDays: number;
 };
 
 /** Le monitoring : plafond de coût, veille des features muettes ou lentes, santé du serveur. */
@@ -366,8 +342,6 @@ export type HarnessConfig = {
   tokenFile: string;
   /** Les clients nommés (jetons hachés, rôles, dépôts permis), gérés par `--add-client` (auth.ts). */
   clientsFile: string;
-  /** Les canaux corpo (canaux/) : identifiants des clients OAuth et jetons Gmail, Agenda, Slack (0600, hors base). */
-  channelsFile: string;
   /**
    * Les fournisseurs déclarés par l'API (providers.ts) : leurs clés (`*_API_KEY`, 0600) et
    * le `models.yml` des fournisseurs compatibles OpenAI, que le lanceur pose chez les runners.
@@ -644,7 +618,6 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     listen: { host: "127.0.0.1", port: 8790 },
     tokenFile: path.join(base, "token"),
     clientsFile: path.join(base, "clients.json"),
-    channelsFile: path.join(base, "channels.json"),
     providersEnvFile: path.join(base, "providers.env"),
     providersModelsFile: path.join(base, "providers.models.yml"),
     dataDir: base,
@@ -745,14 +718,6 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       exfiltrationGuard: true,
       captureRetentionHours: 24,
       vps: { url: null, token: null },
-      channelReadEveryMin: 5,
-      watch: {
-        intervalMinutes: 5,
-        days: ["mon", "tue", "wed", "thu", "fri"],
-        start: "09:00",
-        end: "18:00",
-        followUpDays: 3,
-      },
     },
     issues: { label: "omp:fix", maxLaunch: 5, pollSec: 900 },
     lanes: { direct: true },
@@ -784,36 +749,6 @@ function merge<T>(base: T, over: unknown): T {
 
 function fail(message: string): never {
   throw new Error(`configuration du harness : ${message}`);
-}
-
-/** Les minutes depuis minuit d'une heure `HH:MM` (00:00 à 24:00), `null` si illisible. */
-export function minutesOf(text: unknown): number | null {
-  if (typeof text !== "string") return null;
-  const match = /^([01]\d|2[0-4]):([0-5]\d)$/.exec(text);
-  if (!match) return null;
-  const minutes = Number(match[1]) * 60 + Number(match[2]);
-  return minutes <= 24 * 60 ? minutes : null;
-}
-
-/** Valide la veille du poste : chaque erreur nomme sa clé (le harness refuse de démarrer). */
-function checkWatch(watch: unknown): void {
-  if (!isRecord(watch)) fail("workstation.watch : { intervalMinutes, days, start, end, followUpDays }");
-  const interval = watch.intervalMinutes;
-  if (!(Number.isInteger(interval) && (interval as number) >= 1 && (interval as number) <= 15))
-    fail("workstation.watch.intervalMinutes : entier de 1 à 15");
-  if (
-    !Array.isArray(watch.days) ||
-    watch.days.length === 0 ||
-    watch.days.some((day) => !(WEEK_DAYS as readonly unknown[]).includes(day))
-  )
-    fail(`workstation.watch.days : liste non vide de jours parmi ${WEEK_DAYS.join(", ")}`);
-  const start = minutesOf(watch.start);
-  if (start === null) fail("workstation.watch.start : heure HH:MM");
-  const end = minutesOf(watch.end);
-  if (end === null) fail("workstation.watch.end : heure HH:MM");
-  if (end <= start) fail("workstation.watch.end : plage vide, la fin doit suivre le début (workstation.watch.start)");
-  if (!(Number.isInteger(watch.followUpDays) && (watch.followUpDays as number) >= 1))
-    fail("workstation.watch.followUpDays : entier de jours ouvrés ≥ 1");
 }
 
 function checkModels(tier: string, list: unknown): ModelChoice[] {
@@ -1151,9 +1086,6 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     fail("workstation.shiftEveryMin : minutes ≥ 1");
   if (!(Number.isInteger(workstation.shiftMaxActions) && workstation.shiftMaxActions >= 1))
     fail("workstation.shiftMaxActions : entier ≥ 1");
-  if (!(typeof workstation.channelReadEveryMin === "number" && workstation.channelReadEveryMin >= 1))
-    fail("workstation.channelReadEveryMin : minutes ≥ 1");
-  checkWatch(workstation.watch);
   if (workstation.policy !== undefined) {
     if (!isRecord(workstation.policy)) fail("workstation.policy : { models?, providers?, privacy? }");
     checkPolicy("workstation.policy", workstation.policy);
@@ -1315,7 +1247,6 @@ export function loadConfig(file: string | null): HarnessConfig {
   }
   // Les clients vivent à côté du jeton historique (même dossier d'état, mêmes droits).
   if (raw.clientsFile === undefined) config.clientsFile = path.join(path.dirname(config.tokenFile), "clients.json");
-  if (raw.channelsFile === undefined) config.channelsFile = path.join(path.dirname(config.tokenFile), "channels.json");
   if (raw.providersEnvFile === undefined)
     config.providersEnvFile = path.join(path.dirname(config.tokenFile), "providers.env");
   if (raw.providersModelsFile === undefined)

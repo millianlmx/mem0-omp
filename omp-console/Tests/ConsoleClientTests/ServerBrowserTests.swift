@@ -1,8 +1,9 @@
 // Le client du NAVIGATEUR DU SERVEUR (routes `/v1/workstation/vps/*` d'omp-harness) :
-// l'état des comptes lu dans le statut du poste, le contrat JSON de l'import et de la
-// connexion interactive, les corps des gestes renvoyés à la page, le passage des clics de
-// l'image aux 1280 × 720 de la fenêtre du serveur, et les gestes du modèle (méthode,
-// chemin, corps, échecs) — sur la doublure de transport du serveur de pipelines, sans réseau.
+// l'état des comptes et la copie du profil Chrome lus dans le statut du poste, le choix de
+// la source de la copie, le contrat JSON de la connexion interactive, les corps des gestes
+// renvoyés à la page, le passage des clics de l'image aux 1280 × 720 de la fenêtre du
+// serveur, et les gestes du modèle (méthode, chemin, corps, échecs) — sur la doublure de
+// transport du serveur de pipelines, sans réseau.
 
 @testable import ConsoleClient
 import ConsoleCore
@@ -20,10 +21,10 @@ private let statusJSON = #"""
  "selfIdentities":[],"pending":0,"stopped":null,
  "browsers":[
   {"id":"b1","label":"Perso","online":true,"lastSeenAt":5,"firstSeenAt":1,"extensionVersion":"0.4.0","isDefault":true},
-  {"id":"vps","label":"VPS","online":true,"lastSeenAt":9,"firstSeenAt":2,"extensionVersion":null,"isDefault":false,
+  {"id":"vps","label":"VPS","online":true,"lastSeenAt":9,"firstSeenAt":2,"extensionVersion":null,"isDefault":false,"mirroredAt":1761730060000,
    "accounts":[{"domain":"slack.com","state":"connected","changedAt":1761730000000},
                {"domain":"google.com","state":"disconnected","changedAt":null}]}],
- "defaultBrowser":"b1","allowedHosts":[],"exfiltrationGuard":true,"navigationSource":{"allowedHosts":"config","exfiltrationGuard":"config"}}
+ "defaultBrowser":"b1","mirrorBrowser":"b1","allowedHosts":[],"exfiltrationGuard":true,"navigationSource":{"allowedHosts":"config","exfiltrationGuard":"config"}}
 """#
 
 /// Le statut d'un serveur qui n'a pas de navigateur du serveur.
@@ -32,7 +33,6 @@ private let plainStatusJSON = #"""
  "selfIdentities":[],"pending":0,"browsers":[{"id":"b1","label":"Perso","online":true,"lastSeenAt":5,"firstSeenAt":1,"isDefault":true}]}
 """#
 
-private let importPath = "/v1/workstation/vps/cookie-import"
 private let loginPath = "/v1/workstation/vps/login"
 private let framePath = "/v1/workstation/vps/login/frame"
 private let inputPath = "/v1/workstation/vps/login/input"
@@ -101,16 +101,24 @@ struct ServerBrowserTests {
         #expect(ServerBrowserAccount(domain: "slack.com").loginURL == "https://slack.com/signin")
     }
 
-    @Test("l'import, la connexion, l'image et l'accusé se décodent tels que le serveur les écrit")
+    @Test("la source de la copie du profil Chrome et la dernière copie reçue se lisent dans le statut ; absentes : aucune copie")
+    func decodesMirror() throws {
+        let decoder = JSONDecoder()
+        let status = try decoder.decode(WorkstationStatus.self, from: Data(statusJSON.utf8))
+        #expect(status.mirrorBrowser == "b1")
+        #expect(status.serverBrowser?.mirroredAt == 1_761_730_060_000)
+        #expect(status.browsers.first { $0.id == "b1" }?.mirroredAt == nil, "une extension ne reçoit pas de copie")
+        #expect(status.mirrorSources.map(\.id) == ["b1"], "le navigateur du serveur n'est jamais la source de sa propre copie")
+
+        let plain = try decoder.decode(WorkstationStatus.self, from: Data(plainStatusJSON.utf8))
+        #expect(plain.mirrorBrowser == nil, "un serveur antérieur à la copie n'en dit rien")
+        let off = try decoder.decode(WorkstationStatus.self, from: Data(statusJSON.replacingOccurrences(of: #""mirrorBrowser":"b1""#, with: #""mirrorBrowser":null"#).utf8))
+        #expect(off.mirrorBrowser == nil)
+    }
+
+    @Test("la connexion, l'image et l'accusé se décodent tels que le serveur les écrit")
     func decodesWire() throws {
         let decoder = JSONDecoder()
-        let opened = try decoder.decode(ServerBrowserImportReply.self, from: Data(#"{"import":{"domain":"slack.com","expiresAt":1761730120000}}"#.utf8))
-        #expect(opened.opened == ServerBrowserImport(domain: "slack.com", expiresAt: 1_761_730_120_000))
-        let closedImport = try decoder.decode(ServerBrowserImportStatus.self, from: Data(#"{"open":null}"#.utf8))
-        #expect(closedImport.current == nil)
-        let openImport = try decoder.decode(ServerBrowserImportStatus.self, from: Data(#"{"open":{"domain":"google.com","expiresAt":5}}"#.utf8))
-        #expect(openImport.current == ServerBrowserImport(domain: "google.com", expiresAt: 5))
-
         let started = try decoder.decode(ServerBrowserLoginReply.self, from: Data(#"{"login":{"id":"lg_1","domain":"slack.com","host":"slack.com","startedAt":7,"error":null,"champInconnu":1}}"#.utf8))
         #expect(started.login == ServerBrowserLogin(id: "lg_1", domain: "slack.com", host: "slack.com", startedAt: 7))
         let refused = try decoder.decode(ServerBrowserLoginReply.self, from: Data(#"{"login":{"id":"lg_2","domain":"google.com","host":"exemple.fr","startedAt":8,"error":"navigation refusée"}}"#.utf8))
@@ -161,34 +169,26 @@ struct ServerBrowserTests {
         #expect(small.click(atX: 100, y: 75, displayedWidth: 400, displayedHeight: 300) == ServerBrowserInput.click(x: 200, y: 150))
     }
 
-    @Test("l'import s'ouvre pour un domaine, se relit jusqu'à sa fermeture, et dit s'il a été reçu ou s'il a expiré")
-    func importFlow() async throws {
-        let opened = reply(#"{"import":{"domain":"slack.com","expiresAt":1000000}}"#, status: 201)
-        let stillOpen = reply(#"{"open":{"domain":"slack.com","expiresAt":1000000}}"#)
-        let closed = reply(#"{"open":null}"#)
+    @Test("choisir la source de la copie part en PUT /v1/workstation/settings, `null` explicite pour aucune ; l'état rendu remplace l'ancien")
+    func choosesMirrorSource() async throws {
         let transport = ScriptedHarnessTransport()
-        transport.respond(vpsServer(["POST \(importPath)": opened, "GET \(importPath)": stillOpen]))
+        transport.respond(vpsServer(["PUT /v1/workstation/settings": reply(statusJSON)]))
         let server = await connectedServer(transport)
-        let browser = server.serverBrowser
+        let workstation = server.workstation
 
-        #expect(await browser.openImport(domain: "slack.com"))
-        #expect(browser.pendingImport == ServerBrowserImport(domain: "slack.com", expiresAt: 1_000_000))
-        let post = try #require(transport.calls.last { $0.method == "POST" && $0.path == importPath })
-        #expect(try jsonBody(post)["domain"] as? String == "slack.com")
+        #expect(await workstation.setMirrorBrowser("b1"))
+        let chosen = try #require(transport.calls.last { $0.method == "PUT" })
+        #expect(chosen.path == "/v1/workstation/settings")
+        #expect(String(decoding: try #require(chosen.body), as: UTF8.self) == #"{"mirrorBrowser":"b1"}"#)
+        #expect(workstation.status?.mirrorBrowser == "b1")
 
-        await browser.pollImport(now: Date(timeIntervalSince1970: 500))
-        #expect(browser.pendingImport != nil && browser.importOutcome == nil, "encore ouvert : l'extension n'a pas répondu")
+        #expect(await workstation.setMirrorBrowser(nil))
+        let stopped = try #require(transport.calls.last { $0.method == "PUT" })
+        #expect(String(decoding: try #require(stopped.body), as: UTF8.self) == #"{"mirrorBrowser":null}"#)
 
-        transport.respond(vpsServer(["GET \(importPath)": closed]))
-        await browser.pollImport(now: Date(timeIntervalSince1970: 500))
-        #expect(browser.pendingImport == nil && browser.importOutcome == .received("slack.com"), "refermé avant l'échéance : reçu")
-        #expect(transport.calls.contains { $0.method == "GET" && $0.path == "/v1/workstation" }, "l'état des comptes est relu")
-
-        transport.respond(vpsServer(["POST \(importPath)": opened, "GET \(importPath)": closed]))
-        #expect(await browser.openImport(domain: "slack.com"))
-        #expect(browser.importOutcome == nil, "un nouvel import efface le précédent")
-        await browser.pollImport(now: Date(timeIntervalSince1970: 2000))
-        #expect(browser.pendingImport == nil && browser.importOutcome == .expired("slack.com"), "refermé après l'échéance : expiré")
+        transport.respond(vpsServer(["PUT /v1/workstation/settings": reply(approverRefusal, status: 403)]))
+        #expect(await workstation.setMirrorBrowser("b1") == false)
+        #expect(workstation.failure == .approverOnly)
     }
 
     @Test("un jeton qui n'est pas l'approbateur voit son refus ; la lecture d'une connexion ouverte se tait")
@@ -202,9 +202,7 @@ struct ServerBrowserTests {
         await browser.resumeLogin()
         #expect(browser.login == nil && browser.failure == nil, "un autre jeton n'a rien à reprendre : aucun échec")
 
-        transport.respond(vpsServer(["POST \(importPath)": refusal, "POST \(loginPath)": refusal]))
-        #expect(await browser.openImport(domain: "slack.com") == false)
-        #expect(browser.failure == .approverOnly && browser.pendingImport == nil)
+        transport.respond(vpsServer(["POST \(loginPath)": refusal]))
         #expect(await browser.startLogin(url: "https://slack.com/signin") == false)
         #expect(browser.failure == .approverOnly && browser.login == nil)
     }
