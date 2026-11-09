@@ -817,7 +817,7 @@ test("session-graph/AC-12 : un stake ou un established absent ou sur plusieurs l
     const parsed = planDecision(escalationArgs(extra));
     return parsed.ok ? "" : parsed.error;
   };
-  const [first, second] = CARD_FIELDS.options as [Record<string, unknown>, Record<string, unknown>];
+  const [first, second] = CARD_FIELDS.options as unknown as [Record<string, unknown>, Record<string, unknown>];
   assert.match(refusal({ stake: undefined }), /stake est requis/);
   assert.match(refusal({ stake: "une ligne\nune autre" }), /stake tient sur une seule ligne/);
   assert.match(refusal({ established: "" }), /established est requis/);

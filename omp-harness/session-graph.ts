@@ -382,8 +382,8 @@ class Model {
     let deepest: GraphNode | null = null;
     for (const n of this.nodes.values()) {
       if (n.kind !== "dir" || depth(n) < 2) continue;
-      const deeper = !deepest || depth(n) > depth(deepest);
-      if (deeper || (depth(n) === depth(deepest) && pathOf(n) < pathOf(deepest))) deepest = n;
+      if (!deepest || depth(n) > depth(deepest) || (depth(n) === depth(deepest) && pathOf(n) < pathOf(deepest)))
+        deepest = n;
     }
     if (!deepest) return false;
     this.#foldDir(deepest, path.posix.dirname(pathOf(deepest)));
@@ -633,7 +633,7 @@ export class SessionGraphs {
     this.#mutate(run.id, step, (model, stepNode) => {
       const missing = model.decide(stepNode, id, ref.kind, clean(label), evidence, run.worktree, clean);
       if (missing.length > 0)
-        this.#log(`graphe : preuve introuvable pour ${id}`, { run: run.id, missing: missing.length });
+        this.#log(`graphe : preuve introuvable pour ${id} (${missing.length} manquante(s))`, { runId: run.id });
       return true;
     });
   }
@@ -677,7 +677,7 @@ export class SessionGraphs {
       model.updatedAt = this.#now();
       this.#dispatch(entry, model);
     } catch (err) {
-      this.#log("graphe : mise à jour échouée", { run: runId, error: String(err) });
+      this.#log("graphe : mise à jour échouée", { runId: runId, err });
     }
   }
 
@@ -775,7 +775,7 @@ export class SessionGraphs {
       const content = this.#store.getArtifact(entry.runId, GRAPH_ARTIFACT);
       model = content === null ? null : Model.parse(content);
     } catch (err) {
-      this.#log("graphe : état illisible, reparti de zéro", { run: entry.runId, error: String(err) });
+      this.#log("graphe : état illisible, reparti de zéro", { runId: entry.runId, err });
     }
     entry.model = model ?? new Model();
     entry.saved = entry.model.version;
@@ -815,7 +815,7 @@ export class SessionGraphs {
       this.#store.putArtifact(entry.runId, GRAPH_ARTIFACT, model.serialize(), entry.stepId);
       entry.saved = model.version;
     } catch (err) {
-      this.#log("graphe : écriture de l'artefact échouée", { run: entry.runId, error: String(err) });
+      this.#log("graphe : écriture de l'artefact échouée", { runId: entry.runId, err });
     }
   }
 
@@ -829,7 +829,7 @@ export class SessionGraphs {
     try {
       this.#publish(entry.runId, { version: model.version, nodes: model.nodes.size, edges: model.edges.size });
     } catch (err) {
-      this.#log("graphe : événement non poussé", { run: entry.runId, error: String(err) });
+      this.#log("graphe : événement non poussé", { runId: entry.runId, err });
     }
   }
 }
