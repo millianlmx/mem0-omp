@@ -50,6 +50,13 @@ export type RunRow = {
   kind: WorkKind | null;
   /** Les labels déclarés à la création, que les règles d'autonomie comparent. */
   labels: string[];
+  /**
+   * Le curseur d'autonomie du run : `ask` (tout demander à l'humain), `deliver` (livrer et prévenir), `null` : les
+   * règles du dépôt. L'irréversible et le budget restent à l'humain à tous les niveaux.
+   */
+  autonomy: RunAutonomy | null;
+  /** Le motif donné par l'humain à l'annulation (`CANCEL_CAUSES`) ; `null` : aucun. */
+  cancelCause: CancelCause | null;
   /** Le client qui a créé le run (`null` : service ou jeton historique). */
   createdBy: string | null;
   createdAt: number;
@@ -76,6 +83,8 @@ export type RunPatch = Partial<
     | "mergeRetries"
     | "lastFailCause"
     | "lastReviewSha"
+    | "autonomy"
+    | "cancelCause"
   >
 >;
 
@@ -94,8 +103,15 @@ export type NewRun = Pick<RunRow, "id" | "repo" | "slug" | "title" | "request" |
       | "reason"
       | "kind"
       | "labels"
+      | "autonomy"
     >
   >;
+
+export const RUN_AUTONOMIES = ["ask", "deliver"] as const;
+export type RunAutonomy = (typeof RUN_AUTONOMIES)[number];
+
+export const CANCEL_CAUSES = ["off_target", "too_big", "obsolete", "duplicate", "too_costly", "other"] as const;
+export type CancelCause = (typeof CANCEL_CAUSES)[number];
 
 const FAIL_CAUSES: readonly FailCause[] = [
   "timeout",
@@ -119,6 +135,12 @@ function failCauseOf(value: string | null): FailCause | null {
 /** Un type lu en base : connu, sinon `null` (une valeur inconnue ne casse pas la lecture). */
 function kindOf(value: string | null): WorkKind | null {
   return WORK_KINDS.find((kind) => kind === value) ?? null;
+}
+
+/** Un motif lu en base : connu, sinon `other` (une valeur inconnue ne casse pas la lecture). */
+function cancelCauseOf(value: string | null): CancelCause | null {
+  if (value === null) return null;
+  return CANCEL_CAUSES.find((cause) => cause === value) ?? "other";
 }
 
 function runOf(row: Row): RunRow {
@@ -152,6 +174,8 @@ function runOf(row: Row): RunRow {
     afterRun: strOrNull(row, "after_run"),
     kind: kindOf(strOrNull(row, "kind")),
     labels: json<string[]>(row, "labels", []),
+    autonomy: RUN_AUTONOMIES.find((level) => level === strOrNull(row, "autonomy")) ?? null,
+    cancelCause: cancelCauseOf(strOrNull(row, "cancel_cause")),
     createdBy: strOrNull(row, "created_by"),
     createdAt: num(row, "created_at"),
     updatedAt: num(row, "updated_at"),
@@ -177,14 +201,16 @@ const RUN_COLUMNS: Record<string, string> = {
   mergeRetries: "merge_retries",
   lastFailCause: "last_fail_cause",
   lastReviewSha: "last_review_sha",
+  autonomy: "autonomy",
+  cancelCause: "cancel_cause",
 };
 
 export class RunStore extends StoreCore {
   createRun(input: NewRun): RunRow {
     const at = this.now();
     this.execute(
-      `INSERT INTO runs (id, repo, slug, title, request, state, step, branch, project_id, project_order, modules, priority, created_by, after_run, reason, kind, labels, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (id, repo, slug, title, request, state, step, branch, project_id, project_order, modules, priority, created_by, after_run, reason, kind, labels, autonomy, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.id,
       input.repo,
       input.slug,
@@ -202,6 +228,7 @@ export class RunStore extends StoreCore {
       input.reason ?? null,
       input.kind ?? null,
       JSON.stringify(input.labels ?? []),
+      input.autonomy ?? null,
       at,
       at,
     );

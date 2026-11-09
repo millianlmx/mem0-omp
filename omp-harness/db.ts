@@ -13,17 +13,19 @@
 //        → sessions → usage → push → push-devices → workstation → workstation-meetings
 //        → workstation-captures → workstation-browsers → workstation-requests
 //        → issues → schedules → observability → vigie → corporate-signals → intakes → atlassian
+//        → standing-rules → spaces → proposals → local-sessions
 //        → Store
 //
 // Ainsi `Store` garde l'API d'un seul objet pour tous ses appelants, et une couche
 // qui a besoin d'une autre (le journal lit le dépôt d'un run) la trouve en dessous.
-import { AtlassianStore } from "./db/atlassian.ts";
+import { LocalSessionStore } from "./db/local-sessions.ts";
 
-export class Store extends AtlassianStore {}
+export class Store extends LocalSessionStore {}
 
 export { MIGRATIONS } from "./db/schema.ts";
 export type { RepoFilter } from "./db/sql.ts";
-export type { NewRun, RunPatch, RunRow } from "./db/runs.ts";
+export { CANCEL_CAUSES, RUN_AUTONOMIES } from "./db/runs.ts";
+export type { CancelCause, NewRun, RunAutonomy, RunPatch, RunRow } from "./db/runs.ts";
 export { VIGIE_STATUSES } from "./db/vigie.ts";
 export type { VigieIncident, VigieIncidentPatch, VigieStatus, VigieTriage } from "./db/vigie.ts";
 export { INTAKE_STATES } from "./db/intakes.ts";

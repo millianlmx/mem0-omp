@@ -1288,6 +1288,12 @@ export function apiRoutes(
       orchestrator.providers.setChains(body.models as ModelChains | null, call.actor.by);
       send(call.res, 200, providersView());
     }),
+    // ── OS agentique : la boucle (corriger, motif d'annulation, modules, pause) ──
+    // ── OS agentique : l'autonomie (règles, consignes permanentes, curseur) ──
+    // ── OS agentique : les espaces, le brief et les chiffres ──
+    // ── OS agentique : les propositions et « refaire » ──
+    // ── OS agentique : les sessions locales ──
+    // ── OS agentique : la télécommande (push) ──
     // MCP (« Streamable HTTP », réponses JSON) : un message ou un lot JSON-RPC ; sans requête
     // à rendre (notifications seules), 202. Pas de flux serveur : `GET` reste un 405.
     route("POST", "/v1/mcp", "viewer", async (call) => {
