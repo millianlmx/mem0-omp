@@ -118,8 +118,8 @@ test("serveur-de-pipelines/AC-1 : chaque champ décodé par le client Swift exis
     runFields.delete("waitCause");
     covers(awaiting, runFields, "HarnessRun");
     covers(awaiting.verdict as Record<string, unknown>, swiftFields(wire, "HarnessVerdict"), "HarnessVerdict");
-    // Champs ajoutés (session en graphe) : la carte de l'escalade et le briefing du run en attente. Le client Swift ne
-    // les décode pas encore ; la garde les fige côté serveur pour que les rendus Mac, iOS et Chrome lisent ce contrat.
+    // Champs ajoutés (session en graphe) : la carte de l'escalade et le briefing du run en attente, que le client
+    // Swift décode (HarnessSessionGraph.swift, contrat complet : session-graphe-apps/AC-5).
     const card = (batch.items as Record<string, unknown>[])[0]?.card as Record<string, unknown>;
     assert.deepEqual(Object.keys(card).sort(), [
       "confidence",
@@ -172,6 +172,7 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
     ['path: "/v1/push/devices"', "POST", "/v1/push/devices"],
     ['"/v1/push/devices/\\(id)"', "DELETE", "/v1/push/devices/ab12"],
     ['/proofs")', "GET", "/v1/runs/r1/proofs"],
+    ['/graph")', "GET", "/v1/runs/r1/graph"],
     ['/proofs/\\(n)")', "GET", "/v1/runs/r1/proofs/1"],
   ];
   for (const [client, method, sample] of calls) {

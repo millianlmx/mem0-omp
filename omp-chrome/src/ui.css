@@ -184,3 +184,70 @@ ol.actions .needs_approval .kind {
 [hidden] {
   display: none !important;
 }
+
+/* Questions en attente : la carte, puis le schéma de bifurcation (SVG construit en code). */
+article.question {
+  margin: 0 0 12px;
+}
+
+article.question h3 {
+  font-size: 14px;
+  margin: 2px 0 4px;
+}
+
+article.question ul.options {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+
+article.question ul.options button {
+  width: 100%;
+  margin: 0 0 6px;
+  text-align: left;
+}
+
+svg.schema {
+  display: block;
+  font-size: 11px;
+}
+
+svg.schema .schema-link {
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+
+svg.schema .schema-link.recommended {
+  stroke: var(--ok);
+}
+
+svg.schema .schema-node rect {
+  fill: none;
+  stroke: var(--line);
+}
+
+svg.schema .schema-node text {
+  fill: currentColor;
+}
+
+svg.schema .schema-node.ambiguity rect {
+  stroke: var(--warn);
+  stroke-width: 2;
+}
+
+svg.schema .schema-node.option {
+  cursor: pointer;
+}
+
+svg.schema .schema-node.option rect {
+  stroke: var(--accent);
+}
+
+svg.schema .schema-node.recommended rect {
+  stroke: var(--ok);
+  stroke-width: 2;
+}
+
+svg.schema .schema-node.impact text {
+  fill: var(--muted);
+}
