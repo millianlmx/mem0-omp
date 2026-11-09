@@ -77,8 +77,8 @@ function keyTarget(ref: string | null): HTMLElement {
  */
 function guard(el: HTMLElement, gesture: Gesture, gate: ApprovedGesture, typed: string | null): ActionOutcome | null {
   try {
-    const { verdict, fingerprint } = inspectGesture(el, document, location, gesture, typed);
-    return approvalGate(verdict, gate, fingerprint);
+    const { verdict, fingerprint, replyFingerprint } = inspectGesture(el, document, location, gesture, typed);
+    return approvalGate(verdict, gate, fingerprint, replyFingerprint);
   } catch (error) {
     return {
       outcome: "needs_approval",
@@ -87,6 +87,7 @@ function guard(el: HTMLElement, gesture: Gesture, gate: ApprovedGesture, typed: 
         recipients: [],
         preview: clip(typed ?? "", MAX_PREVIEW),
         fingerprint: null,
+        replyFingerprint: null,
       },
     };
   }

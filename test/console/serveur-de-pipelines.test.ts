@@ -370,11 +370,34 @@ test("serveur-de-pipelines/AC-6 : chaque route du poste de travail appelée par 
   }
   for (const field of [...PERSON_FIELDS, "id", "corrected", "rev", "createdAt", "updatedAt"])
     assert.ok(peopleModel.includes(`public var ${field}:`), `le client ne lit pas le champ ${field} d'une personne`);
-  // La veille proactive (WorkstationWatch.swift) : lecture viewer de « À traiter ».
+  // La veille proactive (WorkstationWatch.swift) : lecture viewer de « À traiter » (proposées,
+  // validées en attente d'envoi, non envoyées) ; écarter et valider au rôle operator.
   const watchModel = code(read("omp-console", "Sources", "ConsoleClient", "WorkstationWatch.swift"));
-  assert.ok(watchModel.includes('path: "/v1/workstation/watch?state=open&limit='), "le client ne lit plus la veille");
-  const watchRoute = routes.find((route) => route.method === "GET" && route.pattern.test("/v1/workstation/watch"));
-  assert.equal(watchRoute?.role, "viewer", "le serveur ne sert pas GET /v1/workstation/watch au rôle viewer");
+  for (const [client, method, sample, role] of [
+    ['path: "/v1/workstation/watch?state=open,validated,failed&limit=', "GET", "/v1/workstation/watch", "viewer"],
+    [
+      'path: "/v1/workstation/watch/\\(HarnessModel.pathComponent(item.id))/dismiss"',
+      "POST",
+      "/v1/workstation/watch/wv1/dismiss",
+      "operator",
+    ],
+    [
+      'path: "/v1/workstation/watch/\\(HarnessModel.pathComponent(item.id))/validate"',
+      "POST",
+      "/v1/workstation/watch/wv1/validate",
+      "operator",
+    ],
+    [
+      'path: "/v1/workstation/watch/\\(HarnessModel.pathComponent(watchId))/validate"',
+      "POST",
+      "/v1/workstation/watch/wv1/validate",
+      "operator",
+    ],
+  ] as const) {
+    assert.ok(watchModel.includes(client), `le client n'appelle plus ${client}`);
+    const served = routes.find((route) => route.method === method && route.pattern.test(sample));
+    assert.equal(served?.role, role, `le serveur ne sert pas ${method} ${sample} au rôle ${role}`);
+  }
 });
 
 /** Une valeur JSON qui doit être un objet : vérifiée, puis rendue comme telle. */

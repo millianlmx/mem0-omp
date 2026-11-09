@@ -315,4 +315,13 @@ export const MIGRATIONS_SUITE: readonly string[] = [
      updated_at INTEGER NOT NULL
    );
    CREATE INDEX workstation_watch_items_state ON workstation_watch_items (state, created_at);`,
+  // La validation des réponses proposées (canaux/reponses.ts) : la demande du poste rattachée à
+  // une réponse validée, l'empreinte SHA-256 des destinataires et du texte figée à la validation,
+  // l'action d'envoi qu'elle a autorisée (une seule), et la raison d'un envoi non abouti.
+  `ALTER TABLE workstation_watch_items ADD COLUMN request_id TEXT;
+   ALTER TABLE workstation_watch_items ADD COLUMN fingerprint TEXT;
+   ALTER TABLE workstation_watch_items ADD COLUMN send_seq INTEGER;
+   ALTER TABLE workstation_watch_items ADD COLUMN send_error TEXT;
+   ALTER TABLE workstation_watch_items ADD COLUMN validated_at INTEGER;
+   CREATE INDEX workstation_watch_items_request ON workstation_watch_items (request_id);`,
 ];

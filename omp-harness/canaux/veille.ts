@@ -27,14 +27,21 @@
 // événement (`workstation_watch` ne porte que `{id, kind, state, ready}`), une erreur levée ni
 // la mémoire d'un dépôt.
 //
-// Contrat pour « Validation et envoi des réponses proposées » : `list`/`get` rendent la vue
-// (`WatchItemView`) ; un élément `reply`/`followup` Gmail porte `draft.id` (le brouillon à
-// mettre à jour ou supprimer), un élément Slack `draft.kind: "internal"` ; `context.to` porte
-// les destinataires du brouillon ; `store.updateWatchItem` change l'état sous révision.
+// La validation des réponses proposées (écarter, modifier, valider, envoi par le navigateur)
+// vit dans canaux/reponses.ts : elle crée par `createDraft` un brouillon Gmail qui manque
+// encore, et la vue rend l'état de l'envoi (`requestId`, `request`, `sendError`).
 import type { HarnessConfig, WeekDay } from "../config.ts";
 import { WEEK_DAYS, minutesOf } from "../config.ts";
 import { wallClock } from "../cron.ts";
-import type { ChannelEventRow, ChannelMessageRow, PersonRow, Store, WatchItemRow, WatchKind } from "../db.ts";
+import type {
+  ChannelEventRow,
+  ChannelMessageRow,
+  PersonRow,
+  Store,
+  WatchItemRow,
+  WatchKind,
+  WorkstationRequest,
+} from "../db.ts";
 import { emailKey, slackKey } from "../db.ts";
 import { HarnessError } from "../errors.ts";
 import type { EventType } from "../events.ts";
@@ -61,7 +68,7 @@ export const WATCH_TEXT_MAX = 20_000;
 const BATCH = 200;
 const OFFERED_MAX = 500;
 const DRAFT_RETRIES = 20;
-const GMAIL_DRAFTS = "https://gmail.googleapis.com/gmail/v1/users/me/drafts";
+export const GMAIL_DRAFTS = "https://gmail.googleapis.com/gmail/v1/users/me/drafts";
 /** Les curseurs de la veille, dans `channel_cursors`. */
 const CURSOR = {
   messages: "watch.messages",
@@ -113,6 +120,12 @@ export type WatchItemView = {
   rev: number;
   createdAt: number;
   updatedAt: number;
+  /** La demande du poste qui enverra la réponse validée, et son état vivant (sa raison d'attente). */
+  requestId: string | null;
+  request: { id: string; state: string; reason: string | null } | null;
+  validatedAt: number | null;
+  /** Pourquoi l'envoi n'a pas abouti (`failed`, revalidable). */
+  sendError: string | null;
 };
 
 export type WatchDeps = {
@@ -123,7 +136,7 @@ export type WatchDeps = {
   event: (type: EventType, runId: string | null, payload?: Record<string, unknown>, repo?: string | null) => void;
 };
 
-export function watchItemView(row: WatchItemRow): WatchItemView {
+export function watchItemView(row: WatchItemRow, request: WorkstationRequest | null = null): WatchItemView {
   const draft: WatchItemView["draft"] =
     row.kind !== "reply" && row.kind !== "followup"
       ? null
@@ -147,6 +160,10 @@ export function watchItemView(row: WatchItemRow): WatchItemView {
     rev: row.rev,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    requestId: row.requestId,
+    request: request === null ? null : { id: request.id, state: request.state, reason: request.reason },
+    validatedAt: row.validatedAt,
+    sendError: row.sendError,
   };
 }
 
@@ -220,13 +237,18 @@ export class Watch {
   // -- lecture (API) --------------------------------------------------------------------------
 
   list(states: readonly string[], limit: number): { items: WatchItemView[] } {
-    return { items: this.#deps.store.listWatchItems({ states, limit }).map(watchItemView) };
+    return { items: this.#deps.store.listWatchItems({ states, limit }).map((row) => this.view(row)) };
   }
 
   get(id: string): { item: WatchItemView } {
     const row = this.#deps.store.getWatchItem(id);
     if (row === null) throw new HarnessError(404, `élément de veille inconnu : ${id}`);
-    return { item: watchItemView(row) };
+    return { item: this.view(row) };
+  }
+
+  /** La vue d'un élément, avec l'état vivant de la demande qui l'envoie. */
+  view(row: WatchItemRow): WatchItemView {
+    return watchItemView(row, row.requestId === null ? null : this.#deps.store.getWorkstationRequest(row.requestId));
   }
 
   // -- le passage -----------------------------------------------------------------------------
@@ -386,7 +408,7 @@ export class Watch {
       context: { to, threadId: message.threadId, conversation: message.conversation },
     });
     if (item === null) return { text: "une réponse est déjà proposée pour ce message." };
-    if (item.channel === "gmail") await this.#draft(item, Date.now());
+    if (item.channel === "gmail") await this.createDraft(item, Date.now());
     return {
       text: `réponse proposée${item.ready ? " (prête)" : ""} : elle attend la validation de l'utilisateur. Rien n'est parti.`,
     };
@@ -412,7 +434,7 @@ export class Watch {
       context: { to: due.to, threadId: due.message.threadId },
     });
     if (item === null) return { text: "une relance est déjà proposée pour ce fil." };
-    await this.#draft(item, Date.now());
+    await this.createDraft(item, Date.now());
     return { text: "relance proposée : elle attend la validation de l'utilisateur. Rien n'est parti." };
   }
 
@@ -475,11 +497,11 @@ export class Watch {
 
   /** Retente les brouillons Gmail que la création n'a pas pu faire (limite de débit, coupure). */
   async retryDrafts(now: number): Promise<void> {
-    for (const item of this.#deps.store.watchItemsWithoutDraft(DRAFT_RETRIES)) await this.#draft(item, now);
+    for (const item of this.#deps.store.watchItemsWithoutDraft(DRAFT_RETRIES)) await this.createDraft(item, now);
   }
 
   /** Crée le brouillon Gmail d'un élément dans le fil d'origine ; l'échec n'écrit qu'un code. */
-  async #draft(item: WatchItemRow, now: number): Promise<void> {
+  async createDraft(item: WatchItemRow, now: number): Promise<void> {
     const { store, channels } = this.#deps;
     const message = item.messageId === null ? null : store.getChannelMessage(item.messageId);
     if (message === null) {

@@ -1204,7 +1204,10 @@ attend avec `approval.summary` = la description du geste (« Cliquer sur e2 dans
 123 », « Saisir « … » dans e1 (l'onglet 4) », « Ouvrir https://… »), `preview` = le texte
 saisi pour `type` (sinon ""), `recipients: []` et `fingerprint: null` : son approbation
 n'autorise aucun envoi (un geste d'envoi repasse `needs_approval` avec sa vraie empreinte) ;
-la raison reste dans `rationale`.
+la raison reste dans `rationale`. L'extension rend aussi `approval.replyFingerprint`,
+l'empreinte de la RÉPONSE (destinataires et texte des éditeurs du compositeur, sans l'onglet ;
+`null` si illisible), comparée à celle figée à la validation d'une réponse proposée (§ « Valider
+et envoyer une réponse proposée ») ; hex de 64 caractères ou absente, autre chose → 400.
 
 **L'approbation liée à ce que l'humain a vu.** `POST …/approve` exige `If-Match:
 "<updatedAt>"`, l'`updatedAt` de l'action affichée : absent → 428, différent → 412 (relire
@@ -1242,7 +1245,7 @@ audits (slots runner, plafond journalier, arrêt et reprise) :
 |---|---|---|---|
 | `poste-profil` | toutes les `profileEveryHours` s'il y a du neuf, ou sur `POST …/profile/rebuild` | `workstation_profile_write`, `progress` | une nouvelle version du profil (`workstation_profile`), l'ancienne gardée |
 | `poste-digest` | à la fin d'un meeting (`POST …/end`) | `workstation_meeting_digest`, `progress` | `digested` (résumé, besoins des clients) ou `failed` ; sans transcript, `digested` sans runner |
-| `poste-demande` | une demande en file, l'extension de son navigateur en ligne, hors pause | `workstation_act`, `workstation_decision`, `workstation_request_report`, `progress` | `done` avec compte rendu ou `failed` avec raison, au plus `shiftMaxActions` actions rattachées à la demande |
+| `poste-demande` | une demande en file, l'extension de son navigateur en ligne, hors pause | `workstation_act`, `workstation_decision`, `workstation_request_report`, `workstation_reply_type` (demande d'une réponse Slack validée), `progress` | `done` avec compte rendu ou `failed` avec raison, au plus `shiftMaxActions` actions rattachées à la demande |
 | `poste-service` | toutes les `shiftEveryMin`, autonomie `propose` ou `act`, extension en ligne, hors pause | `workstation_act`, `workstation_decision`, `workstation_activity`, `workstation_meetings`, `progress` | au plus `shiftMaxActions` actions d'origine `agent` ; l'issue et le nombre d'actions journalisés (`workstation_shift`) ; une pause, l'arrêt d'urgence ou le retour en `observe` l'arrête |
 
 `workstation_act` attend le résultat 30 s au plus ; une action retenue pour
@@ -1672,9 +1675,28 @@ propose QUE ce qui demande l'utilisateur, dans « À traiter » :
   prête et `omp.open` (à relire) sinon. La vigie retire ces textes de ce qu'elle publie ; les
   éléments suivent la purge `workstation.retentionDays`.
 
-Contrat pour la validation des réponses : un élément `reply` ou `followup` naît `open` ; son
-`draft` est `{kind: "gmail", id, error}` ou `{kind: "internal"}` ; `context.to` porte les
-destinataires ; `store.updateWatchItem(id, rev, {state?, text?})` change l'élément sous révision.
+#### Valider et envoyer une réponse proposée
+
+Une réponse ou une relance de « À traiter » (`canaux/reponses.ts`) s'**écarte** (brouillon Gmail
+supprimé, élément `dismissed`, jamais reproposé) ou se **valide**, telle quelle ou modifiée,
+depuis l'app ou d'un geste depuis la notification (`omp.reply`). Valider met d'abord le brouillon
+Gmail au texte validé, fige l'empreinte de la réponse — SHA-256 hex de
+`JSON.stringify([destinataires, texte])`, destinataires sans blanc ni casse, sans doublon et triés
+(les adresses du brouillon ; Slack : l'identifiant de la conversation), texte complet aux fins de
+ligne, espaces insécables et blancs de fin neutralisés — et pose une demande du poste rattachée.
+Aucun envoi par API : le job `poste-demande` ouvre le brouillon Gmail et clique « Envoyer », ou
+saisit dans le fil Slack le texte validé exact par `workstation_reply_type` (le serveur tient le
+texte ; le modèle ne le recopie pas). L'extension rend `needs_approval` avec
+`approval.replyFingerprint`, la même empreinte calculée sur ce qu'elle enverrait
+(`omp-chrome/src/lib/outbound.ts`) : si l'action est de la demande rattachée, la première à
+demander l'accord, et que l'empreinte est strictement égale, elle repart approuvée sans second
+geste (`decidedBy` « réponse validée »), quelle que soit l'autonomie. Toute autre action (service,
+session, autre demande, envoi suivant), une autre empreinte ou aucune : garde d'envoi ordinaire.
+L'envoi abouti passe la réponse `sent` ; une demande en attente (plafond, slot, extension hors
+ligne) la laisse `validated` avec sa raison (`request.reason`) et part au premier tick possible ;
+une demande close sans envoi (arrêt d'urgence, annulation, échec, compte rendu sans envoi) la
+rend `failed` avec la raison, revalidable, et rien n'est redéposé seul. En pause, valider est
+refusé (409).
 
 ## Les issues (MCP)
 
@@ -2042,7 +2064,9 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `PUT /v1/workstation/channels/slack/conversations/{id}` `{followed}` | operator (approbateur) | Coche (`true`) ou décoche un canal Slack suivi : 200 `{conversation}`. La lecture suivante lit ses messages et fils (les DM et les mentions sont lus partout). 400 corps illisible, 404 conversation absente de la dernière liste. Événement `workstation_channel_follow`. |
 | `GET /v1/workstation/people` | viewer | Le graphe des personnes du poste : `{people: [{id, name, emails, slackIds, role, team, projects, tone, delegation, topics, corrected, rev, createdAt, updatedAt}]}`. `delegation` : `jamais` \| `brouillon` \| `réponse` ; `corrected` dit, pour chaque champ, s'il est corrigé par l'humain (figé). Propriétaire seulement (403), 404 si le poste est désactivé. Capacité `workstation-people`. |
 | `PATCH /v1/workstation/people/{id}` `{name?, emails?, slackIds?, role?, team?, projects?, tone?, delegation?, topics?}` + `If-Match: <rev>` | operator (approbateur) | Corrige une personne : un champ absent reste, un champ donné est écrit et figé contre l'alimentation automatique, un champ à `null` est relâché (sa valeur reste, la suggestion suivante peut la remplacer). 200 `{person}`, révision +1. 428 sans `If-Match`, 412 révision dépassée (rien n'est écrit), 400 champ inconnu, corps vide ou valeur invalide (niveau hors `jamais \| brouillon \| réponse`), 404 personne inconnue, 409 adresse ou identifiant Slack déjà à une autre personne. Seul geste qui écrit `delegation` et `topics`. Pas de PUT de collection. Événement `workstation_person` (`{id}`). |
-| `GET /v1/workstation/watch?state=&limit=` · `GET /v1/workstation/watch/{id}` | viewer | Les éléments de la veille proactive dans « À traiter », récents d'abord (`state` : `open` par défaut, plusieurs séparés par des virgules ; `limit` ≤ 500) : `{items}` ; un élément : `{item}` = `{id, kind, state, ready, channel, messageId, eventId, personId, topic, subject, text, context, draft, rev, createdAt, updatedAt}`. `kind` : `reply` \| `followup` \| `prep` \| `brief` ; `ready` : réponse prête (geste valider) ; `draft` : `{kind: "gmail", id, error}`, `{kind: "internal"}` (Slack) ou `null`. Propriétaire seulement (403), jamais un client pilote (403), 404 si le poste est désactivé ou l'élément inconnu. Capacité `workstation-watch`, événement `workstation_watch` (`{id, kind, state, ready}`). |
+| `GET /v1/workstation/watch?state=&limit=` · `GET /v1/workstation/watch/{id}` | viewer | Les éléments de la veille proactive dans « À traiter », récents d'abord (`state` : `open` par défaut, plusieurs séparés par des virgules ; les apps lisent `open,validated,failed` ; `limit` ≤ 500) : `{items}` ; un élément : `{item}` = `{id, kind, state, ready, channel, messageId, eventId, personId, topic, subject, text, context, draft, rev, createdAt, updatedAt, requestId, request, validatedAt, sendError}`. `kind` : `reply` \| `followup` \| `prep` \| `brief` ; `state` : `open` (proposée) \| `validated` (en attente d'envoi) \| `sent` \| `dismissed` \| `failed` (envoi non abouti, raison dans `sendError`) ; `ready` : réponse prête (geste valider) ; `draft` : `{kind: "gmail", id, error}`, `{kind: "internal"}` (Slack) ou `null` ; `request` : `{id, state, reason}` de la demande qui envoie (sa raison d'attente). Propriétaire seulement (403), jamais un client pilote (403), 404 si le poste est désactivé ou l'élément inconnu. Capacité `workstation-watch`, événement `workstation_watch` (`{id, kind, state, ready}`). |
+| `POST /v1/workstation/watch/{id}/dismiss` | operator (approbateur) | Écarte une réponse ou relance `open` ou `failed` : son brouillon Gmail est supprimé (`DELETE users/me/drafts/{id}` ; déjà absent : supprimé ; canal Gmail non lisible : laissé, `draft.error` `draft_not_deleted`), 200 `{item}` `dismissed`, jamais reproposée pour le même message. 409 autre sorte ou autre état, 502 suppression refusée par Gmail (rien ne change). |
+| `POST /v1/workstation/watch/{id}/validate` `{text?}` + `If-Match: <rev>` facultatif | operator (approbateur) | Valide une réponse ou relance `open` ou `failed`, au texte proposé (sans corps : le geste « Valider » de la notification) ou modifié (≤ 20 000 caractères). Gmail : le brouillon est créé s'il manque, puis mis à jour au texte validé (`PUT users/me/drafts/{id}`) avant tout dépôt. Le serveur fige l'empreinte SHA-256 des destinataires normalisés et du texte complet, et pose une demande du poste rattachée : 201 `{item, request}`, `validated`. 409 poste en pause (la réponse reste proposée), autre sorte ou autre état, destinataires inconnus ; 412 révision dépassée ; 400 texte vide ou trop long, champ inconnu ; 502 brouillon non créé ou non mis à jour. |
 | `GET /v1/signals?state=&limit=` · `GET /v1/signals/{id}` | viewer (propriétaire) | Les signalements des collègues, récents d'abord (`state` : `received`, `proposed` par défaut, `ignored`, `dismissed`, `confirmed`, séparés par des virgules ; `limit` ≤ 200) : `{signals}` ; un signalement : `{signal}` = `{id, createdAt, updatedAt, channel, threadRef, url, personRef, excerpt, state, reason, error, repo, kind, title, body, issue, runId, confirmedBy, confirmedAt}`. 403 client restreint (« le poste est réservé au propriétaire ») ou pilote ; 404 inconnu ; 400 `state` inconnu. Même sans poste actif. |
 | `POST /v1/signals/{id}/preview` `{repo?, title?, body?}` | viewer (propriétaire) | Le texte EXACT que `confirm` enverrait à la forge : `{repo, policy: {declared, applied, note}, title, body, issue}` (`issue` : l'issue déjà créée, dont le texte n'est alors pas renvoyé). Sans `title`/`body`, la proposition ; sous `full` appliqué, le corps porte la section « Origine ». 409 dépôt en `forbid` ou sans forge, signalement déjà traité. Ne crée rien. |
 | `POST /v1/signals/{id}/confirm` `{repo, title, body}` · `POST /v1/signals/{id}/dismiss` `{reason?}` | operator (approbateur) | Confirme : crée l'issue puis le run lié (201 `{signal, issue, run, policy}`) ; 502 si la forge échoue (la proposition reste, avec `error`), 409 « le signalement est déjà <état> », dépôt `forbid`/sans forge, ou dépôt autre que celui de l'issue déjà créée ; 404 `dépôt inconnu`. Écarte (200 `{signal}`, `reason` ≤ 500) : jamais reproposé. 403 non approbateur, pilote ou client restreint. Événement `signal`. |

@@ -6,13 +6,15 @@
 //
 // Le contrat vient du serveur (omp-harness/push-alerts.ts) : catégories `omp.validate`
 // (specs, verdict : Valider / Refuser), `omp.approve` (envoi du poste : Approuver /
-// Refuser), `omp.reply` (réponse « prête » de la veille du poste : Valider, qui ouvre
-// « À traiter » où la réponse se valide), `omp.open` ; `rev` est l'If-Match du geste.
+// Refuser), `omp.reply` (réponse « prête » de la veille du poste : Valider, qui confie
+// le texte proposé tel quel à l'envoi — `POST /v1/workstation/watch/{watchId}/validate`
+// sans corps ni If-Match), `omp.open` ; `rev` est l'If-Match du geste.
 // Valider, refuser ou approuver écrivent : l'appareil doit être déverrouillé
-// (`authenticationRequired`). Approuver ou refuser un envoi exige le jeton APPROBATEUR
-// déjà au trousseau ; sans lui, ces actions ouvrent l'app sur le Poste au lieu d'agir.
-// Un refus de specs ou de verdict porte sa raison (le serveur l'exige) : sans texte
-// saisi, l'action ouvre l'app.
+// (`authenticationRequired`). Approuver ou refuser un envoi, valider une réponse, exige le
+// jeton APPROBATEUR déjà au trousseau ; sans lui, ces actions ouvrent l'app (le Poste, ou
+// « À traiter ») au lieu d'agir. Une réponse que le serveur refuse de valider ouvre
+// « À traiter ». Un refus de specs ou de verdict porte sa raison (le serveur l'exige) : sans
+// texte saisi, l'action ouvre l'app.
 
 import ConsoleCore
 import Foundation
@@ -31,7 +33,7 @@ public enum HarnessNotificationAction: String, CaseIterable, Sendable {
     case refuse = "omp.action.refuse"
     case approve = "omp.action.approve"
     case refuseSend = "omp.action.refuseSend"
-    /// Valider une réponse « prête » de la veille : l'app s'ouvre sur « À traiter ».
+    /// Valider une réponse « prête » de la veille, texte proposé tel quel.
     case validateReply = "omp.action.validateReply"
     case open = "omp.action.open"
 }
@@ -128,6 +130,8 @@ public enum HarnessNotificationGesture: Equatable, Sendable {
     /// Approuver l'envoi du poste à cette révision ; absente : celle de la liste relue.
     case approveSend(seq: Int, revision: Int?)
     case refuseSend(seq: Int, revision: Int?)
+    /// Valider la réponse proposée de la veille, texte tel quel (jeton approbateur).
+    case validateReply(watchId: String)
     /// Ouvrir l'app à cet endroit.
     case open(HarnessPaletteCommand)
 }
@@ -223,11 +227,12 @@ public enum HarnessNotificationRouting {
                 open,
             ]
         case .reply:
-            // Le geste valider de la veille : il ouvre « À traiter », où la réponse se relit et se valide.
+            // Le geste valider de la veille : l'approbateur valide sans ouvrir l'app ; sans
+            // son jeton, le serveur refuserait (403) : l'action ouvre « À traiter ».
             return [
                 HarnessNotificationActionSpec(
                     action: .validateReply, title: NotificationText.validate, textInput: false,
-                    authenticationRequired: false, foreground: true, destructive: false
+                    authenticationRequired: approver, foreground: !approver, destructive: false
                 ),
                 open,
             ]
@@ -248,6 +253,7 @@ public enum HarnessNotificationRouting {
         let reason = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let validates = category == HarnessNotificationCategory.validate.rawValue && (alert.kind == .specs || alert.kind == .verdict)
         let approves = category == HarnessNotificationCategory.approve.rawValue && alert.kind == .approval && approver
+        let replies = category == HarnessNotificationCategory.reply.rawValue && alert.kind == .watch && approver
         switch action {
         case .validate:
             guard validates, let runId = alert.runId else { return .open(destination) }
@@ -261,7 +267,10 @@ public enum HarnessNotificationRouting {
         case .refuseSend:
             guard approves, let seq = alert.seq else { return .open(destination) }
             return .refuseSend(seq: seq, revision: alert.rev)
-        case .validateReply, .open:
+        case .validateReply:
+            guard replies, let watchId = alert.watchId else { return .open(destination) }
+            return .validateReply(watchId: watchId)
+        case .open:
             return .open(destination)
         }
     }
@@ -404,6 +413,8 @@ extension HarnessModel {
             await workstation.decideFromNotification(seq: seq, revision: revision, approve: true)
         case let .refuseSend(seq, revision):
             await workstation.decideFromNotification(seq: seq, revision: revision, approve: false)
+        case let .validateReply(watchId):
+            await watch.validateFromNotification(watchId: watchId)
         case .open:
             false
         }
