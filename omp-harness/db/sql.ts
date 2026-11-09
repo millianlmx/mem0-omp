@@ -1,14 +1,6 @@
 // Les briques de lecture et d'écriture partagées par les couches du Store : valeurs
 // SQL, lecture typée d'une ligne, encodage d'un patch et filtre par dépôt.
 
-/**
- * La première ligne de la consigne d'une demande de réponse à un collègue, écrite par le serveur
- * (corporate/replies.ts) : à elle, on reconnaît durablement une telle demande, pour en masquer
- * les actions et le journal, et la vigie en retire le texte de toute issue publique. Ici, brique
- * partagée : la couche de la vigie la lit sans importer une couche qui n'est pas sa parente.
- */
-export const REPLY_INSTRUCTION_HEAD = "Réponse à un collègue, préparée par le serveur et approuvée par l'humain.";
-
 export type SqlValue = string | number | null;
 export type Row = Record<string, unknown>;
 

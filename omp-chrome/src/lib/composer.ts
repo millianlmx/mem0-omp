@@ -8,15 +8,7 @@
 
 import { isSecretInput } from "./observation.ts";
 import type { ElementDescriptor, Gesture, OutboundVerdict } from "./outbound.ts";
-import {
-  COMPOSER_LABEL,
-  EMAIL,
-  SEARCH_LABEL,
-  SEND_LABEL,
-  guardGesture,
-  replyFingerprint,
-  sendFingerprint,
-} from "./outbound.ts";
+import { COMPOSER_LABEL, EMAIL, SEARCH_LABEL, SEND_LABEL, guardGesture, sendFingerprint } from "./outbound.ts";
 import type { NamedElement, SnapDocument } from "./snapshot.ts";
 import { isVisible, labelOf, roleOf } from "./snapshot.ts";
 
@@ -141,39 +133,6 @@ function composerText(el: PageNode, root: PageNode | null, doc: PageDocument, ty
 }
 
 /**
- * Le texte d'une réponse, pour `replyFingerprint` : les éditeurs riches (et `<textarea>`) du
- * compositeur seulement, sans les champs d'une ligne (l'objet du mail n'en fait pas partie).
- * Sans compositeur, aucun texte. `typed` (action `type`) remplace le contenu de l'éditeur
- * visé — l'élément lui-même ou l'éditeur qui l'englobe —, comme dans `composerText`.
- */
-function replyText(el: PageNode, root: PageNode | null, typed: string | null): string {
-  if (root === null) return "";
-  const editors = root.matches(RICH_EDITOR) ? [root] : Array.from(root.querySelectorAll(RICH_EDITOR));
-  const target = typed === null ? null : el.closest(RICH_EDITOR);
-  return editors
-    .map((field) => {
-      if (field === target && typed !== null) return typed;
-      return field.tagName.toLowerCase() === "textarea"
-        ? (field.value ?? "")
-        : (field.innerText ?? field.textContent ?? "");
-    })
-    .filter((text) => text.trim() !== "")
-    .join("\n");
-}
-
-/**
- * Les destinataires d'une réponse : sur app.slack.com, la conversation lue dans
- * `/client/<équipe>/<conversation>[/...]` (aucune si l'adresse n'en porte pas) ; ailleurs,
- * ceux du verdict.
- */
-function replyRecipients(location: PageLocation, verdict: OutboundVerdict): readonly string[] {
-  if (location.hostname !== "app.slack.com") return verdict.recipients;
-  const segments = location.pathname.split("/");
-  const conversation = segments[1] === "client" ? (segments[3] ?? "") : "";
-  return conversation === "" ? [] : [conversation];
-}
-
-/**
  * Ce qu'on lit d'un puits de destinataires : ses adresses, ou `UNREADABLE` dès qu'il porte
  * autre chose qu'elles (un nom sans adresse, une saisie non résolue, un puits vide dont les
  * puces ne se lisent pas). Un champ de saisie vide n'a aucun destinataire en attente.
@@ -273,10 +232,9 @@ function describeTarget(el: PageNode, root: PageNode | null, doc: PageDocument):
 
 /**
  * La garde d'un geste sur la page telle qu'elle est : le verdict de `classifyOutbound` (sans
- * exception), l'empreinte de l'envoi — origine, chemin, titre de l'onglet, destinataires
- * triés et TOUT le texte, jamais coupé — et celle de la réponse (`replyFingerprint` :
- * destinataires du verdict, ou la conversation sur app.slack.com, et texte des éditeurs du
- * compositeur). `typed` : le texte que l'action `type` va saisir dans l'élément visé.
+ * exception) et l'empreinte de l'envoi — origine, chemin, titre de l'onglet, destinataires
+ * triés et TOUT le texte, jamais coupé. `typed` : le texte que l'action `type` va saisir
+ * dans l'élément visé.
  */
 export function inspectGesture(
   el: PageNode,
@@ -284,7 +242,7 @@ export function inspectGesture(
   location: PageLocation,
   gesture: Gesture,
   typed: string | null,
-): { verdict: OutboundVerdict; fingerprint: string; replyFingerprint: string | null } {
+): { verdict: OutboundVerdict; fingerprint: string } {
   const root = composerRoot(el, doc);
   const text = composerText(el, root, doc, typed);
   const verdict = guardGesture({
@@ -303,6 +261,5 @@ export function inspectGesture(
     recipients: verdict.recipients,
     text,
   });
-  const reply = replyFingerprint({ recipients: replyRecipients(location, verdict), text: replyText(el, root, typed) });
-  return { verdict, fingerprint, replyFingerprint: reply };
+  return { verdict, fingerprint };
 }

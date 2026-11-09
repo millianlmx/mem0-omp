@@ -1,20 +1,23 @@
 // Le service worker de l'extension omp-chrome : observation (visites, interactions,
 // tampon persistant envoyé par lots), exécution des actions remises par le document
 // offscreen (qui tient le long-poll), pilotage des meetings (capture + transcription),
+// le miroir des cookies du profil vers le navigateur du poste sur le VPS (lib/cookie-mirror.ts),
 // et l'arrêt d'urgence (bouton Stop du popup) : pause locale, action en cours coupée,
 // `POST /v1/workstation/stop` au serveur.
 //
 // Un service worker MV3 peut mourir à tout instant : tout état vit dans chrome.storage
 // (`local` pour les réglages et le tampon d'observations, `session` pour la visite en
-// cours, la fenêtre de l'agent, le meeting, l'état de la liaison, l'action en cours et le
-// journal des dernières actions que lit le popup), et les écouteurs sont posés au premier
-// tour de l'évaluation du module.
+// cours, la fenêtre de l'agent, le meeting, l'état de la liaison, l'action en cours, le
+// journal des dernières actions que lit le popup et la génération du miroir des cookies),
+// et les écouteurs sont posés au premier tour de l'évaluation du module. Seuls les
+// changements de cookies pas encore envoyés vivent en mémoire : la copie complète
+// périodique du miroir rattrape ceux qu'un arrêt du service worker a perdus.
 
 import { detachAll } from "./cdp.ts";
 import { agentTabIds, agentWindowId, execute } from "./executor.ts";
 import type { ActionOutcome, WorkstationAction } from "./lib/actions.ts";
-import { answerCookieImport } from "./lib/cookie-import.ts";
-import { HarnessError, harnessCall } from "./lib/harness.ts";
+import { CookieMirror, type MirrorState } from "./lib/cookie-mirror.ts";
+import { HarnessError, type HarnessTarget, harnessCall } from "./lib/harness.ts";
 import { INTAKE_KEY, type Intake, settled } from "./lib/intake.ts";
 import { type PendingQuestion, pendingQuestions } from "./lib/questions.ts";
 import type {
@@ -49,6 +52,9 @@ const BUFFER = "buffer";
 /** Une visite longue est coupée : le profil voit le temps passé sans attendre le changement d'onglet. */
 const VISIT_CUT_MS = 10 * 60_000;
 const IDLE_S = 60;
+const MIRROR = "cookieMirror";
+/** Les changements de cookies partent au plus 2 s après le premier d'une rafale. */
+const MIRROR_FLUSH_MS = 2_000;
 
 type Visit = { tabId: number; url: string; title: string; startedAt: number };
 
@@ -692,21 +698,37 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 chrome.tabs.onCreated.addListener(() => void pushConfig());
 chrome.windows.onRemoved.addListener(() => void pushConfig());
 
-/**
- * Répond à l'import de cookies que l'appareil approbateur a ouvert pour un domaine (slack.com ou
- * google.com) : sans import ouvert, rien n'est lu. Ne lève jamais : un échec se retente au tick suivant.
- */
-async function answerCookies(): Promise<void> {
+// ── Miroir des cookies ────────────────────────────────────────────────────
+
+const mirror = new CookieMirror({
+  getAll: () => chrome.cookies.getAll({}),
+  // Écrit par `save` seulement : la génération et l'heure de la dernière copie complète.
+  load: async () => ((await sessionValue(MIRROR)) as MirrorState | undefined) ?? null,
+  save: (state) => chrome.storage.session.set({ [MIRROR]: state }),
+});
+
+/** Un échange du miroir avec le harness. Ne lève jamais : un échec se retente au tick suivant. */
+async function mirrorWith(work: (target: HarnessTarget) => Promise<void>): Promise<void> {
   const { pairing: paired, browserLabel } = await loadSettings();
   if (paired === null) return;
   try {
-    await answerCookieImport(await identified(paired, browserLabel), chrome.cookies, {
-      signal: AbortSignal.timeout(20_000),
-    });
+    await work(await identified(paired, browserLabel));
   } catch {
-    // Le serveur refuse ou ne répond pas : l'import reste ouvert jusqu'à son échéance.
+    // Serveur injoignable, obscura-poste absent ou génération périmée : le tick suivant reprend.
   }
 }
+
+let mirrorFlushing = false;
+chrome.cookies.onChanged.addListener((change) => {
+  // Sans génération rangée, l'envoi abandonne ce changement (miroir éteint ou à recopier en entier).
+  mirror.recordChange(change);
+  if (mirrorFlushing) return;
+  mirrorFlushing = true;
+  setTimeout(() => {
+    mirrorFlushing = false;
+    void mirrorWith((target) => mirror.flush(target));
+  }, MIRROR_FLUSH_MS);
+});
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== TICK) return;
@@ -715,7 +737,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (settings.pairing !== null) await ensureOffscreen().catch(() => undefined);
     await refocus(true);
     await flush();
-    await answerCookies();
+    await mirrorWith((target) => mirror.tick(target));
   })();
 });
 

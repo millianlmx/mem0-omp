@@ -106,12 +106,7 @@ struct HarnessNotificationsTests {
         #expect(ordinary.prefix(2).allSatisfy { $0.foreground && !$0.authenticationRequired }, "sans jeton approbateur : ouvrir l'app")
 
         #expect(HarnessNotificationRouting.actions(for: .open, approver: true).map(\.action) == [.open])
-        #expect(HarnessNotificationCategory.allCases.map(\.rawValue) == ["omp.validate", "omp.approve", "omp.reply", "omp.open"])
-        let replying = HarnessNotificationRouting.actions(for: .reply, approver: true)
-        #expect(replying.map(\.action) == [.validateReply, .open])
-        #expect(replying[0].authenticationRequired && !replying[0].foreground, "l'approbateur valide la réponse sans ouvrir l'app")
-        let ordinaryReply = HarnessNotificationRouting.actions(for: .reply, approver: false)
-        #expect(ordinaryReply[0].foreground && !ordinaryReply[0].authenticationRequired, "sans jeton approbateur : « À traiter »")
+        #expect(HarnessNotificationCategory.allCases.map(\.rawValue) == ["omp.validate", "omp.approve", "omp.open"])
     }
 
     @Test("une action devient le geste de sa catégorie avec la révision de la notification ; sinon elle ouvre l'app là où le geste se fait")
@@ -285,26 +280,6 @@ struct HarnessNotificationsTests {
         ] {
             #expect(HarnessNotificationRouting.localAlert(for: event(name, data), client: operatorClient) == nil, "\(name)")
         }
-
-        // La veille du poste : à l'approbateur seul, « valider » si et seulement si la réponse est prête.
-        let ready = event("workstation_watch", #"{"id":50,"runId":null,"repo":null,"payload":{"id":"wv1","kind":"reply","state":"open","ready":true}}"#)
-        #expect(HarnessNotificationRouting.localAlert(for: ready, client: operatorClient) == nil, "seul l'approbateur")
-        let watch = try #require(HarnessNotificationRouting.localAlert(for: ready, client: approverClient))
-        #expect(watch.alert == HarnessPushAlert(kind: .watch, watchId: "wv1"))
-        #expect(watch.category == .reply)
-        #expect(watch.thread == "workstation")
-        #expect(watch.title == NotificationText.watchTitle(kind: "reply", ready: true))
-        #expect(watch.body(runTitle: nil) == NotificationText.watchSendBody, "rien du contenu du message")
-        let review = HarnessNotificationRouting.localAlert(
-            for: event("workstation_watch", #"{"id":51,"runId":null,"repo":null,"payload":{"id":"wv2","kind":"reply","state":"open","ready":false}}"#),
-            client: approverClient
-        )
-        #expect(review?.category == .open, "une réponse à relire n'a pas le geste valider")
-        #expect(HarnessPushAlert(userInfo: watch.alert.userInfo) == watch.alert)
-        #expect(HarnessNotificationRouting.gesture(category: "omp.reply", action: .validateReply, alert: watch.alert, text: nil, approver: true) == .validateReply(watchId: "wv1"))
-        #expect(HarnessNotificationRouting.gesture(category: "omp.reply", action: .validateReply, alert: watch.alert, text: nil, approver: false) == .open(.section(.inbox)), "jeton ordinaire : « À traiter »")
-        #expect(HarnessNotificationRouting.gesture(category: "omp.open", action: .validateReply, alert: watch.alert, text: nil, approver: true) == .open(.section(.inbox)), "hors de sa catégorie, rien n'est validé")
-        #expect(HarnessNotificationRouting.gesture(category: "omp.reply", action: .validateReply, alert: HarnessPushAlert(kind: .watch), text: nil, approver: true) == .open(.section(.inbox)), "sans élément, rien à valider")
     }
 
     @Test("le client décode le drapeau approbateur de /v1/me ; absent (serveur ancien), il est faux")

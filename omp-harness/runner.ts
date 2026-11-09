@@ -765,13 +765,7 @@ const CHALLENGE_TOOL: HostToolDefinition = {
 };
 
 /** Les jobs du poste de travail menés par un runner (workstation-agent.ts) : le nom est l'en-tête de leur prompt. */
-export type WorkstationJob =
-  | "poste-profil"
-  | "poste-digest"
-  | "poste-service"
-  | "poste-demande"
-  | "poste-signal"
-  | "poste-veille";
+export type WorkstationJob = "poste-profil" | "poste-digest" | "poste-service" | "poste-demande" | "poste-signal";
 
 const NULLABLE_STRING = { type: ["string", "null"] } as const;
 
@@ -977,24 +971,6 @@ const WORKSTATION_REQUEST_REPORT_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
-const WORKSTATION_REPLY_TYPE_TOOL: HostToolDefinition = {
-  name: "workstation_reply_type",
-  label: "Poste — saisir la réponse validée",
-  description:
-    "Seulement pour une demande qui envoie une réponse Slack validée : saisit dans le champ de message `ref` de l'onglet `tabId` le texte validé EXACT, tenu par le serveur, puis l'envoie (Entrée) si `submit` n'est pas `false`. L'envoi passe par la garde d'envoi : il ne part sans second geste que si l'extension voit exactement la réponse validée.",
-  parameters: {
-    type: "object",
-    properties: {
-      tabId: { type: "integer", description: "L'onglet de ta fenêtre où est ouverte la conversation Slack." },
-      ref: { type: "string", description: "La référence du champ de message (snapshot de la page)." },
-      submit: { type: "boolean", description: "Envoyer après la saisie (Entrée) ; `true` par défaut." },
-    },
-    required: ["tabId", "ref"],
-    additionalProperties: false,
-  },
-  loadMode: "essential",
-};
-
 const WORKSTATION_DIGEST_TOOL: HostToolDefinition = {
   name: "workstation_meeting_digest",
   label: "Poste — digest de meeting",
@@ -1085,76 +1061,6 @@ const WORKSTATION_SIGNAL_IGNORE_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
-// La veille proactive (canaux/veille.ts) : ses outils ne font que PROPOSER dans « À traiter ».
-// Aucun n'envoie, n'approuve ni n'agit dans le navigateur ; le serveur vérifie chaque référence
-// (message retenu, relance due, réunion à préparer, brief dû) et le niveau de délégation.
-const WORKSTATION_WATCH_REPLY_TOOL: HostToolDefinition = {
-  name: "workstation_watch_reply",
-  label: "Veille — proposer une réponse",
-  description:
-    "Propose à l'utilisateur une réponse à un message retenu (section « Messages »). Rien ne part : la réponse attend sa validation dans « À traiter » (un brouillon Gmail est créé dans le fil d'un mail). " +
-    "`topic` : le sujet LISTÉ de la personne dont traite le message, mot pour mot, s'il y en a un ; sinon omets-le. Une fois par message au plus.",
-  parameters: {
-    type: "object",
-    properties: {
-      messageId: { type: "string", description: "La référence du message retenu." },
-      text: { type: "string", description: "Le texte complet de la réponse, prêt à partir." },
-      topic: { type: "string", description: "Le sujet listé de la personne dont traite le message." },
-    },
-    required: ["messageId", "text"],
-    additionalProperties: false,
-  },
-  loadMode: "essential",
-};
-
-const WORKSTATION_WATCH_FOLLOWUP_TOOL: HostToolDefinition = {
-  name: "workstation_watch_followup",
-  label: "Veille — proposer une relance",
-  description:
-    "Propose une relance d'un fil resté sans réponse (section « Relances dues »). Rien ne part : elle attend la validation de l'utilisateur. Une fois par fil.",
-  parameters: {
-    type: "object",
-    properties: {
-      messageId: { type: "string", description: "La référence du dernier message de l'utilisateur." },
-      text: { type: "string", description: "Le texte complet de la relance." },
-    },
-    required: ["messageId", "text"],
-    additionalProperties: false,
-  },
-  loadMode: "essential",
-};
-
-const WORKSTATION_WATCH_PREP_TOOL: HostToolDefinition = {
-  name: "workstation_watch_prep",
-  label: "Veille — préparer une réunion",
-  description:
-    "Rend la préparation d'une réunion de la section « Réunions à préparer » : qui sont les participants, ce qui est en cours avec eux, ce que disent les transcripts passés au même lien. Une fois par réunion.",
-  parameters: {
-    type: "object",
-    properties: {
-      eventId: { type: "string", description: "La référence de la réunion." },
-      text: { type: "string", description: "La préparation, en quelques lignes." },
-    },
-    required: ["eventId", "text"],
-    additionalProperties: false,
-  },
-  loadMode: "essential",
-};
-
-const WORKSTATION_WATCH_BRIEF_TOOL: HostToolDefinition = {
-  name: "workstation_watch_brief",
-  label: "Veille — brief du matin",
-  description:
-    "Rend le brief du matin quand le prompt le demande : ce qui attend l'utilisateur aujourd'hui, en quelques puces. Une fois.",
-  parameters: {
-    type: "object",
-    properties: { text: { type: "string", description: "Le brief." } },
-    required: ["text"],
-    additionalProperties: false,
-  },
-  loadMode: "essential",
-};
-
 /**
  * Les outils hôtes d'une étape (ou de l'audit, du contradicteur et du rêve, qui ne
  * décident ni ne testent rien, ou d'un job du poste de travail) : `save_checkpoint` et
@@ -1175,14 +1081,6 @@ export function hostToolsFor(
   if (step === "poste-profil") return [PROGRESS_TOOL, WORKSTATION_PROFILE_TOOL];
   if (step === "poste-digest") return [PROGRESS_TOOL, WORKSTATION_DIGEST_TOOL];
   if (step === "poste-signal") return [PROGRESS_TOOL, WORKSTATION_SIGNAL_PROPOSE_TOOL, WORKSTATION_SIGNAL_IGNORE_TOOL];
-  if (step === "poste-veille")
-    return [
-      PROGRESS_TOOL,
-      WORKSTATION_WATCH_REPLY_TOOL,
-      WORKSTATION_WATCH_FOLLOWUP_TOOL,
-      WORKSTATION_WATCH_PREP_TOOL,
-      WORKSTATION_WATCH_BRIEF_TOOL,
-    ];
   if (step === "poste-demande")
     return [
       PROGRESS_TOOL,
@@ -1190,7 +1088,6 @@ export function hostToolsFor(
       WORKSTATION_DECISION_TOOL,
       WORKSTATION_SIGNAL_TOOL,
       WORKSTATION_REQUEST_REPORT_TOOL,
-      WORKSTATION_REPLY_TYPE_TOOL,
     ];
   if (step === "poste-service")
     return [

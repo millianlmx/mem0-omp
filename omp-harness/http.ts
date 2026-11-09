@@ -54,10 +54,8 @@ import type { BrowserHello, SessionJob, Workstation } from "./workstation.ts";
 import type { VigieStatus } from "./db.ts";
 import { VIGIE_STATUSES } from "./db.ts";
 import { handleMcp } from "./mcp.ts";
-import { parseReplyStates } from "./corporate/replies.ts";
 import { parseLoginInput } from "./browser/vps-login.ts";
 import {
-  APPROVER_ONLY,
   MAX_WAIT_SEC,
   SESSION_JOBS,
   approverFor,
@@ -101,10 +99,6 @@ export const API_FEATURES = [
   "workstation-session",
   "workstation-captures",
   "workstation-files",
-  "workstation-channels",
-  "workstation-channel-reads",
-  "workstation-people",
-  "workstation-watch",
   "workstation-vps",
   "mcp",
   "digest",
@@ -119,7 +113,6 @@ export const API_FEATURES = [
   "autonomy",
   "corporate-signals",
   "intake",
-  "corporate-replies",
   "proofs",
   "session-graph",
 ] as const;
@@ -375,21 +368,6 @@ export function apiRoutes(
   };
   const READS_SIGNALS = "réservé à l'humain — un client pilote ne lit pas les signalements";
   const ACTS_ON_SIGNALS = "geste réservé à l'humain — un client pilote ne confirme pas de signalement";
-  const READS_REPLIES = "réservé à l'humain — un client pilote ne lit pas les réponses aux collègues";
-  const ACTS_ON_REPLIES = "geste réservé à l'humain — un client pilote n'agit pas sur les réponses aux collègues";
-  /**
-   * Un geste sur un brouillon de réponse : propriétaire seul (restreint, puis pilote : 403), brouillon connu
-   * (404), puis appareil approbateur seulement (403). Avant toute lecture du texte du brouillon.
-   */
-  const replyActorOf = (call: Call): void => {
-    ownerOf(call, ACTS_ON_REPLIES);
-    orchestrator.corporateReplies.get(call.match[1] as string);
-    if (!call.client.approver) throw new HarnessError(403, APPROVER_ONLY);
-  };
-  /** Pour un client pilote, une demande de réponse à un collègue (son texte, son fil) est hors de ses lectures du poste. */
-  const repliesHiddenFrom = (call: Call, workstation: Workstation, requestId: string | null): boolean =>
-    call.client.pilot && workstation.isReplyRequest(requestId);
-  const READS_WATCH = "réservé à l'humain — un client pilote ne lit pas la veille du poste";
   /** Approuver, refuser ou régler le poste : l'appareil approbateur seulement (`approverFor`). */
   const approverOf = (call: Call): Workstation => approverFor(orchestrator.workstation, call.client);
   /** La présentation de l'extension appelante : son navigateur (`X-OMP-Browser`), son libellé et sa version. */
@@ -520,43 +498,10 @@ export function apiRoutes(
         signal: orchestrator.signals.dismiss(call.match[1] as string, await readBody(call.req), call.client),
       });
     }),
-    // Les réponses au collègue (pont corpo ↔ usine) : mêmes règles que les signalements, propriétaire seul ;
-    // modifier, approuver et classer : l'appareil approbateur. L'approbation pose une demande du poste.
-    route("GET", "/v1/replies", "viewer", (call) => {
-      ownerOf(call, READS_REPLIES);
-      const states = parseReplyStates(call.url.searchParams.get("state"));
-      send(call.res, 200, { replies: orchestrator.corporateReplies.list(states, limitOf(call.url, 50, 200)) });
-    }),
-    route("GET", "/v1/replies/{id}", "viewer", (call) => {
-      ownerOf(call, READS_REPLIES);
-      send(call.res, 200, { reply: orchestrator.corporateReplies.get(call.match[1] as string) });
-    }),
-    route("PUT", "/v1/replies/{id}", "operator", async (call) => {
-      replyActorOf(call);
-      send(call.res, 200, {
-        reply: orchestrator.corporateReplies.edit(call.match[1] as string, await readBody(call.req)),
-      });
-    }),
-    route("POST", "/v1/replies/{id}/approve", "operator", async (call) => {
-      replyActorOf(call);
-      send(
-        call.res,
-        201,
-        orchestrator.corporateReplies.approve(call.match[1] as string, await readBody(call.req), call.actor),
-      );
-      void orchestrator.tick();
-    }),
-    route("POST", "/v1/replies/{id}/archive", "operator", (call) => {
-      replyActorOf(call);
-      send(call.res, 200, { reply: orchestrator.corporateReplies.archive(call.match[1] as string, call.actor) });
-    }),
     route("GET", "/v1/runs/{id}/origin", "viewer", (call) => {
       const id = runId(call);
       ownerOf(call, READS_SIGNALS);
-      const origin = orchestrator.signals.originOf(id);
-      send(call.res, 200, {
-        origin: origin === null ? null : { ...origin, reply: orchestrator.corporateReplies.replyOf(id) },
-      });
+      send(call.res, 200, { origin: orchestrator.signals.originOf(id) });
     }),
     route("GET", "/v1/runs/{id}/timeline", "viewer", (call) =>
       send(call.res, 200, orchestrator.timeline(call.match[1] as string, call.repos)),
@@ -954,7 +899,7 @@ export function apiRoutes(
     // Le long-poll de l'extension : 200 `{ action }` (passée `running`), ou 204 après l'attente.
     route("GET", "/v1/workstation/next", "operator", async (call) => {
       const workstation = workstationOf(call);
-      // Louer une action en remet les `params` (le texte et le fil d'une réponse) : jamais à un client pilote.
+      // Louer une action en remet les `params` : jamais à un client pilote.
       if (call.client.pilot) throw new HarnessError(403, "le client pilote n'est pas l'extension du poste");
       const hello = helloOf(call);
       const signal = departure(call.res);
@@ -986,21 +931,17 @@ export function apiRoutes(
         throw new HarnessError(400, `state : ${ACTION_STATES.join(" | ")}`);
       const before = Number(call.url.searchParams.get("before"));
       send(call.res, 200, {
-        actions: workstation
-          .listActions({
-            states: states as ActionState[],
-            limit: limitOf(call.url, 50, 200),
-            ...(Number.isInteger(before) && before > 0 ? { before } : {}),
-          })
-          .filter((action) => !repliesHiddenFrom(call, workstation, action.requestId)),
+        actions: workstation.listActions({
+          states: states as ActionState[],
+          limit: limitOf(call.url, 50, 200),
+          ...(Number.isInteger(before) && before > 0 ? { before } : {}),
+        }),
       });
     }),
     // `?wait=` : rend dès que l'action quitte la file et l'extension (l'image d'une capture, en mémoire seulement).
     route("GET", "/v1/workstation/actions/{n}", "viewer", async (call) => {
       const workstation = workstationOf(call);
       const seq = Number(call.match[1]);
-      if (repliesHiddenFrom(call, workstation, workstation.getAction(seq).requestId))
-        throw new HarnessError(403, READS_REPLIES);
       const signal = departure(call.res);
       const view = await workstation.waitAction(seq, waitOf(call.url), signal);
       if (!signal.aborted) send(call.res, 200, view);
@@ -1014,8 +955,6 @@ export function apiRoutes(
     route("GET", "/v1/workstation/actions/{n}/capture", "viewer", (call) => {
       const workstation = workstationOf(call);
       const seq = Number(call.match[1]);
-      if (repliesHiddenFrom(call, workstation, workstation.getAction(seq).requestId))
-        throw new HarnessError(403, READS_REPLIES);
       send(call.res, 200, workstation.capture(seq));
     }),
     // Le fichier d'un `upload` en cours, lu dans le dossier d'envoi du poste : pour l'extension qui l'exécute.
@@ -1032,21 +971,15 @@ export function apiRoutes(
       await orchestrator.workstationAgent.halt("interrompu : arrêt d'urgence");
       send(call.res, 200, stopped);
     }),
-    // Le navigateur du poste sur le VPS (`obscura-poste`) : l'import des cookies d'un domaine (ouvert par
-    // l'approbateur, une réponse de l'extension) et la connexion interactive (approbateur seulement).
-    route("POST", "/v1/workstation/vps/cookie-import", "operator", async (call) => {
-      approverOf(call);
-      const body = await readBody(call.req);
-      send(call.res, 201, { import: orchestrator.vps.openImport(body.domain) });
-    }),
-    route("GET", "/v1/workstation/vps/cookie-import", "operator", (call) => {
+    // Le navigateur du poste sur le VPS (`obscura-poste`) : le mirroir de la session du Chrome source
+    // (l'extension choisie par `mirrorBrowser`) et la connexion interactive (approbateur seulement).
+    route("GET", "/v1/workstation/vps/mirror", "operator", async (call) => {
       workstationOf(call);
-      send(call.res, 200, orchestrator.vps.importStatus());
+      send(call.res, 200, await orchestrator.vps.mirrorStatus(helloOf(call)));
     }),
     route("POST", "/v1/workstation/vps/cookies", "operator", async (call) => {
       workstationOf(call);
-      const body = await readBody(call.req);
-      send(call.res, 200, await orchestrator.vps.acceptCookies(body.domain, body.cookies));
+      send(call.res, 200, await orchestrator.vps.acceptMirror(helloOf(call), await readBody(call.req)));
     }),
     route("POST", "/v1/workstation/vps/login", "operator", async (call) => {
       approverOf(call);
@@ -1130,15 +1063,11 @@ export function apiRoutes(
     route("GET", "/v1/workstation/requests", "viewer", (call) => {
       const workstation = workstationOf(call);
       const states = parseRequestStates(call.url.searchParams.get("state"));
-      const requests = workstation
-        .listRequests({ states, limit: limitOf(call.url, 50, 200) })
-        // Le client pilote ne lit pas les demandes de réponse à un collègue (texte et fil dans leur consigne).
-        .filter((request) => !repliesHiddenFrom(call, workstation, request.id));
+      const requests = workstation.listRequests({ states, limit: limitOf(call.url, 50, 200) });
       send(call.res, 200, { requests });
     }),
     route("GET", "/v1/workstation/requests/{id}", "viewer", (call) => {
       const workstation = workstationOf(call);
-      if (repliesHiddenFrom(call, workstation, call.match[1] as string)) throw new HarnessError(403, READS_REPLIES);
       send(call.res, 200, workstation.requestView(call.match[1] as string));
     }),
     route("POST", "/v1/workstation/requests/{id}/cancel", "operator", (call) => {
@@ -1165,77 +1094,6 @@ export function apiRoutes(
       const removed = approverOf(call).deleteAutomation(call.match[1] as string);
       orchestrator.schedules.unlinkAutomation(removed);
       send(call.res, 200, { removed });
-    }),
-    // Les canaux corpo (Gmail, Agenda, Slack) : l'état se lit (propriétaire), la connexion se mène
-    // depuis l'appareil approbateur seul (client OAuth, URL d'autorisation, URL de retour recollée).
-    route("GET", "/v1/workstation/channels", "viewer", (call) => {
-      workstationOf(call);
-      send(call.res, 200, orchestrator.channels.view(call.client.approver));
-    }),
-    route("PUT", "/v1/workstation/channels/{id}/client", "operator", async (call) => {
-      approverOf(call);
-      const body = await readBody(call.req);
-      send(call.res, 200, orchestrator.channels.setClient(call.match[1] as string, body, call.actor.by));
-    }),
-    route("POST", "/v1/workstation/channels/{id}/login", "operator", async (call) => {
-      approverOf(call);
-      send(call.res, 201, orchestrator.channels.startLogin(call.match[1] as string, await readBody(call.req)));
-    }),
-    route("POST", "/v1/workstation/channels/{id}/login/answer", "operator", async (call) => {
-      approverOf(call);
-      send(call.res, 200, await orchestrator.channels.answer(call.match[1] as string, await readBody(call.req)));
-    }),
-    // La lecture des canaux : les canaux Slack de l'espace (lus en direct) et la case « suivi »,
-    // que la lecture suivante applique (les DM et les mentions sont lus partout).
-    route("GET", "/v1/workstation/channels/slack/conversations", "viewer", async (call) => {
-      workstationOf(call);
-      send(call.res, 200, await orchestrator.channelReader.slackConversations());
-    }),
-    route("PUT", "/v1/workstation/channels/slack/conversations/{id}", "operator", async (call) => {
-      approverOf(call);
-      const body = await readBody(call.req);
-      send(call.res, 200, orchestrator.channelReader.followSlackConversation(call.match[1] as string, body));
-    }),
-    // Le graphe des personnes du poste : lu par le propriétaire, corrigé champ par champ depuis
-    // l'appareil approbateur (If-Match : la révision de la personne). Pas de PUT de collection.
-    route("GET", "/v1/workstation/people", "viewer", (call) => {
-      workstationOf(call);
-      send(call.res, 200, orchestrator.people.list());
-    }),
-    route("PATCH", "/v1/workstation/people/{id}", "operator", async (call) => {
-      approverOf(call);
-      const body = await readBody(call.req);
-      send(call.res, 200, orchestrator.people.patch(call.match[1] as string, body, ifMatch(call.req)));
-    }),
-    // La veille proactive du poste : les éléments de « À traiter » (réponses proposées, relances,
-    // préparations, brief), au propriétaire seul et jamais à un client pilote (ce sont des messages
-    // de collègues). `?state=` (défaut `open`, liste séparée par des virgules ; vide : tous).
-    route("GET", "/v1/workstation/watch", "viewer", (call) => {
-      workstationOf(call);
-      if (call.client.pilot) throw new HarnessError(403, READS_WATCH);
-      const states = (call.url.searchParams.get("state") ?? "open").split(",").filter((state) => state !== "");
-      send(call.res, 200, orchestrator.watch.list(states, limitOf(call.url, 100, 500)));
-    }),
-    route("GET", "/v1/workstation/watch/{id}", "viewer", (call) => {
-      workstationOf(call);
-      if (call.client.pilot) throw new HarnessError(403, READS_WATCH);
-      send(call.res, 200, orchestrator.watch.get(call.match[1] as string));
-    }),
-    // La validation des réponses proposées (canaux/reponses.ts) : l'appareil approbateur seul.
-    // Écarter supprime le brouillon Gmail ; valider (texte modifié ou non, `If-Match` facultatif)
-    // met le brouillon à jour, fige l'empreinte et pose la demande du poste qui enverra.
-    route("POST", "/v1/workstation/watch/{id}/dismiss", "operator", async (call) => {
-      approverOf(call);
-      send(call.res, 200, await orchestrator.replies.dismiss(call.match[1] as string));
-    }),
-    route("POST", "/v1/workstation/watch/{id}/validate", "operator", async (call) => {
-      approverOf(call);
-      const body = await readBody(call.req);
-      send(
-        call.res,
-        201,
-        await orchestrator.replies.validate(call.match[1] as string, body, ifMatch(call.req), call.actor),
-      );
     }),
     // La vigie (vigie/) : ses réglages (admin), son battement de cœur et ses incidents (son client pilote).
     route("GET", "/v1/vigie", "viewer", (call) => send(call.res, 200, orchestrator.vigie.view(call.repos, Date.now()))),

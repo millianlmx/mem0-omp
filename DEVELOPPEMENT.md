@@ -211,8 +211,8 @@ Pour couper le relais Chrome de l'outil navigateur intégré d'omp, lance omp av
   épinglé, pages servies sous `app.slack.com` / `mail.google.com` par un proxy témoin) : `vps` en ligne
   ou hors ligne, `navigate`, geste impossible rendu `failed`, garde d'envoi (résumé, destinataires,
   aperçu, empreinte de l'extension) et rejeu approuvé, hôtes permis, arrêt d'urgence et pause, navigateur
-  par défaut, import de cookies (domaines, expiration, rien en base ni au journal), connexion
-  interactive (images, clics, frappes, IdP listé), état des comptes et alerte d'expiration, imports de
+  par défaut, mirroir du profil Chrome (§ « Le navigateur du serveur (`vps`) » de
+  `omp-harness/README.md`), connexion interactive (images, clics, frappes, IdP listé), état des comptes et alerte d'expiration, imports de
   l'exécuteur tous sous un dossier copié par `Dockerfile.harness`.
 
 **Non vérifié** (smoke humain délégué)
@@ -235,14 +235,15 @@ Pour couper le relais Chrome de l'outil navigateur intégré d'omp, lance omp av
   (les tests passent par un faux CLI qui relie stdin/stdout à un vrai `obscura serve`) ;
 - les conteneurs `omp-qa-*` d'une revue interrompue par un redémarrage du service sont retirés au démarrage ;
 - l'exécuteur `vps` sur la vraie pile : `obscura-poste` charge une page publique pour une action
-  `navigate`, et l'import de cookies d'un vrai Chrome (Slack, Google) puis la connexion interactive
+  `navigate`, et le mirroir d'un vrai Chrome (§ « Le navigateur du serveur (`vps`) » de
+  `omp-harness/README.md`) puis la connexion interactive
   par l'écran Poste de l'app Mac donnent un compte `connected` — les tests ne servent que des pages
   de test sous de faux noms ;
 - l'écran Swift de la connexion interactive (affichage des images, clics et frappes renvoyés) :
   non écrit dans ce run, voir `.harness/impl.md` ; l'API `…/vps/login*` qu'il appellera est
   prouvée par `obscura-poste/AC-28` ;
-- l'extension Chrome avec la permission `cookies` : le build et la réponse à un import (`lib/cookie-import.ts`)
-  sont éprouvés contre le vrai serveur, pas dans un vrai Chrome ;
+- l'extension Chrome avec la permission `cookies` : le mirroir du profil (§ « Le navigateur du serveur
+  (`vps`) » de `omp-harness/README.md`) est éprouvé contre le vrai serveur, pas dans un vrai Chrome ;
 - `docker compose build` de `Dockerfile.harness` avec `omp-chrome/src/{lib,page}` (`.dockerignore`).
 
 ## CI et release

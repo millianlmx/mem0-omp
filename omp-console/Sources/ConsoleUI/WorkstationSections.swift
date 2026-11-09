@@ -5,9 +5,8 @@
 // autonomie appliquée, pause ou arrêt) avec l'arrêt d'urgence pour seul geste marquant
 // — ou la reprise quand le poste est arrêté ; les envois à approuver, seulement s'il y
 // en a ; « Demander au poste » et les demandes en cours ; les dernières décisions du
-// journal ; puis une rangée par page poussée (`WorkstationPage`) : réglages, canaux corpo
-// et personnes (seulement si le serveur les sert à ce jeton), automatisations, commande du
-// navigateur, profil, réunions, sessions de l'agent 24/24.
+// journal ; puis une rangée par page poussée (`WorkstationPage`) : réglages,
+// automatisations, commande du navigateur, profil, réunions, sessions de l'agent 24/24.
 //
 // Chaque app pose la page principale dans son cadre (formulaire du Mac, liste groupée
 // d'iOS) et les pages poussées par `workstationDestinations` dans sa pile de navigation.
@@ -22,14 +21,10 @@ import SwiftUI
 
 public struct WorkstationSections: View {
     @ObservedObject var workstation: WorkstationModel
-    @ObservedObject var channels: WorkstationChannelsModel
-    @ObservedObject var people: WorkstationPeopleModel
     @ObservedObject var drafts: HarnessDrafts
 
-    public init(workstation: WorkstationModel, channels: WorkstationChannelsModel, people: WorkstationPeopleModel, drafts: HarnessDrafts) {
+    public init(workstation: WorkstationModel, drafts: HarnessDrafts) {
         self.workstation = workstation
-        self.channels = channels
-        self.people = people
         self.drafts = drafts
     }
 
@@ -60,7 +55,7 @@ public struct WorkstationSections: View {
                 WorkstationAskSection(workstation: workstation, drafts: drafts, status: status, requests: requests)
             }
             WorkstationRecentJournalSection(drafts: drafts, journal: workstation.journal)
-            WorkstationPagesSection(workstation: workstation, channels: channels, people: people)
+            WorkstationPagesSection(workstation: workstation)
         }
     }
 }
@@ -153,8 +148,6 @@ struct WorkstationHeaderSection: View {
 /// cadre de chaque app la résout par `workstationDestinations(server:drafts:)`.
 public enum WorkstationPage: String, Hashable, Identifiable, Sendable {
     case settings
-    case channels
-    case people
     case automations
     case command
     case profile
@@ -167,13 +160,11 @@ public enum WorkstationPage: String, Hashable, Identifiable, Sendable {
 
     /// Les rangées de la page principale, dans l'ordre. Le journal et les demandes
     /// s'ouvrent depuis leur propre section (« Tout le journal », « Toutes les demandes »).
-    static let rows: [WorkstationPage] = [.settings, .channels, .people, .automations, .command, .profile, .meetings, .sessions]
+    static let rows: [WorkstationPage] = [.settings, .automations, .command, .profile, .meetings, .sessions]
 
     public var title: String {
         switch self {
         case .settings: WorkstationText.settingsTitle
-        case .channels: ChannelText.title
-        case .people: PeopleText.title
         case .automations: ControlText.automationsTitle
         case .command: ControlText.commandTitle
         case .profile: WorkstationText.profileTitle
@@ -187,8 +178,6 @@ public enum WorkstationPage: String, Hashable, Identifiable, Sendable {
     public var systemImage: String {
         switch self {
         case .settings: WorkstationText.settingsSymbol
-        case .channels: ChannelText.pageSymbol
-        case .people: PeopleText.pageSymbol
         case .automations: WorkstationText.automatableSymbol
         case .command: WorkstationText.commandSymbol
         case .profile: WorkstationText.profileSymbol
@@ -205,10 +194,8 @@ extension View {
     /// poussée depuis la page principale y trouve sa vue.
     public func workstationDestinations(server: HarnessModel, drafts: HarnessDrafts) -> some View {
         let workstation = server.workstation
-        let channels = server.channels
-        let people = server.people
         return navigationDestination(for: WorkstationPage.self) { page in
-            WorkstationPageView(workstation: workstation, channels: channels, people: people, drafts: drafts, page: page)
+            WorkstationPageView(workstation: workstation, drafts: drafts, page: page)
         }
     }
 }
@@ -216,8 +203,6 @@ extension View {
 /// Les rangées des pages poussées, en pied de la page principale.
 struct WorkstationPagesSection: View {
     @ObservedObject var workstation: WorkstationModel
-    @ObservedObject var channels: WorkstationChannelsModel
-    @ObservedObject var people: WorkstationPeopleModel
 
     var body: some View {
         Section {
@@ -238,14 +223,11 @@ struct WorkstationPagesSection: View {
         }
     }
 
-    /// Une page dont le serveur ne sert pas le contenu n'a pas de rangée : les canaux et les
-    /// personnes sont absents d'un serveur sans la route (404) et pour un jeton restreint (403).
+    /// Une page dont le serveur ne sert pas le contenu n'a pas de rangée.
     private var pages: [WorkstationPage] {
         WorkstationPage.rows.filter { page in
             switch page {
             case .settings, .command: workstation.status != nil
-            case .channels: channels.availability == .available
-            case .people: people.availability == .available
             case .automations: workstation.automations != nil
             case .profile, .meetings, .journal, .sessions, .requests: true
             }
@@ -256,8 +238,6 @@ struct WorkstationPagesSection: View {
         switch page {
         case .automations: workstation.automations?.count
         case .meetings: workstation.meetings.count
-        case .channels: channels.attentionCount
-        case .people: people.people.count
         case .settings, .command, .profile, .journal, .sessions, .requests: nil
         }
     }
@@ -267,8 +247,6 @@ struct WorkstationPagesSection: View {
 /// en tête, et l'actualisation par le geste du système.
 struct WorkstationPageView: View {
     @ObservedObject var workstation: WorkstationModel
-    @ObservedObject var channels: WorkstationChannelsModel
-    @ObservedObject var people: WorkstationPeopleModel
     @ObservedObject var drafts: HarnessDrafts
     let page: WorkstationPage
 
@@ -282,11 +260,7 @@ struct WorkstationPageView: View {
         .formStyle(.grouped)
         .navigationTitle(page.title)
         .consoleInlineTitle()
-        .refreshable {
-            await workstation.load()
-            if page == .channels { await channels.refresh() }
-            if page == .people { await people.refresh() }
-        }
+        .refreshable { await workstation.load() }
     }
 
     @ViewBuilder
@@ -300,10 +274,6 @@ struct WorkstationPageView: View {
             } else {
                 loading
             }
-        case .channels:
-            WorkstationChannelsSections(channels: channels)
-        case .people:
-            WorkstationPeopleSections(people: people)
         case .automations:
             if let automations = workstation.automations {
                 WorkstationAutomationsSection(workstation: workstation, drafts: drafts, automations: automations)

@@ -348,4 +348,14 @@ export const MIGRATIONS_SUITE: readonly string[] = [
    );
    CREATE INDEX corporate_replies_state ON corporate_replies (state, created_at);
    CREATE INDEX corporate_replies_request ON corporate_replies (request_id);`,
+  `DROP TABLE workstation_person_keys;
+   DROP TABLE workstation_people;
+   DROP TABLE workstation_watch_items;
+   DROP TABLE corporate_replies;
+   DROP TABLE channel_messages;
+   DROP TABLE channel_events;
+   DROP TABLE channel_cursors;
+   DROP TABLE slack_conversations;
+   DROP TABLE slack_users;
+   DELETE FROM settings WHERE key = 'workstation.channels';`,
 ];

@@ -27,7 +27,6 @@ import { ProviderRegistry } from "./providers.ts";
 import type { RunnerProcess } from "./rpc.ts";
 import { writePipelineOverlay } from "./runner.ts";
 import type { Scheduler } from "./scheduler.ts";
-import type { ChannelFetch } from "./canaux/channels.ts";
 import { Monitor } from "./monitor.ts";
 import { SessionFeeds } from "./session-feed.ts";
 import { SessionGraphs } from "./session-graph.ts";
@@ -55,13 +54,11 @@ export type HarnessDeps = {
   exec: Exec;
   /** Le journal structuré (logger.ts) ; absent : rien n'est journalisé. */
   log?: LogLine;
-  /** Le `fetch` des canaux corpo (canaux/) ; absent : celui de la plateforme. Les tests y branchent des doublures. */
-  fetch?: ChannelFetch;
   tickMs?: number;
   /** Tests seulement : la résolution DNS du pré-contrôle des outils `browser_*` (browser/guard.ts). */
   browserLookup?: Lookup;
   /** Tests seulement : les réglages de l'exécuteur du VPS (délais courts, adresses de vérification, DNS). */
-  vps?: Partial<Pick<VpsOptions, "lookup" | "probeUrls" | "pollSec" | "retryMs" | "importTtlMs" | "probeEveryMs">>;
+  vps?: Partial<Pick<VpsOptions, "lookup" | "probeUrls" | "pollSec" | "retryMs" | "probeEveryMs">>;
 };
 
 /**

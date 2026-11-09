@@ -277,6 +277,7 @@ export function fakeChrome() {
       onCreated: onDownloadCreated,
       onChanged: onDownloadChanged,
     },
+    cookies: { getAll: async () => [], onChanged: chromeEvent() },
     idle: { setDetectionInterval: () => undefined, queryState: async () => "active", onStateChanged: chromeEvent() },
     alarms: { create: async () => undefined, get: async () => undefined, onAlarm: chromeEvent() },
     offscreen: {

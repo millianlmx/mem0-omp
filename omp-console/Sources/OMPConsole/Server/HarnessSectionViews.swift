@@ -157,7 +157,6 @@ struct HarnessInboxView: View {
         HarnessSection(server: server, drafts: drafts, catalog: true, reload: {
             await server.workstation.refresh()
             await server.signals.refresh()
-            await server.watch.refresh()
             await server.intakes.refresh()
             await server.vigie.refresh()
         }) {

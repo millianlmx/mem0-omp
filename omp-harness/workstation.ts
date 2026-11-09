@@ -17,7 +17,6 @@
 // du client ou l'arrêt du service. Rien ne bloque les autres requêtes.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { REPLY_APPROVER, replyAfterSend, settledReply, validatedSend, watchEvent } from "./canaux/reponses.ts";
 import type { Client } from "./auth.ts";
 import { isRecord } from "./config.ts";
 import type { HarnessConfig } from "./config.ts";
@@ -31,7 +30,6 @@ import type {
   Meeting,
   MeetingNeed,
   Observation,
-  ReplyRow,
   RequestState,
   Segment,
   ShiftRow,
@@ -43,7 +41,7 @@ import type {
   WorkstationProfileBody,
   WorkstationRequest,
 } from "./db.ts";
-import { ACTION_KINDS, REPLY_INSTRUCTION_HEAD, REQUEST_STATES } from "./db.ts";
+import { ACTION_KINDS, REQUEST_STATES } from "./db.ts";
 import { parseCron } from "./cron.ts";
 import { HarnessError } from "./errors.ts";
 import { newId } from "./ids.ts";
@@ -67,6 +65,8 @@ export type WorkstationSettings = {
   stopped: { at: number; by: string } | null;
   /** Le navigateur par défaut choisi ; `null` : le premier vu. */
   defaultBrowser: string | null;
+  /** Le navigateur (extension) dont la session est copiée en continu dans le navigateur `vps` ; `null` : aucun. */
+  mirrorBrowser: string | null;
   /** Les hôtes permis à la navigation (`workstation.allowedHosts` si l'approbateur n'a rien réglé). */
   allowedHosts: string[];
   /** La garde anti-exfiltration de l'agent (`workstation.exfiltrationGuard` si rien n'est réglé). */
@@ -92,6 +92,8 @@ export type BrowserView = {
   isDefault: boolean;
   /** Les comptes du navigateur `vps` seulement : leur état, jamais un cookie ni un jeton. */
   accounts?: AccountView[];
+  /** Le navigateur `vps` seulement : le dernier envoi du mirroir accepté depuis le démarrage, `null` sinon. */
+  mirroredAt?: number | null;
 };
 
 export type ProfileStats = {
@@ -120,6 +122,8 @@ export type WorkstationStatus = {
   /** Les navigateurs connus (un par extension appairée), et celui qui reçoit ce qui n'en cible aucun. */
   browsers: BrowserView[];
   defaultBrowser: string | null;
+  /** La source du mirroir de session vers le navigateur `vps`, `null` : aucun mirroir. */
+  mirrorBrowser: string | null;
   /** La navigation gardée en vigueur, et la source de chaque valeur (`config` ou `setting`). */
   allowedHosts: string[];
   exfiltrationGuard: boolean;
@@ -139,7 +143,7 @@ export type ResultInput =
   | { outcome: "failed"; error: string }
   | {
       outcome: "needs_approval";
-      approval: Pick<Approval, "summary" | "recipients" | "preview" | "fingerprint" | "replyFingerprint">;
+      approval: Pick<Approval, "summary" | "recipients" | "preview" | "fingerprint">;
     };
 
 /** Le dernier contact de l'extension date de moins de 60 s : elle est en ligne. */
@@ -270,37 +274,6 @@ export const REQUEST_CANCELLED = "demande annulée";
 export const APPROVER_ONLY =
   "seul l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut approuver, refuser ou régler le poste";
 
-export { REPLY_INSTRUCTION_HEAD };
-/** Les gestes qu'une demande de réponse à un collègue peut déposer : ni envoi de fichier, ni téléchargement, ni liste déroulante. */
-export const REPLY_ACTION_KINDS: readonly ActionKind[] = [
-  "tabs",
-  "open",
-  "navigate",
-  "snapshot",
-  "screenshot",
-  "scroll",
-  "hover",
-  "wait",
-  "wait_for",
-  "back",
-  "forward",
-  "reload",
-  "close",
-  "click",
-  "decision",
-  "type",
-  "key",
-];
-/** Pourquoi un geste d'une réponse sur une page `chrome` attend l'humain : il peut publier le texte saisi. */
-export const REPLY_SEND_GUARD = "réponse à un collègue : ce geste peut publier le texte saisi";
-/** Pourquoi un second envoi retenu d'une même réponse est clos : un seul envoi vivant par réponse. */
-export const REPLY_SEND_TAKEN = "un envoi de cette réponse est déjà retenu ou parti : un seul envoi par réponse";
-/** Le résumé que l'événement `workstation_approval` d'une demande de réponse porte à la place du geste (ni texte, ni fil). */
-export const REPLY_APPROVAL_SUMMARY = "Réponse à un collègue : un geste attend ton accord (détail dans l'app)";
-
-const norm = (text: string): string => text.replace(/\s+/g, " ").trim();
-/** La base d'une touche (`Control+Enter` → `Enter`). */
-const keyBase = (raw: unknown): string => String(raw).split("+").pop() ?? "";
 /** Le poste de travail est au propriétaire : un client restreint à des dépôts n'y a pas accès. */
 export function workstationFor(workstation: Workstation, client: Client): Workstation {
   if (client.repos !== "*") throw new HarnessError(403, "le poste est réservé au propriétaire");
@@ -693,12 +666,6 @@ export function parseResult(body: Record<string, unknown>): ResultInput {
       (typeof approval.fingerprint !== "string" || !FINGERPRINT.test(approval.fingerprint))
     )
       bad("approval.fingerprint : SHA-256 en hexadécimal (64 caractères) attendu");
-    if (
-      approval.replyFingerprint !== undefined &&
-      approval.replyFingerprint !== null &&
-      (typeof approval.replyFingerprint !== "string" || !FINGERPRINT.test(approval.replyFingerprint))
-    )
-      bad("approval.replyFingerprint : SHA-256 en hexadécimal (64 caractères) attendu");
     return {
       outcome,
       approval: {
@@ -712,8 +679,6 @@ export function parseResult(body: Record<string, unknown>): ResultInput {
         preview: clip(redact(typeof approval.preview === "string" ? approval.preview : ""), MAX_PREVIEW),
         // Telle que reçue : l'extension n'exécute un envoi approuvé que si l'empreinte recalculée est identique.
         fingerprint: typeof approval.fingerprint === "string" ? approval.fingerprint : null,
-        // L'empreinte de la réponse (destinataires et texte complet) : comparée à celle figée à la validation.
-        ...(typeof approval.replyFingerprint === "string" ? { replyFingerprint: approval.replyFingerprint } : {}),
       },
     };
   }
@@ -852,6 +817,10 @@ function parseSettings(body: Record<string, unknown>): SettingsPatch {
     patch.paused = body.paused;
   }
   if (body.defaultBrowser !== undefined) patch.defaultBrowser = browserRef(body.defaultBrowser, "defaultBrowser");
+  if (body.mirrorBrowser !== undefined) {
+    patch.mirrorBrowser = browserRef(body.mirrorBrowser, "mirrorBrowser");
+    if (patch.mirrorBrowser === VPS_BROWSER) bad("mirrorBrowser : le navigateur vps ne peut pas se copier lui-même");
+  }
   if (body.allowedHosts !== undefined) patch.allowedHosts = parseAllowedHosts(body.allowedHosts);
   if (body.exfiltrationGuard !== undefined) {
     if (body.exfiltrationGuard !== null && typeof body.exfiltrationGuard !== "boolean")
@@ -1106,6 +1075,8 @@ export class Workstation {
   #closed = false;
   /** Ceux que l'annulation d'une action en cours (arrêt d'urgence, `cancel`) prévient : l'exécuteur du VPS. */
   readonly #halted = new Set<(seqs: number[] | null) => void>();
+  /** Le dernier envoi du mirroir de Chrome accepté par le navigateur `vps` (mémoire du process). */
+  #mirroredAt: number | null = null;
 
   constructor(ctx: HarnessContext) {
     this.#ctx = ctx;
@@ -1134,6 +1105,7 @@ export class Workstation {
           ? { at: stored.stopped.at, by: stored.stopped.by }
           : null,
       defaultBrowser: typeof stored.defaultBrowser === "string" ? stored.defaultBrowser : null,
+      mirrorBrowser: typeof stored.mirrorBrowser === "string" ? stored.mirrorBrowser : null,
       allowedHosts: Array.isArray(stored.allowedHosts)
         ? stored.allowedHosts.filter((entry): entry is string => typeof entry === "string")
         : [...this.#ctx.config.workstation.allowedHosts],
@@ -1153,10 +1125,12 @@ export class Workstation {
     const patch = parseSettings(body);
     const { store } = this.#ctx;
     if (typeof patch.defaultBrowser === "string") this.#known(patch.defaultBrowser);
+    if (typeof patch.mirrorBrowser === "string") this.#known(patch.mirrorBrowser);
     store.transaction(() => {
       const stored = { ...(store.getSetting<Record<string, unknown>>(SETTINGS_KEY) ?? {}), ...patch };
       if (stored.thresholdHours === null) delete stored.thresholdHours;
       if (stored.defaultBrowser === null) delete stored.defaultBrowser;
+      if (stored.mirrorBrowser === null) delete stored.mirrorBrowser;
       if (stored.allowedHosts === null) delete stored.allowedHosts;
       if (stored.exfiltrationGuard === null) delete stored.exfiltrationGuard;
       // La reprise par l'approbateur lève l'arrêt d'urgence.
@@ -1268,6 +1242,11 @@ export class Workstation {
     });
   }
 
+  /** Un envoi du mirroir de Chrome vient d'être posé dans le navigateur `vps` (ni cookie ni compte retenu). */
+  markMirrored(at = Date.now()): void {
+    this.#mirroredAt = at;
+  }
+
   /** Les navigateurs connus, du premier vu au dernier. */
   browsers(now = Date.now()): BrowserView[] {
     const fallback = this.defaultBrowserId();
@@ -1279,7 +1258,7 @@ export class Workstation {
       firstSeenAt: row.firstSeenAt,
       extensionVersion: row.version,
       isDefault: row.id === fallback,
-      ...(row.id === VPS_BROWSER ? { accounts: this.vpsAccounts() } : {}),
+      ...(row.id === VPS_BROWSER ? { accounts: this.vpsAccounts(), mirroredAt: this.#mirroredAt } : {}),
     }));
   }
 
@@ -1327,6 +1306,7 @@ export class Workstation {
       stopped: settings.stopped,
       browsers,
       defaultBrowser: browsers.find((browser) => browser.isDefault)?.id ?? null,
+      mirrorBrowser: settings.mirrorBrowser,
       allowedHosts: settings.allowedHosts,
       exfiltrationGuard: settings.exfiltrationGuard,
       navigationSource: settings.navigationSource,
@@ -1387,19 +1367,14 @@ export class Workstation {
       },
       null,
     );
-    // L'envoi d'une réponse validée a abouti (« envoyée ») ou s'est fini sans partir, sa demande close.
-    const reply = replyAfterSend(this.#ctx.store, action, Date.now());
-    if (reply) this.#ctx.event("workstation_watch", null, watchEvent(reply), null);
     if (action.state === "awaiting_approval") {
-      // Une demande de réponse à un collègue : ni le geste (URL, texte), ni les destinataires dans l'événement.
-      const masked = this.isReplyRequest(action.requestId);
       this.#ctx.event(
         "workstation_approval",
         null,
         {
           seq: action.seq,
-          summary: masked ? REPLY_APPROVAL_SUMMARY : (action.approval?.summary ?? action.rationale),
-          recipients: masked ? [] : (action.approval?.recipients ?? []),
+          summary: action.approval?.summary ?? action.rationale,
+          recipients: action.approval?.recipients ?? [],
         },
         null,
       );
@@ -1445,8 +1420,6 @@ export class Workstation {
     const { store } = this.#ctx;
     const settings = this.settings();
     const request = requestId === null ? null : store.getWorkstationRequest(requestId);
-    const reply = requestId === null ? null : store.replyOfRequest(requestId);
-    if (reply !== null) this.#checkReplyGesture(input, reply);
     const browserId =
       input.browserId !== undefined ? this.#known(input.browserId) : (request?.browserId ?? this.defaultBrowserId());
     let state: ActionState = "done";
@@ -1460,8 +1433,6 @@ export class Workstation {
       // Le fichier d'un `upload` existe dans le dossier d'envoi, sous la borne : sinon rien n'est déposé.
       if (input.kind === "upload") this.#uploadPath(String(input.params.file));
       const reasons = this.#guards(input, origin, browserId);
-      if (reply !== null && requestId !== null && this.#publishesReply(input, reply, requestId))
-        reasons.push(REPLY_SEND_GUARD);
       const proposes = requestId === null && origin === "agent" && effective === "propose";
       state = proposes || reasons.length > 0 ? "awaiting_approval" : "queued";
       if (state === "awaiting_approval") {
@@ -1505,101 +1476,27 @@ export class Workstation {
   }
 
   /**
-   * Une demande de réponse à un collègue ne dépose que `REPLY_ACTION_KINDS`, des touches nommées
-   * hors Space (pas de coller ni d'annuler), et la seule saisie du texte approuvé. Rien n'est créé
-   * si le geste est refusé ; les messages ne citent ni texte ni adresse.
-   */
-  #checkReplyGesture(input: ActionInput, reply: ReplyRow): void {
-    if (!REPLY_ACTION_KINDS.includes(input.kind))
-      throw new HarnessError(409, `geste refusé dans une demande de réponse : ${input.kind}`);
-    if (input.kind === "key") {
-      const base = keyBase(input.params.key);
-      if (base === "Space" || !(NAMED_KEYS as readonly string[]).includes(base))
-        throw new HarnessError(
-          409,
-          "touche refusée dans une demande de réponse : seules les touches nommées hors Space (Enter, Tab, Backspace…)",
-        );
-    }
-    if (input.kind === "type" && input.params.text !== reply.text)
-      throw new HarnessError(409, "saisie refusée : seul le texte approuvé de la réponse se saisit dans cette demande");
-  }
-
-  /**
-   * Sur une page `chrome`, l'extension ne reconnaît pas toujours le bouton qui publie : tout clic,
-   * toute touche Entrée ou saisie avec envoi, une fois le texte saisi, attend l'approbateur.
-   */
-  #publishesReply(input: ActionInput, reply: ReplyRow, requestId: string): boolean {
-    const { store } = this.#ctx;
-    if (store.getSignal(reply.signalId)?.channel !== "chrome") return false;
-    if (input.kind === "type") return input.params.submit === true;
-    const sends = input.kind === "click" || (input.kind === "key" && keyBase(input.params.key) === "Enter");
-    return sends && store.listWorkstationActions({ requestId, limit: 10_000 }).some((entry) => entry.kind === "type");
-  }
-
-  /**
-   * Le brouillon dont cette action retenue est l'envoi : un clic, une touche ou une saisie avec envoi
-   * dont l'aperçu porte le texte approuvé (espaces normalisés). `null` pour tout autre geste retenu.
-   */
-  #replySend(action: WorkstationAction, preview: string): ReplyRow | null {
-    if (action.requestId === null) return null;
-    const reply = this.#ctx.store.replyOfRequest(action.requestId);
-    const sends =
-      action.kind === "click" || action.kind === "key" || (action.kind === "type" && action.params.submit === true);
-    return reply !== null && sends && norm(preview).includes(norm(reply.text)) ? reply : null;
-  }
-
-  /** La demande est une demande de réponse à un collègue, reconnue à l'en-tête de sa consigne (durable). */
-  isReplyRequest(requestId: string | null): boolean {
-    if (requestId === null) return false;
-    const request = this.#ctx.store.getWorkstationRequest(requestId);
-    return request?.instruction.startsWith(`${REPLY_INSTRUCTION_HEAD}\n`) ?? false;
-  }
-
-  /**
-   * Le `needs_approval` de l'extension pour une action en cours : la garde d'envoi (à l'humain, sauf
-   * message à soi ou envoi d'une réponse validée sous empreinte). Pour une demande de réponse à un
-   * collègue, l'action qui envoie le texte approuvé est marquée
-   * (`send_seq`) ; un second envoi tant que le premier attend, part ou est parti est clos (`failed`).
-   * Tout autre geste retenu suit la garde ordinaire, sans marque.
+   * Le `needs_approval` de l'extension pour une action en cours : la garde d'envoi. Seul un message
+   * à SOI (destinataires connus, tous à l'utilisateur) repart sans geste humain ; tout autre envoi
+   * attend l'humain.
    */
   #retain(
     seq: number,
-    action: WorkstationAction,
-    held: Pick<Approval, "summary" | "recipients" | "preview" | "fingerprint" | "replyFingerprint">,
+    held: Pick<Approval, "summary" | "recipients" | "preview" | "fingerprint">,
   ): WorkstationAction | null {
-    const { store } = this.#ctx;
-    const reply = this.#replySend(action, held.preview);
-    const marked =
-      reply !== null && reply.sendSeq !== null && reply.sendSeq !== seq ? this.getAction(reply.sendSeq) : null;
-    if (marked !== null && (marked.state === "done" || Workstation.PENDING.includes(marked.state)))
-      return this.#transition(seq, ["running"], {
-        state: "failed",
-        error: REPLY_SEND_TAKEN,
-        approved: false,
-        approval: { ...held, decidedBy: null, decidedAt: null, reason: null },
-        leasedAt: null,
-      });
-    // La garde d'envoi : seul un message à SOI (destinataires connus, tous à l'utilisateur) repart
-    // sans geste humain, ou l'envoi de la demande rattachée à une réponse validée dont l'empreinte
-    // (destinataires et texte complet) est STRICTEMENT celle figée à la validation (canaux/reponses.ts).
     const self = isSelfOnly(held.recipients, this.settings().selfIdentities);
-    const outcome = validatedSend(store, action, held.replyFingerprint, Date.now());
-    if (outcome.item) this.#ctx.event("workstation_watch", null, watchEvent(outcome.item), null);
-    const approved = self || outcome.approved;
     const approval: Approval = {
       ...held,
-      decidedBy: self ? "soi" : outcome.approved ? REPLY_APPROVER : null,
-      decidedAt: approved ? Date.now() : null,
+      decidedBy: self ? "soi" : null,
+      decidedAt: self ? Date.now() : null,
       reason: null,
     };
-    const updated = this.#transition(seq, ["running"], {
-      state: approved ? "queued" : "awaiting_approval",
-      approved,
+    return this.#transition(seq, ["running"], {
+      state: self ? "queued" : "awaiting_approval",
+      approved: self,
       approval,
       leasedAt: null,
     });
-    if (updated && reply !== null && action.requestId !== null) store.markReplySend(action.requestId, seq);
-    return updated;
   }
 
   /**
@@ -1793,7 +1690,7 @@ export class Workstation {
         leasedAt: null,
       });
     } else {
-      updated = this.#ctx.store.transaction(() => this.#retain(seq, action, input.approval));
+      updated = this.#retain(seq, input.approval);
     }
     if (!updated) throw new HarnessError(409, `l'action #${seq} a changé d'état`);
     return updated;
@@ -1967,12 +1864,6 @@ export class Workstation {
       const cleared = store.clearWorkstationResultsBefore(before);
       if (cleared > 0)
         this.#ctx.log(`poste : ${cleared} résultat(s) d'action de plus de ${config.retentionDays} j vidé(s)`);
-      // Les contenus lus des canaux corpo (messages, événements, auteurs Slack) et les éléments de la veille.
-      const read = store.pruneChannelContents(before) + store.pruneWatchItems(before);
-      if (read > 0)
-        this.#ctx.log(
-          `poste : ${read} contenu(s) des canaux ou élément(s) de veille de plus de ${config.retentionDays} j purgé(s)`,
-        );
     }
     // Les captures, à chaque tour : leur rétention se compte en heures.
     store.pruneWorkstationCaptures(now - config.captureRetentionHours * 3_600_000);
@@ -2106,9 +1997,6 @@ export class Workstation {
       { id: request.id, state: request.state, reason: request.reason },
       null,
     );
-    // Une demande close sans que l'envoi de sa réponse parte : « envoi non abouti », revalidable.
-    const settled = settledReply(this.#ctx.store, request, Date.now());
-    if (settled) this.#ctx.event("workstation_watch", null, watchEvent(settled), null);
   }
 
   /** L'erreur d'une action dont la demande est close (annulée ou échouée) ; `null` sinon. */

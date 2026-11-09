@@ -544,10 +544,6 @@ tests (`test/harness/`) font tourner le service complet avec de vrais process, d
 vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 (`test/support/fake-omp-rpc.ts`).
 
-En isolation `none`, un runner a les droits du service : aucun isolement des jetons des
-canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `systemd` ou
-`container`.
-
 ## Configuration
 
 `/etc/omp-harness/config.json` ne fait que surcharger les défauts
@@ -653,11 +649,6 @@ canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `syste
 | `workstation.exfiltrationGuard` | `true` | la garde anti-exfiltration de l'agent 24/24 : une adresse vers un hôte jamais observé ni listé dans `allowedHosts`, ou dont la query (ou le fragment `#a=b`) porte une valeur de plus de 100 caractères ou un jeton opaque (≥ 24 caractères alphanumériques mêlant lettres et chiffres), attend l'approbateur ; `false` la coupe |
 | `workstation.captureRetentionHours` | `24` | les captures d'écran gardées par action (le JPEG tel que capturé, table `workstation_captures`), effacées passé ce délai (à chaque tour) |
 | `workstation.vps` | `{url: null, token: null}` | le navigateur du poste sur le VPS (`obscura-poste`, `browserId: "vps"`) : URL `http://hôte:port` et jeton CDP (32 caractères au moins), repris de `OBSCURA_POSTE_CDP_URL` / `OBSCURA_POSTE_CDP_TOKEN` (posés par `setup` dans `harness.env`) quand le fichier ne les donne pas ; `url` null : l'exécuteur `vps` ne démarre pas |
-| `workstation.channelReadEveryMin` | `5` | le repos entre deux passages de lecture des canaux corpo (Gmail, Agenda, Slack ; § « Lire les canaux ») : hors pause du poste et poste désactivé, sans runner ; minutes ≥ 1 |
-| `workstation.watch.intervalMinutes` | `5` | le repos entre deux passages de la veille proactive (job `poste-veille`, § « La veille proactive ») ; entier de 1 à 15, sinon le harness refuse de démarrer |
-| `workstation.watch.days` | `["mon", "tue", "wed", "thu", "fri"]` | les jours ouvrés de la veille (`sun` à `sat`, liste non vide) |
-| `workstation.watch.start` / `workstation.watch.end` | `"09:00"` / `"18:00"` | la plage ouvrée (`HH:MM`, heure murale de `schedules.timezone`) ; une plage vide (`end` ≤ `start`) refuse le démarrage |
-| `workstation.watch.followUpDays` | `3` | le silence, en jours ouvrés, après lequel un mail de l'utilisateur sans réponse est relancé ; entier ≥ 1 |
 | `issues.label` | `omp:fix` | le label des issues qu'`issues_fix_labeled` et la relève automatique lancent (§ « Les issues (MCP) ») |
 | `issues.maxLaunch` | `5` | les runs qu'un appel d'`issues_fix_labeled` (ou une relève, par dépôt) lance au plus ; le reste attend l'appel suivant |
 | `issues.pollSec` | `900` | la relève automatique : toutes les 15 min, les issues ouvertes du label de chaque dépôt qui a un distant (`repos[].remote`) partent en run, sans appel MCP ; entier ≥ 60, ou `null` : seulement à la demande |
@@ -671,7 +662,6 @@ canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `syste
 | `browser.idleSec` | `600` | un contexte est fermé après cette inactivité, en secondes (1 à 86400) |
 | `browser.callTimeoutSec` | `30` | le délai d'un appel au navigateur, en secondes (1 à 300) |
 | `clientsFile` | à côté de `tokenFile` | les clients nommés (empreintes de jetons, rôles, dépôts), relu à chaque changement ; illisible (JSON cassé à la main), le dernier jeu lu reste en vigueur, l'erreur est journalisée une fois et `add`/`revoke` refusent de l'écraser |
-| `channelsFile` | à côté de `tokenFile` | les canaux corpo (§ « Les canaux du poste ») : identifiants des clients OAuth, jetons Gmail, Agenda et Slack ; 0600, écrit de façon atomique par le seul service, jamais en base ni dans l'environnement. Illisible, les trois canaux sont « en erreur » et aucune écriture ne l'écrase |
 
 Un `kill -HUP` du service (`harness.sh reload`, ou `systemctl kill -s HUP
 omp-harness`), ou `POST /v1/reload` depuis un client admin, relit la configuration et
@@ -1384,10 +1374,7 @@ attend avec `approval.summary` = la description du geste (« Cliquer sur e2 dans
 123 », « Saisir « … » dans e1 (l'onglet 4) », « Ouvrir https://… »), `preview` = le texte
 saisi pour `type` (sinon ""), `recipients: []` et `fingerprint: null` : son approbation
 n'autorise aucun envoi (un geste d'envoi repasse `needs_approval` avec sa vraie empreinte) ;
-la raison reste dans `rationale`. L'extension rend aussi `approval.replyFingerprint`,
-l'empreinte de la RÉPONSE (destinataires et texte des éditeurs du compositeur, sans l'onglet ;
-`null` si illisible), comparée à celle figée à la validation d'une réponse proposée (§ « Valider
-et envoyer une réponse proposée ») ; hex de 64 caractères ou absente, autre chose → 400.
+la raison reste dans `rationale`.
 
 **L'approbation liée à ce que l'humain a vu.** `POST …/approve` exige `If-Match:
 "<updatedAt>"`, l'`updatedAt` de l'action affichée : absent → 428, différent → 412 (relire
@@ -1425,7 +1412,7 @@ audits (slots runner, plafond journalier, arrêt et reprise) :
 |---|---|---|---|
 | `poste-profil` | toutes les `profileEveryHours` s'il y a du neuf, ou sur `POST …/profile/rebuild` | `workstation_profile_write`, `progress` | une nouvelle version du profil (`workstation_profile`), l'ancienne gardée |
 | `poste-digest` | à la fin d'un meeting (`POST …/end`) | `workstation_meeting_digest`, `progress` | `digested` (résumé, besoins des clients) ou `failed` ; sans transcript, `digested` sans runner |
-| `poste-demande` | une demande en file, l'extension de son navigateur en ligne, hors pause | `workstation_act`, `workstation_decision`, `workstation_request_report`, `workstation_reply_type` (demande d'une réponse Slack validée), `progress` | `done` avec compte rendu ou `failed` avec raison, au plus `shiftMaxActions` actions rattachées à la demande ; une demande de réponse à un collègue (§ « Les signalements des collègues ») est muette et refuse `upload`, `download`, `select`, les raccourcis sur une lettre et Space, et toute saisie autre que le texte approuvé |
+| `poste-demande` | une demande en file, l'extension de son navigateur en ligne, hors pause | `workstation_act`, `workstation_decision`, `workstation_request_report`, `progress` | `done` avec compte rendu ou `failed` avec raison, au plus `shiftMaxActions` actions rattachées à la demande |
 | `poste-service` | toutes les `shiftEveryMin`, autonomie `propose` ou `act`, extension en ligne, hors pause | `workstation_act`, `workstation_decision`, `workstation_activity`, `workstation_meetings`, `progress` | au plus `shiftMaxActions` actions d'origine `agent` ; l'issue et le nombre d'actions journalisés (`workstation_shift`) ; une pause, l'arrêt d'urgence ou le retour en `observe` l'arrête |
 
 `workstation_act` attend le résultat 30 s au plus ; une action retenue pour
@@ -1535,8 +1522,7 @@ qui crée l'issue sur la forge puis le run lié. Chaque étape est tenue par le 
 un prompt.
 
 **Le point d'entrée.** `orchestrator.signals.reportSignal({channel, threadRef, url, personRef?, text})`
-est le seul chemin des signalements (les canaux Gmail et Slack du chantier 4/6 l'appelleront ;
-les pages lues dans Chrome et les demandes du poste y passent par l'outil d'hôte
+est le seul chemin des signalements (les pages lues dans Chrome et les demandes du poste y passent par l'outil d'hôte
 `workstation_signal` des jobs `poste-service` et `poste-demande`). Il rend sans lever
 `{status, signal, reason?}` : `received` (enregistré, ou un message de plus ajouté à un fil qui
 attend sa détection), `duplicate` (fil déjà proposé ou confirmé : rien ne change), `dismissed`
@@ -1603,52 +1589,6 @@ poste désactivé. Aucun outil MCP ne les lit.
 clients de tous les dépôts le reçoivent) ; aucun log, événement ni message d'erreur du serveur ne cite
 l'extrait, `personRef`, `url` ou `threadRef`. Le job `poste-signal` n'a aucun direct, son `progress`
 ne journalise rien et ses événements `activity` n'ont pas d'`intent`.
-
-**Les réponses au collègue.** Quand un run lié à une origine passe `merged`, le serveur rédige un brouillon
-`final` (« Bonjour,\n\nC'est corrigé : <sujet>.\n<lien>\n\nMerci pour le signalement ! » : le sujet du commit
-du verdict, sinon le titre de l'issue gardé sur la proposition, sinon « l'issue #n » — jamais un sujet que
-`redact` modifierait —, et le lien de la PR, sinon de l'issue). Quand il passe `failed` ou `cancelled` et
-qu'aucun run plus récent ne porte la même origine, il rédige une réponse d'attente (`attente`). Le gabarit est
-fixe, sans modèle de langage, et ne porte ni `personRef`, ni fil, ni extrait. La réconciliation
-(`orchestrator.corporateReplies.reconcile()`) se fait à chaque tour de l'orchestrateur, poste désactivé compris :
-l'unicité par run et par sorte (`corporate_replies`, `UNIQUE (run_id, kind)`) tient donc au redémarrage et à
-la relecture d'une fusion. Une relance de l'issue crée un run neuf lié à la même origine ; un `attente` encore en
-brouillon dont un run plus récent existe, ou dont le propre run (relancé sur place) est fusionné, est classé.
-
-- **États** : `draft` (« brouillon », dans « À traiter »), `pending` (« en attente d'approbation »), `sent`
-  (« envoyée »), `archived` (« classé », définitif). `GET /v1/replies` rend les seuls brouillons `draft` par
-  défaut ; `state=` en filtre d'autres. `reply` de `GET /v1/runs/{id}/origin` vaut `aucune`, `brouillon`,
-  `en attente d'approbation` ou `envoyée` (le `final` prime sur l'`attente`).
-- **Relire, modifier, classer.** `PUT /v1/replies/{id} {text}`, `POST …/archive` : l'appareil approbateur
-  seulement (403 « seul l'appareil approbateur… » sinon) et un brouillon à l'état `draft` (409 sinon). Un
-  texte fait 1500 caractères au plus et ne porte aucun secret reconnu (400).
-- **Approuver** : `POST /v1/replies/{id}/approve {text}` (appareil approbateur) — le texte porté devient celui du
-  brouillon et c'est lui qui part. Pour `slack`, `gmail` et `chrome`, le serveur pose une demande du poste
-  (`poste-demande`) dont la consigne, écrite par lui, dit d'ouvrir l'`url` du fil et d'y saisir EXACTEMENT ce
-  texte (201 `{reply, request}`) ; poste désactivé : 409. Une origine `manual` se copie : 409, aucun envoi.
-  Aucun appel d'API Gmail ou Slack : l'envoi est un geste du poste dans la page du fil.
-- **Deux gestes humains.** Une demande de réponse refuse `upload`, `download`, `select`, les raccourcis sur
-  une lettre ou un chiffre et Space, et toute saisie (`type`) autre que le texte approuvé (409, aucune action
-  créée). L'envoi est l'action que l'extension retient (`needs_approval`) avec le texte dans son aperçu
-  (`send_seq`) : elle attend l'approbation ordinaire de la garde d'envoi du poste. Une réponse n'a qu'un envoi
-  vivant : un second envoi retenu pendant que le premier attend, part ou est parti est clos (`failed`). Sur le
-  canal `chrome`, que l'extension ne classe pas toujours, tout clic, Entrée ou saisie avec envoi après la saisie du
-  texte attend l'approbateur (« réponse à un collègue : ce geste peut publier le texte saisi »).
-- **Suivi.** Le brouillon reste `pending` tant que sa demande est ouverte ou qu'une de ses actions n'a pas
-  abouti ; l'action d'envoi `done` le fait passer `sent`. Demande échouée, annulée, envoi refusé, expiré ou
-  échoué, ou demande finie sans envoi : il redevient `draft` (texte gardé, `error` lisible par le propriétaire
-  seul) et se réapprouve. Un texte saisi sans envoi reconnu (bouton non classé) revient avec « vérifiez le fil
-  avant de réapprouver » : jamais de double envoi aveugle. Limite : sur Gmail et Slack, le second geste
-  s'en remet au classement de l'extension (Entrée dans un champ, libellés d'envoi français et anglais).
-- **Propriété et confidentialité.** Tout est au propriétaire : client restreint 403 « le poste est réservé au
-  propriétaire », client pilote 403 (lecture comme geste) ; les brouillons se lisent poste désactivé. L'événement
-  `reply` est `{id, state}` (dépôt et `runId` nuls). Une demande de réponse est muette : ni direct, ni `intent`,
-  ni `progress` journalisé ; son échec de runner se lit « détail masqué » ; `workstation_approval` part avec un
-  résumé fixe sans destinataires ; le prompt de `poste-service` montre ses actions « réponse à un collègue
-  (détail masqué) ». Le client pilote n'en lit ni la demande, ni les actions, ni la capture, et ne loue aucune
-  action (`GET /v1/workstation/next` : 403). Le texte d'un brouillon et la consigne d'une demande de réponse sont
-  retirés de toute issue publique par le caviardage (`workstationTexts`).
-
 
 ### Plusieurs navigateurs
 
@@ -1741,242 +1681,45 @@ confiance). Un geste qu'Obscura ne sait pas faire rend `failed` avec la limite n
 seulement si le moteur rejoue l'historique). L'arrêt d'urgence (`POST …/stop`) et l'annulation
 d'une action coupent l'exécution en cours ; l'issue tardive n'écrase pas l'annulation.
 
-**Connecter les comptes (une fois).** Seuls `slack.com` et `google.com` (et leurs
-sous-domaines) : (a) *import de cookies* — l'approbateur ouvre un import pour UN domaine
-(`POST /v1/workstation/vps/cookie-import {domain}`, valable 2 min) ; l'extension (jeton
-ordinaire, `GET` du même chemin, au tick de 30 s) lit les cookies du domaine par
-`chrome.cookies` et les envoie UNE fois (`POST /v1/workstation/vps/cookies {domain, cookies}`) :
-tout domaine ou cookie hors du domaine de l'import, sans import ouvert ou expiré → 4xx, rien n'est
-posé. Les cookies vont de l'extension au harness (TLS du tailnet) puis à `obscura-poste`
-(`Network.setCookies`) ; ils ne sont écrits ni en base, ni au journal, ni dans un événement, une
-réponse d'API ou la mémoire. (b) *connexion interactive* si la session importée est refusée (Google
-lie ses sessions à l'appareil) : `POST /v1/workstation/vps/login {url}` (départ sur un domaine
-de compte), `GET …/login/frame` (une image PNG de la page, 1280×720), `POST …/login/input`
+**Le mirroir de la session de Chrome.** L'approbateur choisit le Chrome source :
+`PUT …/settings {mirrorBrowser: "<browserId>"}` (une extension connue ; `vps` → 400 ; `null`
+coupe le mirroir). Cette extension copie alors en continu **tout son profil**, sans filtre de
+domaine (décision de l'utilisateur : l'agent travaille en autonomie sous son identité), dans
+`obscura-poste`. `GET /v1/workstation/vps/mirror` (operator, au tick de 30 s) rend
+`{mirror: {generation} | null}` : non nul seulement pour l'extension source quand `obscura-poste`
+répond. À chaque génération nouvelle, l'extension envoie toute la session (`chrome.cookies.getAll`,
+par paquets) puis, entre deux ticks, les changements (`chrome.cookies.onChanged`) :
+`POST /v1/workstation/vps/cookies {generation, full?, last?, set: [cookie Chrome], removed:
+[{name, domain, path}]}` (1000 entrées au plus de chaque, 1 Mio par envoi) ; elle renvoie aussi
+tout toutes les 30 min. Une autre extension → 403 ; une génération périmée → 409 (l'extension
+renvoie tout). Un cookie host-only part en `url` sans `domain` (sinon Obscura rejette les
+`__Host-…`). Les cookies vont de l'extension au harness (TLS du tailnet) puis à `obscura-poste`
+(`Network.setCookies`, `Network.deleteCookies`) ; ils ne sont écrits ni en base, ni au journal, ni
+dans un événement, une réponse d'API ou la mémoire. `browsers[vps].mirroredAt` date le dernier
+envoi accepté depuis le démarrage.
+
+**La connexion interactive, en secours** si la session copiée est refusée (Google lie ses
+sessions à l'appareil) : `POST /v1/workstation/vps/login {url}` (départ sur `slack.com` ou
+`google.com`), `GET …/login/frame` (une image PNG de la page, 1280×720), `POST …/login/input`
 `{type: click|text|key|scroll, …}`, `DELETE …/login` ; l'approbateur seulement (403 sinon). La
 navigation reste sur les domaines de compte et les hôtes de `workstation.allowedHosts` (l'IdP de
 l'entreprise), contrôlée APRÈS chaque navigation (Obscura n'offre aucune barrière avant la
-requête) : un autre hôte vide la page et refuse la connexion (409).
+requête) : un autre hôte vide la page et refuse la connexion (409). Le mirroir suivant peut
+écraser les cookies obtenus ainsi s'il porte les mêmes noms.
 
-**État des comptes.** `GET /v1/workstation` : `browsers[vps].accounts` = pour chaque domaine
-`{domain, state: disconnected | connected | expired | blocked, changedAt}`, jamais un cookie. Après
-un import ou une connexion, la page d'accueil du compte est ouverte dans un onglet jetable : une
-page de connexion donne `blocked` (import) ou `disconnected` (connexion), sinon `connected`. Une
-session `connected` qui renvoie ensuite vers une page de connexion passe `expired` (action ou relecture
-toutes les 30 min) : événement `workstation_account` et une seule notification ntfy par passage.
+**État des comptes.** `GET /v1/workstation` : `browsers[vps].accounts` = pour `slack.com` et
+`google.com` `{domain, state: disconnected | connected | expired | blocked, changedAt}`, jamais un
+cookie. Après une copie entière du mirroir ou une connexion, la page d'accueil du compte est
+ouverte dans un onglet jetable : une page de connexion donne `blocked` (mirroir) ou `disconnected`
+(connexion), sinon `connected`. Une session `connected` qui renvoie ensuite vers une page de
+connexion passe `expired` (action ou relecture toutes les 30 min) : événement `workstation_account`
+et une seule notification ntfy par passage.
 
 **Limites.** Obscura ne fusionne les cookies dans `--storage-dir` qu'à la fermeture de la connexion
-et une connexion neuve repart de l'instantané du démarrage : l'exécuteur garde UNE connexion ouverte ;
-si elle tombe (redémarrage d'`obscura-poste`), les cookies posés depuis le démarrage sont à réimporter.
+et une connexion neuve repart de l'instantané du démarrage : l'exécuteur garde UNE connexion ouverte,
+et chaque connexion neuve change la génération du mirroir, qui renvoie alors toute la session. Les
+cookies partitionnés (CHIPS) et le stockage des pages (localStorage, IndexedDB) ne sont pas copiés.
 L'adresse publique du VPS reste coupée par les règles pare-feu de § « Couper l'hôte du navigateur ».
-
-### Les canaux du poste (Gmail, Agenda, Slack)
-
-Le serveur lit Gmail, l'Agenda et Slack par API, côté serveur (les données ne sortent
-pas) ; il n'**envoie** jamais rien par API. Google n'a aucun scope « brouillons seulement » :
-`gmail.compose`, nécessaire aux brouillons, permet aussi l'envoi. La garde est donc
-tenue par le serveur : `omp-harness/canaux/` est le seul module qui parle à ces API, par
-un client (`Channels.request`) à **liste blanche exacte** de points (méthode, hôte, chemin
-complet, canal propriétaire) où aucun point d'envoi ne figure ; tout scope accordé hors de
-`gmail.readonly`, `gmail.compose` et `calendar.readonly` (Google), ou hors des `user_scopes`
-du manifeste (Slack) refuse la connexion. L'envoi d'une réponse reste un geste du poste dans
-le navigateur, sous la garde d'envoi. Un test parcourt les sources et échoue si un point
-d'envoi y apparaît.
-
-**Google.** Dans un projet Google Cloud à toi : active Gmail API et Google Calendar API,
-configure l'écran de consentement (« Interne » pour un Workspace), crée un client OAuth
-« Application de bureau », télécharge son JSON et colle-le dans l'écran Canaux (ou saisis
-identifiant et secret) : `PUT /v1/workstation/channels/google/client`. Ouvre l'URL rendue par
-`POST …/google/login` (PKCE + `state`) ; Google redirige vers
-`http://127.0.0.1/omp-canaux?code=…&state=…`, une page qui ne se charge pas : recolle son URL
-dans l'écran (`POST …/login/answer {value}`). Aucune route de rappel n'existe.
-
-**Slack.** Crée l'app depuis `omp-harness/deploy/slack-app-manifest.json` (jeton utilisateur
-seul, aucun bot, scopes de lecture, PKCE et rotation des jetons : irréversibles, les jetons de
-rafraîchissement valent alors 30 jours), saisis son identifiant client (aucun secret en PKCE),
-ouvre l'URL rendue et recolle l'URL de retour `http://localhost/omp-canaux?code=…&state=…`.
-Si l'espace exige l'approbation d'un administrateur, Slack ne redirige pas : déclare le
-blocage (`{blocked: true}`).
-
-**Où vivent les jetons.** Dans `channelsFile` (`channels.json`, 0600, à côté de `tokenFile`),
-écrit de façon atomique : identifiants des clients, jetons d'accès et de rafraîchissement,
-scopes accordés. Jamais en base, dans l'environnement, un événement, un log ou une réponse.
-L'état non secret (état, compte, dernière lecture, erreur) est le réglage
-`workstation.channels`. En `systemd`, le dossier d'état est caché aux runners
-(`RUNNER_HIDDEN`) ; en `container`, il n'est jamais monté ; en isolation `none`, le runner a
-les droits du service : aucun isolement n'est garanti.
-
-**L'état d'un canal.** `disconnected`, `connected`, `reconnect` (« à reconnecter » : le point
-de jeton refuse, ex. `invalid_grant`, `invalid_client`, jeton Slack révoqué ; plus aucun appel
-tant qu'une connexion n'a pas réussi), `blocked` (« bloqué par l'administrateur ») et `error`.
-Une coupure (réseau, délai, 5xx, code Slack passager), une limite de débit (429,
-`Retry-After`) et une erreur propre à une ressource (404 d'un message effacé, canal Slack
-archivé) laissent l'état en place ; un refus qui n'est rien de cela (ex. API Agenda non
-activée) met le canal en `error`, qui **reste lu** et repasse `connected` au premier succès.
-Les jetons sont renouvelés d'avance (une minute) ou sur 401 / `token_expired`, un seul
-renouvellement à la fois par connexion.
-
-**Connexion partielle.** Si l'humain décoche des scopes au consentement Google, la connexion
-est gardée pour les canaux entièrement couverts (Gmail = `gmail.readonly` + `gmail.compose`,
-Agenda = `calendar.readonly`) ; l'autre canal reste `disconnected` avec le scope manquant.
-`POST …/google/login {channels: ["calendar"]}` connecte l'Agenda seul.
-
-**Blocage par l'administrateur.** `admin_policy_enforced` ou `access_not_configured` dans la
-page recollée (Google), `unapproved_scope` ou `scope_not_allowed_on_enterprise` (Slack), ou
-`{blocked: true}` : les canaux demandés passent `blocked`, la veille ne les lit pas et le
-poste continue par le navigateur. Google refuse la demande entière dès qu'un scope est
-interdit : une demande complète bloque Gmail et Agenda ensemble ; relance avec
-`channels: ["calendar"]` pour l'Agenda seul (Gmail reste bloqué), ou déclare
-`{blocked: true, channels: ["gmail"]}` si tu sais que seul Gmail est restreint. Un texte
-recollé sans code de blocage ni forme de code est refusé « texte non reconnu ». Le reste du
-poste (agent, demandes, observations) ne dépend d'aucun canal.
-
-L'événement `workstation_channel` (`{id, state}`, `id` = `gmail`, `calendar` ou `slack`) ne
-sert qu'à déclencher une relecture de `GET /v1/workstation/channels` : l'état qu'il porte
-n'est pas la source. Les lignes de journal des canaux ne portent que le canal, l'état et un
-code.
-
-#### Lire les canaux
-
-Toutes les `workstation.channelReadEveryMin` minutes (5 par défaut), hors pause du poste (arrêt
-d'urgence compris) et poste désactivé, le serveur lit les canaux `connected` ou `error`
-(`canaux/lecture.ts`) par `Channels.request` et garde ce qu'il lit en base. Ce passage
-n'appelle jamais un runner ni un modèle. Points de lecture ajoutés à la liste blanche, tous
-en `GET` de leur canal : `users/me/history`, `users/me/messages` et `users/me/messages/{id}`
-(Gmail), `calendars/primary/events` (Agenda), `conversations.list`, `conversations.history`,
-`conversations.replies`, `search.messages` et `users.info` (Slack).
-
-- **Gmail** (`lecture-google.ts`) : `users.history.list` depuis le dernier `historyId`, puis
-  `users.messages.get` des messages ajoutés (brouillons sautés). Le curseur n'avance qu'une
-  page entièrement gardée, et un message déjà gardé n'est pas relu : une lecture coupée au
-  milieu d'une page reprend cette page sans perte ni doublon. La première lecture, et un
-  historique expiré (404), relisent au plus 200 messages des 7 derniers jours (au plus
-  `retentionDays`). L'historique repart ensuite du `historyId` relevé avant cette liste.
-- **Agenda** : `events.list` du calendrier principal (`singleEvents`), d'abord sur les 60
-  jours à venir, puis par `nextSyncToken`. Un événement déplacé est mis à jour sur place, un
-  annulé est retiré. Un 410 vide les événements gardés et relit la fenêtre.
-- **Slack** (`lecture-slack.ts`, jeton utilisateur) : les DM (`im`, `mpim`), les canaux
-  suivis (`conversations.history`, puis `conversations.replies` des fils qui ont bougé), les
-  mentions de l'utilisateur partout, canaux non suivis compris (`search.messages` sur
-  `<@moi>`), puis l'identité des auteurs (`users.info`, adresse comprise). Le curseur d'une
-  conversation ou de la recherche n'avance qu'une fois sa lecture finie. Un canal archivé,
-  quitté ou introuvable est sauté.
-- **Limites de débit** : un 429 (`Retry-After`) ou un 403 `rateLimitExceeded` suspend la
-  lecture de CE canal jusqu'à l'échéance. Les curseurs n'ayant avancé que sur des pages
-  finies, rien n'est perdu ni doublé. Les autres canaux continuent.
-- **Canaux suivis** : `GET /v1/workstation/channels/slack/conversations` liste les canaux
-  publics et privés de l'espace (lus en direct). `PUT …/conversations/{id} {followed}` coche ou
-  décoche un canal (appareil approbateur), et la lecture suivante l'applique.
-- **Rétention** : messages, événements finis et auteurs Slack plus vieux que
-  `workstation.retentionDays` sont effacés par la purge horaire du poste. La vigie retire ces
-  contenus (sujets, corps, en-têtes, auteurs, participants, noms de canaux) des issues
-  qu'elle publie (`workstationTexts`). Le journal ne porte que le canal et un code. Les
-  événements `workstation_channel_read` (`{channel, added, removed}`) et
-  `workstation_channel_follow` (`{id, followed}`) ne portent aucun contenu.
-
-**Le stockage, pour les couches suivantes** (graphe des personnes, veille). Il vit dans
-`db/channel-contents.ts`, méthodes du `Store`. Tout y est du texte NON FIABLE : il passe par
-`untrusted()` (`workstation-guards.ts`) avant d'être montré à un agent, et ne va jamais dans
-un log, une issue ni la mémoire d'un dépôt.
-
-| Méthode | Rend |
-| --- | --- |
-| `listChannelMessages({channel?, afterSeq?, threadId?, limit?})` | Les messages Gmail et Slack par `seq` croissant : `{seq, id, channel, sourceId, threadId, conversation, conversationKind, origin, author, authorName, authorEmail, at, subject, text, headers, labels, mentionsMe, bot, readAt}`. `id` vaut `gmail:<id>` ou `slack:<conversation>:<ts>`. `seq` croît à chaque message NOUVEAU : les nouveautés depuis une veille sont `afterSeq: <dernier vu>`. Gmail : `author` = `From` tel quel, `headers` = From, To, Cc, Subject, List-Id, List-Unsubscribe, Auto-Submitted, Precedence, Message-ID, In-Reply-To, References, et `labels` (`SENT`, `INBOX`…). Slack : `author` = `U…`, avec son nom et son adresse s'ils sont lus. `origin` : `history`, `resync`, `dm`, `followed` ou `search`. |
-| `listChannelEvents({from?, to?})` | Les événements de l'Agenda qui finissent après `from` et commencent avant `to` : `{id, summary, startAt, endAt, allDay, organizer, attendees: [{email, name, response, self, organizer}], meetUrl, recurringEventId, updatedAt, readAt}`. `meetUrl` = `hangoutLink` ou le point d'entrée vidéo de `conferenceData`. |
-| `getSlackUser(id)` · `listSlackConversations()` | Un auteur Slack `{id, name, realName, email, bot}` ; les canaux de l'espace `{id, name, kind: public \| private, archived, followed}`. |
-| `getChannelCursor(key)` · `setChannelCursor(key, value, at)` | Les curseurs de lecture : `gmail`, `calendar`, `slack.self`, `slack.conv:<id>`, `slack.search`. Les clés propres aux couches suivantes s'y ajoutent sans toucher à celles-là. |
-
-#### Le graphe des personnes
-
-Le poste tient un graphe des collègues (`canaux/personnes.ts`, table `workstation_people` de
-`db/people.ts`). Une personne porte un nom, ses adresses, ses identifiants Slack, un rôle, une
-équipe, des projets, le ton à employer, un niveau de délégation (`jamais`, `brouillon`,
-`réponse`) et les sujets sur lesquels une réponse peut être prête. Elle a une révision, et
-chaque champ dit s'il est corrigé par l'humain.
-
-- **Alimentation automatique** : à chaque tour (poste activé), `PeopleGraph.feed()` reprend
-  ce que la lecture des canaux a gardé depuis son passage précédent (curseurs `people.*` de
-  `channel_cursors`) : `From`, `To` et `Cc` des mails (hors listes et messages automatiques),
-  participants de l'Agenda, auteurs Slack (hors bots), et la personne des signalements du poste
-  quand c'est une adresse. L'utilisateur lui-même (`selfIdentities`, comptes des canaux)
-  n'entre pas. Une adresse ou un identifiant Slack déjà rattaché désigne la même personne :
-  un auteur Slack de même adresse qu'un correspondant Gmail la rejoint, sans doublon.
-- **Ce qu'elle écrit** : `name` (s'il manque), `emails`, `slackIds`, `role`, `team`,
-  `projects` et `tone`, jamais un champ corrigé. Une personne qu'elle crée naît au niveau
-  `jamais`, sans sujet. Un niveau ou des sujets qu'elle porterait sont ignorés.
-- **Pour les couches suivantes** (veille, réponses) : `orchestrator.people.observe({emails?,
-  slackIds?, name?, role?, team?, projects?, tone?})` propose une suggestion sous les mêmes
-  règles ; `store.listPeople()` et `store.personIdOfKey(emailKey(adresse))` lisent le graphe.
-- **Correction** : `PATCH /v1/workstation/people/{id}` depuis l'appareil approbateur, avec
-  la révision lue en `If-Match` (§ API). C'est le seul chemin qui écrit le niveau et les sujets.
-
-Noms et adresses ne vont dans aucun log. L'événement `workstation_person` ne porte que `{id}`
-(dépôt `null`). La vigie retire ces textes des issues qu'elle publie (`workstationTexts`).
-
-#### La veille proactive
-
-Le job `poste-veille` (`canaux/veille.ts`, éléments dans `workstation_watch_items` de
-`db/watch-items.ts`) lit ce que la lecture des canaux a gardé et le graphe des personnes, et ne
-propose QUE ce qui demande l'utilisateur, dans « À traiter » :
-
-- **Quand** : un passage toutes les `workstation.watch.intervalMinutes` minutes aux heures
-  ouvrées (`days`, `start`–`end`, heure murale de `schedules.timezone`), quelle que soit
-  l'autonomie du poste ; jamais en pause, à l'arrêt d'urgence (qui coupe une veille en cours) ni
-  poste désactivé. Dans les 15 minutes avant l'ouverture, un passage ne prépare que les réunions
-  qui commencent dans les 15 premières minutes de la plage. Aucune planification ne la lance.
-- **Le tri, sans modèle** : n'est pas retenu un message de l'utilisateur, d'une personne
-  inconnue ou au niveau `jamais`, un mail où l'utilisateur n'est pas en `To`, un message
-  automatique (`List-Id`, `List-Unsubscribe`, `Auto-Submitted` autre que `no`, `Precedence`
-  `bulk`/`list`/`junk`), un bot Slack, un message de canal suivi sans mention, ni un message
-  auquel l'utilisateur a répondu depuis dans le même fil. Sans rien de dû (message retenu,
-  relance, préparation, brief), aucun runner ne part : ni coût, ni slot. Un canal non connecté,
-  à reconnecter ou bloqué est ignoré ; un canal en erreur reste lu.
-- **Ce qu'elle propose** : une **réponse** aux messages retenus (`brouillon` : sur tout sujet ;
-  `réponse` : marquée « prête » quand le modèle cite un sujet listé de la personne, que le
-  serveur vérifie, brouillon ordinaire sinon). Un mail reçoit un brouillon Gmail par API dans son
-  fil (`POST users/me/drafts`), retenté au passage suivant s'il échoue ; une réponse Slack garde
-  un brouillon interne (le texte de l'élément) et rien n'est écrit dans Slack. Une **relance**
-  d'un fil Gmail dont le dernier message est de l'utilisateur à autrui, sans réponse depuis
-  `followUpDays` jours ouvrés (une par silence, avec son brouillon). La **préparation** d'une
-  réunion à participants au premier passage entre « début − 15 min » et le début (une fois par
-  événement) : participants et graphe, 5 fils récents avec eux, et les transcripts des meetings
-  du poste tenus au même lien (origine et chemin ; 3 au plus, jamais par titre ; sinon « aucun
-  transcript passé »). Le **brief du matin**, une fois par jour, au premier passage des heures
-  ouvrées s'il y a des nouveautés, des relances ou des réunions.
-- **Gardes du serveur** : chaque outil ne vise qu'une référence de ce passage, le niveau est
-  relu à l'écriture, aucun outil n'envoie, n'approuve ni n'agit dans le navigateur. Le modèle
-  peut ne rien rendre (coût compté, aucune sortie). Un échec du runner laisse les nouveautés à
-  revoir, trois fois de suite au plus. Plafond journalier et slot runner refusés : le passage
-  suivant retente.
-- **Confidentialité** : tout contenu de canal arrive au modèle par `untrusted()` ; le job est
-  muet (ni direct, ni `intent`, ni `progress`) ; sa scope mémoire est `workstation` ; le
-  journal ne dit que `poste : veille en échec (n/3)`. L'événement `workstation_watch` ne porte
-  que `{id, kind, state, ready}` (dépôt `null`) ; l'alerte push part à l'appareil approbateur,
-  sans contenu, avec la catégorie `omp.reply` (geste valider, `omp.watchId`) pour une réponse
-  prête et `omp.open` (à relire) sinon. La vigie retire ces textes de ce qu'elle publie ; les
-  éléments suivent la purge `workstation.retentionDays`.
-
-#### Valider et envoyer une réponse proposée
-
-Une réponse ou une relance de « À traiter » (`canaux/reponses.ts`) s'**écarte** (brouillon Gmail
-supprimé, élément `dismissed`, jamais reproposé) ou se **valide**, telle quelle ou modifiée,
-depuis l'app ou d'un geste depuis la notification (`omp.reply`). Valider met d'abord le brouillon
-Gmail au texte validé, fige l'empreinte de la réponse — SHA-256 hex de
-`JSON.stringify([destinataires, texte])`, destinataires sans blanc ni casse, sans doublon et triés
-(les adresses du brouillon ; Slack : l'identifiant de la conversation), texte complet aux fins de
-ligne, espaces insécables et blancs de fin neutralisés — et pose une demande du poste rattachée.
-Aucun envoi par API : le job `poste-demande` ouvre le brouillon Gmail et clique « Envoyer », ou
-saisit dans le fil Slack le texte validé exact par `workstation_reply_type` (le serveur tient le
-texte ; le modèle ne le recopie pas). L'extension rend `needs_approval` avec
-`approval.replyFingerprint`, la même empreinte calculée sur ce qu'elle enverrait
-(`omp-chrome/src/lib/outbound.ts`) : si l'action est de la demande rattachée, la première à
-demander l'accord, et que l'empreinte est strictement égale, elle repart approuvée sans second
-geste (`decidedBy` « réponse validée »), quelle que soit l'autonomie. Toute autre action (service,
-session, autre demande, envoi suivant), une autre empreinte ou aucune : garde d'envoi ordinaire.
-L'envoi abouti passe la réponse `sent` ; une demande en attente (plafond, slot, extension hors
-ligne) la laisse `validated` avec sa raison (`request.reason`) et part au premier tick possible ;
-une demande close sans envoi (arrêt d'urgence, annulation, échec, compte rendu sans envoi) la
-rend `failed` avec la raison, revalidable, et rien n'est redéposé seul. En pause, valider est
-refusé (409).
 
 ## Les issues (MCP)
 
@@ -2289,11 +2032,7 @@ Parmi elles, `instructions` (`POST /v1/runs/{id}/instructions`, et `instructions
 la relance), `run-budget` (`budgetUsd` au lancement, `POST /v1/runs/{id}/budget`),
 `admin-repos` (`POST /v1/repos`), `reload` (le rechargement de la configuration,
 `POST /v1/reload`), `push-alerts` (`POST /v1/push/devices`, les alertes push des
-appareils iOS), `workstation-channels` (`GET /v1/workstation/channels` et le geste de
-connexion des canaux corpo), `workstation-channel-reads` (la lecture des canaux et les canaux
-Slack suivis, `GET /v1/workstation/channels/slack/conversations`), `workstation-people` (le
-graphe des personnes, `GET /v1/workstation/people` et `PATCH …/people/{id}`), `workstation-watch`
-(la veille proactive du poste, `GET /v1/workstation/watch`), `session-graph` (`GET /v1/runs/{id}/graph`,
+appareils iOS), `session-graph` (`GET /v1/runs/{id}/graph`,
 le graphe de session d'un run, et l'événement éphémère `graph`) et `autonomy`
 (`GET /v1/autonomy`, `kind` et `labels` d'un run).
 
@@ -2355,17 +2094,17 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/client-errors` `{source, version, kind, message, context?}` | viewer | Une erreur d'un client (`source` : `mac` \| `ios` \| `chrome` \| `omp` \| `vigie` ; `context` : objet de 8 Kio au plus) : 202 `{id}`, événement `client_error`, ligne de journal error ; 60 par minute et par client, puis 429 avec `Retry-After`. |
 | `GET /v1/client-errors?since=&source=&limit=` | viewer | Les erreurs des clients, les plus récentes d'abord (200 par défaut, 1000 au plus) ; un client borné à des dépôts ne voit que les siennes. |
 | `POST /v1/push/devices` `{token, platform: "ios", environment: "sandbox" \| "production"}` · `DELETE /v1/push/devices/{jeton}` | viewer | Un appareil iOS et son jeton APNs, liés au client qui l'enregistre (201 nouveau, 200 déjà connu : un jeton enregistré par un autre client passe à celui-ci) ; `pushes` dit si le serveur a une clé APNs. `environment` choisit la passerelle d'Apple (`sandbox` : app installée depuis Xcode). `DELETE` ne retire que les appareils du client qui appelle, tous pour un admin (`removed`). Ce que l'appareil reçoit : § « Les alertes push des appareils ». |
-| `GET /v1/workstation` · `PUT /v1/workstation/settings` `{autonomy?, selfIdentities?, paused?, thresholdHours?, defaultBrowser?, allowedHosts?, exfiltrationGuard?}` | viewer · operator (approbateur) | Le statut du poste (`online`, `lastSeenAt`, `extensionVersion`, `observedSeconds`, `autonomy {setting, effective}`, `paused`, `selfIdentities`, `pending`, `profileUpdatedAt`, `lastShift`, `nextShiftAt`, `stopped {at, by}` ou `null`) ; les réglages, qui priment sur la configuration (`thresholdHours: null` y revient ; `paused: false` lève l'arrêt d'urgence), par le seul client `approver` (403 sinon). Propriétaire seulement (403 « le poste est réservé au propriétaire »), comme toutes les routes du poste. Événement `workstation_settings`. |
+| `GET /v1/workstation` · `PUT /v1/workstation/settings` `{autonomy?, selfIdentities?, paused?, thresholdHours?, defaultBrowser?, mirrorBrowser?, allowedHosts?, exfiltrationGuard?}` | viewer · operator (approbateur) | Le statut du poste (`online`, `lastSeenAt`, `extensionVersion`, `observedSeconds`, `autonomy {setting, effective}`, `paused`, `selfIdentities`, `pending`, `profileUpdatedAt`, `lastShift`, `nextShiftAt`, `stopped {at, by}` ou `null`, `mirrorBrowser`) ; les réglages, qui priment sur la configuration (`thresholdHours: null` y revient ; `paused: false` lève l'arrêt d'urgence ; `mirrorBrowser` : l'extension dont la session est copiée dans `vps`, `null` coupe), par le seul client `approver` (403 sinon). Propriétaire seulement (403 « le poste est réservé au propriétaire »), comme toutes les routes du poste. Événement `workstation_settings`. |
 | `POST /v1/workstation/observations` `{tz, events}` · `GET /v1/workstation/observations?since=&limit=` | operator · viewer | Un lot de 500 observations au plus (`visit`, `interaction`) → `{stored}` ; 409 en pause. La lecture rend les `limit` (≤ 500) plus récentes depuis `since` (ms), dans l'ordre chronologique, avec leur `id`. |
 | `GET /v1/workstation/next?wait=` | operator | Le long-poll de l'extension (`wait` ≤ 30 s, en-têtes `X-OMP-Extension: <version>`, `X-OMP-Browser`, `X-OMP-Browser-Label` et `X-OMP-Agent-Tabs: <onglets de la fenêtre de l'agent>`) : 200 `{action}` de CE navigateur passée `running`, ou 204. 403 au client pilote : louer une action en remet les `params`. |
-| `POST /v1/workstation/actions` `{kind, params, rationale, browserId?}` · `GET /v1/workstation/actions?state=a,b&limit=&before=` | operator · viewer | Déposer une action (201, origine `session`) : `rationale` vide, `kind` inconnu ou `params` invalides → 400 ; extension hors ligne ou poste en pause → 409 (sauf `decision`, écrite `done`). Le journal, récent d'abord (`limit` ≤ 200), sans les actions d'une demande de réponse à un collègue pour le client pilote. Événement `workstation_action` à chaque état. |
-| `GET /v1/workstation/actions/{n}?wait=` | viewer | Une action ; `wait` (≤ 30 s) rend dès qu'elle n'est plus `queued` ni `running`, avec `image` (JPEG base64) si une capture est gardée pour elle. 403 au client pilote pour une action d'une demande de réponse. |
-| `GET /v1/workstation/actions/{n}/capture` | viewer | La capture d'une action `screenshot` réussie, telle que capturée : `{seq, at, mimeType: "image/jpeg", image}` (base64) ; 404 sans capture ou passé `workstation.captureRetentionHours`. 403 au client pilote pour une action d'une demande de réponse. |
+| `POST /v1/workstation/actions` `{kind, params, rationale, browserId?}` · `GET /v1/workstation/actions?state=a,b&limit=&before=` | operator · viewer | Déposer une action (201, origine `session`) : `rationale` vide, `kind` inconnu ou `params` invalides → 400 ; extension hors ligne ou poste en pause → 409 (sauf `decision`, écrite `done`). Le journal, récent d'abord (`limit` ≤ 200). Événement `workstation_action` à chaque état. |
+| `GET /v1/workstation/actions/{n}?wait=` | viewer | Une action ; `wait` (≤ 30 s) rend dès qu'elle n'est plus `queued` ni `running`, avec `image` (JPEG base64) si une capture est gardée pour elle. |
+| `GET /v1/workstation/actions/{n}/capture` | viewer | La capture d'une action `screenshot` réussie, telle que capturée : `{seq, at, mimeType: "image/jpeg", image}` (base64) ; 404 sans capture ou passé `workstation.captureRetentionHours`. |
 | `GET /v1/workstation/actions/{n}/file` | operator | Le fichier d'une action `upload` EN COURS, pour l'extension qui l'exécute : `{name, mime, size, data}` (base64), lu dans le dossier d'envoi (`<worktreesDir>/workstation/_poste/envois/`) ; 409 pour une autre action ou un autre état, 400 si le fichier a disparu, n'est plus un fichier ordinaire ou dépasse 10 Mio. |
 | `POST /v1/workstation/actions/{n}/result` `{outcome, result?, image?, error?, approval?, agentTabs?}` | operator | Le résultat de l'extension pour une action `running` (409 sinon, une action annulée comprise) : `done`, `failed`, ou `needs_approval` `{summary, recipients, preview, fingerprint?}` → `queued` approuvée par « soi » si tous les destinataires sont l'utilisateur, sinon `awaiting_approval` (`workstation_approval`, ntfy). `agentTabs` : les onglets de la fenêtre de l'agent, après l'action. |
 | `POST /v1/workstation/actions/{n}/approve` · `POST /v1/workstation/actions/{n}/refuse` `{reason?}` | operator (approbateur) | Le geste humain sur une action `awaiting_approval` (409 sinon), par le seul client `approver` (403 sinon) : `queued` avec `approved: true`, ou `refused`. `approve` exige `If-Match: "<updatedAt>"` (absent 428, périmé 412) ; `refuse` l'accepte facultatif (périmé 412). |
 | `POST /v1/workstation/actions/{n}/cancel` | operator | Annule une action `queued`, `running` ou `awaiting_approval` → `refused`, `error` « annulée par <client> » ; 409 si elle a déjà abouti. |
-| `POST /v1/workstation/vps/cookie-import` `{domain}` · `GET /v1/workstation/vps/cookie-import` · `POST /v1/workstation/vps/cookies` `{domain, cookies}` | operator (ouvrir : approbateur) | L'import de cookies d'UN domaine (`slack.com`, `google.com`) vers `obscura-poste` : l'approbateur l'ouvre (201, 403 sinon, 400 hors liste), l'extension lit `{open: {domain, expiresAt} \| null}` puis envoie une fois les cookies (`{imported, state}` ; 409 sans import ouvert ou expiré, 400 domaine ou cookie hors du domaine). |
+| `GET /v1/workstation/vps/mirror` · `POST /v1/workstation/vps/cookies` `{generation, full?, last?, set?, removed?}` | operator | Le mirroir de la session du Chrome source (`mirrorBrowser`) vers `obscura-poste` : `{mirror: {generation} \| null}` pour l'extension appelante (`X-OMP-Browser`), puis ses envois (`{set, removed}` comptés ; 403 si elle n'est pas la source, 409 génération périmée, 400 cookie mal formé ou plus de 1000 entrées, 503 `obscura-poste` injoignable). Tous les domaines du profil ; aucune valeur n'est rendue ni journalisée. |
 | `POST /v1/workstation/vps/login` `{url}` · `GET /v1/workstation/vps/login` · `GET …/login/frame` · `POST …/login/input` · `DELETE …/login` | operator (approbateur) | La connexion interactive d'un compte dans `obscura-poste` (§ « Le navigateur du serveur »), 403 pour tout autre client ; 409 si une connexion est déjà ouverte ou si la page est sortie des hôtes permis. |
 | `POST /v1/workstation/stop` | viewer | L'arrêt d'urgence : pause, actions en attente annulées, service de l'agent coupé → `{status, cancelled: [seq…]}` ; événement `workstation_stop`. La reprise : `PUT …/settings` `paused: false` par l'approbateur. |
 | `GET /v1/workstation/session?job=profil\|digest\|service&since=&before=&limit=` | viewer | La session du job, sous la forme de `GET /v1/runs/{id}/session` (`runId` et `auditId` nuls, `job`) ; `since` : seulement les entrées de `seq` plus grande. `job` inconnu ou `since` illisible → 400. |
@@ -2373,28 +2112,14 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/workstation/meetings` `{title, url, startedAt}` · `POST /v1/workstation/meetings/{id}/segments` `{segments}` · `POST /v1/workstation/meetings/{id}/end` | operator | Ouvrir un meeting (201), lui ajouter 200 segments au plus (`{at, speaker: moi \| autres, text}`, 409 s'il est fini ou en pause), le finir (son digest part au tour suivant). Événement `workstation_meeting`. |
 | `GET /v1/workstation/meetings?limit=` · `GET /v1/workstation/meetings/{id}` | viewer | Les meetings, récents d'abord (`state` : `live`, `ended`, `digested`, `failed` ; `summary`, `needs`, `segments`, `browserId`) ; un meeting et son transcript. |
 | `POST /v1/workstation/requests` `{instruction, browserId?}` | operator (approbateur) | Pose une demande (consigne ≤ 4000 caractères, secrets masqués) : 201 `{request}` `queued` ; 409 en pause ; 404 navigateur inconnu. |
-| `GET /v1/workstation/requests?state=&limit=` · `GET /v1/workstation/requests/{id}` | viewer | Les demandes, récentes d'abord (`{id, createdAt, updatedAt, by, instruction, automationId, browserId, state, reason, report, startedAt, endedAt}`, `state` : `queued`, `running`, `done`, `failed`, `cancelled`) ; une demande et ses actions (`requestId`), par `seq` croissant. Une demande de réponse à un collègue est omise de la liste du client pilote et sa lecture lui rend 403. |
+| `GET /v1/workstation/requests?state=&limit=` · `GET /v1/workstation/requests/{id}` | viewer | Les demandes, récentes d'abord (`{id, createdAt, updatedAt, by, instruction, automationId, browserId, state, reason, report, startedAt, endedAt}`, `state` : `queued`, `running`, `done`, `failed`, `cancelled`) ; une demande et ses actions (`requestId`), par `seq` croissant. |
 | `POST /v1/workstation/requests/{id}/cancel` | operator (approbateur) | Annule une demande en file ou en cours : 200 `{request}` `cancelled` ; 409 « la demande est déjà <état> ». |
 | `GET /v1/workstation/automations` · `POST /v1/workstation/automations` `{version, task, browserId?, schedule?}` | viewer · operator (approbateur) | Les automatisations (`{id, createdAt, by, title, frequency, steps, profileVersion, browserId, schedule}`) ; en crée une depuis la tâche `task` de la version `version` du profil : 201, ou 200 l'existante (même titre et étapes) ; 404 profil ou tâche inconnus ; 409 tâche non automatisable ; 400 `schedule` illisible. Avec `schedule`, la création pose sa planification liée. |
 | `POST /v1/workstation/automations/{id}/launch` · `DELETE /v1/workstation/automations/{id}` | operator (approbateur) | Lance l'automatisation (201 `{request}`, 409 en pause) ; la supprime (200 `{removed}`), avec ses planifications ; ses demandes restent. |
-| `GET /v1/workstation/channels` | viewer | L'état des canaux corpo : `{channels: [{id: gmail \| calendar \| slack, connection, state: disconnected \| connected \| reconnect \| blocked \| error, account, lastReadAt, error}], connections: [{id: google \| slack, clientId, clientConfigured, login}]}` ; `login` (`{id, connection, state: waiting \| done \| failed, url, startedAt, expiresAt, error}`) porte l'URL d'autorisation au seul appareil approbateur (`null` pour tout autre client). Jamais de jeton ni de secret. Propriétaire seulement (403), 404 si le poste est désactivé. Capacité `workstation-channels`. |
-| `PUT /v1/workstation/channels/{id}/client` `{clientId, clientSecret}` \| `{json}` \| `{clientId}` | operator (approbateur) | Saisit le client OAuth de la connexion `{id}` = `google` (identifiant et secret, ou le JSON « Application de bureau » téléchargé, clé `installed`) ou `slack` (identifiant seul : PKCE, aucun secret) : 200 `{connection}`, 400 corps illisible, 404 connexion inconnue. Un identifiant différent efface les jetons de la connexion. |
-| `POST /v1/workstation/channels/{id}/login` `{channels?}` | operator (approbateur) | Démarre la connexion `google` ou `slack` : 201 `{login}` dont `url` est l'URL d'autorisation (PKCE + `state`) ; 409 sans client. `channels` (`gmail`, `calendar`) ne demande que les scopes de ces canaux (défaut : tous). |
-| `POST /v1/workstation/channels/{id}/login/answer` `{value}` \| `{blocked: true, channels?}` | operator (approbateur) | Recolle l'URL de retour (ou le code, ou le texte d'erreur affiché) : 200 `{login, channels}`, 400 (`state` étranger, texte non reconnu, connexion expirée), 409 (aucune connexion en cours, refus du fournisseur, scope en trop ou manquant, jeton de bot). `blocked: true` déclare que l'administrateur bloque (seul chemin pour Slack, dont la demande d'approbation ne redirige pas) ; `channels` ne bloque que ces canaux. Événement `workstation_channel`. |
-| `GET /v1/workstation/channels/slack/conversations` | viewer | Les canaux publics et privés de l'espace Slack, relus en direct (`conversations.list`) : `{conversations: [{id, name, kind: public \| private, archived, followed}]}`, par nom. 409 Slack non connecté ou bloqué, 429 limite de débit (`Retry-After`), 502 refus ou coupure du fournisseur. Propriétaire seulement (403), 404 si le poste est désactivé. Capacité `workstation-channel-reads`. |
-| `PUT /v1/workstation/channels/slack/conversations/{id}` `{followed}` | operator (approbateur) | Coche (`true`) ou décoche un canal Slack suivi : 200 `{conversation}`. La lecture suivante lit ses messages et fils (les DM et les mentions sont lus partout). 400 corps illisible, 404 conversation absente de la dernière liste. Événement `workstation_channel_follow`. |
-| `GET /v1/workstation/people` | viewer | Le graphe des personnes du poste : `{people: [{id, name, emails, slackIds, role, team, projects, tone, delegation, topics, corrected, rev, createdAt, updatedAt}]}`. `delegation` : `jamais` \| `brouillon` \| `réponse` ; `corrected` dit, pour chaque champ, s'il est corrigé par l'humain (figé). Propriétaire seulement (403), 404 si le poste est désactivé. Capacité `workstation-people`. |
-| `PATCH /v1/workstation/people/{id}` `{name?, emails?, slackIds?, role?, team?, projects?, tone?, delegation?, topics?}` + `If-Match: <rev>` | operator (approbateur) | Corrige une personne : un champ absent reste, un champ donné est écrit et figé contre l'alimentation automatique, un champ à `null` est relâché (sa valeur reste, la suggestion suivante peut la remplacer). 200 `{person}`, révision +1. 428 sans `If-Match`, 412 révision dépassée (rien n'est écrit), 400 champ inconnu, corps vide ou valeur invalide (niveau hors `jamais \| brouillon \| réponse`), 404 personne inconnue, 409 adresse ou identifiant Slack déjà à une autre personne. Seul geste qui écrit `delegation` et `topics`. Pas de PUT de collection. Événement `workstation_person` (`{id}`). |
-| `GET /v1/workstation/watch?state=&limit=` · `GET /v1/workstation/watch/{id}` | viewer | Les éléments de la veille proactive dans « À traiter », récents d'abord (`state` : `open` par défaut, plusieurs séparés par des virgules ; les apps lisent `open,validated,failed` ; `limit` ≤ 500) : `{items}` ; un élément : `{item}` = `{id, kind, state, ready, channel, messageId, eventId, personId, topic, subject, text, context, draft, rev, createdAt, updatedAt, requestId, request, validatedAt, sendError}`. `kind` : `reply` \| `followup` \| `prep` \| `brief` ; `state` : `open` (proposée) \| `validated` (en attente d'envoi) \| `sent` \| `dismissed` \| `failed` (envoi non abouti, raison dans `sendError`) ; `ready` : réponse prête (geste valider) ; `draft` : `{kind: "gmail", id, error}`, `{kind: "internal"}` (Slack) ou `null` ; `request` : `{id, state, reason}` de la demande qui envoie (sa raison d'attente). Propriétaire seulement (403), jamais un client pilote (403), 404 si le poste est désactivé ou l'élément inconnu. Capacité `workstation-watch`, événement `workstation_watch` (`{id, kind, state, ready}`). |
-| `POST /v1/workstation/watch/{id}/dismiss` | operator (approbateur) | Écarte une réponse ou relance `open` ou `failed` : son brouillon Gmail est supprimé (`DELETE users/me/drafts/{id}` ; déjà absent : supprimé ; canal Gmail non lisible : laissé, `draft.error` `draft_not_deleted`), 200 `{item}` `dismissed`, jamais reproposée pour le même message. 409 autre sorte ou autre état, 502 suppression refusée par Gmail (rien ne change). |
-| `POST /v1/workstation/watch/{id}/validate` `{text?}` + `If-Match: <rev>` facultatif | operator (approbateur) | Valide une réponse ou relance `open` ou `failed`, au texte proposé (sans corps : le geste « Valider » de la notification) ou modifié (≤ 20 000 caractères). Gmail : le brouillon est créé s'il manque, puis mis à jour au texte validé (`PUT users/me/drafts/{id}`) avant tout dépôt. Le serveur fige l'empreinte SHA-256 des destinataires normalisés et du texte complet, et pose une demande du poste rattachée : 201 `{item, request}`, `validated`. 409 poste en pause (la réponse reste proposée), autre sorte ou autre état, destinataires inconnus ; 412 révision dépassée ; 400 texte vide ou trop long, champ inconnu ; 502 brouillon non créé ou non mis à jour. |
 | `GET /v1/signals?state=&limit=` · `GET /v1/signals/{id}` | viewer (propriétaire) | Les signalements des collègues, récents d'abord (`state` : `received`, `proposed` par défaut, `ignored`, `dismissed`, `confirmed`, séparés par des virgules ; `limit` ≤ 200) : `{signals}` ; un signalement : `{signal}` = `{id, createdAt, updatedAt, channel, threadRef, url, personRef, excerpt, state, reason, error, repo, kind, title, body, issue, runId, confirmedBy, confirmedAt}`. 403 client restreint (« le poste est réservé au propriétaire ») ou pilote ; 404 inconnu ; 400 `state` inconnu. Même sans poste actif. |
 | `POST /v1/signals/{id}/preview` `{repo?, title?, body?}` | viewer (propriétaire) | Le texte EXACT que `confirm` enverrait à la forge : `{repo, policy: {declared, applied, note}, title, body, issue}` (`issue` : l'issue déjà créée, dont le texte n'est alors pas renvoyé). Sans `title`/`body`, la proposition ; sous `full` appliqué, le corps porte la section « Origine ». 409 dépôt en `forbid` ou sans forge, signalement déjà traité. Ne crée rien. |
 | `POST /v1/signals/{id}/confirm` `{repo, title, body}` · `POST /v1/signals/{id}/dismiss` `{reason?}` | operator (approbateur) | Confirme : crée l'issue puis le run lié (201 `{signal, issue, run, policy}`) ; 502 si la forge échoue (la proposition reste, avec `error`), 409 « le signalement est déjà <état> », dépôt `forbid`/sans forge, ou dépôt autre que celui de l'issue déjà créée ; 404 `dépôt inconnu`. Écarte (200 `{signal}`, `reason` ≤ 500) : jamais reproposé. 403 non approbateur, pilote ou client restreint. Événement `signal`. |
-| `GET /v1/runs/{id}/origin` | viewer (propriétaire) | L'origine du run (`{origin: {signalId, channel, threadRef, url, personRef, excerpt, issue: {repo, number, url}, confirmedBy, confirmedAt, reply}}`, ou `{origin: null}`) ; `reply` : l'état de la réponse au collègue, `aucune`, `brouillon`, `en attente d'approbation` ou `envoyée`. 404 `run inconnu` hors des dépôts du client, puis 403 client restreint ou pilote. Capacités `corporate-signals` et `corporate-replies`. |
-| `GET /v1/replies?state=&limit=` · `GET /v1/replies/{id}` | viewer (propriétaire) | Les brouillons de réponse au collègue, récents d'abord (`state` : `draft` par défaut, `pending`, `sent`, `archived`, séparés par des virgules ; `limit` ≤ 200) : `{replies}` ; un brouillon : `{reply}` = `{id, createdAt, updatedAt, runId, signalId, kind: final \| attente, state, text, channel, url, personRef, requestId, sendSeq, error, approvedBy, approvedAt, sentAt, archivedBy, archivedAt}`. 403 client restreint (« le poste est réservé au propriétaire ») ou pilote ; 404 `réponse inconnue` ; 400 `state` inconnu. Même poste désactivé. Capacité `corporate-replies`. |
-| `PUT /v1/replies/{id}` `{text}` · `POST /v1/replies/{id}/archive` | operator (approbateur) | Modifie le texte d'un brouillon `draft` (200 `{reply}` ; 400 texte vide, de plus de 1500 caractères ou portant un secret reconnu) ; le classe (200 `{reply}`, définitif, texte gardé). 409 « la réponse est déjà <état> » hors de l'état `draft`. 403 non approbateur (« seul l'appareil approbateur… »), pilote ou client restreint. |
-| `POST /v1/replies/{id}/approve` `{text}` | operator (approbateur) | Approuve le texte porté (il devient celui du brouillon) : pose la demande du poste qui le saisit dans le fil et passe le brouillon `pending` (201 `{reply, request}`). 409 hors de l'état `draft`, origine `manual` (à copier : aucun envoi) ou poste désactivé ; 400 texte invalide. L'envoi reste retenu par la garde d'envoi du poste (approbation de l'action). Événement `reply`. |
+| `GET /v1/runs/{id}/origin` | viewer (propriétaire) | L'origine du run (`{origin: {signalId, channel, threadRef, url, personRef, excerpt, issue: {repo, number, url}, confirmedBy, confirmedAt}}`, ou `{origin: null}`). 404 `run inconnu` hors des dépôts du client, puis 403 client restreint ou pilote. Capacité `corporate-signals`. |
 | `GET /v1/clients` · `POST /v1/clients` `{name, role?, repos?}` · `DELETE /v1/clients/{name}` | admin | Lister (avec le drapeau `approver`), créer (le jeton n'est rendu qu'à la création ; un champ `approver` → 400 : l'approbateur ne se crée qu'en ligne de commande), révoquer. |
 | `GET /v1/providers` | admin | Les fournisseurs (déclarés par l'API ou par la configuration, `source`), leurs modèles et limites, `hasKey` et `keyHint` (4 derniers caractères) — jamais la clé ; les chaînes de modèles en vigueur (`models`, `modelsSource`), les sortes et protocoles permis. |
 | `PUT /v1/providers/{name}` `{kind, apiKey?, baseUrl?, api?, models?, capacity?, refillPerMinute?}` · `DELETE /v1/providers/{name}` | admin | Déclarer ou modifier un fournisseur (`apiKey` absent : la clé reste ; `""` : retirée), le retirer (409 tant qu'une chaîne le nomme). Événement `providers_changed`. |
@@ -2406,7 +2131,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/vigie` · `PUT /v1/vigie` `{mode?, maxIssuesPerDay?, maxLiveRuns?, dailyBudgetUsd?, repos?}` | viewer · admin | La vigie (§ « La vigie ») : `{settings, heartbeat {at, version, client, silent, silentSince}, today {since, issues, liveRuns, spentUsd}, incidents}` (compte par statut) ; les réglages, validés (400 pour un champ inconnu ou un dépôt non déclaré). |
 | `POST /v1/vigie/heartbeat` `{version?}` | operator (client pilote) | Le battement de la vigie (403 à tout autre client) : rend `{settings, today}`. |
 | `GET /v1/vigie/incidents?status=&limit=` · `POST /v1/vigie/incidents` `{fingerprint, source, location, message, at?, repo?, runId?, context?}` \| `{fingerprint, triage}` \| `{fingerprint, defer}` | viewer · operator (client pilote) | Les incidents, récents d'abord (`status` : `new`, `noise`, `bug`, `reported`, `fixing`, `watching`, `resolved`, `deferred`), bornés aux dépôts du lecteur ; une occurrence (201 nouvelle, 200 connue, avec `triage` : `needed` · `skip` · `budget`), le tri d'un incident, ou son renvoi à l'humain. 409 en mode `off`. Événements `vigie_incident`, `vigie_silent`. |
-| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `intake_state` (une Demande change d'état : `intakeId`, `state`, `kind`, `repo`, `reason`, et selon la transition `by`, `answered`, `created`, `recovered` ; sans dépôt, elle va aussi à son auteur), `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `schedule_fired` et `schedule_skipped` (l'échéance d'une planification : `scheduleId`, `name`, `kind`, `status`, `reason`, `dueAt`, `detail`, `missed`, `runIds`, `auditId`, `requestId`), `notify_failed`, `signal` (l'état d'un signalement de collègue : `id`, `state` ; dépôt nul, propriétaire seul), `reply` (l'état d'un brouillon de réponse au collègue : `id`, `state` ; dépôt nul, propriétaire seul), `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners), `graph` (le graphe de session d'un run a changé : `{version, nodes, edges}`, des nombres ; le client relit `GET /v1/runs/{id}/graph` ; au plus un par 2 s et par run, jamais écrit au journal) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
+| `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `intake_state` (une Demande change d'état : `intakeId`, `state`, `kind`, `repo`, `reason`, et selon la transition `by`, `answered`, `created`, `recovered` ; sans dépôt, elle va aussi à son auteur), `pilot` (le geste du pilote d'un audit sur un run : `action`, `reason`, `rev` traitée), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `schedule_fired` et `schedule_skipped` (l'échéance d'une planification : `scheduleId`, `name`, `kind`, `status`, `reason`, `dueAt`, `detail`, `missed`, `runIds`, `auditId`, `requestId`), `notify_failed`, `signal` (l'état d'un signalement de collègue : `id`, `state` ; dépôt nul, propriétaire seul), `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners), `graph` (le graphe de session d'un run a changé : `{version, nodes, edges}`, des nombres ; le client relit `GET /v1/runs/{id}/graph` ; au plus un par 2 s et par run, jamais écrit au journal) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
 | événements `autonomy`, `validation` | viewer | Événements du journal (`GET /v1/events`). `validation` `{gate, approve, liftable, by?, pilot?}` : chaque validation ou refus d'une attente humaine, par qui que ce soit ; `gate` est ce qui était attendu (`specs`, `irreversible`, `verdict`…), `liftable` dit, constaté par le serveur au moment du geste, si une règle d'autonomie aurait pu la lever. `autonomy` `{action: "hold" \| "validate" \| "defer", gate: "specs" \| "review", rev, seq?, rank?, why?}` : une attente retenue, validée seule (`seq` : la décision inscrite, `rank` : la règle) ou rendue à l'humain. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle

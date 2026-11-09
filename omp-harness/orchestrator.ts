@@ -21,9 +21,6 @@
 // (modules disjoints seulement) et le plafond de chaque dépôt (`maxParallel`).
 // L'admission est ÉQUITABLE : priorité d'abord, puis le dépôt et le projet qui ont le
 // moins de runs vivants, puis l'ancienneté — aucun projet ne prend tous les runners.
-import { Channels } from "./canaux/channels.ts";
-import { ChannelReader } from "./canaux/lecture.ts";
-import { PeopleGraph } from "./canaux/personnes.ts";
 import { AutonomyGates } from "./autonomy-gates.ts";
 import type { WorkKind } from "./autonomy-rules.ts";
 import { Auditor } from "./audits.ts";
@@ -78,9 +75,6 @@ import { Splitter, waitReason } from "./split.ts";
 import { Workstation } from "./workstation.ts";
 import { IssueDesk } from "./issues.ts";
 import { SignalDesk } from "./corporate/signals.ts";
-import { ReplyDesk } from "./corporate/replies.ts";
-import { Replies } from "./canaux/reponses.ts";
-import { Watch } from "./canaux/veille.ts";
 import { WorkstationAgent } from "./workstation-agent.ts";
 import { VigieDesk } from "./vigie/desk.ts";
 import { BrowserDesk } from "./browser/desk.ts";
@@ -186,20 +180,8 @@ export class Orchestrator {
   readonly workstation: Workstation;
   /** L'agent 24/24 du poste et ses jobs (profil, digest des meetings, services). */
   readonly workstationAgent: WorkstationAgent;
-  /** Les canaux corpo lus par API (Gmail, Agenda, Slack) : connexion OAuth, état, client HTTP en liste blanche. */
-  readonly channels: Channels;
-  /** Le passage de lecture des canaux corpo (contenus gardés en base) et les canaux Slack suivis. */
-  readonly channelReader: ChannelReader;
-  /** Le graphe des personnes du poste : alimenté par les canaux lus et les signalements, corrigé par l'humain. */
-  readonly people: PeopleGraph;
-  /** La veille proactive du poste : ses éléments d'« À traiter » (réponses, relances, préparations, brief). */
-  readonly watch: Watch;
-  /** La validation des réponses proposées : écarter, modifier, valider (envoi par le navigateur seul). */
-  readonly replies: Replies;
-  /** Les signalements des collègues et leurs propositions (pont corpo ↔ usine) : `reportSignal` est le point d'entrée des canaux. */
+  /** Les signalements des collègues et leurs propositions (pont corpo ↔ usine) */
   readonly signals: SignalDesk;
-  /** Les brouillons de réponse au collègue : rédigés au tour de l'orchestrateur, envoyés seulement après deux gestes humains. */
-  readonly corporateReplies: ReplyDesk;
   /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
   readonly metrics: Metrics;
   /** Les issues GitHub des dépôts déclarés, lancées en run (`POST /v1/mcp`). */
@@ -271,48 +253,7 @@ export class Orchestrator {
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
     this.signals = new SignalDesk(this.#ctx, { workstation: this.workstation, issues: this.issues });
-    this.corporateReplies = new ReplyDesk(this.#ctx, { workstation: this.workstation });
-    this.channels = new Channels({
-      config: this.#ctx.config,
-      store: this.#ctx.store,
-      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
-      log: this.#ctx.log,
-      fetch: deps.fetch ?? ((url, init) => globalThis.fetch(url, init)),
-    });
-    this.channelReader = new ChannelReader({
-      config: this.#ctx.config,
-      store: this.#ctx.store,
-      channels: this.channels,
-      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
-      log: this.#ctx.log,
-      active: () => this.workstation.enabled && !this.workstation.settings().paused,
-    });
-    this.people = new PeopleGraph({
-      store: this.#ctx.store,
-      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
-      self: () => [
-        ...this.workstation.settings().selfIdentities,
-        ...this.channels
-          .view(false)
-          .channels.map((c) => c.account)
-          .filter((a): a is string => a !== null),
-      ],
-    });
-    this.watch = new Watch({
-      config: this.#ctx.config,
-      store: this.#ctx.store,
-      workstation: this.workstation,
-      channels: this.channels,
-      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
-    });
-    this.replies = new Replies({
-      store: this.#ctx.store,
-      workstation: this.workstation,
-      channels: this.channels,
-      watch: this.watch,
-      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
-    });
-    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation, this.signals, this.watch);
+    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation, this.signals);
     this.vps = new VpsBrowser(this.workstation, {
       config: () => this.#ctx.config.workstation.vps,
       log: this.#ctx.log,
@@ -467,7 +408,6 @@ export class Orchestrator {
     // Les attentes du poste (long-polls de l'extension) rendent tout de suite.
     this.workstation.close();
     await this.workstationAgent.stop();
-    await this.channelReader.stop();
     await this.#ctx.logins.stop();
     // Un merge en cours n'est pas attendu (sa suite complète peut durer) : le run reste
     // `merging` en base et son merge repart au démarrage suivant.
@@ -601,28 +541,6 @@ export class Orchestrator {
     } catch (err) {
       this.#ctx.log(`poste de travail : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
     }
-    // Les brouillons de réponse au collègue suivent l'état des runs liés, même poste désactivé.
-    try {
-      this.corporateReplies.reconcile();
-    } catch (err) {
-      this.#ctx.log(`réponses aux collègues : ${err instanceof Error ? err.message : String(err)}`, {
-        level: "error",
-        err,
-      });
-    }
-    // La lecture des canaux corpo : un passage dû part sans attendre (aucun runner).
-    try {
-      this.channelReader.tick();
-    } catch (err) {
-      this.#ctx.log(`lecture des canaux : ${err instanceof Error ? err.name : "inconnu"}`, { level: "error" });
-    }
-    // Le graphe des personnes reprend ce que les canaux et les signalements ont gardé depuis.
-    if (this.workstation.enabled)
-      try {
-        this.people.feed();
-      } catch (err) {
-        this.#ctx.log(`graphe des personnes : ${err instanceof Error ? err.name : "inconnu"}`, { level: "error" });
-      }
     this.#admit();
     // Après les runs : un dépôt ne rêve que sur un slot que nul run n'attend.
     this.dreams.tick();

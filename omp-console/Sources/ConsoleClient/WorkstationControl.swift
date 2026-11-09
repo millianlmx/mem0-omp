@@ -158,6 +158,13 @@ extension WorkstationModel {
         await saveNavigation(WorkstationNavigationBody(defaultBrowser: id.map { .set($0) } ?? .reset))
     }
 
+    /// Choisit le navigateur dont l'extension copie en continu tout le profil Chrome dans le
+    /// navigateur du serveur ; `nil` arrête la copie (`null` explicite dans le JSON).
+    @discardableResult
+    public func setMirrorBrowser(_ id: String?) async -> Bool {
+        await saveNavigation(WorkstationNavigationBody(mirrorBrowser: id.map { .set($0) } ?? .reset))
+    }
+
     /// Pose les hôtes permis (vide : tout hôte) ; `nil` revient à la configuration du serveur.
     @discardableResult
     public func setAllowedHosts(_ hosts: [String]?) async -> Bool {

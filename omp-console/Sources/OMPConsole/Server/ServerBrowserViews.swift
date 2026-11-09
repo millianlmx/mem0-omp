@@ -1,14 +1,15 @@
 // Le NAVIGATEUR DU SERVEUR dans la section « Poste » du Mac, à l'usage de l'appareil
-// approbateur : l'état de chaque compte (Slack, Google), l'import de la session du Chrome
-// de l'utilisateur (l'extension répond seule, dans les deux minutes) et la connexion
-// interactive, dans une feuille qui montre la page du serveur, y renvoie les clics et les
-// frappes, et se termine par « Terminer ».
+// approbateur : l'état de chaque compte (Slack, Google), la source de la copie continue du
+// profil Chrome (l'extension choisie copie tout le profil, la date de la dernière copie
+// reçue suit) et, en secours, la connexion interactive, dans une feuille qui montre la page
+// du serveur, y renvoie les clics et les frappes, et se termine par « Terminer ».
 //
 // Propre au Mac : l'app iOS n'en a pas. Les gestes restent offerts à tout jeton qui peut
-// agir — le serveur décide, son refus se dit au plus près par le bandeau d'échec. Le modèle
-// (`ServerBrowserModel`, porté par `HarnessModel`) ne porte aucun texte : les mots viennent
-// de `ServerBrowserText`. Les boucles de relecture (l'import ouvert, l'image de la page)
-// sont des tâches de ces vues : les fermer les arrête.
+// agir — le serveur décide, son refus se dit au plus près par le bandeau d'échec. Les
+// modèles (`ServerBrowserModel` pour la connexion, `WorkstationModel` pour la source de la
+// copie, portés par `HarnessModel`) ne portent aucun texte : les mots viennent de
+// `ServerBrowserText`. La relecture de l'image de la page est une tâche de ces vues : les
+// fermer l'arrête.
 
 import AppKit
 import ConsoleClient
@@ -24,7 +25,7 @@ struct ServerBrowserSection: View {
     @Binding var loginShown: Bool
 
     var body: some View {
-        if let browser = workstation.status?.serverBrowser, !browser.accounts.isEmpty {
+        if let status = workstation.status, let browser = status.serverBrowser, !browser.accounts.isEmpty {
             Section {
                 if let failure = model.failure {
                     ConsoleFailureBanner(failure: failure)
@@ -34,17 +35,49 @@ struct ServerBrowserSection: View {
                     tone: browser.online ? .success : .neutral
                 ))
                 .consoleID("workstation.vps.online")
+                mirror(status: status, browser: browser)
                 ForEach(browser.accounts) { account in
                     row(account)
                 }
-                importFeedback
                 openLogin
             } header: {
                 Label(ServerBrowserText.sectionTitle, systemImage: ServerBrowserText.sectionSymbol)
             } footer: {
-                Text(ServerBrowserText.sectionHint + " " + ServerBrowserText.importHint + " " + ServerBrowserText.loginHint)
+                Text(ServerBrowserText.sectionHint + " " + ServerBrowserText.mirrorHint + " " + ServerBrowserText.loginHint)
             }
         }
+    }
+
+    /// La source de la copie du profil Chrome (une extension appairée, ou aucune) et la
+    /// dernière copie reçue par le serveur.
+    @ViewBuilder
+    private func mirror(status: WorkstationStatus, browser: WorkstationBrowser) -> some View {
+        if workstation.failure == .approverOnly {
+            ConsoleFailureBanner(failure: .approverOnly)
+        }
+        Picker(ServerBrowserText.mirrorSource, selection: mirrorBinding(status)) {
+            Text(ServerBrowserText.mirrorNone).tag(String?.none)
+            ForEach(status.mirrorSources) { source in
+                Text(source.name).tag(Optional(source.id))
+            }
+        }
+        .disabled(!workstation.canAct || workstation.isSaving)
+        .consoleID("workstation.vps.mirror")
+        if status.mirrorBrowser != nil {
+            Text(mirrored(browser))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .consoleID("workstation.vps.mirroredAt")
+        }
+    }
+
+    private func mirrorBinding(_ status: WorkstationStatus) -> Binding<String?> {
+        Binding(get: { status.mirrorBrowser }, set: { id in Task { await workstation.setMirrorBrowser(id) } })
+    }
+
+    private func mirrored(_ browser: WorkstationBrowser) -> String {
+        guard let at = browser.mirroredAt else { return ServerBrowserText.mirrorPending }
+        return ServerBrowserText.mirroredAt(ConsoleFormat.relative(ms: at, nowMs: Date().timeIntervalSince1970 * 1000))
     }
 
     private func row(_ account: ServerBrowserAccount) -> some View {
@@ -66,21 +99,14 @@ struct ServerBrowserSection: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack {
-                Button(ServerBrowserText.importAction) {
-                    Task { await model.openImport(domain: account.domain) }
+            Button(ServerBrowserText.loginAction) {
+                Task {
+                    if await model.startLogin(url: account.loginURL) { loginShown = true }
                 }
-                .disabled(!workstation.canAct || model.isBusy || model.pendingImport != nil)
-                .consoleID("workstation.vps.import." + account.domain)
-                Button(ServerBrowserText.loginAction) {
-                    Task {
-                        if await model.startLogin(url: account.loginURL) { loginShown = true }
-                    }
-                }
-                .disabled(!workstation.canAct || model.isBusy || model.login != nil)
-                .consoleID("workstation.vps.login." + account.domain)
             }
             .buttonStyle(.bordered)
+            .disabled(!workstation.canAct || model.isBusy || model.login != nil)
+            .consoleID("workstation.vps.login." + account.domain)
         }
         .padding(.vertical, 2)
     }
@@ -91,43 +117,6 @@ struct ServerBrowserSection: View {
         case .expired: .attention
         case .blocked: .danger
         case .disconnected, nil: .neutral
-        }
-    }
-
-    /// L'import ouvert (l'extension répond depuis Chrome), puis comment le dernier s'est refermé.
-    @ViewBuilder
-    private var importFeedback: some View {
-        if let pending = model.pendingImport {
-            HStack(alignment: .top, spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(ServerBrowserText.importOpened(ServerBrowserText.accountName(pending.domain)))
-                    Text(ServerBrowserText.importDeadline(ConsoleFormat.time(ms: pending.expiresAt)))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .consoleID("workstation.vps.import.waiting")
-        } else if let outcome = model.importOutcome {
-            Label(ServerBrowserText.outcome(outcome), systemImage: symbol(of: outcome))
-                .font(.callout)
-                .foregroundStyle(color(of: outcome))
-                .consoleID("workstation.vps.import.outcome")
-        }
-    }
-
-    private func symbol(of outcome: ServerBrowserImportOutcome) -> String {
-        switch outcome {
-        case .received: "checkmark.circle"
-        case .expired: "exclamationmark.triangle"
-        }
-    }
-
-    private func color(of outcome: ServerBrowserImportOutcome) -> Color {
-        switch outcome {
-        case .received: .green
-        case .expired: .orange
         }
     }
 
@@ -154,15 +143,14 @@ struct ServerBrowserSection: View {
     }
 }
 
-/// Les tâches du navigateur du serveur, posées sur la page Poste : relire l'import ouvert
-/// tant qu'il l'est, et reprendre une connexion déjà ouverte à l'ouverture de la page.
+/// Les tâches du navigateur du serveur, posées sur la page Poste : reprendre une connexion
+/// déjà ouverte à l'ouverture de la page.
 struct ServerBrowserTasks: ViewModifier {
     @ObservedObject var model: ServerBrowserModel
 
     func body(content: Content) -> some View {
         content
             .task { await model.resumeLogin() }
-            .task(id: model.pendingImport) { await model.watchImport() }
     }
 }
 

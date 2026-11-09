@@ -158,7 +158,6 @@ struct IOSInboxScreen: View {
         IOSHarnessScreen(server: server, drafts: drafts, section: .inbox, catalog: true, reloadAlso: {
             await server.workstation.refresh()
             await server.signals.refresh()
-            await server.watch.refresh()
             await server.intakes.refresh()
             await server.vigie.refresh()
         }) {

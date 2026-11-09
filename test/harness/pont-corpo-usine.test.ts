@@ -1,8 +1,8 @@
 // Feature pont-corpo-usine : un collègue signale un bug ou une demande de feature (Slack, Gmail, une page
 // lue dans Chrome, une demande faite au poste) ; le serveur en fait une proposition « ouvrir une issue et
 // lancer un correctif dans <dépôt> » ; l'appareil approbateur confirme, et seulement alors la forge reçoit
-// l'issue et un run lié naît, qui porte l'origine. L'origine reste côté harness. Les critères AC-20 à AC-24
-// (réponses au collègue, apps) sont ceux des sous-features : aucun test d'ici ne les porte.
+// l'issue et un run lié naît, qui porte l'origine. L'origine reste côté harness. Les critères des apps
+// sont ceux des sous-features : aucun test d'ici ne les porte.
 // Noms, adresses, fils et jetons : fictifs.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -828,7 +828,6 @@ test("pont-corpo-usine/AC-10 : l'approbateur confirme : une issue, un run lié q
       issue,
       confirmedBy: "app-approbateur",
       confirmedAt: rowOf(b, row.id).confirmedAt,
-      reply: "aucune",
     });
     const again = await api.call(api.tokens.approver, "POST", `/v1/signals/${row.id}/confirm`, sendOf(row));
     assert.deepEqual([again.status, again.json], [409, { error: "le signalement est déjà confirmed" }]);
