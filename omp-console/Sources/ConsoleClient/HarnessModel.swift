@@ -71,6 +71,9 @@ public final class HarnessModel: ObservableObject {
     /// Le poste de travail (extension Chrome, agent 24/24), servi par le même serveur :
     /// il passe par l'échange de ce modèle et reçoit les événements de son flux.
     public private(set) lazy var workstation = WorkstationModel(harness: self, reloadDelay: refreshDelay)
+    /// Les signalements des collègues devenus propositions, et l'origine d'une feature
+    /// (pont corpo ↔ usine) : même échange, même flux.
+    public private(set) lazy var signals = CorporateSignalsModel(harness: self, reloadDelay: refreshDelay)
     /// L'historique des features (`GET /v1/runs`), terminées comprises.
     public private(set) lazy var history = HarnessRunsHistory(harness: self)
     /// La vigie (surveillance 24/24 du harness) : réglages, battement, incidents.
@@ -274,6 +277,7 @@ public final class HarnessModel: ObservableObject {
     /// Ce qui appartient au serveur relié : poste, historique, services, remontée.
     private func resetServerState() {
         workstation.reset()
+        signals.reset()
         history.reset()
         vigie.reset()
         schedules.reset()
@@ -381,6 +385,7 @@ public final class HarnessModel: ObservableObject {
                         let names = events.map(\.name)
                         scheduleRefresh()
                         workstation.receive(names)
+                        signals.receive(names)
                         vigie.receive(names)
                         schedules.receive(names)
                         streamObserver?(events)
