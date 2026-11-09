@@ -400,7 +400,7 @@ export class ProviderRegistry {
   }
 }
 
-function atomicWrite(file: string, content: string, mode: number): void {
+export function atomicWrite(file: string, content: string, mode: number): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(temp, content, { mode });

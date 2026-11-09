@@ -42,6 +42,15 @@ export type IssueDetail = Issue & { body: string; state: string; comments: Issue
 /** L'état d'une PR (MR) : ouverte, fusionnée, fermée sans fusion. */
 export type ChangeState = "OPEN" | "MERGED" | "CLOSED";
 
+/** La visibilité d'un projet sur sa forge (`internal` : GitLab, GitHub Enterprise). */
+export type ForgeVisibility = "public" | "internal" | "private";
+
+/** `PUBLIC`, `private`, `Internal` → la visibilité en minuscules ; `null` pour toute autre valeur. */
+export function visibilityOf(value: unknown): ForgeVisibility | null {
+  const text = typeof value === "string" ? value.toLowerCase() : "";
+  return text === "public" || text === "internal" || text === "private" ? text : null;
+}
+
 /** Une PR (MR) à ouvrir de `head` vers `base`. */
 export type ChangeRequest = { head: string; base: string; title: string; body: string };
 
@@ -85,6 +94,11 @@ export type Forge = {
   labels(): Promise<string[]>;
   /** Crée un label ; `color` en hexadécimal sans `#` (`5319e7`). */
   createLabel(name: string, options: { color: string; description: string }): Promise<void>;
+  /**
+   * La visibilité du projet sur la forge ; `null` si elle ne se lit pas (CLI en échec, réponse
+   * illisible, aucune forge) : jamais d'exception. Seul `private` vaut « privé » (issues.corporate: full).
+   */
+  visibility(): Promise<ForgeVisibility | null>;
 };
 
 /** Ce dont une forge a besoin : lancer sa CLI, lire le distant du clone, l'environnement du service. */
@@ -233,5 +247,8 @@ class NoForge implements Forge {
   }
   async createLabel(): Promise<void> {
     this.#refuse();
+  }
+  async visibility(): Promise<ForgeVisibility | null> {
+    return null;
   }
 }

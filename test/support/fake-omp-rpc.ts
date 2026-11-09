@@ -7,7 +7,7 @@
 //
 // Scénario (FAKE_SCENARIO) : pour chaque étape (`req`, `specs`, `impl`, `review`, `audit`,
 // `pilote`, `fix`, `contradicteur`, `reve`, les jobs du poste `poste-profil`, `poste-digest`,
-// `poste-service`, `poste-demande`, et les sessions de la vigie `vigie-triage`, `vigie-pilote`), une liste d'OCCURRENCES ; chaque occurrence est une liste d'actions :
+// `poste-service`, `poste-demande`, `poste-signal`, et les sessions de la vigie `vigie-triage`, `vigie-pilote`), une liste d'OCCURRENCES ; chaque occurrence est une liste d'actions :
 //   { "write": "chemin", "content": "…" }       écrit un fichier du worktree
 //   { "tool": "nom", "args": { … } }            appelle un outil hôte et attend
 //   { "parallel": [{ "tool", "args" }, …] }     appelle ces outils hôtes ensemble (un tour à plusieurs outils)
@@ -65,7 +65,7 @@ function stepOf(message: string): string | null {
   const first = message.split("\n")[0] ?? "";
   if (first.startsWith("# /impl --fix")) return "fix";
   const match =
-    /^# \/(req|specs|impl|review|audit|pilote|contradicteur|reve|poste-profil|poste-digest|poste-service|poste-demande|vigie-triage|vigie-pilote)\b/.exec(
+    /^# \/(req|specs|impl|review|audit|pilote|contradicteur|reve|poste-profil|poste-digest|poste-service|poste-demande|poste-signal|vigie-triage|vigie-pilote)\b/.exec(
       first,
     );
   return match ? (match[1] as string) : null;
@@ -85,6 +85,8 @@ function askCode(): void {
 }
 let toolSeq = 0;
 let currentStep = "req";
+/** Le dernier `signalId` lu dans un prompt (la relance d'un nudge ne le répète pas). */
+let signalIdOfStep: string | undefined;
 /** Les messages de pilotage reçus et pas encore attendus par une action `waitSteer`. */
 const steers: string[] = [];
 let steered: (() => void) | null = null;
@@ -134,8 +136,19 @@ function callTool(name: string, args: Record<string, unknown>): Promise<string> 
   });
 }
 
+/** Le `signalId` cité dans le prompt d'un tri de signalement : un scénario statique l'écrit `$signalId`. */
+function fill(value: unknown, signalId: string | undefined): unknown {
+  if (value === "$signalId") return signalId ?? value;
+  if (Array.isArray(value)) return value.map((item) => fill(item, signalId));
+  if (value !== null && typeof value === "object")
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fill(item, signalId)]));
+  return value;
+}
+
 async function runPrompt(id: string, message: string): Promise<void> {
   const step = stepOf(message);
+  const signalId = /signalId: "([^"]+)"/.exec(message)?.[1] ?? signalIdOfStep;
+  if (signalId) signalIdOfStep = signalId;
   if (step) currentStep = step;
   const nudge = message.startsWith("L'étape /");
   const actions = occurrence(nudge ? `${currentStep}-nudge` : currentStep);
@@ -149,12 +162,14 @@ async function runPrompt(id: string, message: string): Promise<void> {
       fs.writeFileSync(action.write, action.content ?? "");
     }
     if (action.tool) {
-      const result = await callTool(action.tool, action.args ?? {});
+      const result = await callTool(action.tool, fill(action.args ?? {}, signalId) as Record<string, unknown>);
       log({ kind: "tool", step: currentStep, tool: action.tool, result });
     }
     if (action.parallel) {
       const calls = action.parallel;
-      const results = await Promise.all(calls.map((call) => callTool(call.tool, call.args ?? {})));
+      const results = await Promise.all(
+        calls.map((call) => callTool(call.tool, fill(call.args ?? {}, signalId) as Record<string, unknown>)),
+      );
       for (const [i, call] of calls.entries()) {
         log({ kind: "tool", step: currentStep, tool: call.tool, result: results[i] });
       }

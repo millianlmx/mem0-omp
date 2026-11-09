@@ -92,6 +92,20 @@ export type ForgeKind = "github" | "gitlab" | "none";
 export const FORGES: readonly ForgeKind[] = ["github", "gitlab", "none"];
 
 /**
+ * Ce qu'une issue d'origine corpo (un signalement d'un collègue) peut contenir, par dépôt :
+ * `forbid` aucune issue, `redacted` un texte reformulé et caviardé par le serveur (défaut),
+ * `full` le texte confirmé, seulement si la forge confirme le dépôt privé.
+ */
+export type CorporatePolicy = "forbid" | "redacted" | "full";
+
+export const CORPORATE_POLICIES: readonly CorporatePolicy[] = ["forbid", "redacted", "full"];
+
+/** La politique d'issues d'origine corpo d'un dépôt : celle qu'il déclare, sinon `redacted`. */
+export function corporatePolicy(repo: Pick<RepoConfig, "issues">): CorporatePolicy {
+  return repo.issues?.corporate ?? "redacted";
+}
+
+/**
  * La politique de modèles d'un dépôt ou du poste (policy.ts) : des chaînes par tier
  * (`"fournisseur/modèle"`, prioritaires sur celles du serveur), une liste blanche de
  * fournisseurs (jamais de bascule hors de la liste) et la confidentialité. Absente :
@@ -249,6 +263,8 @@ export type RepoConfig = {
    * sinon none).
    */
   forge?: ForgeKind;
+  /** Les issues d'origine corpo de ce dépôt : `corporate` (`redacted` par défaut). */
+  issues?: { corporate?: CorporatePolicy };
   /**
    * Le GitLab de ce dépôt pour `glab` : `host` l'instance (`gitlab.client.example`, ou son
    * URL ; absente : l'hôte du distant), `tokenEnv` le NOM d'une variable du service qui
@@ -270,6 +286,8 @@ export type HarnessConfig = {
   tokenFile: string;
   /** Les clients nommés (jetons hachés, rôles, dépôts permis), gérés par `--add-client` (auth.ts). */
   clientsFile: string;
+  /** Les canaux corpo (canaux/) : identifiants des clients OAuth et jetons Gmail, Agenda, Slack (0600, hors base). */
+  channelsFile: string;
   /**
    * Les fournisseurs déclarés par l'API (providers.ts) : leurs clés (`*_API_KEY`, 0600) et
    * le `models.yml` des fournisseurs compatibles OpenAI, que le lanceur pose chez les runners.
@@ -522,6 +540,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     listen: { host: "127.0.0.1", port: 8790 },
     tokenFile: path.join(base, "token"),
     clientsFile: path.join(base, "clients.json"),
+    channelsFile: path.join(base, "channels.json"),
     providersEnvFile: path.join(base, "providers.env"),
     providersModelsFile: path.join(base, "providers.models.yml"),
     dataDir: base,
@@ -711,6 +730,12 @@ function checkRepoAccounts(repo: RepoConfig): void {
   }
   if (repo.forge !== undefined && !(FORGES as readonly string[]).includes(repo.forge))
     fail(`${where}.forge : ${FORGES.join(" | ")}`);
+  if (repo.issues !== undefined) {
+    const { issues } = repo;
+    if (!isRecord(issues)) fail(`${where}.issues : { corporate? }`);
+    if (issues.corporate !== undefined && !(CORPORATE_POLICIES as readonly unknown[]).includes(issues.corporate))
+      fail(`${where}.issues.corporate : ${CORPORATE_POLICIES.join(" | ")}`);
+  }
   if (repo.forge === "none" && repo.merge === "gh")
     fail(`${where}.forge : « none » n'ouvre aucune PR, \`merge: "gh"\` demande une forge`);
   if (repo.gitlab !== undefined) {
@@ -998,6 +1023,7 @@ export function loadConfig(file: string | null): HarnessConfig {
   }
   // Les clients vivent à côté du jeton historique (même dossier d'état, mêmes droits).
   if (raw.clientsFile === undefined) config.clientsFile = path.join(path.dirname(config.tokenFile), "clients.json");
+  if (raw.channelsFile === undefined) config.channelsFile = path.join(path.dirname(config.tokenFile), "channels.json");
   if (raw.providersEnvFile === undefined)
     config.providersEnvFile = path.join(path.dirname(config.tokenFile), "providers.env");
   if (raw.providersModelsFile === undefined)

@@ -26,6 +26,7 @@ import { ProviderRegistry } from "./providers.ts";
 import type { RunnerProcess } from "./rpc.ts";
 import { writePipelineOverlay } from "./runner.ts";
 import type { Scheduler } from "./scheduler.ts";
+import type { ChannelFetch } from "./canaux/channels.ts";
 import { Monitor } from "./monitor.ts";
 import { SessionFeeds } from "./session-feed.ts";
 import { ActivityPusher, ApnsClient } from "./push.ts";
@@ -50,6 +51,8 @@ export type HarnessDeps = {
   exec: Exec;
   /** Le journal structuré (logger.ts) ; absent : rien n'est journalisé. */
   log?: LogLine;
+  /** Le `fetch` des canaux corpo (canaux/) ; absent : celui de la plateforme. Les tests y branchent des doublures. */
+  fetch?: ChannelFetch;
   tickMs?: number;
 };
 

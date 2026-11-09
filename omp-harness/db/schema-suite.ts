@@ -136,4 +136,45 @@ export const MIGRATIONS_SUITE: readonly string[] = [
      created_at INTEGER NOT NULL,
      updated_at INTEGER NOT NULL
    );`,
+  // Le pont corpo ↔ usine : un signalement d'un collègue (une ligne par fil), sa proposition
+  // « ouvrir une issue et lancer un correctif », l'issue créée et le texte caviardé dont le
+  // run est construit ; `corporate_signal_runs` garde l'origine de chaque run lancé depuis
+  // cette issue (relances comprises). Rien de cela n'est écrit sur la forge ni dans le dépôt.
+  `CREATE TABLE corporate_signals (
+     id TEXT PRIMARY KEY,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     channel TEXT NOT NULL,
+     thread_ref TEXT NOT NULL,
+     url TEXT NOT NULL,
+     person_ref TEXT,
+     excerpt TEXT NOT NULL,
+     state TEXT NOT NULL,
+     reason TEXT,
+     error TEXT,
+     attempts INTEGER NOT NULL DEFAULT 0,
+     repo TEXT,
+     kind TEXT,
+     title TEXT,
+     body TEXT,
+     issue_repo TEXT,
+     issue_number INTEGER,
+     issue_url TEXT,
+     run_title TEXT,
+     run_request TEXT,
+     policy TEXT,
+     run_id TEXT,
+     confirmed_by TEXT,
+     confirmed_at INTEGER,
+     UNIQUE (channel, thread_ref)
+   );
+   CREATE INDEX corporate_signals_state ON corporate_signals (state, created_at);
+   CREATE INDEX corporate_signals_issue ON corporate_signals (issue_repo, issue_number);
+   CREATE INDEX corporate_signals_person ON corporate_signals (person_ref, confirmed_at);
+   CREATE TABLE corporate_signal_runs (
+     run_id TEXT PRIMARY KEY,
+     signal_id TEXT NOT NULL,
+     created_at INTEGER NOT NULL
+   );
+   CREATE INDEX corporate_signal_runs_signal ON corporate_signal_runs (signal_id);`,
 ];

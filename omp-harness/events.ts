@@ -99,10 +99,13 @@ export const EVENT_TYPES = [
   "workstation_request",
   "workstation_automation",
   "workstation_browser",
+  "workstation_channel",
   // la vigie (vigie/) : un incident qui bouge (relevé, trié, publié, corrigé, rendu à l'humain),
   // et son silence (plus de battement de cœur depuis vigie.SILENT_MS)
   "vigie_incident",
   "vigie_silent",
+  // le pont corpo ↔ usine : l'état d'un signalement d'un collègue (`{id, state}` seulement ; repo null : poste réservé au propriétaire)
+  "signal",
   // éphémères
   "activity",
   "session",

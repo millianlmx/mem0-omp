@@ -21,6 +21,7 @@
 // (modules disjoints seulement) et le plafond de chaque dépôt (`maxParallel`).
 // L'admission est ÉQUITABLE : priorité d'abord, puis le dépôt et le projet qui ont le
 // moins de runs vivants, puis l'ancienneté — aucun projet ne prend tous les runners.
+import { Channels } from "./canaux/channels.ts";
 import { Auditor } from "./audits.ts";
 import { Dreamer } from "./dreams.ts";
 import { AuditPilot } from "./pilot.ts";
@@ -66,6 +67,7 @@ import { SPECS_BASELINE, StepExecutor, challengeUnit, directSpecs, liveRun } fro
 import { Splitter, waitReason } from "./split.ts";
 import { Workstation } from "./workstation.ts";
 import { IssueDesk } from "./issues.ts";
+import { SignalDesk } from "./corporate/signals.ts";
 import { WorkstationAgent } from "./workstation-agent.ts";
 import { VigieDesk } from "./vigie/desk.ts";
 
@@ -165,6 +167,10 @@ export class Orchestrator {
   readonly workstation: Workstation;
   /** L'agent 24/24 du poste et ses jobs (profil, digest des meetings, services). */
   readonly workstationAgent: WorkstationAgent;
+  /** Les canaux corpo lus par API (Gmail, Agenda, Slack) : connexion OAuth, état, client HTTP en liste blanche. */
+  readonly channels: Channels;
+  /** Les signalements des collègues et leurs propositions (pont corpo ↔ usine) : `reportSignal` est le point d'entrée des canaux. */
+  readonly signals: SignalDesk;
   /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
   readonly metrics: Metrics;
   /** Les issues GitHub des dépôts déclarés, lancées en run (`POST /v1/mcp`). */
@@ -216,7 +222,15 @@ export class Orchestrator {
     this.vigie = new VigieDesk(this.#ctx, this.issues);
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
-    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation);
+    this.signals = new SignalDesk(this.#ctx, { workstation: this.workstation, issues: this.issues });
+    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation, this.signals);
+    this.channels = new Channels({
+      config: this.#ctx.config,
+      store: this.#ctx.store,
+      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
+      log: this.#ctx.log,
+      fetch: deps.fetch ?? ((url, init) => globalThis.fetch(url, init)),
+    });
     this.digest = new DigestSender({
       config: this.#ctx.config,
       store: this.#ctx.store,
