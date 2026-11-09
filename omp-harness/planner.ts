@@ -5,6 +5,8 @@
 // Un module est un chemin du dépôt (dossier ou fichier) ; deux ensembles se
 // chevauchent dès qu'un chemin de l'un est préfixe d'un chemin de l'autre. Une
 // feature aux modules INCONNUS chevauche tout : dans le doute, on sérialise.
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { isArtifactPath } from "./git.ts";
 import type { Memory, Oracle } from "./oracle.ts";
 
@@ -86,6 +88,20 @@ export function modulesFromText(text: string, known: string[]): string[] {
   });
   // Un dossier nommé ET un de ses enfants : seul l'enfant est gardé (plus précis).
   return found.filter((module) => !found.some((other) => other !== module && contains(module, other))).sort();
+}
+
+/**
+ * Les modules larges d'une liste : la racine ou un dossier entier, lu dans `worktree` —
+ * jamais un fichier. Sans worktree, un chemin dont le dernier segment n'a pas d'extension
+ * compte pour un dossier (dans le doute, large).
+ */
+export function broadModules(modules: readonly string[], worktree: string | null): string[] {
+  return modules.filter((module) => {
+    const clean = normalize(module);
+    if (clean === "" || clean === "." || clean.split("/").includes("..")) return true;
+    if (worktree === null) return !/\.[^/]+$/.test(clean);
+    return fs.statSync(path.join(worktree, clean), { throwIfNoEntry: false })?.isDirectory() ?? false;
+  });
 }
 
 /**

@@ -9,6 +9,9 @@
 //   et runs de correction) par jour UTC, `maxLiveRuns` corrections vivantes ;
 // - une seule génération de correction par empreinte, et l'anti-boucle : un bug relevé
 //   sur un run que la vigie a lancé (ou sur sa descendance) revient à l'humain ;
+// - la trace d'un runner (`omp-runner-<run>-<étape>`, vigie/attribution.ts) revient à son
+//   run, pas au harness : bruit, ni issue ni correction ; une correction ne réserve que les
+//   fichiers précis que nomme son incident, jamais un dossier entier ;
 // - le caviardage de tout ce qui part sur la forge du dépôt (vigie/redact.ts) ;
 // - le silence : plus de battement depuis SILENT_MS, un événement `vigie_silent` ;
 // - après le merge d'une correction, l'empreinte est surveillée WATCH_MS : sans
@@ -24,6 +27,7 @@ import { HarnessError } from "../errors.ts";
 import type { Forge } from "../forge.ts";
 import type { IssueDesk } from "../issues.ts";
 import { isTerminal } from "../machine.ts";
+import { namedFiles, runnerTraceOf } from "./attribution.ts";
 import { isFingerprint } from "./fingerprint.ts";
 import { record } from "./json.ts";
 import { redactForIssue, redactSecrets } from "./redact.ts";
@@ -295,10 +299,10 @@ export class VigieDesk {
     return this.today(now).spentUsd >= settings.dailyBudgetUsd ? "budget" : "needed";
   }
 
-  #event(incident: VigieIncident, action: string): void {
+  #event(incident: VigieIncident, action: string, runId: string | null = null): void {
     this.#ctx.event(
       "vigie_incident",
-      null,
+      runId,
       {
         fingerprint: incident.fingerprint,
         action,
@@ -355,9 +359,12 @@ export class VigieDesk {
     const repoName = bounded(body, "repo", 100, false);
     const repo = repoName !== null && repoByName(this.#ctx.config, repoName) !== null ? repoName : null;
     const runIdRaw = bounded(body, "runId", 100, false);
-    const run = runIdRaw === null ? null : this.#store.getRun(runIdRaw);
+    // La trace d'un runner revient au run qu'elle nomme (sinon à celui du signal), jamais au harness.
+    const trace = runnerTraceOf({ source, location, message, runId: runIdRaw });
+    const traced = trace?.runId ? this.#store.getRun(trace.runId) : null;
+    const run = traced ?? (runIdRaw === null ? null : this.#store.getRun(runIdRaw));
     // Un bug sur un run lancé par la vigie (ou sur sa descendance) revient à l'humain : jamais de boucle.
-    const loop = run !== null && this.launchedByVigie(run.id);
+    const loop = trace === null && run !== null && this.launchedByVigie(run.id);
     const incident = this.#store.createVigieIncident({
       fingerprint,
       source,
@@ -365,15 +372,19 @@ export class VigieDesk {
       message,
       repo: repo ?? run?.repo ?? null,
       runId: run?.id ?? null,
-      status: loop ? "deferred" : "new",
+      status: trace ? "noise" : loop ? "deferred" : "new",
       context: context === null ? null : redactSecrets(context),
-      note: loop
-        ? `anti-boucle : le run ${run?.slug ?? ""} a été lancé par la vigie — une correction de sa correction revient à l'humain`
-        : null,
+      note: trace
+        ? `trace du runner ${trace.unit}${run ? ` du run ${run.slug}` : ""} : elle revient à ce run (son agent, ses tests, sa mémoire), pas au harness — ni issue ni correction`
+        : loop
+          ? `anti-boucle : le run ${run?.slug ?? ""} a été lancé par la vigie — une correction de sa correction revient à l'humain`
+          : null,
       at,
     });
-    this.#event(incident, loop ? "deferred" : "seen");
-    return { incident, known: false, triage: loop ? "skip" : this.#triageGate(now) };
+    // Une trace de runner s'inscrit au journal de son run : c'est là que ses problèmes se lisent.
+    if (trace) this.#event(incident, "runner", run?.id ?? null);
+    else this.#event(incident, loop ? "deferred" : "seen");
+    return { incident, known: false, triage: trace || loop ? "skip" : this.#triageGate(now) };
   }
 
   #applyTriage(incident: VigieIncident, raw: unknown, now: number): VigieIncident {
@@ -485,6 +496,9 @@ export class VigieDesk {
         at: now,
       });
     }
+    // La trace d'un runner revient à son run : la vigie n'en publie jamais l'issue.
+    if (client.pilot && runnerTraceOf(incident))
+      throw new HarnessError(409, `incident ${fingerprint} : ${incident.note ?? "trace d'un runner"}`);
     if (incident.issueNumber !== null && incident.issueUrl !== null)
       return {
         status: "already",
@@ -603,10 +617,17 @@ export class VigieDesk {
   // -- corrections --------------------------------------------------------------
 
   /**
-   * Avant `issue_fix` par un client pilote : le mode `fix`, une issue de la vigie, une seule
-   * génération de correction par empreinte, l'anti-boucle, `maxLiveRuns` et le budget du jour.
+   * Avant `issue_fix` par un client pilote : le mode `fix`, une issue de la vigie qui n'est pas
+   * la trace d'un runner, une seule génération de correction par empreinte, l'anti-boucle,
+   * `maxLiveRuns` et le budget du jour. Rend l'incident et les modules du run : les fichiers
+   * suivis de `main` que nomme l'incident (piles, chemins, fichiers du tri), jamais un dossier.
+   * Aucun : rien ne part, l'issue reste ouverte et l'incident revient à l'humain.
    */
-  guardFix(repo: RepoConfig, number: number, now: number): VigieIncident {
+  async guardFix(
+    repo: RepoConfig,
+    number: number,
+    now: number,
+  ): Promise<{ incident: VigieIncident; modules: string[] }> {
     const settings = this.settings();
     if (settings.mode !== "fix")
       throw new HarnessError(403, `mode ${settings.mode} : la vigie ne lance pas de correction (mode fix requis)`);
@@ -615,6 +636,11 @@ export class VigieDesk {
     const incident = this.#store.vigieIncidentByIssue(repo.name, number);
     if (!incident)
       throw new HarnessError(403, `l'issue #${number} n'est pas une issue de la vigie : à l'humain de la lancer`);
+    if (runnerTraceOf(incident))
+      throw new HarnessError(
+        409,
+        `l'issue #${number} porte la trace d'un runner : elle revient à son run, pas au harness`,
+      );
     if (incident.fixRunId !== null)
       throw new HarnessError(
         409,
@@ -637,7 +663,27 @@ export class VigieDesk {
         429,
         `budget du jour épuisé : ${today.spentUsd.toFixed(2)} $ sur ${settings.dailyBudgetUsd.toFixed(2)} $`,
       );
-    return incident;
+    const files = await this.#ctx.git.listFiles(repo.path, repo.mainBranch);
+    const triage = incident.triage;
+    const modules = namedFiles(
+      [
+        ...(triage?.files ?? []),
+        incident.location,
+        incident.message,
+        incident.context ?? "",
+        triage?.symptom ?? "",
+        triage?.hypothesis ?? "",
+        ...(triage?.evidence ?? []),
+      ],
+      files,
+    );
+    if (modules.length === 0) {
+      const note =
+        "aucun fichier précis du dépôt dans l'incident : la vigie ne lance pas de correction sur des dossiers entiers (elle bloquerait tous les runs suivants) — l'issue reste ouverte, à toi de lancer sa correction";
+      this.#defer(incident, note);
+      throw new HarnessError(409, note);
+    }
+    return { incident, modules };
   }
 
   /** Le run de correction lancé : l'unique génération de l'empreinte. */

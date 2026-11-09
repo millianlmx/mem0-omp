@@ -13,6 +13,10 @@
 // La relève (`issues.pollSec`) lance d'elle-même, à intervalle régulier, les issues du
 // label de chaque dépôt déclaré qui pousse vers un distant et a une forge : poser le
 // label suffit.
+//
+// Une issue dont le titre nomme un runner d'un run de ce harness (`omp-runner-<run>-<étape>`)
+// porte une trace de ce run — son agent, ses tests, sa mémoire —, pas un bug du harness :
+// elle n'est jamais lancée (409 au lancement, sautée par la relève).
 import type { RepoConfig } from "./config.ts";
 import { type Actor, type HarnessContext, SERVICE } from "./context.ts";
 import type { RunRow } from "./db.ts";
@@ -20,6 +24,7 @@ import { HarnessError } from "./errors.ts";
 import { type Forge, type Issue, type IssueDetail, openForge } from "./forge.ts";
 import type { RunState } from "./machine.ts";
 import type { NewRunInput } from "./orchestrator.ts";
+import { runnerUnitOf } from "./vigie/attribution.ts";
 
 /** Une issue et son run lié, s'il y en a un. */
 export type ListedIssue = Issue & { run: { id: string; state: RunState; slug: string } | null };
@@ -140,9 +145,15 @@ export class IssueDesk {
    * Lance un run pour une issue ouverte ; une issue déjà liée à un run vivant ou mergé le rend tel quel.
    * Une issue née d'un signalement d'un collègue ne se lance que par sa confirmation (`options.origin`,
    * passée par `SignalDesk.confirm` seule) : refusée avant la promesse partagée, sinon un lancement
-   * concurrent (`issue_fix`) y répondrait à la place de l'approbateur.
+   * concurrent (`issue_fix`) y répondrait à la place de l'approbateur. `options.modules` : les modules
+   * du run, posés d'emblée (sinon l'oracle les déduit du texte de l'issue).
    */
-  fix(repo: RepoConfig, number: number, actor: Actor, options: { origin?: true } = {}): Promise<FixOutcome> {
+  fix(
+    repo: RepoConfig,
+    number: number,
+    actor: Actor,
+    options: { origin?: true; modules?: string[] } = {},
+  ): Promise<FixOutcome> {
     if (!Number.isInteger(number) || number < 1) throw new HarnessError(400, "number : numéro d'issue attendu");
     const origin = this.#ctx.store.signalOfIssue(repo.name, number);
     if (origin && origin.state !== "confirmed" && !options.origin)
@@ -153,7 +164,7 @@ export class IssueDesk {
     const key = `${repo.name}#${number}`;
     const pending = this.#pending.get(key);
     if (pending) return pending;
-    const launch = this.#fix(repo, number, actor).finally(() => this.#pending.delete(key));
+    const launch = this.#fix(repo, number, actor, options.modules).finally(() => this.#pending.delete(key));
     this.#pending.set(key, launch);
     return launch;
   }
@@ -163,12 +174,29 @@ export class IssueDesk {
     return link ? this.#ctx.store.getRun(link.runId) : null;
   }
 
-  async #fix(repo: RepoConfig, number: number, actor: Actor): Promise<FixOutcome> {
+  /** Le run dont un titre d'issue nomme le runner (`omp-runner-<run>-<étape>`), s'il est de ce harness. */
+  #runnerRun(title: string): RunRow | null {
+    const named = runnerUnitOf(title);
+    return named ? this.#ctx.store.getRun(named.runId) : null;
+  }
+
+  async #fix(repo: RepoConfig, number: number, actor: Actor, modules: string[] | undefined): Promise<FixOutcome> {
     const linked = this.#linked(repo, number);
     if (linked && !RELAUNCHABLE.includes(linked.state)) return { issue: number, status: "already", run: linked };
     const forge = await this.forge(repo);
     const issue = await forge.issue(number);
     if (issue.state !== "OPEN") throw new HarnessError(409, `l'issue #${number} n'est pas ouverte (${issue.state})`);
+    const traced = this.#runnerRun(issue.title);
+    if (traced) {
+      this.#ctx.log(`issue #${number} non lancée : elle porte une trace du runner du run ${traced.id}`, {
+        runId: traced.id,
+        repo: repo.name,
+      });
+      throw new HarnessError(
+        409,
+        `l'issue #${number} nomme le runner du run ${traced.id} (« ${traced.title} ») : une trace de ce run — son agent, ses tests, sa mémoire —, pas un bug du harness. Elle se suit sur ce run ; retire le nom du runner du titre pour la lancer quand même.`,
+      );
+    }
     const { store } = this.#ctx;
     const origin = store.signalOfIssue(repo.name, number);
     const run = store.transaction(() => {
@@ -177,7 +205,12 @@ export class IssueDesk {
       const created = this.#createRun(
         origin
           ? { repo: repo.name, title: origin.runTitle ?? "", request: origin.runRequest ?? "" }
-          : { repo: repo.name, title: `Issue #${number} : ${issue.title}`, request: issueRequest(forge, issue) },
+          : {
+              repo: repo.name,
+              title: `Issue #${number} : ${issue.title}`,
+              request: issueRequest(forge, issue),
+              ...(modules && modules.length > 0 ? { modules } : {}),
+            },
         actor,
       );
       store.linkIssue({ repo: repo.name, number, runId: created.id, url: issue.url, by: actor.by });
@@ -206,6 +239,8 @@ export class IssueDesk {
       if (link) outcome.skipped.push({ issue: issue.number, runId: link.runId });
       // Une issue d'origine corpo ne se lance que par la confirmation de sa proposition, jamais par label.
       else if (this.#ctx.store.signalOfIssue(repo.name, issue.number)) continue;
+      // La trace du runner d'un run revient à ce run, jamais à une correction.
+      else if (this.#runnerRun(issue.title)) continue;
       else if (outcome.launched.length < this.#ctx.config.issues.maxLaunch)
         outcome.launched.push(await this.fix(repo, issue.number, actor));
       else outcome.remaining.push(issue.number);

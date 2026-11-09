@@ -17,6 +17,7 @@ import type { HeavyResult, TestScope } from "./heavy.ts";
 import { heavyReport } from "./heavy.ts";
 import type { Memory } from "./oracle.ts";
 import { renderMemories } from "./oracle.ts";
+import { broadModules } from "./planner.ts";
 import type { HostToolResult } from "./rpc.ts";
 import type { StepHooks } from "./steps.ts";
 import type { Verdict } from "./verdict.ts";
@@ -303,6 +304,13 @@ function setModulesTool(
   if (artifacts.length > 0)
     return {
       text: `set_modules refusé : ${artifacts.join(", ")} est sous \`${ARTIFACTS_DIR}/\`, les artefacts d'étape ne sont jamais un module. Rappelle set_modules avec les seuls chemins du dépôt que la feature touchera ; les modules du run n'ont pas changé.`,
+      isError: true,
+    };
+  // Une correction de la vigie ne réserve que des fichiers : un dossier entier bloquerait tous les runs suivants.
+  const broad = store.vigieIncidentByFixRun(run.id) ? broadModules(paths, run.worktree) : [];
+  if (broad.length > 0)
+    return {
+      text: `set_modules refusé : ${broad.join(", ")} est un dossier entier. Un run de correction de la vigie ne réserve que les fichiers précis qu'il touche (un dossier chevaucherait tous les runs créés après lui) : rappelle set_modules avec ces fichiers ; les modules du run n'ont pas changé.`,
       isError: true,
     };
   const updated = store.transaction(() => {
