@@ -12,6 +12,7 @@
 // L'auteur de chaque geste est gardé (`by`) dans la base et dans le journal.
 // Un pilote (celui d'un audit, ou un client `pilot` comme la vigie) emprunte ces gestes,
 // sauf ceux réservés à l'humain : il est refusé en 403, sans rien écrire.
+import { AUTONOMY_BY } from "./autonomy-rules.ts";
 import type { Actor, HarnessContext } from "./context.ts";
 import type { DecisionRow, EscalationRow, RunPatch, RunRow } from "./db.ts";
 import { IRREVERSIBLE, checkpointMessage, dependentsOf } from "./decisions.ts";
@@ -32,6 +33,7 @@ import {
   retried,
   reworkAfterReversal,
   humanWaitOf,
+  specsBackToHuman,
 } from "./machine.ts";
 import { humanDecisionMemory } from "./oracle.ts";
 import type { RunBudget } from "./monitor.ts";
@@ -58,6 +60,8 @@ export type GestureHooks = {
   steer: (runId: string, message: string) => Promise<boolean>;
   /** Les specs du run viennent d'être acceptées (dans la transaction) : leur découpage part (split.ts). */
   specsAccepted: (run: RunRow) => void;
+  /** Une règle d'autonomie pourrait-elle lever l'attente de ce run (autonomy-gates.ts `liftable`) ? */
+  liftable: (run: RunRow) => boolean;
 };
 
 /** Où est allée une consigne : dans le prompt en cours (`session`), ou gardée pour le prochain (`pending`). */
@@ -80,6 +84,7 @@ function byOf(actor: Actor): { by?: string } {
 
 /** Qui tranche, dans la raison écrite sur le run. */
 function whoOf(actor: Actor): string {
+  if (actor.by?.startsWith(AUTONOMY_BY)) return "l'autonomie";
   if (!actor.pilot) return "l'humain";
   return actor.by === null || actor.by.startsWith("pilote:") ? "le pilote de l'audit" : `le pilote ${actor.by}`;
 }
@@ -424,6 +429,9 @@ export class HumanLoop {
     const fresh = this.#ctx.run(runId);
     if (fresh.state === "merging" || fresh.state === "merged" || fresh.state === "cancelled")
       throw new HarnessError(409, `le run est passé en ${fresh.state} pendant le renversement`);
+    // Une validation de specs prise seule par l'autonomie : les specs reviennent à l'humain.
+    if (decision.autonomy?.gate === "specs")
+      return this.#specsBackToHuman(fresh, decision, option, reason, fallen, actor);
 
     if (fallen.length === 0 || fresh.worktree === null || decision.checkpointSha === null)
       return this.#reworkOver(fresh, decision, option, reason, fallen, actor);
@@ -523,6 +531,50 @@ export class HumanLoop {
       this.#ctx.transition(this.#ctx.run(runId), resumeAtCheckpoint(cursor, stepKind, seq), [fresh.state], {
         actor: { by: actor.by },
       });
+    });
+    this.#hooks.tick();
+    return this.#ctx.run(runId);
+  }
+
+  /**
+   * L'humain désavoue une validation de specs prise seule, avant le merge : le travail déjà commité reste sur la
+   * branche, et les specs reviennent à l'humain (`specs_ready`). Aucune attente de ce run n'est plus levée seule
+   * (autonomy-gates.ts). Le renverser « comme une décision d'agent » relancerait /impl avec une consigne
+   * qu'aucun runner ne peut appliquer.
+   */
+  async #specsBackToHuman(
+    fresh: RunRow,
+    decision: DecisionRow,
+    option: string,
+    reason: string,
+    fallen: readonly number[],
+    actor: Actor,
+  ): Promise<RunRow> {
+    const { store, git } = this.#ctx;
+    const runId = fresh.id;
+    const seq = decision.seq;
+    if (fresh.worktree !== null && (await git.isDirty(fresh.worktree)))
+      await git.commitAll(
+        fresh.worktree,
+        `wip(${fresh.step ?? "fix"}): avant le renversement de #${seq}`.slice(0, 120),
+      );
+    store.transaction(() => {
+      store.updateRun(runId, { verdict: null });
+      store.reverseDecision(runId, seq, option, reason, fallen, actor.by);
+      for (const item of store.listEscalations({ runId, status: "open" }))
+        store.answerEscalation(item.id, `caduque : specs rendues à l'humain après le renversement de #${seq}`);
+      store.addInstructions(
+        runId,
+        `L'humain a renversé la validation des specs par l'autonomie (#${seq}, raison : ${reason}) et les relit. ` +
+          "Le travail déjà commité reste sur la branche : garde ce qui tient avec specs.md, défais le reste.",
+      );
+      this.#ctx.event("decision_reversed", runId, { seq, option, mode: "rework", superseded: fallen, ...byOf(actor) });
+      this.#ctx.transition(
+        this.#ctx.run(runId),
+        specsBackToHuman({ step: "specs", fixes: fresh.fixes, attempts: 0 }, seq),
+        [fresh.state],
+        { actor: { by: actor.by } },
+      );
     });
     this.#hooks.tick();
     return this.#ctx.run(runId);
@@ -628,12 +680,27 @@ export class HumanLoop {
 
   // -- validation, relance, annulation, priorité ---------------------------------
 
-  /** La validation humaine en attente : les specs (avant /impl) ou le verdict de revue. */
-  validate(runId: string, approve: boolean, reason: string, actor: Actor): Promise<RunRow> {
-    return this.#serial(runId, () => this.#validate(runId, approve, reason.trim(), actor));
+  /**
+   * La validation humaine en attente : les specs (avant /impl) ou le verdict de revue. `inscribe` : l'autonomie
+   * inscrit sa décision dans la transaction du geste (autonomy-gates.ts).
+   */
+  validate(
+    runId: string,
+    approve: boolean,
+    reason: string,
+    actor: Actor,
+    inscribe?: (next: RunRow) => void,
+  ): Promise<RunRow> {
+    return this.#serial(runId, () => this.#validate(runId, approve, reason.trim(), actor, inscribe));
   }
 
-  async #validate(runId: string, approve: boolean, why: string, actor: Actor): Promise<RunRow> {
+  async #validate(
+    runId: string,
+    approve: boolean,
+    why: string,
+    actor: Actor,
+    inscribe?: (next: RunRow) => void,
+  ): Promise<RunRow> {
     const { store, oracle } = this.#ctx;
     const run = this.#fresh(runId, actor);
     this.assertPilotMay(run, actor);
@@ -651,6 +718,8 @@ export class HumanLoop {
         );
     }
     const current = this.#ctx.run(runId);
+    // Ce que la porte pourrait lever, constaté avant le geste : le journal ne le recalcule jamais après coup.
+    const liftable = this.#hooks.liftable(current);
     const cursor = { step: current.step ?? "review", fixes: current.fixes, attempts: 0 };
     const who = whoOf(actor);
     // Un merge arrêté au plafond : le valider rejouerait le même merge, qui buterait pareil.
@@ -669,6 +738,16 @@ export class HumanLoop {
           : {};
     const moved = store.transaction(() => {
       const next = this.#ctx.transition(current, transition, ["awaiting_human"], { patch, actor: { by: actor.by } });
+      if (next) {
+        this.#ctx.event("validation", runId, {
+          gate: humanWaitOf(current),
+          approve,
+          liftable,
+          ...byOf(actor),
+          ...(actor.pilot ? { pilot: true } : {}),
+        });
+        inscribe?.(next);
+      }
       if (next && approve && stop !== null) store.addInstructions(runId, this.#mergeStopInstructions(current, stop));
       if (next && acceptsSpecs(current.step, transition)) this.#hooks.specsAccepted(next);
       if (next && !approve) {

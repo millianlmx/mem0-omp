@@ -12,6 +12,8 @@ import type { LogLevel } from "./logger.ts";
 import { LOG_LEVELS } from "./logger.ts";
 import { STEP_KINDS } from "./machine.ts";
 import type { StepKind } from "./machine.ts";
+import { checkAutonomy } from "./autonomy-rules.ts";
+import type { AutonomyRule } from "./autonomy-rules.ts";
 import { isTimeZone } from "./cron.ts";
 
 /** Les familles de modèles, de la moins chère à la plus capable. */
@@ -198,6 +200,19 @@ export type MonitoringConfig = {
   keep: number;
 };
 
+/**
+ * Les seuils des propositions de palier d'autonomie (autonomy-learning.ts) : sur `windowDays`
+ * jours, un groupe (dépôt, type, porte) d'au moins `minRuns` runs reçoit une proposition de
+ * baisse si son taux de corrections vaut `lowerMinRate` ou plus, de montée s'il vaut `raiseMaxRate`
+ * ou moins. Le harness ne change jamais une règle seul.
+ */
+export type AutonomyLearningConfig = {
+  windowDays: number;
+  minRuns: number;
+  raiseMaxRate: number;
+  lowerMinRate: number;
+};
+
 /** L'envoi des notifications push d'Apple (Live Activities de l'app iOS) : `null` les coupe. */
 export type ApnsConfig = {
   /** La clé `.p8` d'Apple (fichier de l'hôte, 0600). */
@@ -278,6 +293,12 @@ export type RepoConfig = {
    * reçoivent au lieu du jeton global. Absent : le jeton global.
    */
   memory?: { tokenEnv?: string };
+  /**
+   * L'autonomie par paliers (autonomy-rules.ts) : des règles ordonnées, la première qui
+   * correspond à un run décide si le serveur lève seul son attente `specs` ou `verdict`.
+   * Absent : tout reste à l'humain.
+   */
+  autonomy?: { rules: AutonomyRule[] };
 } & ModelPolicy;
 
 export type HarnessConfig = {
@@ -469,6 +490,8 @@ export type HarnessConfig = {
    * et `worktreesDir`.
    */
   health: { tickStaleSec: number; minFreeMiB: number };
+  /** Les seuils des propositions de palier d'autonomie ; changés au redémarrage seulement. */
+  autonomyLearning: AutonomyLearningConfig;
   monitoring: MonitoringConfig;
   apns: ApnsConfig | null;
   workstation: WorkstationConfig;
@@ -623,6 +646,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       sampleSec: 15,
       keep: 480,
     },
+    autonomyLearning: { windowDays: 30, minRuns: 10, raiseMaxRate: 0.05, lowerMinRate: 0.2 },
     apns: null,
     workstation: {
       enabled: true,
@@ -840,6 +864,13 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
       (typeof repo.sshKey !== "string" || !path.isAbsolute(repo.sshKey) || repo.sshKey.includes("'"))
     )
       fail(`repos.${repo.name}.sshKey : chemin absolu sans apostrophe, ou null`);
+    if (repo.autonomy !== undefined) {
+      try {
+        repo.autonomy = checkAutonomy(`repos.${repo.name}.autonomy`, repo.autonomy);
+      } catch (err: unknown) {
+        fail(err instanceof Error ? err.message : String(err));
+      }
+    }
     checkRepoAccounts(repo);
   }
   if (!Array.isArray(config.runner.retryBackoffSec) || config.runner.retryBackoffSec.some((s) => !(s >= 0)))
@@ -913,6 +944,18 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (typeof monitoring.pauseOnBudget !== "boolean") fail("monitoring.pauseOnBudget : booléen");
   if (!(monitoring.sampleSec >= 1)) fail("monitoring.sampleSec : secondes ≥ 1");
   if (!(Number.isInteger(monitoring.keep) && monitoring.keep >= 1)) fail("monitoring.keep : entier ≥ 1");
+  const learning = config.autonomyLearning;
+  if (!(Number.isInteger(learning.windowDays) && learning.windowDays >= 1))
+    fail("autonomyLearning.windowDays : entier ≥ 1");
+  if (learning.windowDays > config.events.retentionDays)
+    fail(
+      `autonomyLearning.windowDays : au plus events.retentionDays (${config.events.retentionDays}), le journal purgé ne porte plus la fenêtre`,
+    );
+  if (!(Number.isInteger(learning.minRuns) && learning.minRuns >= 1)) fail("autonomyLearning.minRuns : entier ≥ 1");
+  for (const key of ["raiseMaxRate", "lowerMinRate"] as const)
+    if (!(typeof learning[key] === "number" && learning[key] >= 0 && learning[key] <= 1))
+      fail(`autonomyLearning.${key} : nombre entre 0 et 1`);
+  if (!(learning.raiseMaxRate < learning.lowerMinRate)) fail("autonomyLearning : raiseMaxRate < lowerMinRate");
   const workstation = config.workstation;
   if (!isRecord(workstation)) fail("workstation : objet attendu");
   if (typeof workstation.enabled !== "boolean") fail("workstation.enabled : booléen");

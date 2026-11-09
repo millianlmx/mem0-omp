@@ -18,12 +18,7 @@ import type { LogLine } from "../logger.ts";
 import { atomicWrite } from "../providers.ts";
 import type { ChannelId, Method } from "./allowlist.ts";
 import { allowed, ownedBy } from "./allowlist.ts";
-import {
-  ChannelApiError,
-  ChannelNetworkError,
-  ChannelRateLimited,
-  ChannelUnavailable,
-} from "./errors.ts";
+import { ChannelApiError, ChannelNetworkError, ChannelRateLimited, ChannelUnavailable } from "./errors.ts";
 
 export type { ChannelId, Method } from "./allowlist.ts";
 
@@ -382,8 +377,10 @@ export class Channels {
   startLogin(id: string, body: Record<string, unknown>): { login: LoginView } {
     const connection = this.#connectionOf(id);
     onlyKeys(body, ["channels"]);
-    const channels = this.#channelsOf(body.channels, CHANNELS_OF[connection], (list) =>
-      `channels : canaux de ${connection} attendus (${list})`,
+    const channels = this.#channelsOf(
+      body.channels,
+      CHANNELS_OF[connection],
+      (list) => `channels : canaux de ${connection} attendus (${list})`,
     );
     const client = this.#read()[connection];
     if (!client) throw new HarnessError(409, `configurez d'abord le client de ${connection} dans l'écran Canaux`);
@@ -435,11 +432,7 @@ export class Channels {
   }
 
   /** `channels` : tableau non vide, sans doublon, parmi `among` ; absent : `among`. */
-  #channelsOf(
-    value: unknown,
-    among: readonly ChannelId[],
-    message: (list: string) => string,
-  ): ChannelId[] {
+  #channelsOf(value: unknown, among: readonly ChannelId[], message: (list: string) => string): ChannelId[] {
     if (value === undefined) return [...among];
     if (
       !Array.isArray(value) ||
@@ -452,10 +445,7 @@ export class Channels {
   }
 
   /** Recolle la réponse : l'URL de retour, le code, le texte d'erreur affiché, ou la déclaration de blocage. */
-  async answer(
-    id: string,
-    body: Record<string, unknown>,
-  ): Promise<{ login: LoginView; channels: ChannelView[] }> {
+  async answer(id: string, body: Record<string, unknown>): Promise<{ login: LoginView; channels: ChannelView[] }> {
     const connection = this.#connectionOf(id);
     onlyKeys(body, ["value", "blocked", "channels"]);
     if (body.value !== undefined && body.blocked !== undefined)
@@ -470,12 +460,14 @@ export class Channels {
       if (value === "" || value.length > MAX_ANSWER) throw new HarnessError(400, "value : le code ou l'URL de retour");
     }
     const login = this.#logins.get(connection);
-    if (!login || login.state !== "waiting")
+    if (login?.state !== "waiting")
       throw new HarnessError(409, `aucune connexion en cours pour ${connection} : relancez-la`);
     const asked =
       body.blocked === true
-        ? this.#channelsOf(body.channels, login.channels, (list) =>
-            `channels : canaux demandés par la connexion en cours attendus (${list})`,
+        ? this.#channelsOf(
+            body.channels,
+            login.channels,
+            (list) => `channels : canaux demandés par la connexion en cours attendus (${list})`,
           )
         : login.channels;
     if (this.#now() >= login.expiresAt) {
@@ -542,11 +534,7 @@ export class Channels {
     for (const channel of login.channels) {
       const current = this.#states()[channel];
       if (current.state === "blocked") continue;
-      this.#set(
-        channel,
-        { error: message, ...(tokens === undefined ? { state: "error" as const } : {}) },
-        "refus",
-      );
+      this.#set(channel, { error: message, ...(tokens === undefined ? { state: "error" as const } : {}) }, "refus");
     }
     throw new HarnessError(409, message);
   }

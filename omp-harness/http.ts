@@ -40,9 +40,10 @@ import type { Orchestrator } from "./orchestrator.ts";
 import type { ModelChains, ProviderInput } from "./providers.ts";
 import { PROOF_MIMES } from "./proofs.ts";
 import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS, OAUTH } from "./providers.ts";
-import { escalationBatches, projectsOf } from "./queries.ts";
+import { autonomyValidations, escalationBatches, projectsOf } from "./queries.ts";
 import type { ConfigAdmin } from "./repos.ts";
 import { computeStats } from "./stats.ts";
+import { autonomyProposals } from "./autonomy-learning.ts";
 import { HARNESS_COMMIT } from "./build-info.ts";
 import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
 import type { LogLine } from "./logger.ts";
@@ -106,6 +107,7 @@ export const API_FEATURES = [
   "prometheus",
   "vigie",
   "push-alerts",
+  "autonomy",
   "corporate-signals",
   "proofs",
 ] as const;
@@ -461,7 +463,7 @@ export function apiRoutes(
     }),
     route("POST", "/v1/runs", "operator", async (call) => {
       const body = await readBody(call.req);
-      const run = orchestrator.createRun(newRunInput(body, call.client), call.actor);
+      const run = orchestrator.createRun(newRunInput(body, call.client, { typed: true }), call.actor);
       send(call.res, 201, { run }, { ETag: `"${run.rev}"` });
     }),
     route("GET", "/v1/runs/{id}", "viewer", (call) => {
@@ -792,6 +794,19 @@ export function apiRoutes(
         scheduler: orchestrator.status(call.repos).scheduler,
       }),
     ),
+    // L'autonomie par paliers, en lecture seule : les règles de chaque dépôt visible, ce qui a été validé seul
+    // (avec sa règle et ses preuves) et les propositions de palier. Aucune route n'écrit une règle.
+    route("GET", "/v1/autonomy", "viewer", (call) => {
+      const now = Date.now();
+      const { config } = orchestrator;
+      send(call.res, 200, {
+        repos: config.repos
+          .filter((repo) => call.repos === null || call.repos.includes(repo.name))
+          .map((repo) => ({ repo: repo.name, rules: repo.autonomy?.rules ?? [] })),
+        validations: autonomyValidations(store, config.autonomyLearning.windowDays, now, call.repos),
+        proposals: autonomyProposals(store, config, now, call.repos),
+      });
+    }),
     // Le rapport du matin : ce qui s'est fait seul depuis `since` (epoch ms ; défaut : 24 h).
     route("GET", "/v1/digest", "viewer", (call) => {
       const now = Date.now();

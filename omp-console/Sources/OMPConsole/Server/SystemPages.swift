@@ -1,5 +1,5 @@
 // SYSTÈME sur le Mac : le hub (une rangée par page, son état à droite) et les pages
-// qu'il pousse dans sa pile — Vigie, Planifications, Statistiques et santé,
+// qu'il pousse dans sa pile — Vigie, Planifications, Autonomie, Statistiques et santé,
 // Administration. Le Serveur ouvre la feuille de connexion. Le contenu est PARTAGÉ avec
 // l'app iOS (cible ConsoleUI) ; ce fichier n'en garde que le cadre du Mac.
 //
@@ -19,6 +19,7 @@ struct HarnessSystemView: View {
         HarnessSection(server: server, drafts: drafts, catalog: true, form: false, reload: {
             await server.vigie.load()
             await server.schedules.refresh()
+            await server.autonomy.refresh()
             if server.isAdmin { await server.admin.refresh() }
         }) {
             NavigationStack(path: path) {
@@ -34,6 +35,7 @@ struct HarnessSystemView: View {
         .task {
             await server.vigie.load()
             await server.schedules.refresh()
+            await server.autonomy.refresh()
         }
         .controlGestures(server: server, drafts: drafts)
         .accessibilityIdentifier("system.harness")
@@ -55,6 +57,10 @@ struct HarnessSystemView: View {
                 .accessibilityIdentifier("vigie.harness")
         case .schedules:
             SystemSchedulesPage(server: server, drafts: drafts)
+        case .autonomy:
+            HarnessForm(server: server, drafts: drafts) { AutonomySections(server: server, drafts: drafts) }
+                .task { await server.autonomy.refresh() }
+                .accessibilityIdentifier("autonomy.harness")
         case .stats:
             SystemStatsPage(server: server, drafts: drafts)
         case .admin:

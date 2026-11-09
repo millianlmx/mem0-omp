@@ -207,12 +207,14 @@ export class HarnessContext {
    * Applique une transition SI le run est encore dans un des états `expected` (et, si
    * l'acteur en donne une, à la révision qu'il a lue) ; sinon `null`. La table de
    * `machine.ts` est vérifiée d'abord : une transition hors table est un bug, elle lève.
+   * `quiet` : l'autonomie va valider cette attente (autonomy-gates.ts) — `specs_ready` et
+   * `verdict` ne partent pas (elle les publie elle-même si elle y renonce).
    */
   transition(
     run: RunRow,
     transition: Transition,
     expected: readonly RunState[],
-    options: { patch?: RunPatch; actor?: Actor } = {},
+    options: { patch?: RunPatch; actor?: Actor; quiet?: boolean } = {},
   ): RunRow | null {
     assertTransition(expected, transition.state);
     const { store } = this;
@@ -251,7 +253,7 @@ export class HarnessContext {
           })),
         });
       }
-      if (transition.state === "awaiting_human") {
+      if (transition.state === "awaiting_human" && options.quiet !== true) {
         if (transition.step === "specs") this.event("specs_ready", run.id, { reason: transition.reason });
         else
           this.event("verdict", run.id, {

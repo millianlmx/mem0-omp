@@ -56,7 +56,8 @@ const SLACK_SCOPES = (
     oauth_config: { scopes: { user: string[] } };
   }
 ).oauth_config.scopes.user;
-const BLOCKED = "bloqué par l'administrateur de l'entreprise : la veille ne lit pas ce canal, le poste continue par le navigateur";
+const BLOCKED =
+  "bloqué par l'administrateur de l'entreprise : la veille ne lit pas ce canal, le poste continue par le navigateur";
 
 // -- la doublure de Google et de Slack -----------------------------------------------------------
 
@@ -208,7 +209,13 @@ type LoginRow = {
   expiresAt: number;
   error: string | null;
 };
-type ChannelRow = { id: string; state: string; account: string | null; lastReadAt: number | null; error: string | null };
+type ChannelRow = {
+  id: string;
+  state: string;
+  account: string | null;
+  lastReadAt: number | null;
+  error: string | null;
+};
 type ConnectionRow = { id: string; clientId: string | null; clientConfigured: boolean; login: LoginRow | null };
 type Body = {
   error: string;
@@ -283,7 +290,11 @@ async function serve(world: FakeWorld): Promise<Api> {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
       const text = await response.text();
-      return { status: response.status, json: text.startsWith("{") || text.startsWith("[") ? JSON.parse(text) : null, text };
+      return {
+        status: response.status,
+        json: text.startsWith("{") || text.startsWith("[") ? JSON.parse(text) : null,
+        text,
+      };
     },
     close: async () => {
       server.closeAllConnections();
@@ -294,7 +305,9 @@ async function serve(world: FakeWorld): Promise<Api> {
   };
 }
 
-async function setup(scenario: Record<string, unknown> = {}): Promise<{ world: FakeWorld; api: Api; provider: Provider }> {
+async function setup(
+  scenario: Record<string, unknown> = {},
+): Promise<{ world: FakeWorld; api: Api; provider: Provider }> {
   const provider = new Provider();
   const world = fakeWorld(scenario, { fetch: provider.fetch });
   return { world, api: await serve(world), provider };
@@ -328,7 +341,11 @@ test("poste-canaux/AC-1 : l'approbateur saisit les clients, ouvre l'URL (PKCE + 
     const first = await view(api);
     assert.deepEqual(
       first.channels.map((c: { id: string; state: string }) => [c.id, c.state]),
-      [["gmail", "disconnected"], ["calendar", "disconnected"], ["slack", "disconnected"]],
+      [
+        ["gmail", "disconnected"],
+        ["calendar", "disconnected"],
+        ["slack", "disconnected"],
+      ],
     );
     assert.deepEqual(first.connections, [
       { id: "google", clientId: null, clientConfigured: false, login: null },
@@ -339,7 +356,10 @@ test("poste-canaux/AC-1 : l'approbateur saisit les clients, ouvre l'URL (PKCE + 
 
     // Saisie des identifiants : l'approbateur seul ; sans client, pas de connexion.
     const noClient = await api.call("POST", `${CHANNELS}/google/login`, {});
-    assert.deepEqual([noClient.status, noClient.json.error], [409, "configurez d'abord le client de google dans l'écran Canaux"]);
+    assert.deepEqual(
+      [noClient.status, noClient.json.error],
+      [409, "configurez d'abord le client de google dans l'écran Canaux"],
+    );
     const refused = await api.call("PUT", `${CHANNELS}/google/client`, { json: GOOGLE_CLIENT }, api.admin);
     assert.equal(refused.status, 403);
     assert.equal((await api.call("PUT", `${CHANNELS}/google/client`, { json: GOOGLE_CLIENT }, api.viewer)).status, 403);
@@ -354,8 +374,14 @@ test("poste-canaux/AC-1 : l'approbateur saisit les clients, ouvre l'URL (PKCE + 
       SLACK_CLIENT,
     );
     assert.equal((await api.call("PUT", `${CHANNELS}/inconnu/client`, { clientId: "x" })).status, 404);
-    assert.equal((await api.call("PUT", `${CHANNELS}/slack/client`, { clientId: SLACK_CLIENT, clientSecret: "s" })).status, 400);
-    assert.equal((await api.call("PUT", `${CHANNELS}/google/client`, { json: { web: { client_id: "x" } } })).status, 400);
+    assert.equal(
+      (await api.call("PUT", `${CHANNELS}/slack/client`, { clientId: SLACK_CLIENT, clientSecret: "s" })).status,
+      400,
+    );
+    assert.equal(
+      (await api.call("PUT", `${CHANNELS}/google/client`, { json: { web: { client_id: "x" } } })).status,
+      400,
+    );
 
     // L'URL d'autorisation de Google : PKCE, state, scopes de lecture + brouillons, retour loopback.
     const google = await login(api, "google");
@@ -371,7 +397,15 @@ test("poste-canaux/AC-1 : l'approbateur saisit les clients, ouvre l'URL (PKCE + 
     assert.equal(params.get("access_type"), "offline");
     assert.equal(params.get("prompt"), "consent");
     assert.equal(params.has("include_granted_scopes"), false, "une demande complète n'est pas incrémentale");
-    assert.deepEqual(Object.keys(google.reply.json.login).sort(), ["connection", "error", "expiresAt", "id", "startedAt", "state", "url"]);
+    assert.deepEqual(Object.keys(google.reply.json.login).sort(), [
+      "connection",
+      "error",
+      "expiresAt",
+      "id",
+      "startedAt",
+      "state",
+      "url",
+    ]);
 
     // Le GET rend l'URL à l'approbateur seul.
     assert.equal((await view(api)).connections[0]!.login!.url, google.reply.json.login.url);
@@ -390,7 +424,12 @@ test("poste-canaux/AC-1 : l'approbateur saisit les clients, ouvre l'URL (PKCE + 
     assert.equal(done.json.login.state, "done");
     assert.equal(done.json.login.url, null);
     const exchange = new URLSearchParams(provider.calls.find((call) => call.key === GOOGLE_TOKEN)!.body);
-    assert.equal(createHash("sha256").update(exchange.get("code_verifier") as string).digest("base64url"), params.get("code_challenge"));
+    assert.equal(
+      createHash("sha256")
+        .update(exchange.get("code_verifier") as string)
+        .digest("base64url"),
+      params.get("code_challenge"),
+    );
     assert.deepEqual(
       [exchange.get("grant_type"), exchange.get("code"), exchange.get("redirect_uri"), exchange.get("client_secret")],
       ["authorization_code", "c", "http://127.0.0.1/omp-canaux", GOOGLE_CLIENT.installed.client_secret],
@@ -401,7 +440,9 @@ test("poste-canaux/AC-1 : l'approbateur saisit les clients, ouvre l'URL (PKCE + 
       assert.equal(typeof channel.lastReadAt, "number");
     }
     assert.equal(
-      provider.calls.every((call) => call.key === GOOGLE_TOKEN || call.headers.Authorization === "Bearer ya29.first-access"),
+      provider.calls.every(
+        (call) => call.key === GOOGLE_TOKEN || call.headers.Authorization === "Bearer ya29.first-access",
+      ),
       true,
       "chaque lecture porte le jeton d'accès",
     );
@@ -411,14 +452,27 @@ test("poste-canaux/AC-1 : l'approbateur saisit les clients, ouvre l'URL (PKCE + 
     const sp = slack.url!.searchParams;
     assert.equal(`${slack.url!.origin}${slack.url!.pathname}`, "https://slack.com/oauth/v2/authorize");
     assert.deepEqual(
-      [sp.get("client_id"), sp.get("user_scope"), sp.get("redirect_uri"), sp.has("scope"), sp.get("code_challenge_method")],
+      [
+        sp.get("client_id"),
+        sp.get("user_scope"),
+        sp.get("redirect_uri"),
+        sp.has("scope"),
+        sp.get("code_challenge_method"),
+      ],
       [SLACK_CLIENT, SLACK_SCOPES.join(","), "http://localhost/omp-canaux", false, "S256"],
     );
-    const slackDone = await api.call("POST", `${CHANNELS}/slack/login/answer`, { value: `http://localhost/omp-canaux?code=s&state=${slack.state}` });
+    const slackDone = await api.call("POST", `${CHANNELS}/slack/login/answer`, {
+      value: `http://localhost/omp-canaux?code=s&state=${slack.state}`,
+    });
     assert.equal(slackDone.status, 200, JSON.stringify(slackDone.json));
     const slackExchange = new URLSearchParams(provider.calls.find((call) => call.key === SLACK_TOKEN)!.body);
     assert.equal(slackExchange.has("client_secret"), false, "Slack en PKCE : aucun secret client");
-    assert.equal(createHash("sha256").update(slackExchange.get("code_verifier") as string).digest("base64url"), sp.get("code_challenge"));
+    assert.equal(
+      createHash("sha256")
+        .update(slackExchange.get("code_verifier") as string)
+        .digest("base64url"),
+      sp.get("code_challenge"),
+    );
     const slackChannel = channelOf(await view(api), "slack");
     assert.deepEqual([slackChannel.state, slackChannel.account], ["connected", "moi @ Equipe"]);
 
@@ -442,7 +496,8 @@ test("poste-canaux/AC-1 : l'approbateur saisit les clients, ouvre l'URL (PKCE + 
     ];
     const clean = (where: string, bytes: string | Buffer) => {
       const text = typeof bytes === "string" ? bytes : bytes.toString("latin1");
-      for (const secret of secrets) assert.equal(text.includes(secret), false, `${where} ne contient pas ${secret.slice(0, 8)}…`);
+      for (const secret of secrets)
+        assert.equal(text.includes(secret), false, `${where} ne contient pas ${secret.slice(0, 8)}…`);
     };
     const dbFile = path.join(world.config.dataDir, "harness.sqlite");
     clean("harness.sqlite", fs.readFileSync(dbFile));
@@ -451,7 +506,11 @@ test("poste-canaux/AC-1 : l'approbateur saisit les clients, ouvre l'URL (PKCE + 
     clean("process.env", JSON.stringify(process.env));
     const events = world.store.db.prepare("SELECT type, payload FROM events").all();
     clean("les événements", JSON.stringify(events));
-    assert.equal(events.some((event) => event.type === "workstation_channel"), true, "un événement par changement d'état");
+    assert.equal(
+      events.some((event) => event.type === "workstation_channel"),
+      true,
+      "un événement par changement d'état",
+    );
     const gets = api.routes.filter((route) => route.method === "GET" && !route.path.includes("{"));
     assert.ok(gets.length > 10);
     for (const route of gets) {
@@ -460,7 +519,10 @@ test("poste-canaux/AC-1 : l'approbateur saisit les clients, ouvre l'URL (PKCE + 
     }
 
     // Une connexion n'a pas de route de rappel.
-    assert.equal(api.routes.some((route) => /callback|oauth2callback/i.test(route.path) && route.path.includes("workstation")), false);
+    assert.equal(
+      api.routes.some((route) => /callback|oauth2callback/i.test(route.path) && route.path.includes("workstation")),
+      false,
+    );
     assert.equal(api.routes.filter((route) => route.path.startsWith(CHANNELS)).length, 4);
   } finally {
     await teardown(world, api);
@@ -485,28 +547,53 @@ test("poste-canaux/AC-2 : un scope hors liste, un jeton de bot ou un scope manqu
   e.provider.googleScopes = [...ALL_GOOGLE, `${GOOGLE}gmail.modify`];
   e.channels.setClient("google", { json: GOOGLE_CLIENT }, "t");
   let started = e.channels.startLogin("google", {});
-  await rejectsWith(e.channels.answer("google", { value: back(stateParam(started.login.url)) }), 409, /scope en trop : .*gmail\.modify/);
+  await rejectsWith(
+    e.channels.answer("google", { value: back(stateParam(started.login.url)) }),
+    409,
+    /scope en trop : .*gmail\.modify/,
+  );
   noTokens(e, "google");
   assert.equal(stateOf(e.channels, "gmail").state, "error");
   assert.match(stateOf(e.channels, "gmail").error as string, /gmail\.modify/);
 
   // Slack rend un jeton de bot à la racine.
   e = env();
-  e.provider.slackGrant = { ok: true, access_token: "xoxb-bot", token_type: "bot", bot_user_id: "B1", authed_user: { id: "U1" } };
+  e.provider.slackGrant = {
+    ok: true,
+    access_token: "xoxb-bot",
+    token_type: "bot",
+    bot_user_id: "B1",
+    authed_user: { id: "U1" },
+  };
   e.channels.setClient("slack", { clientId: SLACK_CLIENT }, "t");
   started = e.channels.startLogin("slack", {});
-  await rejectsWith(e.channels.answer("slack", { value: `http://localhost/omp-canaux?code=c&state=${stateParam(started.login.url)}` }), 409, /jeton de bot refusé/);
+  await rejectsWith(
+    e.channels.answer("slack", { value: `http://localhost/omp-canaux?code=c&state=${stateParam(started.login.url)}` }),
+    409,
+    /jeton de bot refusé/,
+  );
   noTokens(e, "slack");
 
   // Slack avec un scope d'écriture en plus.
   e = env();
   e.provider.slackGrant = {
     ok: true,
-    authed_user: { id: "U1", scope: [...SLACK_SCOPES, "chat:write"].join(","), access_token: "xoxe.xoxp-1", token_type: "user", expires_in: 43200, refresh_token: "xoxe-1" },
+    authed_user: {
+      id: "U1",
+      scope: [...SLACK_SCOPES, "chat:write"].join(","),
+      access_token: "xoxe.xoxp-1",
+      token_type: "user",
+      expires_in: 43200,
+      refresh_token: "xoxe-1",
+    },
   };
   e.channels.setClient("slack", { clientId: SLACK_CLIENT }, "t");
   started = e.channels.startLogin("slack", {});
-  await rejectsWith(e.channels.answer("slack", { value: `http://localhost/omp-canaux?code=c&state=${stateParam(started.login.url)}` }), 409, /scope en trop : chat:write/);
+  await rejectsWith(
+    e.channels.answer("slack", { value: `http://localhost/omp-canaux?code=c&state=${stateParam(started.login.url)}` }),
+    409,
+    /scope en trop : chat:write/,
+  );
   noTokens(e, "slack");
 
   // Slack sans rotation des jetons.
@@ -517,7 +604,11 @@ test("poste-canaux/AC-2 : un scope hors liste, un jeton de bot ou un scope manqu
   };
   e.channels.setClient("slack", { clientId: SLACK_CLIENT }, "t");
   started = e.channels.startLogin("slack", {});
-  await rejectsWith(e.channels.answer("slack", { value: `http://localhost/omp-canaux?code=c&state=${stateParam(started.login.url)}` }), 409, /rotation des jetons absente/);
+  await rejectsWith(
+    e.channels.answer("slack", { value: `http://localhost/omp-canaux?code=c&state=${stateParam(started.login.url)}` }),
+    409,
+    /rotation des jetons absente/,
+  );
   noTokens(e, "slack");
 
   // Google n'accorde que l'Agenda : l'Agenda est connecté (sondé), Gmail ne l'est pas et n'est jamais lu.
@@ -532,7 +623,10 @@ test("poste-canaux/AC-2 : un scope hors liste, un jeton de bot ou un scope manqu
   assert.match(stateOf(e.channels, "gmail").error as string, /^scope non accordé : .*gmail\.readonly/);
   assert.equal(e.provider.count("GET gmail.googleapis.com/gmail/v1/users/me/profile"), 0, "Gmail n'est pas sondé");
   const before = e.provider.calls.length;
-  await assert.rejects(e.channels.request("gmail", PROFILE), (err) => err instanceof ChannelUnavailable && err.state === "disconnected");
+  await assert.rejects(
+    e.channels.request("gmail", PROFILE),
+    (err) => err instanceof ChannelUnavailable && err.state === "disconnected",
+  );
   assert.equal(e.provider.calls.length, before, "aucun appel réseau");
 
   // Gmail en lecture sans brouillons ni Agenda : aucun canal demandé n'est couvert.
@@ -540,15 +634,26 @@ test("poste-canaux/AC-2 : un scope hors liste, un jeton de bot ou un scope manqu
   e.provider.googleScopes = [GMAIL_READ];
   e.channels.setClient("google", { json: GOOGLE_CLIENT }, "t");
   started = e.channels.startLogin("google", {});
-  await rejectsWith(e.channels.answer("google", { value: back(stateParam(started.login.url)) }), 409, /scope manquant : .*gmail\.compose/);
+  await rejectsWith(
+    e.channels.answer("google", { value: back(stateParam(started.login.url)) }),
+    409,
+    /scope manquant : .*gmail\.compose/,
+  );
   noTokens(e, "google");
 
   // Pas de jeton de rafraîchissement : refusé.
   e = env();
-  e.provider.queue(GOOGLE_TOKEN, { status: 200, body: { access_token: "ya29.x", expires_in: 3600, scope: ALL_GOOGLE.join(" ") } });
+  e.provider.queue(GOOGLE_TOKEN, {
+    status: 200,
+    body: { access_token: "ya29.x", expires_in: 3600, scope: ALL_GOOGLE.join(" ") },
+  });
   e.channels.setClient("google", { json: GOOGLE_CLIENT }, "t");
   started = e.channels.startLogin("google", {});
-  await rejectsWith(e.channels.answer("google", { value: back(stateParam(started.login.url)) }), 409, /aucun jeton de rafraîchissement rendu/);
+  await rejectsWith(
+    e.channels.answer("google", { value: back(stateParam(started.login.url)) }),
+    409,
+    /aucun jeton de rafraîchissement rendu/,
+  );
   noTokens(e, "google");
 });
 
@@ -591,7 +696,9 @@ test("poste-canaux/AC-3 : le manifeste Slack ne déclare aucun bot, que des scop
 });
 
 test("poste-canaux/AC-4 : un blocage par l'administrateur se dit par canal (page recollée, refus d'échange ou déclaration), connexion partielle comprise, et le poste continue", async () => {
-  const { world, api, provider } = await setup({ "poste-demande": [[{ tool: "workstation_request_report", args: { report: "rien à faire" } }]] });
+  const { world, api, provider } = await setup({
+    "poste-demande": [[{ tool: "workstation_request_report", args: { report: "rien à faire" } }]],
+  });
   const answer = (id: "google" | "slack", body: unknown) => api.call("POST", `${CHANNELS}/${id}/login/answer`, body);
   try {
     await api.call("PUT", `${CHANNELS}/google/client`, { json: GOOGLE_CLIENT });
@@ -600,12 +707,18 @@ test("poste-canaux/AC-4 : un blocage par l'administrateur se dit par canal (page
     // Google : la page d'erreur recollée ; un texte sans code de blocage ni forme de code est refusé.
     await login(api, "google");
     let reply = await answer("google", { value: "Accès bloqué : erreur d'autorisation" });
-    assert.deepEqual([reply.status, reply.json.error], [400, "texte non reconnu : recollez l'URL de retour ou déclarez le blocage"]);
+    assert.deepEqual(
+      [reply.status, reply.json.error],
+      [400, "texte non reconnu : recollez l'URL de retour ou déclarez le blocage"],
+    );
     assert.equal((await view(api)).connections[0]!.login!.state, "waiting");
     assert.equal(channelOf(await view(api), "gmail").state, "disconnected");
     reply = await answer("google", { value: "Error 400: access_not_configured" });
     assert.equal(reply.status, 200);
-    assert.deepEqual(reply.json.channels.map((c: { state: string }) => c.state), ["blocked", "blocked", "disconnected"]);
+    assert.deepEqual(
+      reply.json.channels.map((c: { state: string }) => c.state),
+      ["blocked", "blocked", "disconnected"],
+    );
     assert.equal(provider.count(GOOGLE_TOKEN), 0, "aucun appel au point de jeton");
     await login(api, "google");
     reply = await answer("google", { value: "Erreur 400 : admin_policy_enforced" });
@@ -619,7 +732,10 @@ test("poste-canaux/AC-4 : un blocage par l'administrateur se dit par canal (page
     let slack = await login(api, "slack");
     reply = await answer("slack", { value: `http://localhost/omp-canaux?error=invalid_scope&state=${slack.state}` });
     assert.deepEqual([reply.status, reply.json.error], [409, "refus du fournisseur : invalid_scope"]);
-    assert.deepEqual([channelOf(await view(api), "slack").state, channelOf(await view(api), "slack").error], ["error", "refus du fournisseur : invalid_scope"]);
+    assert.deepEqual(
+      [channelOf(await view(api), "slack").state, channelOf(await view(api), "slack").error],
+      ["error", "refus du fournisseur : invalid_scope"],
+    );
     slack = await login(api, "slack");
     reply = await answer("slack", { value: `http://localhost/omp-canaux?error=unapproved_scope&state=${slack.state}` });
     assert.equal(reply.status, 200);
@@ -653,10 +769,16 @@ test("poste-canaux/AC-4 : un blocage par l'administrateur se dit par canal (page
     reply = await answer("google", { value: back(only.state) });
     assert.equal(reply.status, 200, JSON.stringify(reply.json));
     assert.equal(channelOf(reply.json, "calendar").state, "connected");
-    assert.deepEqual([channelOf(reply.json, "gmail").state, channelOf(reply.json, "gmail").error], ["blocked", BLOCKED]);
+    assert.deepEqual(
+      [channelOf(reply.json, "gmail").state, channelOf(reply.json, "gmail").error],
+      ["blocked", BLOCKED],
+    );
     assert.equal(provider.count("GET gmail.googleapis.com/gmail/v1/users/me/profile"), 0);
     const calls = provider.calls.length;
-    await assert.rejects(world.orchestrator.channels.request("gmail", PROFILE), (err) => err instanceof ChannelUnavailable && err.state === "blocked");
+    await assert.rejects(
+      world.orchestrator.channels.request("gmail", PROFILE),
+      (err) => err instanceof ChannelUnavailable && err.state === "blocked",
+    );
     assert.equal(provider.calls.length, calls, "un canal bloqué ne se lit pas");
   } finally {
     await teardown(world, api);
@@ -671,19 +793,32 @@ test("poste-canaux/AC-4 : un blocage par l'administrateur se dit par canal (page
     await login(fresh.api, "google");
     let reply = await post("google", "login/answer", { blocked: true, channels: ["gmail"] });
     assert.equal(reply.status, 200);
-    assert.deepEqual(reply.json.channels.map((c: { state: string; error: string | null }) => [c.state, c.error === null]), [["blocked", false], ["disconnected", true], ["disconnected", true]]);
+    assert.deepEqual(
+      reply.json.channels.map((c: { state: string; error: string | null }) => [c.state, c.error === null]),
+      [
+        ["blocked", false],
+        ["disconnected", true],
+        ["disconnected", true],
+      ],
+    );
     assert.equal(reply.json.login.state, "failed");
 
     const gmail = await login(fresh.api, "google", { channels: ["gmail"] });
     assert.equal(gmail.url!.searchParams.get("scope"), `${GMAIL_READ} ${GMAIL_COMPOSE}`);
     reply = await post("google", "login/answer", { value: back(gmail.state) });
     assert.equal(reply.status, 200, JSON.stringify(reply.json));
-    assert.deepEqual(reply.json.channels.map((c: { state: string }) => c.state), ["connected", "connected", "disconnected"]);
+    assert.deepEqual(
+      reply.json.channels.map((c: { state: string }) => c.state),
+      ["connected", "connected", "disconnected"],
+    );
 
     const calendar = await login(fresh.api, "google", { channels: ["calendar"] });
     reply = await post("google", "login/answer", { value: `Error 400: admin_policy_enforced ${calendar.state}` });
     assert.equal(reply.status, 200);
-    assert.deepEqual(reply.json.channels.map((c: { state: string }) => c.state), ["connected", "blocked", "disconnected"]);
+    assert.deepEqual(
+      reply.json.channels.map((c: { state: string }) => c.state),
+      ["connected", "blocked", "disconnected"],
+    );
 
     // Les corps refusés.
     for (const body of [{ channels: [] }, { channels: ["slack"] }, { channels: ["gmail", "gmail"] }, { inconnu: 1 }])
@@ -737,7 +872,10 @@ test("poste-canaux/AC-5 : un jeton révoqué passe les canaux à reconnecter san
   assert.equal(typeof read, "number");
   e.clock.now += 2 * 3600 * 1000;
   e.provider.queue(GOOGLE_TOKEN, { status: 400, body: { error: "invalid_grant" } });
-  await assert.rejects(e.channels.request("gmail", PROFILE), (err) => err instanceof ChannelUnavailable && err.state === "reconnect");
+  await assert.rejects(
+    e.channels.request("gmail", PROFILE),
+    (err) => err instanceof ChannelUnavailable && err.state === "reconnect",
+  );
   for (const id of ["gmail", "calendar"] as const) {
     assert.deepEqual([stateOf(e.channels, id).state, stateOf(e.channels, id).lastReadAt], ["reconnect", read]);
     assert.match(stateOf(e.channels, id).error as string, /invalid_grant/);
@@ -745,38 +883,66 @@ test("poste-canaux/AC-5 : un jeton révoqué passe les canaux à reconnecter san
   const calls = e.provider.calls.length;
   for (let index = 0; index < 3; index++) await assert.rejects(e.channels.request("calendar", CALENDAR));
   assert.equal(e.provider.calls.length, calls, "aucune nouvelle tentative");
-  assert.equal(e.logs.some((line) => /invalid_grant/.test(line) && line.startsWith("poste : canal gmail à reconnecter")), true);
-  for (const line of e.logs) assert.doesNotMatch(line, /moi@example|ya29|1\/\//, "un log ne porte que le canal, l'état et un code");
+  assert.equal(
+    e.logs.some((line) => /invalid_grant/.test(line) && line.startsWith("poste : canal gmail à reconnecter")),
+    true,
+  );
+  for (const line of e.logs)
+    assert.doesNotMatch(line, /moi@example|ya29|1\/\//, "un log ne porte que le canal, l'état et un code");
 
   // Une connexion fraîche : la limite de débit n'est pas une panne.
   e = env();
   await connectGoogle(e);
   const key = "GET www.googleapis.com/calendar/v3/calendars/primary";
   e.provider.queue(key, { status: 429, headers: { "retry-after": "7" }, body: {} });
-  await assert.rejects(e.channels.request("calendar", CALENDAR), (err) => err instanceof ChannelRateLimited && err.retryAfterMs === 7000);
+  await assert.rejects(
+    e.channels.request("calendar", CALENDAR),
+    (err) => err instanceof ChannelRateLimited && err.retryAfterMs === 7000,
+  );
   e.provider.queue(key, { status: 403, body: { error: { errors: [{ reason: "rateLimitExceeded" }] } } });
-  await assert.rejects(e.channels.request("calendar", CALENDAR), (err) => err instanceof ChannelRateLimited && err.retryAfterMs === 60000);
+  await assert.rejects(
+    e.channels.request("calendar", CALENDAR),
+    (err) => err instanceof ChannelRateLimited && err.retryAfterMs === 60000,
+  );
   assert.deepEqual([stateOf(e.channels, "calendar").state, stateOf(e.channels, "calendar").error], ["connected", null]);
   e.provider.queue(key, { status: 403, body: { error: { errors: [{ reason: "accessNotConfigured" }] } } });
-  await assert.rejects(e.channels.request("calendar", CALENDAR), (err) => err instanceof ChannelApiError && err.status === 403);
+  await assert.rejects(
+    e.channels.request("calendar", CALENDAR),
+    (err) => err instanceof ChannelApiError && err.status === 403,
+  );
   assert.equal(stateOf(e.channels, "calendar").state, "error");
   assert.equal(stateOf(e.channels, "calendar").error, "GET /calendar/v3/calendars/primary : 403");
   // Un canal en erreur reste lu : la lecture suivante le repasse connecté.
-  assert.deepEqual(await e.channels.request("calendar", CALENDAR), { id: "moi@example.org", summary: "moi@example.org" });
+  assert.deepEqual(await e.channels.request("calendar", CALENDAR), {
+    id: "moi@example.org",
+    summary: "moi@example.org",
+  });
   assert.deepEqual([stateOf(e.channels, "calendar").state, stateOf(e.channels, "calendar").error], ["connected", null]);
 
   // Coupures : l'état, l'erreur et la date de lecture ne bougent pas.
   const profile = "GET gmail.googleapis.com/gmail/v1/users/me/profile";
   const gmail = stateOf(e.channels, "gmail");
   e.provider.queue(profile, "reject");
-  await assert.rejects(e.channels.request("gmail", PROFILE), (err) => err instanceof ChannelNetworkError && err.code === "network");
+  await assert.rejects(
+    e.channels.request("gmail", PROFILE),
+    (err) => err instanceof ChannelNetworkError && err.code === "network",
+  );
   assert.deepEqual(stateOf(e.channels, "gmail"), gmail);
   e.provider.queue(profile, { status: 503, body: {} });
-  await assert.rejects(e.channels.request("gmail", PROFILE), (err) => err instanceof ChannelNetworkError && err.code === "server");
+  await assert.rejects(
+    e.channels.request("gmail", PROFILE),
+    (err) => err instanceof ChannelNetworkError && err.code === "server",
+  );
   assert.deepEqual(stateOf(e.channels, "gmail"), gmail);
-  assert.equal(((await e.channels.request("gmail", PROFILE)) as { emailAddress: string }).emailAddress, "moi@example.org");
+  assert.equal(
+    ((await e.channels.request("gmail", PROFILE)) as { emailAddress: string }).emailAddress,
+    "moi@example.org",
+  );
   e.provider.queue(profile, { status: 200, body: undefined });
-  await assert.rejects(e.channels.request("gmail", PROFILE), (err) => err instanceof ChannelNetworkError && err.code === "invalid_json");
+  await assert.rejects(
+    e.channels.request("gmail", PROFILE),
+    (err) => err instanceof ChannelNetworkError && err.code === "invalid_json",
+  );
 
   // Un renouvellement qui rejette : coupure, puis UN renouvellement qui aboutit.
   e.clock.now += 2 * 3600 * 1000;
@@ -785,9 +951,13 @@ test("poste-canaux/AC-5 : un jeton révoqué passe les canaux à reconnecter san
   await assert.rejects(e.channels.request("gmail", PROFILE), (err) => err instanceof ChannelNetworkError);
   assert.equal(fs.readFileSync(e.file, "utf8"), tokens, "jetons inchangés");
   e.provider.queue(GOOGLE_TOKEN, { status: 503, body: {} });
-  await assert.rejects(e.channels.request("gmail", PROFILE), (err) => err instanceof ChannelNetworkError && err.code === "server");
+  await assert.rejects(
+    e.channels.request("gmail", PROFILE),
+    (err) => err instanceof ChannelNetworkError && err.code === "server",
+  );
   assert.equal(fs.readFileSync(e.file, "utf8"), tokens, "jetons inchangés après un 503");
-  const renewals = () => e.provider.calls.filter((c) => c.key === GOOGLE_TOKEN && c.body.includes("refresh_token")).length;
+  const renewals = () =>
+    e.provider.calls.filter((c) => c.key === GOOGLE_TOKEN && c.body.includes("refresh_token")).length;
   const before = renewals();
   await e.channels.request("gmail", PROFILE);
   assert.equal(renewals(), before + 1);
@@ -796,8 +966,14 @@ test("poste-canaux/AC-5 : un jeton révoqué passe les canaux à reconnecter san
   // Un client OAuth supprimé ou dont le secret a changé : à reconnecter, sans nouvel appel.
   e.clock.now += 2 * 3600 * 1000;
   e.provider.queue(GOOGLE_TOKEN, { status: 401, body: { error: "invalid_client" } });
-  await assert.rejects(e.channels.request("gmail", PROFILE), (err) => err instanceof ChannelUnavailable && err.state === "reconnect");
-  assert.deepEqual(["gmail", "calendar"].map((id) => stateOf(e.channels, id as ChannelId).state), ["reconnect", "reconnect"]);
+  await assert.rejects(
+    e.channels.request("gmail", PROFILE),
+    (err) => err instanceof ChannelUnavailable && err.state === "reconnect",
+  );
+  assert.deepEqual(
+    ["gmail", "calendar"].map((id) => stateOf(e.channels, id as ChannelId).state),
+    ["reconnect", "reconnect"],
+  );
   const after = e.provider.calls.length;
   await assert.rejects(e.channels.request("gmail", PROFILE));
   assert.equal(e.provider.calls.length, after);
@@ -806,10 +982,16 @@ test("poste-canaux/AC-5 : un jeton révoqué passe les canaux à reconnecter san
   e = env();
   await connectSlack(e);
   e.provider.queue("GET slack.com/api/auth.test", { status: 200, body: { ok: false, error: "channel_not_found" } });
-  await assert.rejects(e.channels.request("slack", AUTH_TEST), (err) => err instanceof ChannelApiError && err.code === "channel_not_found");
+  await assert.rejects(
+    e.channels.request("slack", AUTH_TEST),
+    (err) => err instanceof ChannelApiError && err.code === "channel_not_found",
+  );
   assert.deepEqual([stateOf(e.channels, "slack").state, stateOf(e.channels, "slack").error], ["connected", null]);
   e.provider.queue("GET slack.com/api/auth.test", { status: 200, body: { ok: false, error: "missing_scope" } });
-  await assert.rejects(e.channels.request("slack", AUTH_TEST), (err) => err instanceof ChannelApiError && err.code === "missing_scope");
+  await assert.rejects(
+    e.channels.request("slack", AUTH_TEST),
+    (err) => err instanceof ChannelApiError && err.code === "missing_scope",
+  );
   assert.equal(stateOf(e.channels, "slack").state, "error");
   await e.channels.request("slack", AUTH_TEST);
   assert.equal(stateOf(e.channels, "slack").state, "connected");
@@ -823,15 +1005,36 @@ test("poste-canaux/AC-5 : un jeton révoqué passe les canaux à reconnecter san
 });
 
 test("poste-canaux/AC-8 : un jeton échu (date, 401 ou token_expired) est renouvelé une seule fois, le nouveau couple est réécrit en 0600 et la lecture aboutit", async () => {
-  const cases: { channel: ChannelId; request: typeof PROFILE | typeof CALENDAR | typeof AUTH_TEST; key: string; expired: Reply }[] = [
-    { channel: "gmail", request: PROFILE, key: "GET gmail.googleapis.com/gmail/v1/users/me/profile", expired: { status: 401, body: { error: { code: 401 } } } },
-    { channel: "calendar", request: CALENDAR, key: "GET www.googleapis.com/calendar/v3/calendars/primary", expired: { status: 401, body: {} } },
-    { channel: "slack", request: AUTH_TEST, key: "GET slack.com/api/auth.test", expired: { status: 200, body: { ok: false, error: "token_expired" } } },
+  const cases: {
+    channel: ChannelId;
+    request: typeof PROFILE | typeof CALENDAR | typeof AUTH_TEST;
+    key: string;
+    expired: Reply;
+  }[] = [
+    {
+      channel: "gmail",
+      request: PROFILE,
+      key: "GET gmail.googleapis.com/gmail/v1/users/me/profile",
+      expired: { status: 401, body: { error: { code: 401 } } },
+    },
+    {
+      channel: "calendar",
+      request: CALENDAR,
+      key: "GET www.googleapis.com/calendar/v3/calendars/primary",
+      expired: { status: 401, body: {} },
+    },
+    {
+      channel: "slack",
+      request: AUTH_TEST,
+      key: "GET slack.com/api/auth.test",
+      expired: { status: 200, body: { ok: false, error: "token_expired" } },
+    },
   ];
   for (const { channel, request, key, expired } of cases) {
     const slack = channel === "slack";
     const tokenKey = slack ? SLACK_TOKEN : GOOGLE_TOKEN;
-    const renewals = (e: Env) => e.provider.calls.filter((c) => c.key === tokenKey && c.body.includes("grant_type=refresh_token")).length;
+    const renewals = (e: Env) =>
+      e.provider.calls.filter((c) => c.key === tokenKey && c.body.includes("grant_type=refresh_token")).length;
     const make = async () => {
       const e = env();
       await (slack ? connectSlack(e) : connectGoogle(e));
@@ -845,7 +1048,10 @@ test("poste-canaux/AC-8 : un jeton échu (date, 401 ou token_expired) est renouv
     e.clock.now = first.expiresAt - 30_000;
     const results = await Promise.all([e.channels.request(channel, request), e.channels.request(channel, request)]);
     assert.equal(renewals(e), 1, `${channel} : un seul renouvellement pour deux lectures`);
-    assert.equal(results.every((result) => result !== null), true);
+    assert.equal(
+      results.every((result) => result !== null),
+      true,
+    );
     const second = tokensOf(e);
     assert.notEqual(second.access, first.access);
     assert.equal(second.expiresAt > e.clock.now, true);
@@ -875,15 +1081,35 @@ test("poste-canaux/AC-8 : un jeton échu (date, 401 ou token_expired) est renouv
 
 test("poste-canaux/AC-12 : aucune source n'appelle un envoi Gmail ou Slack ; le client des canaux refuse tout point hors liste blanche, hors canal ou d'écriture, sans appel réseau", async () => {
   // -- les sources -------------------------------------------------------------------------------
-  const files = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: ROOT, maxBuffer: 1 << 26 })
+  const files = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+    cwd: ROOT,
+    maxBuffer: 1 << 26,
+  })
     .toString("utf8")
     .split("\0")
-    .filter((file) => file !== "" && !file.startsWith("test/") && !file.endsWith(".md") && fs.existsSync(path.join(ROOT, file)));
+    .filter(
+      (file) =>
+        file !== "" && !file.startsWith("test/") && !file.endsWith(".md") && fs.existsSync(path.join(ROOT, file)),
+    );
   assert.ok(files.length > 100, "les fichiers suivis sont parcourus");
   const banned = [
-    "messages/send", "messages.send", "drafts/send", "drafts.send", "/upload/gmail", "/batch/gmail",
-    "chat.postMessage", "chat.postEphemeral", "chat.scheduleMessage", "chat.update", "chat.delete", "chat.meMessage",
-    "files.upload", "files.getUploadURLExternal", "files.completeUploadExternal", "reactions.add", "users.profile.set",
+    "messages/send",
+    "messages.send",
+    "drafts/send",
+    "drafts.send",
+    "/upload/gmail",
+    "/batch/gmail",
+    "chat.postMessage",
+    "chat.postEphemeral",
+    "chat.scheduleMessage",
+    "chat.update",
+    "chat.delete",
+    "chat.meMessage",
+    "files.upload",
+    "files.getUploadURLExternal",
+    "files.completeUploadExternal",
+    "reactions.add",
+    "users.profile.set",
   ];
   const hosts = ["gmail.googleapis.com", "www.googleapis.com/calendar", "oauth2.googleapis.com", "slack.com/api"];
   const secretFile = /channelsFile|channels\.json/;
@@ -893,7 +1119,8 @@ test("poste-canaux/AC-12 : aucune source n'appelle un envoi Gmail ou Slack ; le 
     const text = bytes.toString("utf8");
     for (const word of banned) assert.equal(text.includes(word), false, `${file} nomme ${word}`);
     if (!file.startsWith("omp-harness/canaux/"))
-      for (const host of hosts) assert.equal(text.includes(host), false, `${file} nomme ${host} hors de omp-harness/canaux/`);
+      for (const host of hosts)
+        assert.equal(text.includes(host), false, `${file} nomme ${host} hors de omp-harness/canaux/`);
     if (!file.startsWith("omp-harness/canaux/") && file !== "omp-harness/config.ts")
       assert.equal(secretFile.test(text), false, `${file} nomme le fichier des canaux`);
   }
@@ -913,11 +1140,18 @@ test("poste-canaux/AC-12 : aucune source n'appelle un envoi Gmail ou Slack ; le 
     for (const name of Object.getOwnPropertyNames(proto)) names.add(name);
   for (const name of names) assert.doesNotMatch(name, /token|secret/i, `Channels expose ${name}`);
   const dump = JSON.stringify(e.channels);
-  for (const secret of ["ya29.first-access", "1//first-refresh", "xoxe.xoxp-first-access", GOOGLE_CLIENT.installed.client_secret])
+  for (const secret of [
+    "ya29.first-access",
+    "1//first-refresh",
+    "xoxe.xoxp-first-access",
+    GOOGLE_CLIENT.installed.client_secret,
+  ])
     assert.equal(dump.includes(secret), false);
 
   // -- la liste blanche ---------------------------------------------------------------------------
-  const writes = ALLOWLIST.filter((entry) => entry.method !== "GET").map((entry) => `${entry.method} ${entry.host}${entry.path}`);
+  const writes = ALLOWLIST.filter((entry) => entry.method !== "GET").map(
+    (entry) => `${entry.method} ${entry.host}${entry.path}`,
+  );
   assert.deepEqual(writes.sort(), [
     "DELETE gmail.googleapis.com/gmail/v1/users/me/drafts/{id}",
     "POST gmail.googleapis.com/gmail/v1/users/me/drafts",
@@ -927,26 +1161,33 @@ test("poste-canaux/AC-12 : aucune source n'appelle un envoi Gmail ou Slack ; le 
   ]);
   for (const entry of ALLOWLIST) {
     if (entry.host === "slack.com" && entry.path !== "/api/oauth.v2.access")
-      assert.match(entry.path.slice(entry.path.lastIndexOf(".") + 1), /^(test|list|info|history|replies|members|messages|conversations|lookupByEmail)$/);
+      assert.match(
+        entry.path.slice(entry.path.lastIndexOf(".") + 1),
+        /^(test|list|info|history|replies|members|messages|conversations|lookupByEmail)$/,
+      );
     const expected =
-      entry.path === "/token" || entry.path === "/api/oauth.v2.access" ? null
-      : entry.host === "gmail.googleapis.com" ? "gmail"
-      : entry.host === "www.googleapis.com" && entry.path.startsWith("/calendar/v3/") ? "calendar"
-      : entry.host === "slack.com" && entry.path.startsWith("/api/") ? "slack"
-      : "?";
+      entry.path === "/token" || entry.path === "/api/oauth.v2.access"
+        ? null
+        : entry.host === "gmail.googleapis.com"
+          ? "gmail"
+          : entry.host === "www.googleapis.com" && entry.path.startsWith("/calendar/v3/")
+            ? "calendar"
+            : entry.host === "slack.com" && entry.path.startsWith("/api/")
+              ? "slack"
+              : "?";
     assert.equal(entry.channel, expected, `${entry.host}${entry.path}`);
   }
 
   // -- les refus, sans appel réseau ----------------------------------------------------------------
   const gmail = "https://gmail.googleapis.com";
-  const drafts = `${gmail}/gmail/v1/users/me/dra` + "fts";
+  const drafts = `${gmail}/gmail/v1/users/me/drafts`;
   const refused: [ChannelId, "GET" | "POST" | "PUT" | "DELETE", string][] = [
-    ["gmail", "POST", `${drafts}/se` + "nd"],
-    ["gmail", "POST", `${gmail}/gmail/v1/users/me/mess` + "ages/send"],
+    ["gmail", "POST", `${drafts}/send`],
+    ["gmail", "POST", `${gmail}/gmail/v1/users/me/messages/send`],
     ["gmail", "POST", `${gmail}/batch/gmail/v1`],
     ["calendar", "POST", "https://www.googleapis.com/batch/calendar/v3"],
     ["slack", "POST", "https://slack.com/api/chat." + "postMessage"],
-    ["gmail", "POST", `${drafts}/abc/se` + "nd"],
+    ["gmail", "POST", `${drafts}/abc/send`],
     ["gmail", "GET", `${drafts}/abc`],
     ["gmail", "DELETE", `${gmail}/gmail/v1/users/me/profile`],
     ["gmail", "GET", "https://evil.exemple.fr/gmail/v1/users/me/profile"],
@@ -960,7 +1201,11 @@ test("poste-canaux/AC-12 : aucune source n'appelle un envoi Gmail ou Slack ; le 
   ];
   const calls = e.provider.calls.length;
   for (const [channel, method, url] of refused)
-    await assert.rejects(e.channels.request(channel, { method, url }), (err) => err instanceof ChannelRefused, `${method} ${url}`);
+    await assert.rejects(
+      e.channels.request(channel, { method, url }),
+      (err) => err instanceof ChannelRefused,
+      `${method} ${url}`,
+    );
   assert.equal(e.provider.calls.length, calls, "aucun appel réseau");
 
   // Un point d'écriture permis (brouillons) atteint le fournisseur : la liste blanche ne l'a pas refusé.
@@ -985,9 +1230,16 @@ test("poste-canaux/AC-12 : aucune source n'appelle un envoi Gmail ou Slack ; le 
     ["slack", "POST", "https://slack.com/api/oauth.v2.access"],
   ];
   for (const [channel, method, url] of mismatches)
-    await assert.rejects(e.channels.request(channel, { method, url }), (err) => err instanceof ChannelRefused && /autre canal/.test(err.message), `${channel} ${url}`);
+    await assert.rejects(
+      e.channels.request(channel, { method, url }),
+      (err) => err instanceof ChannelRefused && /autre canal/.test(err.message),
+      `${channel} ${url}`,
+    );
   assert.equal(e.provider.calls.length, cross, "aucun jeton ne part vers un autre point");
-  await assert.rejects(e.channels.request("gmail", PROFILE), (err) => err instanceof ChannelUnavailable && err.state === "blocked");
+  await assert.rejects(
+    e.channels.request("gmail", PROFILE),
+    (err) => err instanceof ChannelUnavailable && err.state === "blocked",
+  );
   assert.equal(e.provider.calls.length, cross);
 });
 
@@ -995,7 +1247,13 @@ test("poste-canaux/AC-34 : channels.json vit dans le dossier d'état, hors de po
   const e = env();
   await connectGoogle(e);
   await connectSlack(e);
-  const secrets = ["ya29.first-access", "1//first-refresh", "xoxe.xoxp-first-access", "xoxe-first-refresh", GOOGLE_CLIENT.installed.client_secret];
+  const secrets = [
+    "ya29.first-access",
+    "1//first-refresh",
+    "xoxe.xoxp-first-access",
+    "xoxe-first-refresh",
+    GOOGLE_CLIENT.installed.client_secret,
+  ];
   assert.equal(fs.statSync(e.file).mode & 0o777, 0o600);
 
   // (d) Le fichier reste en 0600 après un renouvellement.
@@ -1025,13 +1283,23 @@ test("poste-canaux/AC-34 : channels.json vit dans le dossier d'état, hors de po
   // (b) En systemd : le dossier d'état est caché aux runners, dans le lanceur comme dans sa configuration.
   const example = loadConfig(path.join(ROOT, "omp-harness/deploy/config.example.json"));
   const hiddenIn = (file: string): string[] => {
-    const line = fs.readFileSync(path.join(ROOT, file), "utf8").split("\n").find((l) => l.startsWith("RUNNER_HIDDEN="));
-    return (line as string).replace(/^RUNNER_HIDDEN=/, "").replace(/^"|"$/g, "").split(/\s+/);
+    const line = fs
+      .readFileSync(path.join(ROOT, file), "utf8")
+      .split("\n")
+      .find((l) => l.startsWith("RUNNER_HIDDEN="));
+    return (line as string)
+      .replace(/^RUNNER_HIDDEN=/, "")
+      .replace(/^"|"$/g, "")
+      .split(/\s+/);
   };
   const stateDir = path.dirname(example.channelsFile);
   assert.equal(stateDir, "/var/lib/omp-harness/state");
   for (const file of ["omp-harness/deploy/launcher.conf", "omp-harness/deploy/omp-harness-systemd-run"])
-    assert.equal(hiddenIn(file).some((hidden) => stateDir === hidden || stateDir.startsWith(`${hidden}/`)), true, `${file} cache ${stateDir}`);
+    assert.equal(
+      hiddenIn(file).some((hidden) => stateDir === hidden || stateDir.startsWith(`${hidden}/`)),
+      true,
+      `${file} cache ${stateDir}`,
+    );
   assert.equal(path.dirname(defaultConfig("/x").channelsFile), "/x");
   assert.equal(path.dirname(example.tokenFile), stateDir, "à côté du jeton de l'API");
 

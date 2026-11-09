@@ -28,6 +28,8 @@ struct RootView: View {
     @ObservedObject var notifications: HarnessNotificationCenter
     /// Le poste de travail du même serveur (`server.workstation`) : ses badges.
     @ObservedObject var workstation: WorkstationModel
+    /// Les propositions des signalements de collègues (`server.signals`) : badge d'À traiter.
+    @ObservedObject var signals: CorporateSignalsModel
     /// La vigie du même serveur (`server.vigie`) : le badge de Système quand elle se tait.
     @ObservedObject var vigie: HarnessVigie
     @Environment(\.scenePhase) private var scenePhase
@@ -52,6 +54,7 @@ struct RootView: View {
         self.drafts = drafts
         self.notifications = notifications
         self.workstation = server.workstation
+        self.signals = server.signals
         self.vigie = server.vigie
         _selection = State(initialValue: IOSTabs.tab(from: .section(.inbox), to: selection))
         _state = State(initialValue: state)
@@ -180,10 +183,12 @@ struct RootView: View {
                 await server.load()
                 server.startLive()
             }
-            // L'état du poste et ses envois à approuver (badges, À traiter), et le battement
-            // de la vigie, relus à chaque serveur relié ; le flux de la boîte les tient ensuite à jour.
+            // L'état du poste et ses envois à approuver, les propositions des signalements
+            // (badges, À traiter), et le battement de la vigie, relus à chaque serveur relié ;
+            // le flux de la boîte les tient ensuite à jour.
             .task(id: server.address) {
                 await workstation.refresh()
+                await signals.refresh()
                 await vigie.refresh()
             }
             // Au retour au premier plan, le flux coupé en arrière-plan est rouvert sur une
@@ -195,6 +200,7 @@ struct RootView: View {
                     await server.refresh()
                     server.startLive()
                     await workstation.refresh()
+                    await signals.refresh()
                 }
             }
     }
@@ -232,7 +238,7 @@ struct RootView: View {
     private func badge(for section: ConsoleSection) -> Int {
         IOSTabs.badge(
             of: section,
-            pending: server.inbox?.pendingCount ?? 0,
+            pending: (server.inbox?.pendingCount ?? 0) + signals.pendingCount,
             approvals: workstation.pendingCount,
             vigieSilent: vigie.isSilent
         )

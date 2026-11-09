@@ -3,6 +3,7 @@
 // la recherche sur iPhone (la Mémoire passe sous Système, plus d'onglet « Plus »), la
 // sélection d'une section, ses badges, et les onglets de la page d'une feature.
 
+import ConsoleClient
 import ConsoleCore
 import Testing
 
@@ -75,11 +76,14 @@ struct IOSTabsTests {
         }
     }
 
-    @Test("refonte : la page d'une feature s'ouvre sur ce qu'elle attend, sinon sur son direct quand elle tourne")
+    @Test("refonte : la page d'une feature s'ouvre sur ses preuves quand sa revue attend, sur ce qu'elle attend sinon, sur son direct quand elle tourne")
     func runPageOpensOnTheRightTab() {
-        #expect(IOSRunTab.initial(pending: true, running: true) == .overview)
-        #expect(IOSRunTab.initial(pending: false, running: true) == .live)
-        #expect(IOSRunTab.initial(pending: false, running: false) == .overview)
-        #expect(IOSRunTab.allCases.map(\.session) == [nil, .live, .changes, .tests, .timeline])
+        #expect(IOSRunTab.initial(.proofs) == .proofs)
+        #expect(IOSRunTab.initial(.overview) == .overview)
+        #expect(IOSRunTab.initial(.live) == .live)
+        #expect(IOSRunTab.allCases.map(\.session) == [nil, nil, .live, .changes, .tests, .timeline])
+        // Les Preuves n'ont pas d'onglet quand le serveur ne les sert pas.
+        #expect(IOSRunTab.shown(proofs: false) == [.overview, .live, .changes, .tests, .timeline])
+        #expect(IOSRunTab.shown(proofs: true).contains(.proofs))
     }
 }

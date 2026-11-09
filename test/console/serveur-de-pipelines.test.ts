@@ -142,6 +142,7 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
     ['path: "/v1/push/devices"', "POST", "/v1/push/devices"],
     ['"/v1/push/devices/\\(id)"', "DELETE", "/v1/push/devices/ab12"],
     ['/proofs")', "GET", "/v1/runs/r1/proofs"],
+    ['/proofs/\\(n)")', "GET", "/v1/runs/r1/proofs/1"],
   ];
   for (const [client, method, sample] of calls) {
     assert.ok(model.includes(client), `le client n'appelle plus ${client}`);

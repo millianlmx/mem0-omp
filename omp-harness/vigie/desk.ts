@@ -357,7 +357,7 @@ export class VigieDesk {
     const runIdRaw = bounded(body, "runId", 100, false);
     const run = runIdRaw === null ? null : this.#store.getRun(runIdRaw);
     // Un bug sur un run lancé par la vigie (ou sur sa descendance) revient à l'humain : jamais de boucle.
-    const loop = run !== null && this.#launchedByVigie(run.id);
+    const loop = run !== null && this.launchedByVigie(run.id);
     const incident = this.#store.createVigieIncident({
       fingerprint,
       source,
@@ -397,7 +397,7 @@ export class VigieDesk {
   }
 
   /** Le run a-t-il été lancé par la vigie : sa correction, la descendance de celle-ci, ou créé par son client. */
-  #launchedByVigie(runId: string): boolean {
+  launchedByVigie(runId: string): boolean {
     const heartbeat = this.#heartbeat();
     const parents = new Map<string, string>();
     for (const event of this.#store.eventsOfType("follow_up"))
@@ -622,7 +622,7 @@ export class VigieDesk {
       );
     if (incident.status === "deferred")
       throw new HarnessError(409, `incident rendu à l'humain : ${incident.note ?? "à toi de trancher"}`);
-    if (incident.runId !== null && this.#launchedByVigie(incident.runId)) {
+    if (incident.runId !== null && this.launchedByVigie(incident.runId)) {
       this.#defer(incident, `anti-boucle : le run ${incident.runId} a été lancé par la vigie — à l'humain`);
       throw new HarnessError(409, "anti-boucle : un bug sur un run lancé par la vigie revient à l'humain");
     }
