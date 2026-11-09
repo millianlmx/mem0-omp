@@ -264,4 +264,29 @@ export const MIGRATIONS_SUITE: readonly string[] = [
      bot INTEGER NOT NULL DEFAULT 0,
      updated_at INTEGER NOT NULL
    );`,
+  // Le graphe des personnes du poste (db/people.ts, canaux/personnes.ts) : une personne par
+  // ligne, ses champs, ceux que l'humain a corrigés (figés contre l'alimentation automatique)
+  // et sa révision ; `workstation_person_keys` rattache chaque adresse (`email:…`) et chaque
+  // identifiant Slack (`slack:…`) à UNE personne.
+  `CREATE TABLE workstation_people (
+     id TEXT PRIMARY KEY,
+     name TEXT,
+     emails TEXT NOT NULL DEFAULT '[]',
+     slack_ids TEXT NOT NULL DEFAULT '[]',
+     role TEXT,
+     team TEXT,
+     projects TEXT NOT NULL DEFAULT '[]',
+     tone TEXT,
+     delegation TEXT NOT NULL DEFAULT 'jamais',
+     topics TEXT NOT NULL DEFAULT '[]',
+     corrected TEXT NOT NULL DEFAULT '[]',
+     rev INTEGER NOT NULL DEFAULT 1,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE TABLE workstation_person_keys (
+     key TEXT PRIMARY KEY,
+     person_id TEXT NOT NULL REFERENCES workstation_people (id) ON DELETE CASCADE
+   );
+   CREATE INDEX workstation_person_keys_person ON workstation_person_keys (person_id);`,
 ];

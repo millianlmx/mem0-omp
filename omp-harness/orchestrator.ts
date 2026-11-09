@@ -23,6 +23,7 @@
 // moins de runs vivants, puis l'ancienneté — aucun projet ne prend tous les runners.
 import { Channels } from "./canaux/channels.ts";
 import { ChannelReader } from "./canaux/lecture.ts";
+import { PeopleGraph } from "./canaux/personnes.ts";
 import { AutonomyGates } from "./autonomy-gates.ts";
 import type { WorkKind } from "./autonomy-rules.ts";
 import { Auditor } from "./audits.ts";
@@ -179,6 +180,8 @@ export class Orchestrator {
   readonly channels: Channels;
   /** Le passage de lecture des canaux corpo (contenus gardés en base) et les canaux Slack suivis. */
   readonly channelReader: ChannelReader;
+  /** Le graphe des personnes du poste : alimenté par les canaux lus et les signalements, corrigé par l'humain. */
+  readonly people: PeopleGraph;
   /** Les signalements des collègues et leurs propositions (pont corpo ↔ usine) : `reportSignal` est le point d'entrée des canaux. */
   readonly signals: SignalDesk;
   /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
@@ -258,6 +261,17 @@ export class Orchestrator {
       event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
       log: this.#ctx.log,
       active: () => this.workstation.enabled && !this.workstation.settings().paused,
+    });
+    this.people = new PeopleGraph({
+      store: this.#ctx.store,
+      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
+      self: () => [
+        ...this.workstation.settings().selfIdentities,
+        ...this.channels
+          .view(false)
+          .channels.map((c) => c.account)
+          .filter((a): a is string => a !== null),
+      ],
     });
     this.digest = new DigestSender({
       config: this.#ctx.config,
@@ -541,6 +555,13 @@ export class Orchestrator {
     } catch (err) {
       this.#ctx.log(`lecture des canaux : ${err instanceof Error ? err.name : "inconnu"}`, { level: "error" });
     }
+    // Le graphe des personnes reprend ce que les canaux et les signalements ont gardé depuis.
+    if (this.workstation.enabled)
+      try {
+        this.people.feed();
+      } catch (err) {
+        this.#ctx.log(`graphe des personnes : ${err instanceof Error ? err.name : "inconnu"}`, { level: "error" });
+      }
     this.#admit();
     // Après les runs : un dépôt ne rêve que sur un slot que nul run n'attend.
     this.dreams.tick();

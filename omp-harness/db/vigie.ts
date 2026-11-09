@@ -316,6 +316,21 @@ export class VigieStore extends ObservabilityStore {
       add([row.name, row.real_name, row.email]);
     for (const row of this.selectAll("SELECT name FROM slack_conversations WHERE updated_at >= ?", since))
       add(row.name);
+    // Le graphe des personnes du poste (db/people.ts) : noms, adresses et ce qui est dit d'elles.
+    for (const row of this.selectAll(
+      "SELECT name, emails, slack_ids, role, team, projects, tone, topics FROM workstation_people WHERE updated_at >= ?",
+      since,
+    ))
+      add([
+        row.name,
+        parsed(row.emails),
+        parsed(row.slack_ids),
+        row.role,
+        row.team,
+        parsed(row.projects),
+        row.tone,
+        parsed(row.topics),
+      ]);
     // Le profil établi et les identités de l'utilisateur (réglages du poste), quelle que soit leur date.
     for (const row of this.selectAll("SELECT profile FROM workstation_profiles ORDER BY version DESC LIMIT 1"))
       add(parsed(row.profile));
