@@ -91,6 +91,7 @@ et chaque job de tests en **conteneur frère**, par le socket du moteur :
 | Réseau | celui du compose (mémoire, fournisseurs LLM) | aucun (`--network none`) |
 | Montages | son worktree, le clone en lecture, son HOME, ses clés | son worktree, le clone en lecture |
 | Droits | `--cap-drop ALL`, `no-new-privileges` | `--cap-drop ALL`, `no-new-privileges` |
+| Journal du moteur | aucun (`--log-driver none`) : ni `docker logs` ni `podman logs` ne gardent sa session, que le service lit sur stdout | celui du moteur |
 
 Les clés LLM ne vivent que dans `runner.env`, monté dans les agents et nulle part
 ailleurs. Le service a accès au socket du moteur : avec Docker « rootful », c'est un

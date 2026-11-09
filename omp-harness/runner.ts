@@ -172,6 +172,8 @@ function containerRunnerArgv(
     "run",
     "--rm",
     "-i",
+    // Le moteur ne garde rien de la session (trames RPC, résultats d'outils) : le harness la lit sur stdout.
+    "--log-driver=none",
     "--init",
     `--name=${spec.unit}`,
     "--label=omp-harness=runner",
