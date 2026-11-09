@@ -49,6 +49,8 @@ import { newId } from "./ids.ts";
 import { redact, workstationOwner } from "./session-feed.ts";
 import type { SessionEntry } from "./session-feed.ts";
 import { TAB_KINDS, URL_KINDS, hostListed, hostOf, opaqueQueryParam, parseAgentTabs } from "./workstation-guards.ts";
+import { ACCOUNT_DOMAINS, ACCOUNT_STATES, VPS_BROWSER } from "./browser/vps-policy.ts";
+import type { AccountDomain, AccountState, AccountView } from "./browser/vps-policy.ts";
 
 export type Autonomy = "auto" | "observe" | "propose" | "act";
 export type EffectiveAutonomy = "observe" | "propose" | "act";
@@ -87,6 +89,8 @@ export type BrowserView = {
   firstSeenAt: number;
   extensionVersion: string | null;
   isDefault: boolean;
+  /** Les comptes du navigateur `vps` seulement : leur état, jamais un cookie ni un jeton. */
+  accounts?: AccountView[];
 };
 
 export type ProfileStats = {
@@ -245,6 +249,8 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 const SETTINGS_KEY = "workstation";
+/** L'état des comptes du navigateur `vps` (table `settings`) : domaine → { state, at }. */
+const ACCOUNTS_KEY = "workstation.vps.accounts";
 /** Le temps observé CUMULÉ (il survit à la rétention des observations) et la première observation. */
 const OBSERVED_KEY = "workstation.observed";
 
@@ -308,6 +314,7 @@ export function parseBrowserHello(rawId: unknown, rawLabel: unknown, rawVersion:
   let id: string | null = null;
   if (typeof rawId === "string" && rawId.trim() !== "") {
     if (!BROWSER_ID.test(rawId.trim())) bad("X-OMP-Browser : identifiant de 1 à 64 caractères [A-Za-z0-9_.-] attendu");
+    if (rawId.trim() === VPS_BROWSER) bad("X-OMP-Browser : « vps » est réservé au navigateur du serveur");
     id = rawId.trim();
   }
   let label: string | null = null;
@@ -1065,6 +1072,8 @@ export class Workstation {
   /** Une synthèse du profil demandée depuis une app (`POST …/profile/rebuild`) : l'agent la lance au prochain tour, puis l'efface. */
   profileRequested = false;
   #closed = false;
+  /** Ceux que l'annulation d'une action en cours (arrêt d'urgence, `cancel`) prévient : l'exécuteur du VPS. */
+  readonly #halted = new Set<(seqs: number[] | null) => void>();
 
   constructor(ctx: HarnessContext) {
     this.#ctx = ctx;
@@ -1150,7 +1159,8 @@ export class Workstation {
     const { store } = this.#ctx;
     const chosen = this.settings().defaultBrowser;
     if (chosen !== null && store.getWorkstationBrowser(chosen)) return chosen;
-    return store.listWorkstationBrowsers()[0]?.id ?? null;
+    // Le navigateur du serveur n'est le défaut que si l'approbateur l'a choisi : une extension ancienne (sans identifiant) ne doit jamais tomber sur lui.
+    return store.listWorkstationBrowsers().find((browser) => browser.id !== VPS_BROWSER)?.id ?? null;
   }
 
   /** Un navigateur désigné doit être connu (une extension s'est présentée avec cet identifiant). */
@@ -1193,6 +1203,39 @@ export class Workstation {
     return false;
   }
 
+  /** Le navigateur n'est plus joignable : hors ligne tout de suite (sans attendre `ONLINE_MS`). Il reste connu. */
+  forget(browserId: string): void {
+    this.#presence.delete(browserId);
+  }
+
+  onHalt(listener: (seqs: number[] | null) => void): void {
+    this.#halted.add(listener);
+  }
+
+  /** L'état de chaque compte du navigateur `vps` : non connecté tant que rien ne dit le contraire. */
+  vpsAccounts(): AccountView[] {
+    const stored = this.#ctx.store.getSetting<Record<string, { state?: unknown; at?: unknown }>>(ACCOUNTS_KEY) ?? {};
+    return ACCOUNT_DOMAINS.map((domain) => {
+      const entry = stored[domain];
+      const state = (ACCOUNT_STATES as readonly unknown[]).includes(entry?.state)
+        ? (entry?.state as AccountState)
+        : "disconnected";
+      return { domain, state, changedAt: typeof entry?.at === "number" ? entry.at : null };
+    });
+  }
+
+  /** Pose l'état d'un compte ; un changement émet `workstation_account` (la notification ne part que pour `expired`). */
+  setVpsAccount(domain: AccountDomain, state: AccountState): boolean {
+    const { store } = this.#ctx;
+    return store.transaction(() => {
+      if (this.vpsAccounts().find((account) => account.domain === domain)?.state === state) return false;
+      const stored = store.getSetting<Record<string, unknown>>(ACCOUNTS_KEY) ?? {};
+      store.setSetting(ACCOUNTS_KEY, { ...stored, [domain]: { state, at: Date.now() } }, null);
+      this.#ctx.event("workstation_account", null, { domain, state }, null);
+      return true;
+    });
+  }
+
   /** Les navigateurs connus, du premier vu au dernier. */
   browsers(now = Date.now()): BrowserView[] {
     const fallback = this.defaultBrowserId();
@@ -1204,6 +1247,7 @@ export class Workstation {
       firstSeenAt: row.firstSeenAt,
       extensionVersion: row.version,
       isDefault: row.id === fallback,
+      ...(row.id === VPS_BROWSER ? { accounts: this.vpsAccounts() } : {}),
     }));
   }
 
@@ -1225,10 +1269,12 @@ export class Workstation {
     const effective = effectiveAutonomy(settings.autonomy, observedSeconds, settings.thresholdHours);
     const last = store.lastWorkstationShift();
     const browsers = this.browsers(now);
-    const latest = browsers.reduce<BrowserView | null>(
-      (best, browser) => (best === null || browser.lastSeenAt > best.lastSeenAt ? browser : best),
-      null,
-    );
+    const latest = browsers
+      .filter((browser) => browser.id !== VPS_BROWSER)
+      .reduce<BrowserView | null>(
+        (best, browser) => (best === null || browser.lastSeenAt > best.lastSeenAt ? browser : best),
+        null,
+      );
     const seen = [...this.#presence.values()].reduce<number | null>(
       (max, presence) => (max === null || presence.lastSeenAt > max ? presence.lastSeenAt : max),
       null,
@@ -1694,6 +1740,7 @@ export class Workstation {
     const action = this.getAction(seq);
     const cancelled = this.#cancel(action, `annulée par ${actor.by ?? "un client"}`);
     if (!cancelled) throw new HarnessError(409, `l'action #${seq} a déjà abouti (état ${this.getAction(seq).state})`);
+    for (const listener of [...this.#halted]) listener([seq]);
     return cancelled;
   }
 
@@ -1725,6 +1772,7 @@ export class Workstation {
       return seqs.sort((a, b) => a - b);
     });
     this.#ctx.log(`poste : arrêt d'urgence par ${by}, ${cancelled.length} action(s) annulée(s)`);
+    for (const listener of [...this.#halted]) listener(cancelled);
     return { status: this.status(), cancelled };
   }
 

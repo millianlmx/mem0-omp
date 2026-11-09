@@ -102,6 +102,8 @@ export const EVENT_TYPES = [
   "workstation_request",
   "workstation_automation",
   "workstation_browser",
+  // l'état d'un compte du navigateur `vps` (domaine, état : jamais un cookie)
+  "workstation_account",
   "workstation_channel",
   // la lecture des canaux corpo : un passage a gardé ou retiré des contenus (`{channel, added, removed}`),
   // un canal Slack coché ou décoché comme suivi (`{id, followed}`) ; jamais de contenu

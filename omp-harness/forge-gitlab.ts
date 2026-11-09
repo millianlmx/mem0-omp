@@ -11,8 +11,10 @@ import { HarnessError } from "./errors.ts";
 import type {
   ChangeRequest,
   ChangeState,
+  FailedLog,
   Forge,
   ForgeAuth,
+  ForgeCheck,
   ForgeVisibility,
   Issue,
   IssueComment,
@@ -20,13 +22,15 @@ import type {
   IssueQuery,
   SquashMessage,
 } from "./forge.ts";
-import { failure, record, remoteLocation, textOf, visibilityOf } from "./forge.ts";
+import { failure, isRedCheck, record, remoteLocation, textOf, usefulLogLines, visibilityOf } from "./forge.ts";
 import { glabEnv } from "./policy.ts";
 import type { Exec, ProcResult } from "./proc.ts";
 
 const PR_TIMEOUT_MS = 120_000;
 const ISSUE_TIMEOUT_MS = 60_000;
 const JSON_MAX_BYTES = 8 * 1024 * 1024;
+/** La trace d'un job (`glab api …/trace`) : sa fin seule est gardée au-delà. */
+const LOG_MAX_BYTES = 4 * 1024 * 1024;
 /** GitLab pagine à 100 au plus. */
 const PAGE_MAX = 100;
 
@@ -66,6 +70,18 @@ function mrState(raw: unknown): ChangeState | null {
   if (value.state === "merged") return "MERGED";
   if (value.state === "closed") return "CLOSED";
   return value.state === "opened" || value.state === "locked" ? "OPEN" : null;
+}
+
+/** Le statut d'un job (ou d'un pipeline) GitLab en check : `allowFailure` rend un job rouge neutre, sans bloquer. */
+function glabCheck(name: string, status: unknown, allowFailure: boolean, url: string | null): ForgeCheck {
+  const check = { name, url, required: !allowFailure };
+  if (status === "success") return { ...check, status: "completed", conclusion: "success" };
+  if (status === "failed") return { ...check, status: "completed", conclusion: allowFailure ? "neutral" : "failure" };
+  if (status === "canceled" || status === "canceling")
+    return { ...check, status: "completed", conclusion: "cancelled" };
+  // Un job manuel n'est pas lancé : il n'attend personne.
+  if (status === "skipped" || status === "manual") return { ...check, status: "completed", conclusion: "skipped" };
+  return { ...check, status: status === "running" ? "running" : "pending", conclusion: null };
 }
 
 export class GitLabForge implements Forge {
@@ -193,7 +209,7 @@ export class GitLabForge implements Forge {
     }
   }
 
-  async openChange(change: ChangeRequest, known: string | null): Promise<string | null> {
+  async openChange(change: ChangeRequest, known: string | null, draft = false): Promise<string | null> {
     const created = await this.#run(
       [
         "mr",
@@ -209,6 +225,7 @@ export class GitLabForge implements Forge {
         "--description",
         change.body,
         "--yes",
+        ...(draft ? ["--draft"] : []),
       ],
       PR_TIMEOUT_MS,
     );
@@ -218,6 +235,8 @@ export class GitLabForge implements Forge {
     // Une MR existe déjà pour la branche (merge relancé) : glab ne rend pas son URL, la vue la donne.
     const existing = url ?? (await this.#openMr(change.head))?.url ?? known;
     if (existing === null) throw new HarnessError(502, `glab mr create : ${failure(created)}`);
+    // Une MR existante, sortie du brouillon par un merge précédent : remise en brouillon (sa fusion automatique tombe).
+    if (draft) await this.#run(["mr", "update", change.head, "-R", this.#target(), "--draft"], PR_TIMEOUT_MS);
     return existing;
   }
 
@@ -243,6 +262,48 @@ export class GitLabForge implements Forge {
 
   async changeState(head: string): Promise<ChangeState | null> {
     return (await this.#openMr(head))?.state ?? null;
+  }
+
+  async markReady(head: string): Promise<void> {
+    const ready = await this.#run(["mr", "update", head, "-R", this.#target(), "--ready"], PR_TIMEOUT_MS);
+    if (ready.code !== 0) throw new HarnessError(502, `glab mr update --ready refusé : ${failure(ready)}`);
+  }
+
+  /** Les jobs du dernier pipeline du commit `head` ; sans job, le pipeline lui-même (un YAML refusé n'a aucun job). */
+  async checks(head: string): Promise<ForgeCheck[]> {
+    const pipelines = await this.#api(`pipelines?sha=${encodeURIComponent(head)}&per_page=1`);
+    const pipeline = record(Array.isArray(pipelines) ? pipelines[0] : null);
+    if (!Number.isInteger(pipeline.id)) return [];
+    const jobs = await this.#api(`pipelines/${String(pipeline.id)}/jobs?per_page=${PAGE_MAX}`);
+    const checks = (Array.isArray(jobs) ? jobs : []).map((raw) => {
+      const job = record(raw);
+      return glabCheck(textOf(job.name), job.status, job.allow_failure === true, textOf(job.web_url) || null);
+    });
+    if (checks.length > 0) return checks;
+    return [glabCheck("pipeline", pipeline.status, false, textOf(pipeline.web_url) || null)];
+  }
+
+  async failedLogs(head: string, limit: number): Promise<FailedLog[]> {
+    const project = encodeURIComponent(this.project as string);
+    const failed: FailedLog[] = [];
+    for (const check of (await this.checks(head)).filter(isRedCheck)) {
+      const id = /\/-\/jobs\/(\d+)/.exec(check.url ?? "")?.[1];
+      // La trace d'un job est du texte brut (pas du JSON) : `glab api` la rend telle quelle.
+      const trace =
+        id === undefined
+          ? null
+          : await this.#run(
+              ["api", "--hostname", this.#hostname(), `projects/${project}/jobs/${id}/trace`],
+              PR_TIMEOUT_MS,
+              LOG_MAX_BYTES,
+            );
+      failed.push({
+        name: check.name,
+        url: check.url,
+        log: trace !== null && trace.code === 0 ? usefulLogLines(trace.stdout, limit) : "",
+      });
+    }
+    return failed;
   }
 
   async issues(query: IssueQuery): Promise<Issue[]> {

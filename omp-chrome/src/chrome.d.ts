@@ -163,6 +163,19 @@ declare namespace chrome {
     const onCreated: ChromeEvent<(item: DownloadItem) => void>;
     const onChanged: ChromeEvent<(delta: DownloadDelta) => void>;
   }
+  namespace cookies {
+    interface Cookie {
+      name: string;
+      value: string;
+      domain: string;
+      path: string;
+      secure: boolean;
+      httpOnly: boolean;
+      sameSite?: string;
+      expirationDate?: number;
+    }
+    function getAll(details: { domain: string }): Promise<Cookie[]>;
+  }
 
   namespace idle {
     type IdleState = "active" | "idle" | "locked";

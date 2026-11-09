@@ -1,8 +1,10 @@
 // Les outils hôtes d'un run : ce que le runner appelle et que le SERVICE exécute
 // (`progress`, `oracle_recall`, `decision`, `save_checkpoint`, `set_modules`, `split_feature`,
-// `run_tests`, `review_verdict`, `qa_record_proof`). Le runner n'a ni la base ni le jeton de l'API : tout
-// passe par ici.
+// `run_tests`, `review_verdict`, `qa_record_proof`, et en revue, avec une prévisualisation, les outils de
+// navigation `qa_*` de browser/qa.ts). Le runner n'a ni la base ni le jeton de l'API : tout passe par ici.
 import { baselineSummary } from "./baseline.ts";
+import type { QaPreview } from "./browser/qa.ts";
+import { isQaTool } from "./browser/qa-tools.ts";
 import { buildCard, maskCard } from "./card.ts";
 import { reviewCard } from "./card-reader.ts";
 import type { ReviewedCard } from "./card-reader.ts";
@@ -34,6 +36,8 @@ export type StepState = {
    * passage servi par le cache sur la même clé garde le décompte du passage précédent, issu du flux complet.
    */
   lastTests: { scope: "touched" | "full"; result: HeavyResult } | null;
+  /** La QA de l'étape /review en cours (prévisualisation du worktree et son navigateur), `null` hors /review ou sans `preview`. */
+  qa: QaPreview | null;
 };
 
 /** Le score d'un souvenir de décision humaine à partir duquel il vaut réponse. */
@@ -77,6 +81,13 @@ export async function runHostTool(
   const run = ctx.run(runId);
   const step = state.step;
   if (!step) return { text: "aucune étape en cours", isError: true };
+  // Les outils de navigation de la QA : refusés avant tout accès au navigateur hors /review ou sans prévisualisation.
+  if (isQaTool(name)) {
+    if (step.kind !== "review") return { text: `${name} n'existe qu'en /review`, isError: true };
+    if (state.qa === null)
+      return { text: `${name} : aucune prévisualisation déclarée pour ce dépôt (preview)`, isError: true };
+    return state.qa.tool(name, args);
+  }
   switch (name) {
     case "progress": {
       const message = typeof args.message === "string" ? args.message.slice(0, 500) : "";
@@ -105,7 +116,7 @@ export async function runHostTool(
       return { text: "verdict enregistré. Termine ton tour." };
     }
     case "qa_record_proof":
-      return recordProofTool(ctx, run, step, args);
+      return recordProofTool(ctx, run, step, args, state.qa);
     default:
       return { text: `outil inconnu : ${name}`, isError: true };
   }
@@ -352,12 +363,13 @@ function splitFeatureTool(hooks: StepHooks, run: RunRow, step: StepRow, args: Re
 
 const PROOF_ARGS: readonly string[] = ["kind", "title", "text", "capture", "acRef", "side"];
 
-/** `qa_record_proof` : un log texte joint à la revue. Aucun chemin n'est jamais lu ; aucune capture sans navigateur. */
+/** `qa_record_proof` : un log texte joint à la revue, ou une capture prise par `qa_screenshot` (jamais un chemin). */
 function recordProofTool(
   ctx: HarnessContext,
   run: RunRow,
   step: StepRow,
   args: Record<string, unknown>,
+  qa: QaPreview | null,
 ): HostToolResult {
   const refuse = (reason: string): HostToolResult => ({ text: `qa_record_proof refusé : ${reason}`, isError: true });
   if (step.kind !== "review") return { text: "qa_record_proof n'existe qu'en /review", isError: true };
@@ -365,7 +377,14 @@ function recordProofTool(
   if (unknown !== undefined) return refuse(`argument inconnu « ${unknown} »`);
   if (args.kind === "test_report") return refuse("test_report n'est produit que par le harness");
   if (args.kind === "video") return refuse("aucun outil n'enregistre de vidéo");
-  if (args.kind === "screenshot") return refuse("aucun navigateur pour ce run");
+  if (args.kind === "screenshot") {
+    if (qa === null) return refuse("aucune capture : ce run n'a pas de navigateur de QA");
+    if (typeof args.title !== "string") return refuse("titre vide");
+    const { acRef = null, side = null } = args;
+    if (acRef !== null && typeof acRef !== "string") return refuse("acRef attendu au format AC-n");
+    if (side !== null && side !== "before" && side !== "after") return refuse("side attendu : before ou after");
+    return qa.attach({ capture: args.capture, title: args.title, acRef, side });
+  }
   if (args.kind !== "log") return refuse(`type de preuve inconnu : ${String(args.kind)}`);
   if (typeof args.text !== "string") return refuse("text attendu pour un log");
   if (typeof args.title !== "string") return refuse("titre vide");

@@ -34,6 +34,7 @@ import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import { escalationBatches } from "./queries.ts";
 import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
+import { BROWSER_TOOLS } from "./browser/tools.ts";
 import { intakeView, visibleIntake } from "./intake.ts";
 import { TARGET_KINDS, scheduleInput } from "./schedules.ts";
 
@@ -54,9 +55,9 @@ export type McpCall = {
 
 type JsonRpcId = string | number | null;
 
-type ToolArgs = Record<string, unknown>;
+export type ToolArgs = Record<string, unknown>;
 
-type Tool = {
+export type Tool = {
   name: string;
   title: string;
   description: string;
@@ -67,7 +68,11 @@ type Tool = {
   run: (call: McpCall, args: ToolArgs) => Promise<Record<string, unknown>>;
   /** Le texte rendu à l'agent ; par défaut, le résultat en JSON. */
   render?: (result: Record<string, unknown>) => string;
+  /** Le contenu MCP rendu à la place du texte (une image, par exemple). */
+  content?: (result: Record<string, unknown>) => McpContent[];
 };
+
+export type McpContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
 const REPO_PROPERTY = {
   type: "string",
@@ -775,6 +780,7 @@ export const MCP_TOOLS: readonly Tool[] = [
       return { intake: intakeView(row) };
     },
   },
+  ...BROWSER_TOOLS,
 ];
 
 function rpcError(id: JsonRpcId, code: number, message: string): Record<string, unknown> {
@@ -792,7 +798,9 @@ async function callTool(call: McpCall, params: Record<string, unknown>): Promise
       throw new HarnessError(403, `le rôle ${call.client.role} ne permet pas ${tool.name} (${tool.role} requis)`);
     const result = await tool.run(call, args as ToolArgs);
     return {
-      content: [{ type: "text", text: tool.render?.(result) ?? JSON.stringify(result, null, 2) }],
+      content: tool.content?.(result) ?? [
+        { type: "text", text: tool.render?.(result) ?? JSON.stringify(result, null, 2) },
+      ],
       structuredContent: result,
     };
   } catch (err) {
@@ -843,7 +851,7 @@ export async function handleMcp(message: unknown, call: McpCall): Promise<Record
             capabilities: { tools: { listChanged: false } },
             serverInfo: { name: "omp-harness", title: "OMP harness", version: call.version },
             instructions:
-              "Lis les issues (GitHub ou GitLab) d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority, run_budget, et run_instructions pour lui parler pendant qu'il tourne). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list, et ce qui s'est fait seul (la nuit) avec digest. Planifie un travail récurrent (un run, un audit, la relève des issues d'un label) avec schedule_create, liste-les avec schedules_list, retire-les avec schedule_delete. Confie une demande en une phrase libre avec intake (elle est classée en un plan, rien n'est créé), réponds à sa question de clarification avec intake_answer et confirme son plan avec intake_confirm. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer.",
+              "Lis les issues (GitHub ou GitLab) d'un dépôt déclaré dans le harness et lance des pipelines qui les corrigent, ou lance un run libre (run_start) ; suis-le (run_get, runs_list) et pilote-le (run_cancel, run_priority, run_budget, et run_instructions pour lui parler pendant qu'il tourne). Débloque un run : run_validate pour un run en awaiting_human, run_answer_escalation pour un run escalated, run_retry, run_revert, run_decisions_accept et run_decision_accept. Supervise ce qui attend l'humain avec inbox et escalations_list, et ce qui s'est fait seul (la nuit) avec digest. Planifie un travail récurrent (un run, un audit, la relève des issues d'un label) avec schedule_create, liste-les avec schedules_list, retire-les avec schedule_delete. Confie une demande en une phrase libre avec intake (elle est classée en un plan, rien n'est créé), réponds à sa question de clarification avec intake_answer et confirme son plan avec intake_confirm. Un geste (sauf run_revert) peut porter `rev`, la révision lue par run_get : si le run a changé depuis, il est refusé. Un dépôt absent de la liste du harness est refusé : il faut d'abord le déclarer. Navigue le web sans le Chrome de l'utilisateur : browser_open, browser_snapshot, browser_click, browser_fill, browser_key, browser_screenshot, browser_close.",
           },
         };
       }

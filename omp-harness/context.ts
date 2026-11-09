@@ -35,6 +35,8 @@ import { ActivityPusher, ApnsClient } from "./push.ts";
 import { AlertPusher } from "./push-alerts.ts";
 import { ProofStore, currentRound } from "./proofs.ts";
 import { TestFeeds } from "./test-feed.ts";
+import type { Lookup } from "./browser/guard.ts";
+import type { VpsOptions } from "./browser/vps.ts";
 
 export type SpawnRunner = (
   command: string,
@@ -56,6 +58,10 @@ export type HarnessDeps = {
   /** Le `fetch` des canaux corpo (canaux/) ; absent : celui de la plateforme. Les tests y branchent des doublures. */
   fetch?: ChannelFetch;
   tickMs?: number;
+  /** Tests seulement : la résolution DNS du pré-contrôle des outils `browser_*` (browser/guard.ts). */
+  browserLookup?: Lookup;
+  /** Tests seulement : les réglages de l'exécuteur du VPS (délais courts, adresses de vérification, DNS). */
+  vps?: Partial<Pick<VpsOptions, "lookup" | "probeUrls" | "pollSec" | "retryMs" | "importTtlMs" | "probeEveryMs">>;
 };
 
 /**

@@ -1,0 +1,20 @@
+#!/bin/sh
+# L'entrée de l'image Obscura de la pile : le jeton CDP vient d'un fichier des secrets
+# (écrit par `setup`), Obscura ne le lit que dans OBSCURA_CDP_TOKEN. Les arguments du
+# service (ex. --storage-dir) passent après `serve`. Le jeton n'est jamais affiché.
+set -eu
+
+env_file="${OBSCURA_ENV_FILE:-/run/secrets/obscura/obscura.env}"
+[ -r "$env_file" ] || { echo "✗ jeton CDP introuvable : $env_file" >&2; exit 1; }
+
+set -a
+# shellcheck disable=SC1090
+. "$env_file"
+set +a
+token="${OBSCURA_CDP_TOKEN:-}"
+if [ "${#token}" -lt 32 ]; then
+  echo "✗ jeton CDP absent ou trop court (32 caractères au moins)" >&2
+  exit 1
+fi
+
+exec "${OBSCURA_BIN:-/obscura}" serve --host 0.0.0.0 --port 9222 "$@"

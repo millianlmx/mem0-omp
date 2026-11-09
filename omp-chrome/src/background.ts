@@ -13,6 +13,7 @@
 import { detachAll } from "./cdp.ts";
 import { agentTabIds, agentWindowId, execute } from "./executor.ts";
 import type { ActionOutcome, WorkstationAction } from "./lib/actions.ts";
+import { answerCookieImport } from "./lib/cookie-import.ts";
 import { HarnessError, harnessCall } from "./lib/harness.ts";
 import { INTAKE_KEY, type Intake, settled } from "./lib/intake.ts";
 import type {
@@ -651,6 +652,22 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 chrome.tabs.onCreated.addListener(() => void pushConfig());
 chrome.windows.onRemoved.addListener(() => void pushConfig());
 
+/**
+ * Répond à l'import de cookies que l'appareil approbateur a ouvert pour un domaine (slack.com ou
+ * google.com) : sans import ouvert, rien n'est lu. Ne lève jamais : un échec se retente au tick suivant.
+ */
+async function answerCookies(): Promise<void> {
+  const { pairing: paired, browserLabel } = await loadSettings();
+  if (paired === null) return;
+  try {
+    await answerCookieImport(await identified(paired, browserLabel), chrome.cookies, {
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch {
+    // Le serveur refuse ou ne répond pas : l'import reste ouvert jusqu'à son échéance.
+  }
+}
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== TICK) return;
   void (async () => {
@@ -658,6 +675,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (settings.pairing !== null) await ensureOffscreen().catch(() => undefined);
     await refocus(true);
     await flush();
+    await answerCookies();
   })();
 });
 

@@ -72,6 +72,7 @@ export const DEFAULT_NOTIFY_EVENTS: readonly string[] = [
   "budget_exceeded",
   "daily_budget_reached",
   "workstation_approval",
+  "workstation_account",
   "pilot",
   "backup_failed",
   // La vigie : ce qu'elle rend à l'humain (notificationFor ne dit rien d'autre), et son silence.
@@ -92,6 +93,24 @@ export const PRIVACIES: readonly Privacy[] = ["standard", "local-only"];
 export type ForgeKind = "github" | "gitlab" | "none";
 
 export const FORGES: readonly ForgeKind[] = ["github", "gitlab", "none"];
+
+/** Qui juge la suite complète d'un dépôt : le slot heavy (`local`) ou la CI de sa forge (`ci`). */
+export type TestJudge = "local" | "ci";
+
+export const TEST_JUDGES: readonly TestJudge[] = ["local", "ci"];
+
+/** Le délai par défaut de la CI de la forge, en secondes. */
+export const DEFAULT_CI_TIMEOUT_SEC = 3600;
+
+/** Qui juge la suite complète du dépôt : `local` sauf déclaration. */
+export function testsJudge(repo: Pick<RepoConfig, "tests">): TestJudge {
+  return repo.tests.judge ?? "local";
+}
+
+/** Le délai de la CI de la forge, en secondes. */
+export function ciTimeoutSec(repo: Pick<RepoConfig, "tests">): number {
+  return repo.tests.ciTimeoutSec ?? DEFAULT_CI_TIMEOUT_SEC;
+}
 
 /**
  * Ce qu'une issue d'origine corpo (un signalement d'un collègue) peut contenir, par dépôt :
@@ -170,6 +189,12 @@ export type WorkstationConfig = {
   exfiltrationGuard: boolean;
   /** Les captures d'écran gardées par action, en heures (JPEG tel que capturé). */
   captureRetentionHours: number;
+  /**
+   * Le navigateur du poste sur le VPS (`obscura-poste`, browserId `vps`) : son URL et son jeton
+   * CDP, complétés depuis l'environnement (`OBSCURA_POSTE_CDP_URL`, `OBSCURA_POSTE_CDP_TOKEN`) quand
+   * le fichier ne les donne pas. `url` null : l'exécuteur `vps` ne démarre pas.
+   */
+  vps: { url: string | null; token: string | null };
   /** Le repos entre deux passages de lecture des canaux corpo (Gmail, Agenda, Slack), en minutes. */
   channelReadEveryMin: number;
   /** La veille proactive (job `poste-veille`, canaux/veille.ts). */
@@ -263,9 +288,12 @@ export type RepoConfig = {
   /**
    * Les commandes de test ; `{files}` reçoit les fichiers touchés, cités pour le
    * shell. `pattern` : le glob des fichiers de test (`test/**\/*.test.ts`) qui filtre
-   * `{files}` ; `null` = pas de filtre.
+   * `{files}` ; `null` = pas de filtre. `judge` : qui juge la suite complète — `local`
+   * (défaut) : `full` dans le slot heavy ; `ci` : les checks de la forge du dépôt sur la
+   * branche du run poussée (`full` n'est alors jamais lancé ici), au plus `ciTimeoutSec`
+   * secondes (3600 par défaut). `ci` exige une forge (`github` ou `gitlab`).
    */
-  tests: { touched: string; full: string; pattern: string | null };
+  tests: { touched: string; full: string; pattern: string | null; judge?: TestJudge; ciTimeoutSec?: number };
   /** Les commandes nommées (`{ "lint": "bash scripts/lint.sh" }`) que `run_tests scope:"check"` lance. */
   checks: Record<string, string>;
   /**
@@ -317,6 +345,13 @@ export type RepoConfig = {
    * reçoivent au lieu du jeton global. Absent : le jeton global.
    */
   memory?: { tokenEnv?: string };
+  /**
+   * La prévisualisation de ce dépôt pour la QA de /review (browser/qa.ts) : `command` la lance dans
+   * un conteneur de l'image des tests, sans réseau, depuis le worktree du run (isolation `container`
+   * seulement) ; `port` est celui qu'elle écoute ; `path` sa page d'accueil, capturée d'office ;
+   * `readyTimeoutSec` le temps qu'elle a pour répondre. Absente : pas de QA navigateur.
+   */
+  preview?: { command: string; port: number; path: string; readyTimeoutSec: number };
   /**
    * L'autonomie par paliers (autonomy-rules.ts) : des règles ordonnées, la première qui
    * correspond à un run décide si le serveur lève seul son attente `specs` ou `verdict`.
@@ -440,8 +475,6 @@ export type HarnessConfig = {
    * `gh`, la cadence de relecture de la PR après `gh pr merge --auto` et l'attente
    * maximale de sa fusion (les checks requis de la branche protégée). `crossProvider` :
    * la revue tourne de préférence chez un autre fournisseur que celui qui a implémenté.
-   * `cardReader` : le relecteur « humain pressé » (tier `fast`) relit chaque carte d'escalade
-   * avant qu'elle parte, au plus `cardReaderSec` secondes ; `false` le coupe, son échec ne bloque jamais.
    */
   review: {
     fixCap: number;
@@ -454,8 +487,6 @@ export type HarnessConfig = {
     mergePollSec: number;
     mergeWaitSec: number;
     crossProvider: boolean;
-    cardReader: boolean;
-    cardReaderSec: number;
   };
   /**
    * Le contradicteur : en fin de /req et de /specs, un agent neuf (autre contexte, autre
@@ -544,6 +575,22 @@ export type HarnessConfig = {
    * est notée manquée.
    */
   schedules: { timezone: string; catchUpMin: number };
+  /**
+   * Le navigateur Obscura des outils MCP `browser_*` (omp-harness/browser/). `url` null :
+   * « navigateur non configuré » ; l'URL et le jeton viennent de l'environnement quand le
+   * fichier ne les donne pas (`browserFromEnv`). `allowPrivateNetwork` : développement
+   * seulement, il lève le pré-contrôle du harness sur la boucle locale, les réseaux
+   * privés, link-local et ULA (jamais le tailnet).
+   */
+  browser: {
+    url: string | null;
+    token: string | null;
+    allowPrivateNetwork: boolean;
+    maxContextsPerClient: number;
+    maxContexts: number;
+    idleSec: number;
+    callTimeoutSec: number;
+  };
   repos: RepoConfig[];
 };
 
@@ -653,8 +700,6 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       mergePollSec: 60,
       mergeWaitSec: 7200,
       crossProvider: true,
-      cardReader: true,
-      cardReaderSec: 45,
     },
     challenge: { steps: [...CHALLENGE_STEPS], tier: "heavy" },
     notify: { url: null, targets: [], events: [...DEFAULT_NOTIFY_EVENTS], digestHour: 8, dedupMin: 30 },
@@ -693,6 +738,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       allowedHosts: [],
       exfiltrationGuard: true,
       captureRetentionHours: 24,
+      vps: { url: null, token: null },
       channelReadEveryMin: 5,
       watch: {
         intervalMinutes: 5,
@@ -705,6 +751,15 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     issues: { label: "omp:fix", maxLaunch: 5, pollSec: 900 },
     lanes: { direct: true },
     schedules: { timezone: "Europe/Paris", catchUpMin: 60 },
+    browser: {
+      url: null,
+      token: null,
+      allowPrivateNetwork: false,
+      maxContextsPerClient: 3,
+      maxContexts: 12,
+      idleSec: 600,
+      callTimeoutSec: 30,
+    },
     repos: [],
   };
 }
@@ -801,6 +856,41 @@ function checkPolicy(where: string, policy: ModelPolicy): void {
       }
     }
   }
+}
+
+const PREVIEW_KEYS = ["command", "port", "path", "readyTimeoutSec"];
+
+/** Le port du CDP du navigateur de QA dans l'espace réseau de la prévisualisation (browser/qa.ts). */
+export const QA_CDP_PORT = 9222;
+
+/**
+ * Valide `repos.<nom>.preview` (la prévisualisation de la QA de /review) et complète ses défauts :
+ * `path` = `/`, `readyTimeoutSec` = 60. Un dépôt sans `preview` n'est pas touché.
+ */
+function checkPreview(repo: RepoConfig): void {
+  if (repo.preview === undefined) return;
+  const where = `repos.${repo.name}.preview`;
+  const preview: unknown = repo.preview;
+  if (!isRecord(preview)) fail(`${where} : { command, port, path?, readyTimeoutSec? }`);
+  const unknown = Object.keys(preview).find((key) => !PREVIEW_KEYS.includes(key));
+  if (unknown !== undefined) fail(`${where}.${unknown} : clé inconnue (${PREVIEW_KEYS.join(", ")})`);
+  const { command, port, path: home = "/", readyTimeoutSec = 60 } = preview;
+  if (typeof command !== "string" || command.trim() === "" || /[\n\r]/.test(command) || command.includes("\0"))
+    fail(`${where}.command : commande non vide sur une ligne (lancée par bash -c dans le worktree)`);
+  if (!(Number.isInteger(port) && (port as number) >= 1 && (port as number) <= 65_535))
+    fail(`${where}.port : entier de 1 à 65535`);
+  if (port === QA_CDP_PORT) fail(`${where}.port : ${QA_CDP_PORT} est réservé au navigateur de QA`);
+  if (
+    typeof home !== "string" ||
+    home.length > 512 ||
+    !home.startsWith("/") ||
+    home.startsWith("//") ||
+    /[\s\p{Cc}]/u.test(home)
+  )
+    fail(`${where}.path : chemin /… sans espace, 512 caractères au plus (ex. /)`);
+  if (!(Number.isInteger(readyTimeoutSec) && (readyTimeoutSec as number) >= 1 && (readyTimeoutSec as number) <= 600))
+    fail(`${where}.readyTimeoutSec : entier de 1 à 600 (secondes)`);
+  repo.preview = { command, port: port as number, path: home, readyTimeoutSec: readyTimeoutSec as number };
 }
 
 /** L'instance d'un GitLab : un hôte (`gitlab.client.example`, port permis) ou son URL http(s). */
@@ -943,6 +1033,7 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
       }
     }
     checkRepoAccounts(repo);
+    checkPreview(repo);
   }
   if (!Array.isArray(config.runner.retryBackoffSec) || config.runner.retryBackoffSec.some((s) => !(s >= 0)))
     fail("runner.retryBackoffSec : liste de secondes ≥ 0");
@@ -965,8 +1056,6 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!(config.review.mergePollSec > 0)) fail("review.mergePollSec : secondes > 0");
   if (!(config.review.mergeWaitSec > 0)) fail("review.mergeWaitSec : secondes > 0");
   if (typeof config.review.crossProvider !== "boolean") fail("review.crossProvider : booléen");
-  if (typeof config.review.cardReader !== "boolean") fail("review.cardReader : booléen");
-  if (!(config.review.cardReaderSec > 0)) fail("review.cardReaderSec : secondes > 0");
   if (
     !Array.isArray(config.challenge.steps) ||
     config.challenge.steps.some((step) => !(CHALLENGE_STEPS as readonly string[]).includes(step))
@@ -1061,6 +1150,8 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     if (!isRecord(workstation.policy)) fail("workstation.policy : { models?, providers?, privacy? }");
     checkPolicy("workstation.policy", workstation.policy);
   }
+  if (!isRecord(workstation.vps)) fail("workstation.vps : { url, token }");
+  checkCdpEndpoint("workstation.vps", workstation.vps as { url: string | null; token: string | null });
   if (config.apns !== null) {
     const apns = config.apns;
     if (!isRecord(apns)) fail("apns : { keyFile, keyId, teamId, topic, sandbox } ou null");
@@ -1086,12 +1177,84 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     )
   )
     fail("schedules.catchUpMin : entier de 1 à 10080 (minutes, une semaine au plus)");
+  validateBrowser(config.browser);
   for (const repo of config.repos) {
     if (repo.tests.pattern !== null && typeof repo.tests.pattern !== "string")
       fail(`repos.${repo.name}.tests.pattern : glob ou null`);
+    const { judge, ciTimeoutSec: timeout } = repo.tests;
+    if (judge !== undefined && !TEST_JUDGES.includes(judge))
+      fail(`repos.${repo.name}.tests.judge : ${TEST_JUDGES.map((value) => `"${value}"`).join(" | ")}`);
+    if (timeout !== undefined && !(Number.isInteger(timeout) && timeout >= 1))
+      fail(`repos.${repo.name}.tests.ciTimeoutSec : entier ≥ 1 (secondes)`);
+    // La forge se lit ici dans la configuration seule (forge.ts `forgeKindOf` y ajoute l'URL du distant, lue plus tard).
+    const hasForge =
+      repo.forge !== undefined
+        ? repo.forge !== "none"
+        : repo.gitlab !== undefined || repo.gh !== undefined || repo.merge === "gh";
+    if (judge === "ci" && !hasForge)
+      fail(
+        `repos.${repo.name}.tests.judge : "ci" juge la suite par les checks de la forge — déclare \`forge\` ("github" ou "gitlab") pour ce dépôt, ou garde "local"`,
+      );
     if (!isRecord(repo.checks) || Object.values(repo.checks).some((command) => typeof command !== "string"))
       fail(`repos.${repo.name}.checks : { nom: commande }`);
   }
+  return config;
+}
+
+/** L'adresse et le jeton d'un Obscura : refusés avec un message préfixé `<prefix>.url :` ou `<prefix>.token :`. */
+function checkCdpEndpoint(prefix: string, endpoint: { url: string | null; token: string | null }): void {
+  const { url, token } = endpoint;
+  if (url !== null) {
+    let parsed: URL | null = null;
+    try {
+      parsed = typeof url === "string" ? new URL(url) : null;
+    } catch {
+      parsed = null;
+    }
+    if (parsed === null) fail(`${prefix}.url : URL http:// ou ws:// (réseau interne), ou null`);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "ws:")
+      fail(`${prefix}.url : http:// ou ws:// attendu (réseau interne)`);
+    if (parsed.pathname !== "/" || parsed.search !== "" || parsed.hash !== "" || parsed.username !== "")
+      fail(`${prefix}.url : sans chemin (http://hôte:port)`);
+  }
+  if (token !== null && !(typeof token === "string" && token.length >= 32))
+    fail(`${prefix}.token : 32 caractères au moins, ou null`);
+}
+
+/** Les réglages du navigateur d'Obscura : refusés avec un message préfixé `browser.<clé> :`. */
+function validateBrowser(browser: HarnessConfig["browser"]): void {
+  checkCdpEndpoint("browser", browser);
+  if (typeof browser.allowPrivateNetwork !== "boolean") fail("browser.allowPrivateNetwork : booléen");
+  const integer = (
+    key: "maxContextsPerClient" | "maxContexts" | "idleSec" | "callTimeoutSec",
+    min: number,
+    max: number,
+  ) => {
+    const value = browser[key];
+    if (!(Number.isInteger(value) && value >= min && value <= max)) fail(`browser.${key} : entier de ${min} à ${max}`);
+  };
+  integer("maxContextsPerClient", 1, 20);
+  integer("maxContexts", browser.maxContextsPerClient, 64);
+  integer("idleSec", 1, 86_400);
+  integer("callTimeoutSec", 1, 300);
+}
+
+/**
+ * L'URL et le jeton du navigateur, complétés depuis l'environnement (`OBSCURA_CDP_URL`,
+ * `OBSCURA_CDP_TOKEN`, posés par le service `setup`) quand le fichier ne les donne pas ;
+ * une valeur vide est ignorée. Les réglages sont revalidés.
+ */
+export function browserFromEnv(
+  config: HarnessConfig,
+  env: Record<string, string | undefined> = process.env,
+): HarnessConfig {
+  config.browser.url ??= env.OBSCURA_CDP_URL || null;
+  config.browser.token ??= env.OBSCURA_CDP_TOKEN || null;
+  validateBrowser(config.browser);
+  // Le navigateur du poste (`obscura-poste`) : lu seulement par l'exécuteur `vps`.
+  config.workstation.vps.url ??= env.OBSCURA_POSTE_CDP_URL || null;
+  config.workstation.vps.token ??= env.OBSCURA_POSTE_CDP_TOKEN || null;
+  checkCdpEndpoint("workstation.vps", config.workstation.vps);
   return config;
 }
 
