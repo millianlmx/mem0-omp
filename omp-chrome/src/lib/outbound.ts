@@ -217,6 +217,36 @@ export function sendFingerprint(target: SendTarget): string {
 }
 
 /**
+ * Le texte d'une réponse tel que le serveur et l'extension le comparent : fins de ligne
+ * `\n`, espaces insécables en espaces, sans blancs de fin de ligne, trois retours ou plus
+ * réduits à deux, sans blancs autour. Jamais coupé.
+ */
+export function normalizeReplyText(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * L'empreinte d'une réponse validée, celle que le serveur fige à la validation : SHA-256 hex
+ * de `[destinataires, texte]`, destinataires sans blancs autour, en minuscules, sans doublon
+ * et triés, texte normalisé (`normalizeReplyText`). `null` sans destinataire ou sans texte.
+ */
+export function replyFingerprint(input: { recipients: readonly string[]; text: string }): string | null {
+  const recipients = [...new Set(input.recipients.map((recipient) => recipient.trim().toLowerCase()))]
+    .filter((recipient) => recipient !== "")
+    .sort();
+  const text = normalizeReplyText(input.text);
+  if (recipients.length === 0 || text === "") return null;
+  return sha256Hex(JSON.stringify([recipients, text]));
+}
+
+/**
  * L'approbation portée par l'action : l'empreinte de l'envoi que l'humain a vu. `approval`
  * et `fingerprint` peuvent ARRIVER ABSENTS : Chrome retire les `null` des objets passés à
  * `executeScript` (`args`).
@@ -228,7 +258,14 @@ export type ApprovedGesture = {
 
 export type NeedsApproval = {
   outcome: "needs_approval";
-  approval: { summary: string; recipients: string[]; preview: string; fingerprint: string | null };
+  approval: {
+    summary: string;
+    recipients: string[];
+    preview: string;
+    fingerprint: string | null;
+    /** L'empreinte de la réponse (`replyFingerprint`) : le serveur la compare à celle d'une réponse validée. */
+    replyFingerprint: string | null;
+  };
 };
 
 /**
@@ -242,11 +279,18 @@ export function approvalGate(
   verdict: OutboundVerdict,
   gate: ApprovedGesture,
   fingerprint: string,
+  reply: string | null,
 ): NeedsApproval | null {
   if (!verdict.outbound) return null;
   if (gate.approved === true && fingerprint !== "" && gate.approval?.fingerprint === fingerprint) return null;
   return {
     outcome: "needs_approval",
-    approval: { summary: verdict.summary, recipients: verdict.recipients, preview: verdict.preview, fingerprint },
+    approval: {
+      summary: verdict.summary,
+      recipients: verdict.recipients,
+      preview: verdict.preview,
+      fingerprint,
+      replyFingerprint: reply,
+    },
   };
 }

@@ -21,8 +21,8 @@ import type * as http from "node:http";
 import type { Client, Role } from "./auth.ts";
 import { ClientRegistry, ROLES, allows, canSeeRepo, repoFilter } from "./auth.ts";
 import type { Actor } from "./context.ts";
-import type { ActionState, ClientSource, DecisionStatus, EventRow, RepoFilter } from "./db.ts";
-import { ACTION_STATES, CLIENT_SOURCES } from "./db.ts";
+import type { ActionState, ClientSource, DecisionStatus, EventRow, RepoFilter, SignalState } from "./db.ts";
+import { ACTION_STATES, CLIENT_SOURCES, SIGNAL_STATES } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import {
   budgetInput,
@@ -35,14 +35,16 @@ import {
   stringList,
   text,
 } from "./input.ts";
+import { intakeView, parseIntakeStates, visibleIntake } from "./intake.ts";
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import type { ModelChains, ProviderInput } from "./providers.ts";
 import { PROOF_MIMES } from "./proofs.ts";
 import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS, OAUTH } from "./providers.ts";
-import { escalationBatches, projectsOf } from "./queries.ts";
+import { autonomyValidations, escalationBatches, projectsOf } from "./queries.ts";
 import type { ConfigAdmin } from "./repos.ts";
 import { computeStats } from "./stats.ts";
+import { autonomyProposals } from "./autonomy-learning.ts";
 import { HARNESS_COMMIT } from "./build-info.ts";
 import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
 import type { LogLine } from "./logger.ts";
@@ -54,12 +56,13 @@ import { VIGIE_STATUSES } from "./db.ts";
 import { handleMcp } from "./mcp.ts";
 import { parseLoginInput } from "./browser/vps-login.ts";
 import {
-  APPROVER_ONLY,
   MAX_WAIT_SEC,
   SESSION_JOBS,
+  approverFor,
   parseActionInput,
   parseBrowserHello,
   parseRequestStates,
+  workstationFor,
 } from "./workstation.ts";
 
 export const API_VERSION = 1;
@@ -96,6 +99,10 @@ export const API_FEATURES = [
   "workstation-session",
   "workstation-captures",
   "workstation-files",
+  "workstation-channels",
+  "workstation-channel-reads",
+  "workstation-people",
+  "workstation-watch",
   "workstation-vps",
   "mcp",
   "digest",
@@ -107,8 +114,14 @@ export const API_FEATURES = [
   "prometheus",
   "vigie",
   "push-alerts",
+  "autonomy",
+  "corporate-signals",
+  "intake",
   "proofs",
 ] as const;
+
+/** Le refus d'un geste du poste (ou d'un signalement de collègue) à un client restreint à des dépôts. */
+const OWNER_ONLY = "le poste est réservé au propriétaire";
 
 /** La version du service, lue dans son `package.json`. */
 export const HARNESS_VERSION: string = (() => {
@@ -295,7 +308,7 @@ type Call = {
 };
 
 export type Route = {
-  method: "GET" | "POST" | "PUT" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   role: Role;
   pattern: RegExp;
@@ -345,23 +358,22 @@ export function apiRoutes(
       apis: COMPATIBLE_APIS,
     };
   };
-  /** Le poste de travail est au propriétaire : un client restreint à des dépôts n'y a pas accès. */
-  const workstationOf = (call: Call): Workstation => {
-    if (call.repos !== null) throw new HarnessError(403, "le poste est réservé au propriétaire");
-    if (!orchestrator.workstation.enabled)
-      throw new HarnessError(404, "le poste de travail est désactivé (workstation.enabled)");
-    return orchestrator.workstation;
-  };
+  /** Le poste de travail est au propriétaire (workstation.ts `workstationFor`). */
+  const workstationOf = (call: Call): Workstation => workstationFor(orchestrator.workstation, call.client);
   /**
-   * Approuver, refuser ou régler le poste : l'appareil approbateur seulement. Le jeton du
-   * code ordinaire vit dans `~/.omp/harness.json` et l'extension : une session omp qui le
-   * lit ne doit pas pouvoir trancher ses propres envois.
+   * Les signalements des collègues et l'origine d'un run sont au propriétaire, comme tout le poste : un
+   * client restreint (403) ou pilote (403, la vigie est un agent) n'y a pas accès. Sans le 404 « poste
+   * désactivé » : ils restent lisibles et confirmables quand le poste est coupé.
    */
-  const approverOf = (call: Call): Workstation => {
-    const workstation = workstationOf(call);
-    if (!call.client.approver) throw new HarnessError(403, APPROVER_ONLY);
-    return workstation;
+  const ownerOf = (call: Call, pilotRefusal: string): void => {
+    if (call.repos !== null) throw new HarnessError(403, OWNER_ONLY);
+    if (call.client.pilot) throw new HarnessError(403, pilotRefusal);
   };
+  const READS_SIGNALS = "réservé à l'humain — un client pilote ne lit pas les signalements";
+  const ACTS_ON_SIGNALS = "geste réservé à l'humain — un client pilote ne confirme pas de signalement";
+  const READS_WATCH = "réservé à l'humain — un client pilote ne lit pas la veille du poste";
+  /** Approuver, refuser ou régler le poste : l'appareil approbateur seulement (`approverFor`). */
+  const approverOf = (call: Call): Workstation => approverFor(orchestrator.workstation, call.client);
   /** La présentation de l'extension appelante : son navigateur (`X-OMP-Browser`), son libellé et sa version. */
   const helloOf = (call: Call): BrowserHello =>
     parseBrowserHello(
@@ -447,12 +459,53 @@ export function apiRoutes(
     }),
     route("POST", "/v1/runs", "operator", async (call) => {
       const body = await readBody(call.req);
-      const run = orchestrator.createRun(newRunInput(body, call.client), call.actor);
+      const run = orchestrator.createRun(newRunInput(body, call.client, { typed: true }), call.actor);
       send(call.res, 201, { run }, { ETag: `"${run.rev}"` });
     }),
     route("GET", "/v1/runs/{id}", "viewer", (call) => {
       const view = orchestrator.runView(call.match[1] as string, call.repos);
       send(call.res, 200, view, { ETag: `"${(view.run as { rev: number }).rev}"` });
+    }),
+    // Le pont corpo ↔ usine : les signalements des collègues et leurs propositions (propriétaire seul ;
+    // confirmer et écarter : l'appareil approbateur). L'origine d'un run se lit ici et nulle part ailleurs.
+    route("GET", "/v1/signals", "viewer", (call) => {
+      ownerOf(call, READS_SIGNALS);
+      const asked = (call.url.searchParams.get("state") ?? "proposed").split(",").filter((state) => state !== "");
+      const states = asked.filter((state): state is SignalState =>
+        (SIGNAL_STATES as readonly string[]).includes(state),
+      );
+      if (states.length !== asked.length) throw new HarnessError(400, `state : ${SIGNAL_STATES.join(" | ")}`);
+      send(call.res, 200, { signals: orchestrator.signals.list({ states, limit: limitOf(call.url, 50, 200) }) });
+    }),
+    route("GET", "/v1/signals/{id}", "viewer", (call) => {
+      ownerOf(call, READS_SIGNALS);
+      send(call.res, 200, { signal: orchestrator.signals.get(call.match[1] as string) });
+    }),
+    route("POST", "/v1/signals/{id}/preview", "viewer", async (call) => {
+      ownerOf(call, READS_SIGNALS);
+      send(call.res, 200, await orchestrator.signals.preview(call.match[1] as string, await readBody(call.req)));
+    }),
+    route("POST", "/v1/signals/{id}/confirm", "operator", async (call) => {
+      ownerOf(call, ACTS_ON_SIGNALS);
+      const result = await orchestrator.signals.confirm(
+        call.match[1] as string,
+        await readBody(call.req),
+        call.client,
+        call.actor,
+      );
+      send(call.res, 201, result);
+      void orchestrator.tick();
+    }),
+    route("POST", "/v1/signals/{id}/dismiss", "operator", async (call) => {
+      ownerOf(call, ACTS_ON_SIGNALS);
+      send(call.res, 200, {
+        signal: orchestrator.signals.dismiss(call.match[1] as string, await readBody(call.req), call.client),
+      });
+    }),
+    route("GET", "/v1/runs/{id}/origin", "viewer", (call) => {
+      const id = runId(call);
+      ownerOf(call, READS_SIGNALS);
+      send(call.res, 200, { origin: orchestrator.signals.originOf(id) });
     }),
     route("GET", "/v1/runs/{id}/timeline", "viewer", (call) =>
       send(call.res, 200, orchestrator.timeline(call.match[1] as string, call.repos)),
@@ -656,6 +709,43 @@ export function apiRoutes(
         audit: await orchestrator.audits.cancel(visibleAudit(call, call.match[1] as string).id, call.actor),
       }),
     ),
+    // Les Demandes (intake.ts) : une phrase libre, classée en plan ; rien n'est créé avant `confirm`.
+    route("GET", "/v1/intake", "viewer", (call) =>
+      send(call.res, 200, {
+        intakes: store
+          .listIntakes({
+            states: parseIntakeStates(call.url.searchParams.get("state")),
+            viewer: { repos: call.repos, name: call.client.name },
+            limit: limitOf(call.url, 50, 200),
+          })
+          .map(intakeView),
+      }),
+    ),
+    route("POST", "/v1/intake", "operator", async (call) => {
+      const intake = orchestrator.intake.create(await readBody(call.req), call.client, call.actor);
+      void orchestrator.tick();
+      send(call.res, 201, { intake: intakeView(intake) });
+    }),
+    route("GET", "/v1/intake/{id}", "viewer", (call) =>
+      send(call.res, 200, { intake: intakeView(visibleIntake(store, call.client, call.match[1] as string)) }),
+    ),
+    route("POST", "/v1/intake/{id}/confirm", "operator", async (call) => {
+      const body = await readBody(call.req);
+      const intake = orchestrator.intake.confirm(call.match[1] as string, call.client, call.actor, body);
+      void orchestrator.tick();
+      send(call.res, 201, { intake: intakeView(intake) });
+    }),
+    route("POST", "/v1/intake/{id}/cancel", "operator", async (call) =>
+      send(call.res, 200, {
+        intake: intakeView(await orchestrator.intake.cancel(call.match[1] as string, call.client, call.actor)),
+      }),
+    ),
+    route("POST", "/v1/intake/{id}/answer", "operator", async (call) => {
+      const body = await readBody(call.req);
+      const intake = orchestrator.intake.answer(call.match[1] as string, call.client, call.actor, body);
+      void orchestrator.tick();
+      send(call.res, 200, { intake: intakeView(intake) });
+    }),
     // Le jeton push d'une Live Activity de l'app iOS, pour un run que le client voit.
     route("POST", "/v1/push/activities", "viewer", async (call) => {
       const body = await readBody(call.req);
@@ -737,6 +827,19 @@ export function apiRoutes(
         scheduler: orchestrator.status(call.repos).scheduler,
       }),
     ),
+    // L'autonomie par paliers, en lecture seule : les règles de chaque dépôt visible, ce qui a été validé seul
+    // (avec sa règle et ses preuves) et les propositions de palier. Aucune route n'écrit une règle.
+    route("GET", "/v1/autonomy", "viewer", (call) => {
+      const now = Date.now();
+      const { config } = orchestrator;
+      send(call.res, 200, {
+        repos: config.repos
+          .filter((repo) => call.repos === null || call.repos.includes(repo.name))
+          .map((repo) => ({ repo: repo.name, rules: repo.autonomy?.rules ?? [] })),
+        validations: autonomyValidations(store, config.autonomyLearning.windowDays, now, call.repos),
+        proposals: autonomyProposals(store, config, now, call.repos),
+      });
+    }),
     // Le rapport du matin : ce qui s'est fait seul depuis `since` (epoch ms ; défaut : 24 h).
     route("GET", "/v1/digest", "viewer", (call) => {
       const now = Date.now();
@@ -992,6 +1095,77 @@ export function apiRoutes(
       orchestrator.schedules.unlinkAutomation(removed);
       send(call.res, 200, { removed });
     }),
+    // Les canaux corpo (Gmail, Agenda, Slack) : l'état se lit (propriétaire), la connexion se mène
+    // depuis l'appareil approbateur seul (client OAuth, URL d'autorisation, URL de retour recollée).
+    route("GET", "/v1/workstation/channels", "viewer", (call) => {
+      workstationOf(call);
+      send(call.res, 200, orchestrator.channels.view(call.client.approver));
+    }),
+    route("PUT", "/v1/workstation/channels/{id}/client", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(call.res, 200, orchestrator.channels.setClient(call.match[1] as string, body, call.actor.by));
+    }),
+    route("POST", "/v1/workstation/channels/{id}/login", "operator", async (call) => {
+      approverOf(call);
+      send(call.res, 201, orchestrator.channels.startLogin(call.match[1] as string, await readBody(call.req)));
+    }),
+    route("POST", "/v1/workstation/channels/{id}/login/answer", "operator", async (call) => {
+      approverOf(call);
+      send(call.res, 200, await orchestrator.channels.answer(call.match[1] as string, await readBody(call.req)));
+    }),
+    // La lecture des canaux : les canaux Slack de l'espace (lus en direct) et la case « suivi »,
+    // que la lecture suivante applique (les DM et les mentions sont lus partout).
+    route("GET", "/v1/workstation/channels/slack/conversations", "viewer", async (call) => {
+      workstationOf(call);
+      send(call.res, 200, await orchestrator.channelReader.slackConversations());
+    }),
+    route("PUT", "/v1/workstation/channels/slack/conversations/{id}", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(call.res, 200, orchestrator.channelReader.followSlackConversation(call.match[1] as string, body));
+    }),
+    // Le graphe des personnes du poste : lu par le propriétaire, corrigé champ par champ depuis
+    // l'appareil approbateur (If-Match : la révision de la personne). Pas de PUT de collection.
+    route("GET", "/v1/workstation/people", "viewer", (call) => {
+      workstationOf(call);
+      send(call.res, 200, orchestrator.people.list());
+    }),
+    route("PATCH", "/v1/workstation/people/{id}", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(call.res, 200, orchestrator.people.patch(call.match[1] as string, body, ifMatch(call.req)));
+    }),
+    // La veille proactive du poste : les éléments de « À traiter » (réponses proposées, relances,
+    // préparations, brief), au propriétaire seul et jamais à un client pilote (ce sont des messages
+    // de collègues). `?state=` (défaut `open`, liste séparée par des virgules ; vide : tous).
+    route("GET", "/v1/workstation/watch", "viewer", (call) => {
+      workstationOf(call);
+      if (call.client.pilot) throw new HarnessError(403, READS_WATCH);
+      const states = (call.url.searchParams.get("state") ?? "open").split(",").filter((state) => state !== "");
+      send(call.res, 200, orchestrator.watch.list(states, limitOf(call.url, 100, 500)));
+    }),
+    route("GET", "/v1/workstation/watch/{id}", "viewer", (call) => {
+      workstationOf(call);
+      if (call.client.pilot) throw new HarnessError(403, READS_WATCH);
+      send(call.res, 200, orchestrator.watch.get(call.match[1] as string));
+    }),
+    // La validation des réponses proposées (canaux/reponses.ts) : l'appareil approbateur seul.
+    // Écarter supprime le brouillon Gmail ; valider (texte modifié ou non, `If-Match` facultatif)
+    // met le brouillon à jour, fige l'empreinte et pose la demande du poste qui enverra.
+    route("POST", "/v1/workstation/watch/{id}/dismiss", "operator", async (call) => {
+      approverOf(call);
+      send(call.res, 200, await orchestrator.replies.dismiss(call.match[1] as string));
+    }),
+    route("POST", "/v1/workstation/watch/{id}/validate", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(
+        call.res,
+        201,
+        await orchestrator.replies.validate(call.match[1] as string, body, ifMatch(call.req), call.actor),
+      );
+    }),
     // La vigie (vigie/) : ses réglages (admin), son battement de cœur et ses incidents (son client pilote).
     route("GET", "/v1/vigie", "viewer", (call) => send(call.res, 200, orchestrator.vigie.view(call.repos, Date.now()))),
     route("PUT", "/v1/vigie", "admin", async (call) =>
@@ -1170,10 +1344,17 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     // Les en-têtes partent tout de suite : le client sait son flux ouvert avant le premier événement.
     res.flushHeaders();
     stats.sseClients++;
+    // Un `intake_state` sans dépôt (demande pas encore classée sur un dépôt) va aussi à son
+    // auteur : la règle de lecture de `GET /v1/intake`, au direct comme au rejeu.
+    const authorOf = (event: EventRow): boolean =>
+      event.type === "intake_state" &&
+      event.repo === null &&
+      typeof event.payload.intakeId === "string" &&
+      store.getIntake(event.payload.intakeId)?.createdBy === client.name;
     const visible = (event: EventRow): boolean =>
       (runId === null || event.runId === runId) &&
       (auditId === null || event.payload.auditId === auditId) &&
-      (repos === null || (event.repo !== null && repos.includes(event.repo)));
+      (repos === null || (event.repo !== null && repos.includes(event.repo)) || authorOf(event));
     let closed = false;
     let ping: NodeJS.Timeout | undefined;
     let unsubscribe = (): void => {};
@@ -1254,7 +1435,9 @@ export function createHandler(options: HttpOptions): http.RequestListener {
       } catch {
         pathname = "";
       }
-      const method = ["GET", "POST", "PUT", "DELETE"].includes(req.method ?? "") ? (req.method as string) : "AUTRE";
+      const method = ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(req.method ?? "")
+        ? (req.method as string)
+        : "AUTRE";
       stats.record(routeLabel(pathname), method, res.statusCode, Number(process.hrtime.bigint() - started) / 1e9);
     });
     void (async () => {

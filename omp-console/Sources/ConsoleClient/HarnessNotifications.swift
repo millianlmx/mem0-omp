@@ -6,11 +6,15 @@
 //
 // Le contrat vient du serveur (omp-harness/push-alerts.ts) : catégories `omp.validate`
 // (specs, verdict : Valider / Refuser), `omp.approve` (envoi du poste : Approuver /
-// Refuser), `omp.open` ; `rev` est l'If-Match du geste. Valider, refuser ou approuver
-// écrivent : l'appareil doit être déverrouillé (`authenticationRequired`). Approuver
-// ou refuser un envoi exige le jeton APPROBATEUR déjà au trousseau ; sans lui, ces
-// actions ouvrent l'app sur le Poste au lieu d'agir. Un refus de specs ou de verdict
-// porte sa raison (le serveur l'exige) : sans texte saisi, l'action ouvre l'app.
+// Refuser), `omp.reply` (réponse « prête » de la veille du poste : Valider, qui confie
+// le texte proposé tel quel à l'envoi — `POST /v1/workstation/watch/{watchId}/validate`
+// sans corps ni If-Match), `omp.open` ; `rev` est l'If-Match du geste.
+// Valider, refuser ou approuver écrivent : l'appareil doit être déverrouillé
+// (`authenticationRequired`). Approuver ou refuser un envoi, valider une réponse, exige le
+// jeton APPROBATEUR déjà au trousseau ; sans lui, ces actions ouvrent l'app (le Poste, ou
+// « À traiter ») au lieu d'agir. Une réponse que le serveur refuse de valider ouvre
+// « À traiter ». Un refus de specs ou de verdict porte sa raison (le serveur l'exige) : sans
+// texte saisi, l'action ouvre l'app.
 
 import ConsoleCore
 import Foundation
@@ -19,6 +23,7 @@ import Foundation
 public enum HarnessNotificationCategory: String, CaseIterable, Sendable {
     case validate = "omp.validate"
     case approve = "omp.approve"
+    case reply = "omp.reply"
     case open = "omp.open"
 }
 
@@ -28,6 +33,8 @@ public enum HarnessNotificationAction: String, CaseIterable, Sendable {
     case refuse = "omp.action.refuse"
     case approve = "omp.action.approve"
     case refuseSend = "omp.action.refuseSend"
+    /// Valider une réponse « prête » de la veille, texte proposé tel quel.
+    case validateReply = "omp.action.validateReply"
     case open = "omp.action.open"
 }
 
@@ -52,6 +59,8 @@ public enum HarnessPushKind: String, CaseIterable, Sendable {
     case dailyBudget = "daily_budget"
     case vigieSilent = "vigie_silent"
     case backupFailed = "backup_failed"
+    /// Un élément de la veille proactive du poste dans « À traiter ».
+    case watch
 }
 
 /// Ce qu'une notification porte : des identifiants, jamais de contenu.
@@ -62,12 +71,15 @@ public struct HarnessPushAlert: Equatable, Sendable {
     public var rev: Int?
     /// Le numéro de l'action du poste.
     public var seq: Int?
+    /// L'élément de la veille du poste (`omp.watchId`).
+    public var watchId: String?
 
-    public init(kind: HarnessPushKind, runId: String? = nil, rev: Int? = nil, seq: Int? = nil) {
+    public init(kind: HarnessPushKind, runId: String? = nil, rev: Int? = nil, seq: Int? = nil, watchId: String? = nil) {
         self.kind = kind
         self.runId = runId
         self.rev = rev
         self.seq = seq
+        self.watchId = watchId
     }
 
     /// La charge `omp` d'une notification (APNs ou locale) ; `nil` si elle n'en porte pas.
@@ -79,7 +91,8 @@ public struct HarnessPushAlert: Equatable, Sendable {
             kind: kind,
             runId: omp["runId"] as? String,
             rev: (omp["rev"] as? NSNumber)?.intValue,
-            seq: (omp["seq"] as? NSNumber)?.intValue
+            seq: (omp["seq"] as? NSNumber)?.intValue,
+            watchId: omp["watchId"] as? String
         )
     }
 
@@ -89,6 +102,7 @@ public struct HarnessPushAlert: Equatable, Sendable {
         if let runId { omp["runId"] = runId }
         if let rev { omp["rev"] = rev }
         if let seq { omp["seq"] = seq }
+        if let watchId { omp["watchId"] = watchId }
         return ["omp": omp]
     }
 
@@ -101,7 +115,7 @@ public struct HarnessPushAlert: Equatable, Sendable {
         case .escalation: .inbox(.toDecide)
         case .approval: .section(.workstation)
         case .runFailed, .stalled, .budget: runId.map(HarnessPaletteCommand.run) ?? .section(.inbox)
-        case .dailyBudget: .section(.inbox)
+        case .dailyBudget, .watch: .section(.inbox)
         case .vigieSilent, .backupFailed: .system(.vigie)
         }
     }
@@ -116,6 +130,8 @@ public enum HarnessNotificationGesture: Equatable, Sendable {
     /// Approuver l'envoi du poste à cette révision ; absente : celle de la liste relue.
     case approveSend(seq: Int, revision: Int?)
     case refuseSend(seq: Int, revision: Int?)
+    /// Valider la réponse proposée de la veille, texte tel quel (jeton approbateur).
+    case validateReply(watchId: String)
     /// Ouvrir l'app à cet endroit.
     case open(HarnessPaletteCommand)
 }
@@ -129,6 +145,12 @@ public struct HarnessLocalAlert: Equatable, Sendable {
     public var repo: String?
     /// Le nombre de questions d'une escalade.
     public var questions: Int
+    /// Le nombre de preuves du tour de revue d'un verdict ; `nil` pour un serveur qui ne
+    /// le dit pas (le corps est alors celui d'avant).
+    public var proofs: Int? = nil
+    /// La sorte d'un élément de la veille (`reply`, `followup`, `prep`, `brief`) et s'il est prêt.
+    public var watchKind: String? = nil
+    public var watchReady: Bool = false
 
     /// Le titre, les mêmes mots que l'alerte push du serveur.
     public var title: String {
@@ -143,6 +165,7 @@ public struct HarnessLocalAlert: Equatable, Sendable {
         case .dailyBudget: NotificationText.dailyBudget
         case .vigieSilent: NotificationText.vigieSilent
         case .backupFailed: NotificationText.backupFailed
+        case .watch: NotificationText.watchTitle(kind: watchKind ?? "", ready: watchReady)
         }
     }
 
@@ -153,6 +176,10 @@ public struct HarnessLocalAlert: Equatable, Sendable {
         case .dailyBudget: NotificationText.dailyBudgetBody
         case .vigieSilent: NotificationText.vigieSilentBody
         case .backupFailed: NotificationText.backupFailedBody
+        case .watch: watchKind == "reply" || watchKind == "followup" ? NotificationText.watchSendBody : NotificationText.watchBody
+        case .verdict:
+            NotificationText.runLine(repo: repo ?? "", title: runTitle ?? alert.runId ?? "")
+                + (proofs.map { " · " + NotificationText.proofs($0) } ?? "")
         default: NotificationText.runLine(repo: repo ?? "", title: runTitle ?? alert.runId ?? "")
         }
     }
@@ -160,7 +187,7 @@ public struct HarnessLocalAlert: Equatable, Sendable {
     /// Le regroupement des notifications, comme le `thread-id` du serveur.
     public var thread: String {
         switch alert.kind {
-        case .approval: "workstation"
+        case .approval, .watch: "workstation"
         case .dailyBudget, .vigieSilent, .backupFailed: "server"
         default: alert.runId ?? "server"
         }
@@ -199,6 +226,16 @@ public enum HarnessNotificationRouting {
                 ),
                 open,
             ]
+        case .reply:
+            // Le geste valider de la veille : l'approbateur valide sans ouvrir l'app ; sans
+            // son jeton, le serveur refuserait (403) : l'action ouvre « À traiter ».
+            return [
+                HarnessNotificationActionSpec(
+                    action: .validateReply, title: NotificationText.validate, textInput: false,
+                    authenticationRequired: approver, foreground: !approver, destructive: false
+                ),
+                open,
+            ]
         case .open:
             return [open]
         }
@@ -216,6 +253,7 @@ public enum HarnessNotificationRouting {
         let reason = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let validates = category == HarnessNotificationCategory.validate.rawValue && (alert.kind == .specs || alert.kind == .verdict)
         let approves = category == HarnessNotificationCategory.approve.rawValue && alert.kind == .approval && approver
+        let replies = category == HarnessNotificationCategory.reply.rawValue && alert.kind == .watch && approver
         switch action {
         case .validate:
             guard validates, let runId = alert.runId else { return .open(destination) }
@@ -229,6 +267,9 @@ public enum HarnessNotificationRouting {
         case .refuseSend:
             guard approves, let seq = alert.seq else { return .open(destination) }
             return .refuseSend(seq: seq, revision: alert.rev)
+        case .validateReply:
+            guard replies, let watchId = alert.watchId else { return .open(destination) }
+            return .validateReply(watchId: watchId)
         case .open:
             return .open(destination)
         }
@@ -258,6 +299,19 @@ public enum HarnessNotificationRouting {
         case "daily_budget_reached": kind = .dailyBudget
         case "vigie_silent": kind = .vigieSilent
         case "backup_failed": kind = .backupFailed
+        case "workstation_watch":
+            guard approver, let watch = try? JSONDecoder().decode(WatchRow.self, from: event.data).payload,
+                  watch.state == "open"
+            else { return nil }
+            return HarnessLocalAlert(
+                alert: HarnessPushAlert(kind: .watch, watchId: watch.id),
+                category: watch.kind == "reply" && watch.ready == true ? .reply : .open,
+                eventId: id,
+                repo: nil,
+                questions: 0,
+                watchKind: watch.kind,
+                watchReady: watch.ready == true
+            )
         default: return nil
         }
         let category: HarnessNotificationCategory = switch kind {
@@ -272,7 +326,8 @@ public enum HarnessNotificationRouting {
             category: category,
             eventId: id,
             repo: row.repo,
-            questions: questions
+            questions: questions,
+            proofs: kind == .verdict ? row.payload?.proofs : nil
         )
     }
 }
@@ -283,12 +338,26 @@ private struct StreamRow: Decodable {
         struct Item: Decodable {}
         var seq: Int?
         var items: [Item]?
+        /// Les preuves du tour de revue courant (événement `verdict`).
+        var proofs: Int?
     }
 
     var id: Int?
     var runId: String?
     var repo: String?
     var payload: Payload?
+}
+
+/// Un événement `workstation_watch` du flux : `{id, kind, state, ready}`, rien d'autre.
+private struct WatchRow: Decodable {
+    struct Payload: Decodable {
+        var id: String?
+        var kind: String?
+        var state: String?
+        var ready: Bool?
+    }
+
+    var payload: Payload
 }
 
 /// La passerelle d'Apple qui sert l'appareil : `sandbox` pour une app signée d'un profil
@@ -344,6 +413,8 @@ extension HarnessModel {
             await workstation.decideFromNotification(seq: seq, revision: revision, approve: true)
         case let .refuseSend(seq, revision):
             await workstation.decideFromNotification(seq: seq, revision: revision, approve: false)
+        case let .validateReply(watchId):
+            await watch.validateFromNotification(watchId: watchId)
         case .open:
             false
         }

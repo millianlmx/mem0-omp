@@ -6,6 +6,7 @@
 // - `event` : un événement au journal (ou poussé en direct s'il est éphémère) ;
 // - `transition` : un changement d'état validé par la table de `machine.ts`, écrit
 //   par compare-and-swap, ses événements dans la MÊME transaction SQLite.
+import { Baseline } from "./baseline.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
 import { repoByName } from "./config.ts";
 import type { RunPatch, RunRow, Store } from "./db.ts";
@@ -26,6 +27,7 @@ import { ProviderRegistry } from "./providers.ts";
 import type { RunnerProcess } from "./rpc.ts";
 import { writePipelineOverlay } from "./runner.ts";
 import type { Scheduler } from "./scheduler.ts";
+import type { ChannelFetch } from "./canaux/channels.ts";
 import { Monitor } from "./monitor.ts";
 import { SessionFeeds } from "./session-feed.ts";
 import { ActivityPusher, ApnsClient } from "./push.ts";
@@ -52,6 +54,8 @@ export type HarnessDeps = {
   exec: Exec;
   /** Le journal structuré (logger.ts) ; absent : rien n'est journalisé. */
   log?: LogLine;
+  /** Le `fetch` des canaux corpo (canaux/) ; absent : celui de la plateforme. Les tests y branchent des doublures. */
+  fetch?: ChannelFetch;
   tickMs?: number;
   /** Tests seulement : la résolution DNS du pré-contrôle des outils `browser_*` (browser/guard.ts). */
   browserLookup?: Lookup;
@@ -75,6 +79,8 @@ export class HarnessContext {
   readonly scheduler: Scheduler;
   readonly git: Git;
   readonly heavy: HeavyRunner;
+  /** Le rouge de base : ce que la suite complète de main échoue déjà (un échec connu ne bloque pas). */
+  readonly baseline: Baseline;
   readonly proofs: ProofStore;
   readonly oracle: Oracle;
   readonly spawn: SpawnRunner;
@@ -155,6 +161,14 @@ export class HarnessContext {
     });
     this.tests = new TestFeeds({ publish: (runId, payload) => this.event("test_output", runId, payload) });
     this.heavy.attachOutput(this.tests);
+    this.baseline = new Baseline({
+      config: () => this.config,
+      store: this.store,
+      git: this.git,
+      heavy: this.heavy,
+      log: this.log,
+      event: (runId, payload) => this.event("heavy_baseline", runId, payload),
+    });
     const apns = new ApnsClient({ config: () => this.config.apns, log: this.log });
     this.push = new ActivityPusher({
       store: this.store,
@@ -210,12 +224,14 @@ export class HarnessContext {
    * Applique une transition SI le run est encore dans un des états `expected` (et, si
    * l'acteur en donne une, à la révision qu'il a lue) ; sinon `null`. La table de
    * `machine.ts` est vérifiée d'abord : une transition hors table est un bug, elle lève.
+   * `quiet` : l'autonomie va valider cette attente (autonomy-gates.ts) — `specs_ready` et
+   * `verdict` ne partent pas (elle les publie elle-même si elle y renonce).
    */
   transition(
     run: RunRow,
     transition: Transition,
     expected: readonly RunState[],
-    options: { patch?: RunPatch; actor?: Actor } = {},
+    options: { patch?: RunPatch; actor?: Actor; quiet?: boolean } = {},
   ): RunRow | null {
     assertTransition(expected, transition.state);
     const { store } = this;
@@ -254,7 +270,7 @@ export class HarnessContext {
           })),
         });
       }
-      if (transition.state === "awaiting_human") {
+      if (transition.state === "awaiting_human" && options.quiet !== true) {
         if (transition.step === "specs") this.event("specs_ready", run.id, { reason: transition.reason });
         else
           this.event("verdict", run.id, {

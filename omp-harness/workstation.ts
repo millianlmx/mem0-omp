@@ -17,6 +17,8 @@
 // du client ou l'arrêt du service. Rien ne bloque les autres requêtes.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { REPLY_APPROVER, replyAfterSend, settledReply, validatedSend, watchEvent } from "./canaux/reponses.ts";
+import type { Client } from "./auth.ts";
 import { isRecord } from "./config.ts";
 import type { HarnessConfig } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
@@ -134,7 +136,10 @@ export type ActionInput = {
 export type ResultInput =
   | { outcome: "done"; result: WorkstationAction["result"]; image: string | null }
   | { outcome: "failed"; error: string }
-  | { outcome: "needs_approval"; approval: Pick<Approval, "summary" | "recipients" | "preview" | "fingerprint"> };
+  | {
+      outcome: "needs_approval";
+      approval: Pick<Approval, "summary" | "recipients" | "preview" | "fingerprint" | "replyFingerprint">;
+    };
 
 /** Le dernier contact de l'extension date de moins de 60 s : elle est en ligne. */
 export const ONLINE_MS = 60_000;
@@ -263,6 +268,24 @@ export const REQUEST_CANCELLED = "demande annulée";
 /** Le refus d'un geste d'approbateur (approuver, refuser, régler le poste) à tout autre client. */
 export const APPROVER_ONLY =
   "seul l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut approuver, refuser ou régler le poste";
+
+/** Le poste de travail est au propriétaire : un client restreint à des dépôts n'y a pas accès. */
+export function workstationFor(workstation: Workstation, client: Client): Workstation {
+  if (client.repos !== "*") throw new HarnessError(403, "le poste est réservé au propriétaire");
+  if (!workstation.enabled) throw new HarnessError(404, "le poste de travail est désactivé (workstation.enabled)");
+  return workstation;
+}
+
+/**
+ * Approuver, refuser ou régler le poste : l'appareil approbateur seulement. Le jeton du
+ * code ordinaire vit dans `~/.omp/harness.json` et l'extension : une session omp qui le
+ * lit ne doit pas pouvoir trancher ses propres envois.
+ */
+export function approverFor(workstation: Workstation, client: Client): Workstation {
+  const owned = workstationFor(workstation, client);
+  if (!client.approver) throw new HarnessError(403, APPROVER_ONLY);
+  return owned;
+}
 
 const LEASE_LOST = "l'extension n'a pas rendu le résultat";
 const APPROVAL_EXPIRED = "approbation non donnée à temps : vaut refus";
@@ -638,6 +661,12 @@ export function parseResult(body: Record<string, unknown>): ResultInput {
       (typeof approval.fingerprint !== "string" || !FINGERPRINT.test(approval.fingerprint))
     )
       bad("approval.fingerprint : SHA-256 en hexadécimal (64 caractères) attendu");
+    if (
+      approval.replyFingerprint !== undefined &&
+      approval.replyFingerprint !== null &&
+      (typeof approval.replyFingerprint !== "string" || !FINGERPRINT.test(approval.replyFingerprint))
+    )
+      bad("approval.replyFingerprint : SHA-256 en hexadécimal (64 caractères) attendu");
     return {
       outcome,
       approval: {
@@ -651,6 +680,8 @@ export function parseResult(body: Record<string, unknown>): ResultInput {
         preview: clip(redact(typeof approval.preview === "string" ? approval.preview : ""), MAX_PREVIEW),
         // Telle que reçue : l'extension n'exécute un envoi approuvé que si l'empreinte recalculée est identique.
         fingerprint: typeof approval.fingerprint === "string" ? approval.fingerprint : null,
+        // L'empreinte de la réponse (destinataires et texte complet) : comparée à celle figée à la validation.
+        ...(typeof approval.replyFingerprint === "string" ? { replyFingerprint: approval.replyFingerprint } : {}),
       },
     };
   }
@@ -1324,6 +1355,9 @@ export class Workstation {
       },
       null,
     );
+    // L'envoi d'une réponse validée a abouti (« envoyée ») ou s'est fini sans partir, sa demande close.
+    const reply = replyAfterSend(this.#ctx.store, action, Date.now());
+    if (reply) this.#ctx.event("workstation_watch", null, watchEvent(reply), null);
     if (action.state === "awaiting_approval")
       this.#ctx.event(
         "workstation_approval",
@@ -1622,17 +1656,25 @@ export class Workstation {
         leasedAt: null,
       });
     } else {
-      // La garde d'envoi : seul un message à SOI (destinataires connus, tous à l'utilisateur) repart sans geste humain.
+      // La garde d'envoi : seul un message à SOI (destinataires connus, tous à l'utilisateur) repart
+      // sans geste humain, ou l'envoi de la demande rattachée à une réponse validée dont l'empreinte
+      // (destinataires et texte complet) est STRICTEMENT celle figée à la validation (canaux/reponses.ts).
       const self = isSelfOnly(input.approval.recipients, this.settings().selfIdentities);
+      const reply = this.#ctx.store.transaction(() => {
+        const outcome = validatedSend(this.#ctx.store, action, input.approval.replyFingerprint, Date.now());
+        if (outcome.item) this.#ctx.event("workstation_watch", null, watchEvent(outcome.item), null);
+        return outcome.approved;
+      });
+      const approved = self || reply;
       const approval: Approval = {
         ...input.approval,
-        decidedBy: self ? "soi" : null,
-        decidedAt: self ? Date.now() : null,
+        decidedBy: self ? "soi" : reply ? REPLY_APPROVER : null,
+        decidedAt: approved ? Date.now() : null,
         reason: null,
       };
       updated = this.#transition(seq, ["running"], {
-        state: self ? "queued" : "awaiting_approval",
-        approved: self,
+        state: approved ? "queued" : "awaiting_approval",
+        approved,
         approval,
         leasedAt: null,
       });
@@ -1776,8 +1818,8 @@ export class Workstation {
    * une approbation non donnée après `approvalTtlHours` → `expired` (JAMAIS approuvée) ; une
    * action restée en file aussi longtemps → `expired` (elle ne part pas des jours plus tard) ;
    * un meeting `live` muet depuis `ORPHAN_MEETING_MS` → `ended` (son digest part). Puis, au
-   * plus une fois par heure, la rétention des observations, des transcripts et des résultats
-   * d'actions (vidés, la ligne du journal reste).
+   * plus une fois par heure, la rétention des observations, des transcripts, des résultats
+   * d'actions (vidés, la ligne du journal reste) et des contenus lus des canaux corpo.
    */
   maintain(now = Date.now()): void {
     const config = this.#ctx.config.workstation;
@@ -1809,6 +1851,12 @@ export class Workstation {
       const cleared = store.clearWorkstationResultsBefore(before);
       if (cleared > 0)
         this.#ctx.log(`poste : ${cleared} résultat(s) d'action de plus de ${config.retentionDays} j vidé(s)`);
+      // Les contenus lus des canaux corpo (messages, événements, auteurs Slack) et les éléments de la veille.
+      const read = store.pruneChannelContents(before) + store.pruneWatchItems(before);
+      if (read > 0)
+        this.#ctx.log(
+          `poste : ${read} contenu(s) des canaux ou élément(s) de veille de plus de ${config.retentionDays} j purgé(s)`,
+        );
     }
     // Les captures, à chaque tour : leur rétention se compte en heures.
     store.pruneWorkstationCaptures(now - config.captureRetentionHours * 3_600_000);
@@ -1942,6 +1990,9 @@ export class Workstation {
       { id: request.id, state: request.state, reason: request.reason },
       null,
     );
+    // Une demande close sans que l'envoi de sa réponse parte : « envoi non abouti », revalidable.
+    const settled = settledReply(this.#ctx.store, request, Date.now());
+    if (settled) this.#ctx.event("workstation_watch", null, watchEvent(settled), null);
   }
 
   /** L'erreur d'une action dont la demande est close (annulée ou échouée) ; `null` sinon. */

@@ -84,8 +84,11 @@ export class JournalStore extends RunStore {
       params.push(runId);
     }
     if (repos !== null) {
-      if (repos.length === 0) return [];
-      where.push(`repo IN (${repos.map(() => "?").join(", ")})`);
+      // Un client restreint rejoue aussi les `intake_state` sans dépôt : `visible` (http.ts)
+      // ne garde que ceux dont il est l'auteur.
+      const orphan = "(repo IS NULL AND type = 'intake_state')";
+      if (repos.length === 0) where.push(orphan);
+      else where.push(`(repo IN (${repos.map(() => "?").join(", ")}) OR ${orphan})`);
       params.push(...repos);
     }
     return this.selectAll(
@@ -105,6 +108,16 @@ export class JournalStore extends RunStore {
       params.push(...repos);
     }
     return this.selectAll(`SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY id`, ...params).map(eventOf);
+  }
+
+  /** Le dernier événement d'un type écrit pour ce run, ou `null`. */
+  lastRunEvent(runId: string, type: string): EventRow | null {
+    const row = this.selectOne(
+      "SELECT * FROM events WHERE run_id = ? AND type = ? ORDER BY id DESC LIMIT 1",
+      runId,
+      type,
+    );
+    return row ? eventOf(row) : null;
   }
 
   /** Le dernier identifiant du journal (0 s'il est vide) : le curseur d'un abonnement qui ne veut que la suite. */

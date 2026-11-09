@@ -74,6 +74,20 @@ public final class HarnessModel: ObservableObject {
     /// Le navigateur du serveur du poste (écran Poste du Mac) : import de la session de
     /// Chrome et connexion interactive d'un compte, réservés à l'appareil approbateur.
     public private(set) lazy var serverBrowser = ServerBrowserModel(harness: self)
+    /// Les signalements des collègues devenus propositions, et l'origine d'une feature
+    /// (pont corpo ↔ usine) : même échange, même flux.
+    public private(set) lazy var signals = CorporateSignalsModel(harness: self, reloadDelay: refreshDelay)
+    /// La Demande : une phrase libre classée en plan par le serveur (`/v1/intake*`).
+    public private(set) lazy var intakes = HarnessIntakes(harness: self, reloadDelay: refreshDelay)
+    /// Les canaux corpo du poste (Gmail, Agenda, Slack) : état et connexion, même échange,
+    /// relus à l'événement `workstation_channel`.
+    public private(set) lazy var channels = WorkstationChannelsModel(harness: self, reloadDelay: refreshDelay)
+    /// Le graphe des personnes du poste : liste et correction champ par champ, même échange,
+    /// relu à l'événement `workstation_person`.
+    public private(set) lazy var people = WorkstationPeopleModel(harness: self, reloadDelay: refreshDelay)
+    /// La veille proactive du poste : ses éléments dans « À traiter », relus à l'événement
+    /// `workstation_watch`.
+    public private(set) lazy var watch = WorkstationWatchModel(harness: self, reloadDelay: refreshDelay)
     /// L'historique des features (`GET /v1/runs`), terminées comprises.
     public private(set) lazy var history = HarnessRunsHistory(harness: self)
     /// La vigie (surveillance 24/24 du harness) : réglages, battement, incidents.
@@ -84,6 +98,8 @@ public final class HarnessModel: ObservableObject {
     public private(set) lazy var admin = HarnessAdmin(harness: self)
     /// Les issues des dépôts, lues et corrigées par le MCP du serveur.
     public private(set) lazy var issues = HarnessIssues(harness: self)
+    /// L'autonomie par paliers, en lecture : règles, validations prises seules, propositions.
+    public private(set) lazy var autonomy = HarnessAutonomy(harness: self)
     /// La remontée bornée des erreurs de l'app (contrat C2).
     var reporter: HarnessErrorReporter
     /// Les événements complets du flux, à qui en veut le détail (les notifications
@@ -278,11 +294,17 @@ public final class HarnessModel: ObservableObject {
     private func resetServerState() {
         workstation.reset()
         serverBrowser.reset()
+        signals.reset()
+        intakes.reset()
+        channels.reset()
+        people.reset()
+        watch.reset()
         history.reset()
         vigie.reset()
         schedules.reset()
         admin.reset()
         issues.reset()
+        autonomy.reset()
         reporter.reset()
         health = nil
         healthReached = false
@@ -385,8 +407,14 @@ public final class HarnessModel: ObservableObject {
                         let names = events.map(\.name)
                         scheduleRefresh()
                         workstation.receive(names)
+                        signals.receive(names)
+                        intakes.receive(names)
+                        channels.receive(names)
+                        people.receive(names)
+                        watch.receive(names)
                         vigie.receive(names)
                         schedules.receive(names)
+                        autonomy.receive(names)
                         streamObserver?(events)
                     }
                 }
@@ -559,6 +587,21 @@ public final class HarnessModel: ObservableObject {
     /// Une erreur de transport ou de décodage LÈVE : une clé mal nommée ne passe pas pour un serveur sans preuves.
     public func proofs(runId: String) async throws -> HarnessProofs? {
         try await readIfServed("/v1/runs/\(Self.encoded(runId))/proofs")
+    }
+
+    /// Les octets d'une preuve (capture, journal, rapport de tests), tels que le serveur
+    /// les a enregistrés. `nil` sur un 404 (preuve ou feature inconnue) ; un autre
+    /// statut LÈVE l'échec qu'il dit.
+    public func proofContent(runId: String, n: Int) async throws -> Data? {
+        let call = HarnessCall(method: "GET", path: "/v1/runs/\(Self.encoded(runId))/proofs/\(n)")
+        let reply = try await exchange(call)
+        switch reply.status {
+        case 200: return reply.body
+        case 404: return nil
+        default:
+            let _: HarnessAck = try decode(reply, for: call)
+            throw HarnessFailure.unreadable
+        }
     }
 
     /// Les fichiers touchés par une feature.
@@ -744,7 +787,9 @@ public final class HarnessModel: ObservableObject {
             priority: options.priority,
             lane: options.lane == .full ? HarnessLane.full.rawValue : nil,
             req: options.req,
-            budgetUsd: options.budgetUsd
+            budgetUsd: options.budgetUsd,
+            kind: options.kind?.rawValue,
+            labels: options.labels.isEmpty ? nil : options.labels
         )
         let reply: HarnessRunReply? = await launch("/v1/runs", body: body)
         return reply?.run
@@ -1136,6 +1181,8 @@ private struct RunBody: Encodable {
     var lane: String?
     var req: String?
     var budgetUsd: Double?
+    var kind: String?
+    var labels: [String]?
 }
 
 private struct ProjectBody: Encodable {

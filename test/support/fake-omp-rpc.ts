@@ -5,9 +5,9 @@
 // Ce module n'est pas un fichier de test : le test le lance comme process enfant,
 // à la place du binaire `omp`, avec les arguments que le service a construits.
 //
-// Scénario (FAKE_SCENARIO) : pour chaque étape (`req`, `specs`, `impl`, `review`, `audit`,
+// Scénario (FAKE_SCENARIO) : pour chaque étape (`req`, `specs`, `impl`, `review`, `audit`, `demande`,
 // `pilote`, `fix`, `contradicteur`, `reve`, les jobs du poste `poste-profil`, `poste-digest`,
-// `poste-service`, `poste-demande`, et les sessions de la vigie `vigie-triage`, `vigie-pilote`), une liste d'OCCURRENCES ; chaque occurrence est une liste d'actions :
+// `poste-service`, `poste-demande`, `poste-signal`, `poste-veille`, et les sessions de la vigie `vigie-triage`, `vigie-pilote`), une liste d'OCCURRENCES ; chaque occurrence est une liste d'actions :
 //   { "write": "chemin", "content": "…" }       écrit un fichier du worktree
 //   { "tool": "nom", "args": { … } }            appelle un outil hôte et attend
 //   { "parallel": [{ "tool", "args" }, …] }     appelle ces outils hôtes ensemble (un tour à plusieurs outils)
@@ -15,6 +15,7 @@
 //   { "sleep": 60000 }                          attend (une étape qui dure)
 //   { "frame": { "type": "…", … } }             émet une trame telle quelle (le direct de la session)
 //   { "waitSteer": 15000 }                      attend un message de pilotage (`steer`), au plus ce délai
+//   { "exit": 137 }                             sort du process avec ce code (un runner tué faute de mémoire)
 // Un message de pilotage (`steer`) est journalisé et accepté ; `"steer": "refuse"` au
 // scénario le fait refuser (le runner ne prend pas la consigne).
 // La dernière occurrence se répète. Le compteur d'occurrences vit dans FAKE_STATE
@@ -39,6 +40,7 @@ type Action = {
   frame?: Record<string, unknown>;
   parallel?: { tool: string; args?: Record<string, unknown> }[];
   waitSteer?: number;
+  exit?: number;
 };
 
 const scenario: Record<string, Action[][]> = JSON.parse(fs.readFileSync(process.env.FAKE_SCENARIO as string, "utf8"));
@@ -65,13 +67,13 @@ function stepOf(message: string): string | null {
   const first = message.split("\n")[0] ?? "";
   if (first.startsWith("# /impl --fix")) return "fix";
   const match =
-    /^# \/(req|specs|impl|review|audit|pilote|contradicteur|reve|poste-profil|poste-digest|poste-service|poste-demande|vigie-triage|vigie-pilote)\b/.exec(
+    /^# \/(req|specs|impl|review|audit|demande|pilote|contradicteur|reve|poste-profil|poste-digest|poste-service|poste-demande|poste-signal|poste-veille|vigie-triage|vigie-pilote)\b/.exec(
       first,
     );
   return match ? (match[1] as string) : null;
 }
 
-const waiting = new Map<string, (text: string) => void>();
+const waiting = new Map<string, (text: string, isError: boolean) => void>();
 type LoginScenario = { url?: string; instructions?: string; prompt?: string; code?: string; error?: string };
 /** La commande `login` en cours et la demande d'`input` qu'elle attend. */
 let login: { id: string; provider: string; inputId: string } | null = null;
@@ -85,6 +87,8 @@ function askCode(): void {
 }
 let toolSeq = 0;
 let currentStep = "req";
+/** Le dernier `signalId` lu dans un prompt (la relance d'un nudge ne le répète pas). */
+let signalIdOfStep: string | undefined;
 /** Les messages de pilotage reçus et pas encore attendus par une action `waitSteer`. */
 const steers: string[] = [];
 let steered: (() => void) | null = null;
@@ -126,22 +130,34 @@ log({
   ),
 });
 
-function callTool(name: string, args: Record<string, unknown>): Promise<string> {
+function callTool(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
   const id = `fake-tool-${++toolSeq}`;
   return new Promise((resolve) => {
-    waiting.set(id, resolve);
+    waiting.set(id, (text, isError) => resolve({ text, isError }));
     out({ type: "host_tool_call", id, toolCallId: id, toolName: name, arguments: args });
   });
 }
 
+/** Le `signalId` cité dans le prompt d'un tri de signalement : un scénario statique l'écrit `$signalId`. */
+function fill(value: unknown, signalId: string | undefined): unknown {
+  if (value === "$signalId") return signalId ?? value;
+  if (Array.isArray(value)) return value.map((item) => fill(item, signalId));
+  if (value !== null && typeof value === "object")
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fill(item, signalId)]));
+  return value;
+}
+
 async function runPrompt(id: string, message: string): Promise<void> {
   const step = stepOf(message);
+  const signalId = /signalId: "([^"]+)"/.exec(message)?.[1] ?? signalIdOfStep;
+  if (signalId) signalIdOfStep = signalId;
   if (step) currentStep = step;
   const nudge = message.startsWith("L'étape /");
   const actions = occurrence(nudge ? `${currentStep}-nudge` : currentStep);
   log({ kind: "prompt", step: currentStep, nudge, message });
   for (const action of actions) {
     if (action.sleep) await new Promise((resolve) => setTimeout(resolve, action.sleep));
+    if (action.exit !== undefined) process.exit(action.exit);
     if (action.waitSteer) log({ kind: "steered", step: currentStep, message: await nextSteer(action.waitSteer) });
     if (action.frame) out(action.frame);
     if (action.write) {
@@ -149,14 +165,19 @@ async function runPrompt(id: string, message: string): Promise<void> {
       fs.writeFileSync(action.write, action.content ?? "");
     }
     if (action.tool) {
-      const result = await callTool(action.tool, action.args ?? {});
-      log({ kind: "tool", step: currentStep, tool: action.tool, result });
+      const { text, isError } = await callTool(
+        action.tool,
+        fill(action.args ?? {}, signalId) as Record<string, unknown>,
+      );
+      log({ kind: "tool", step: currentStep, tool: action.tool, result: text, ...(isError ? { isError: true } : {}) });
     }
     if (action.parallel) {
       const calls = action.parallel;
-      const results = await Promise.all(calls.map((call) => callTool(call.tool, call.args ?? {})));
+      const results = await Promise.all(
+        calls.map((call) => callTool(call.tool, fill(call.args ?? {}, signalId) as Record<string, unknown>)),
+      );
       for (const [i, call] of calls.entries()) {
-        log({ kind: "tool", step: currentStep, tool: call.tool, result: results[i] });
+        log({ kind: "tool", step: currentStep, tool: call.tool, result: results[i]?.text });
       }
     }
     if (action.error) {
@@ -197,6 +218,7 @@ lines.on("line", (line) => {
             part.type === "image" ? `[image ${part.mimeType} ${String(part.data?.length ?? 0)}]` : (part.text ?? ""),
           )
           .join("\n"),
+        frame.isError === true,
       );
       waiting.delete(id);
       return;

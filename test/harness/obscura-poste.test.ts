@@ -114,7 +114,7 @@ async function rig(t: { skip(message: string): void }, options: RigOptions = {})
         probeUrls: options.probe ?? {},
         probeEveryMs: 3_600_000,
       },
-      log: (line, fields) => logs.push(`${line} ${JSON.stringify(fields ?? {})}`),
+      harnessLog: (line, fields) => logs.push(`${line} ${JSON.stringify(fields ?? {})}`),
     },
   );
   const clients = new ClientRegistry(path.join(tmpdir("obscura-poste-"), "clients.json"));

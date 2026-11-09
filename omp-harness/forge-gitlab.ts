@@ -13,13 +13,14 @@ import type {
   ChangeState,
   Forge,
   ForgeAuth,
+  ForgeVisibility,
   Issue,
   IssueComment,
   IssueDetail,
   IssueQuery,
   SquashMessage,
 } from "./forge.ts";
-import { failure, record, remoteLocation, textOf } from "./forge.ts";
+import { failure, record, remoteLocation, textOf, visibilityOf } from "./forge.ts";
 import { glabEnv } from "./policy.ts";
 import type { Exec, ProcResult } from "./proc.ts";
 
@@ -154,7 +155,8 @@ export class GitLabForge implements Forge {
   #api(resource: string): Promise<unknown> {
     this.#target();
     const project = encodeURIComponent(this.project as string);
-    return this.#json(["api", "--hostname", this.#hostname(), `projects/${project}/${resource}`]);
+    const path = resource === "" ? project : `${project}/${resource}`;
+    return this.#json(["api", "--hostname", this.#hostname(), `projects/${path}`]);
   }
 
   async auth(): Promise<ForgeAuth> {
@@ -311,6 +313,14 @@ export class GitLabForge implements Forge {
     const created = gitlabUrl(out, "issues");
     if (created === null) throw new HarnessError(502, "glab issue create : URL d'issue illisible");
     return created;
+  }
+
+  async visibility(): Promise<ForgeVisibility | null> {
+    try {
+      return visibilityOf(record(await this.#api("")).visibility);
+    } catch {
+      return null;
+    }
   }
 
   async labels(): Promise<string[]> {

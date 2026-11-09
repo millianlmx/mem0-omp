@@ -130,6 +130,23 @@ public final class HarnessDrafts: ObservableObject {
     /// Les adresses et pseudos de l'utilisateur en cours de saisie (une par ligne) ;
     /// `nil` tant qu'il n'a rien touché : le champ montre alors celles du serveur.
     @Published public var workstationIdentities: String?
+    /// La proposition d'un signalement dont la feuille de confirmation est ouverte.
+    @Published public var signalShown: CorporateSignal?
+    /// La feuille « Demande » est ouverte, sa saisie et le dépôt imposé (vide : déduit).
+    @Published public var intakeSheetShown = false
+    @Published public var intakeText = ""
+    @Published public var intakeRepo = ""
+    /// Les réponses aux questions de clarification en cours de saisie, par demande.
+    @Published public var intakeAnswers: [String: String] = [:]
+    /// La demande dont le plan est en cours de modification (feuille ouverte).
+    @Published public var intakeEdit: HarnessIntake?
+
+    /// Ouvre la feuille « Demande », saisie vide.
+    public func openIntake() {
+        intakeText = ""
+        intakeRepo = ""
+        intakeSheetShown = true
+    }
 
     // MARK: Consigne, relance et budget d'une feature
 

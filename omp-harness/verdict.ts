@@ -233,6 +233,9 @@ export type MergeEvidence = {
   touchedFiles: string[];
 };
 
+/** Ce que la revue garde de son évidence (steps.ts `REVIEW_EVIDENCE`) : celle du merge, les tests ajoutés ou modifiés, le sha relu. */
+export type ReviewEvidence = MergeEvidence & { reproTests: string[]; reviewSha: string };
+
 export type MergeDecision =
   | { auto: true }
   /** `readCode` : le verdict est faible — l'humain lit le code, pas seulement le verdict. */

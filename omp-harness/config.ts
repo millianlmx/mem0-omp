@@ -12,6 +12,8 @@ import type { LogLevel } from "./logger.ts";
 import { LOG_LEVELS } from "./logger.ts";
 import { STEP_KINDS } from "./machine.ts";
 import type { StepKind } from "./machine.ts";
+import { checkAutonomy } from "./autonomy-rules.ts";
+import type { AutonomyRule } from "./autonomy-rules.ts";
 import { isTimeZone } from "./cron.ts";
 
 /** Les familles de modèles, de la moins chère à la plus capable. */
@@ -93,6 +95,20 @@ export type ForgeKind = "github" | "gitlab" | "none";
 export const FORGES: readonly ForgeKind[] = ["github", "gitlab", "none"];
 
 /**
+ * Ce qu'une issue d'origine corpo (un signalement d'un collègue) peut contenir, par dépôt :
+ * `forbid` aucune issue, `redacted` un texte reformulé et caviardé par le serveur (défaut),
+ * `full` le texte confirmé, seulement si la forge confirme le dépôt privé.
+ */
+export type CorporatePolicy = "forbid" | "redacted" | "full";
+
+export const CORPORATE_POLICIES: readonly CorporatePolicy[] = ["forbid", "redacted", "full"];
+
+/** La politique d'issues d'origine corpo d'un dépôt : celle qu'il déclare, sinon `redacted`. */
+export function corporatePolicy(repo: Pick<RepoConfig, "issues">): CorporatePolicy {
+  return repo.issues?.corporate ?? "redacted";
+}
+
+/**
  * La politique de modèles d'un dépôt ou du poste (policy.ts) : des chaînes par tier
  * (`"fournisseur/modèle"`, prioritaires sur celles du serveur), une liste blanche de
  * fournisseurs (jamais de bascule hors de la liste) et la confidentialité. Absente :
@@ -161,6 +177,30 @@ export type WorkstationConfig = {
    * le fichier ne les donne pas. `url` null : l'exécuteur `vps` ne démarre pas.
    */
   vps: { url: string | null; token: string | null };
+  /** Le repos entre deux passages de lecture des canaux corpo (Gmail, Agenda, Slack), en minutes. */
+  channelReadEveryMin: number;
+  /** La veille proactive (job `poste-veille`, canaux/veille.ts). */
+  watch: WatchConfig;
+};
+
+/** Les jours de la semaine des heures ouvrées, dans l'ordre de `Date.getUTCDay()`. */
+export const WEEK_DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+export type WeekDay = (typeof WEEK_DAYS)[number];
+
+/**
+ * La veille proactive du poste : un passage toutes les `intervalMinutes` minutes aux heures
+ * ouvrées (`days`, de `start` à `end`, heure murale de `schedules.timezone`), plus les passages
+ * des 15 minutes avant l'ouverture, qui ne préparent que les réunions du début de plage.
+ */
+export type WatchConfig = {
+  /** De 1 à 15. */
+  intervalMinutes: number;
+  days: WeekDay[];
+  /** `HH:MM`, avant `end`. */
+  start: string;
+  end: string;
+  /** Le silence (en jours ouvrés) après lequel un mail de l'utilisateur sans réponse est relancé. */
+  followUpDays: number;
 };
 
 /** Le monitoring : plafond de coût, veille des features muettes ou lentes, santé du serveur. */
@@ -189,6 +229,19 @@ export type MonitoringConfig = {
   /** La santé du serveur : un point toutes les `sampleSec` secondes, les `keep` derniers gardés. */
   sampleSec: number;
   keep: number;
+};
+
+/**
+ * Les seuils des propositions de palier d'autonomie (autonomy-learning.ts) : sur `windowDays`
+ * jours, un groupe (dépôt, type, porte) d'au moins `minRuns` runs reçoit une proposition de
+ * baisse si son taux de corrections vaut `lowerMinRate` ou plus, de montée s'il vaut `raiseMaxRate`
+ * ou moins. Le harness ne change jamais une règle seul.
+ */
+export type AutonomyLearningConfig = {
+  windowDays: number;
+  minRuns: number;
+  raiseMaxRate: number;
+  lowerMinRate: number;
 };
 
 /** L'envoi des notifications push d'Apple (Live Activities de l'app iOS) : `null` les coupe. */
@@ -256,6 +309,8 @@ export type RepoConfig = {
    * sinon none).
    */
   forge?: ForgeKind;
+  /** Les issues d'origine corpo de ce dépôt : `corporate` (`redacted` par défaut). */
+  issues?: { corporate?: CorporatePolicy };
   /**
    * Le GitLab de ce dépôt pour `glab` : `host` l'instance (`gitlab.client.example`, ou son
    * URL ; absente : l'hôte du distant), `tokenEnv` le NOM d'une variable du service qui
@@ -276,6 +331,12 @@ export type RepoConfig = {
    * `readyTimeoutSec` le temps qu'elle a pour répondre. Absente : pas de QA navigateur.
    */
   preview?: { command: string; port: number; path: string; readyTimeoutSec: number };
+  /**
+   * L'autonomie par paliers (autonomy-rules.ts) : des règles ordonnées, la première qui
+   * correspond à un run décide si le serveur lève seul son attente `specs` ou `verdict`.
+   * Absent : tout reste à l'humain.
+   */
+  autonomy?: { rules: AutonomyRule[] };
 } & ModelPolicy;
 
 export type HarnessConfig = {
@@ -284,6 +345,8 @@ export type HarnessConfig = {
   tokenFile: string;
   /** Les clients nommés (jetons hachés, rôles, dépôts permis), gérés par `--add-client` (auth.ts). */
   clientsFile: string;
+  /** Les canaux corpo (canaux/) : identifiants des clients OAuth et jetons Gmail, Agenda, Slack (0600, hors base). */
+  channelsFile: string;
   /**
    * Les fournisseurs déclarés par l'API (providers.ts) : leurs clés (`*_API_KEY`, 0600) et
    * le `models.yml` des fournisseurs compatibles OpenAI, que le lanceur pose chez les runners.
@@ -441,6 +504,8 @@ export type HarnessConfig = {
    * pilote coupé) ; au-delà, l'humain.
    */
   pilot: { actionsPerRun: number; tier: Tier };
+  /** Le classement des Demandes (intake.ts) : la session qui classe une phrase libre tourne sur `tier`. */
+  intake: { tier: Tier };
   /** Le journal d'événements : au-delà de `retentionDays`, il est purgé (au démarrage, puis chaque heure). */
   events: { retentionDays: number };
   /**
@@ -465,6 +530,8 @@ export type HarnessConfig = {
    * et `worktreesDir`.
    */
   health: { tickStaleSec: number; minFreeMiB: number };
+  /** Les seuils des propositions de palier d'autonomie ; changés au redémarrage seulement. */
+  autonomyLearning: AutonomyLearningConfig;
   monitoring: MonitoringConfig;
   apns: ApnsConfig | null;
   workstation: WorkstationConfig;
@@ -552,6 +619,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     listen: { host: "127.0.0.1", port: 8790 },
     tokenFile: path.join(base, "token"),
     clientsFile: path.join(base, "clients.json"),
+    channelsFile: path.join(base, "channels.json"),
     providersEnvFile: path.join(base, "providers.env"),
     providersModelsFile: path.join(base, "providers.models.yml"),
     dataDir: base,
@@ -618,6 +686,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     oracle: null,
     dreams: { checkMinutes: 60, minFacts: 5, maxDelayHours: 24, tier: "standard" },
     pilot: { actionsPerRun: 3, tier: "heavy" },
+    intake: { tier: "standard" },
     events: { retentionDays: 30 },
     backups: { dir: null, intervalHours: 24, keep: 7, beforeMigration: true, remote: null },
     logs: { dir: null, retentionDays: 14, level: "info" },
@@ -634,6 +703,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       sampleSec: 15,
       keep: 480,
     },
+    autonomyLearning: { windowDays: 30, minRuns: 10, raiseMaxRate: 0.05, lowerMinRate: 0.2 },
     apns: null,
     workstation: {
       enabled: true,
@@ -648,6 +718,14 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       exfiltrationGuard: true,
       captureRetentionHours: 24,
       vps: { url: null, token: null },
+      channelReadEveryMin: 5,
+      watch: {
+        intervalMinutes: 5,
+        days: ["mon", "tue", "wed", "thu", "fri"],
+        start: "09:00",
+        end: "18:00",
+        followUpDays: 3,
+      },
     },
     issues: { label: "omp:fix", maxLaunch: 5, pollSec: 900 },
     lanes: { direct: true },
@@ -679,6 +757,36 @@ function merge<T>(base: T, over: unknown): T {
 
 function fail(message: string): never {
   throw new Error(`configuration du harness : ${message}`);
+}
+
+/** Les minutes depuis minuit d'une heure `HH:MM` (00:00 à 24:00), `null` si illisible. */
+export function minutesOf(text: unknown): number | null {
+  if (typeof text !== "string") return null;
+  const match = /^([01]\d|2[0-4]):([0-5]\d)$/.exec(text);
+  if (!match) return null;
+  const minutes = Number(match[1]) * 60 + Number(match[2]);
+  return minutes <= 24 * 60 ? minutes : null;
+}
+
+/** Valide la veille du poste : chaque erreur nomme sa clé (le harness refuse de démarrer). */
+function checkWatch(watch: unknown): void {
+  if (!isRecord(watch)) fail("workstation.watch : { intervalMinutes, days, start, end, followUpDays }");
+  const interval = watch.intervalMinutes;
+  if (!(Number.isInteger(interval) && (interval as number) >= 1 && (interval as number) <= 15))
+    fail("workstation.watch.intervalMinutes : entier de 1 à 15");
+  if (
+    !Array.isArray(watch.days) ||
+    watch.days.length === 0 ||
+    watch.days.some((day) => !(WEEK_DAYS as readonly unknown[]).includes(day))
+  )
+    fail(`workstation.watch.days : liste non vide de jours parmi ${WEEK_DAYS.join(", ")}`);
+  const start = minutesOf(watch.start);
+  if (start === null) fail("workstation.watch.start : heure HH:MM");
+  const end = minutesOf(watch.end);
+  if (end === null) fail("workstation.watch.end : heure HH:MM");
+  if (end <= start) fail("workstation.watch.end : plage vide, la fin doit suivre le début (workstation.watch.start)");
+  if (!(Number.isInteger(watch.followUpDays) && (watch.followUpDays as number) >= 1))
+    fail("workstation.watch.followUpDays : entier de jours ouvrés ≥ 1");
 }
 
 function checkModels(tier: string, list: unknown): ModelChoice[] {
@@ -786,6 +894,12 @@ function checkRepoAccounts(repo: RepoConfig): void {
   }
   if (repo.forge !== undefined && !(FORGES as readonly string[]).includes(repo.forge))
     fail(`${where}.forge : ${FORGES.join(" | ")}`);
+  if (repo.issues !== undefined) {
+    const { issues } = repo;
+    if (!isRecord(issues)) fail(`${where}.issues : { corporate? }`);
+    if (issues.corporate !== undefined && !(CORPORATE_POLICIES as readonly unknown[]).includes(issues.corporate))
+      fail(`${where}.issues.corporate : ${CORPORATE_POLICIES.join(" | ")}`);
+  }
   if (repo.forge === "none" && repo.merge === "gh")
     fail(`${where}.forge : « none » n'ouvre aucune PR, \`merge: "gh"\` demande une forge`);
   if (repo.gitlab !== undefined) {
@@ -890,6 +1004,13 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
       (typeof repo.sshKey !== "string" || !path.isAbsolute(repo.sshKey) || repo.sshKey.includes("'"))
     )
       fail(`repos.${repo.name}.sshKey : chemin absolu sans apostrophe, ou null`);
+    if (repo.autonomy !== undefined) {
+      try {
+        repo.autonomy = checkAutonomy(`repos.${repo.name}.autonomy`, repo.autonomy);
+      } catch (err: unknown) {
+        fail(err instanceof Error ? err.message : String(err));
+      }
+    }
     checkRepoAccounts(repo);
     checkPreview(repo);
   }
@@ -956,6 +1077,8 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     fail("pilot.actionsPerRun : entier ≥ 0");
   if (!(TIERS as readonly string[]).includes(config.pilot.tier))
     fail(`pilot.tier : tier inconnu (${TIERS.join(" | ")})`);
+  if (!(TIERS as readonly string[]).includes(config.intake.tier))
+    fail(`intake.tier : tier inconnu (${TIERS.join(" | ")})`);
   const monitoring = config.monitoring;
   for (const key of ["runBudgetUsd", "dailyBudgetUsd", "stallMin", "stallToolMin", "slowFactor", "fixLoop"] as const) {
     const value = monitoring[key];
@@ -964,6 +1087,18 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (typeof monitoring.pauseOnBudget !== "boolean") fail("monitoring.pauseOnBudget : booléen");
   if (!(monitoring.sampleSec >= 1)) fail("monitoring.sampleSec : secondes ≥ 1");
   if (!(Number.isInteger(monitoring.keep) && monitoring.keep >= 1)) fail("monitoring.keep : entier ≥ 1");
+  const learning = config.autonomyLearning;
+  if (!(Number.isInteger(learning.windowDays) && learning.windowDays >= 1))
+    fail("autonomyLearning.windowDays : entier ≥ 1");
+  if (learning.windowDays > config.events.retentionDays)
+    fail(
+      `autonomyLearning.windowDays : au plus events.retentionDays (${config.events.retentionDays}), le journal purgé ne porte plus la fenêtre`,
+    );
+  if (!(Number.isInteger(learning.minRuns) && learning.minRuns >= 1)) fail("autonomyLearning.minRuns : entier ≥ 1");
+  for (const key of ["raiseMaxRate", "lowerMinRate"] as const)
+    if (!(typeof learning[key] === "number" && learning[key] >= 0 && learning[key] <= 1))
+      fail(`autonomyLearning.${key} : nombre entre 0 et 1`);
+  if (!(learning.raiseMaxRate < learning.lowerMinRate)) fail("autonomyLearning : raiseMaxRate < lowerMinRate");
   const workstation = config.workstation;
   if (!isRecord(workstation)) fail("workstation : objet attendu");
   if (typeof workstation.enabled !== "boolean") fail("workstation.enabled : booléen");
@@ -987,6 +1122,9 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     fail("workstation.shiftEveryMin : minutes ≥ 1");
   if (!(Number.isInteger(workstation.shiftMaxActions) && workstation.shiftMaxActions >= 1))
     fail("workstation.shiftMaxActions : entier ≥ 1");
+  if (!(typeof workstation.channelReadEveryMin === "number" && workstation.channelReadEveryMin >= 1))
+    fail("workstation.channelReadEveryMin : minutes ≥ 1");
+  checkWatch(workstation.watch);
   if (workstation.policy !== undefined) {
     if (!isRecord(workstation.policy)) fail("workstation.policy : { models?, providers?, privacy? }");
     checkPolicy("workstation.policy", workstation.policy);
@@ -1134,6 +1272,7 @@ export function loadConfig(file: string | null): HarnessConfig {
   }
   // Les clients vivent à côté du jeton historique (même dossier d'état, mêmes droits).
   if (raw.clientsFile === undefined) config.clientsFile = path.join(path.dirname(config.tokenFile), "clients.json");
+  if (raw.channelsFile === undefined) config.channelsFile = path.join(path.dirname(config.tokenFile), "channels.json");
   if (raw.providersEnvFile === undefined)
     config.providersEnvFile = path.join(path.dirname(config.tokenFile), "providers.env");
   if (raw.providersModelsFile === undefined)

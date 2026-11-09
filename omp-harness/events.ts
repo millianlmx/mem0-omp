@@ -55,6 +55,7 @@ export const EVENT_TYPES = [
   "heavy_fail_retry",
   "heavy_skipped",
   "heavy_flaky",
+  "heavy_baseline",
   // git et merge
   "rebased",
   "rebase_conflict",
@@ -70,6 +71,8 @@ export const EVENT_TYPES = [
   "audit_state",
   "pilot",
   "dream_state",
+  // les Demandes (intake.ts) : dépôt de la demande, null s'il n'y en a pas
+  "intake_state",
   // planifications récurrentes (le dépôt de leur cible)
   "schedule_fired",
   "schedule_skipped",
@@ -101,10 +104,25 @@ export const EVENT_TYPES = [
   "workstation_browser",
   // l'état d'un compte du navigateur `vps` (domaine, état : jamais un cookie)
   "workstation_account",
+  "workstation_channel",
+  // la lecture des canaux corpo : un passage a gardé ou retiré des contenus (`{channel, added, removed}`),
+  // un canal Slack coché ou décoché comme suivi (`{id, followed}`) ; jamais de contenu
+  "workstation_channel_read",
+  "workstation_channel_follow",
+  // le graphe des personnes du poste : une personne créée, complétée ou corrigée (`{id}` seul)
+  "workstation_person",
+  // la veille proactive du poste : un élément d'« À traiter » créé ou changé (`{id, kind, state, ready}` seuls)
+  "workstation_watch",
   // la vigie (vigie/) : un incident qui bouge (relevé, trié, publié, corrigé, rendu à l'humain),
   // et son silence (plus de battement de cœur depuis vigie.SILENT_MS)
   "vigie_incident",
   "vigie_silent",
+  // l'autonomie par paliers : une attente retenue, validée seule ou rendue à l'humain (`autonomy`),
+  // et chaque validation ou refus d'une attente humaine, par qui que ce soit (`validation`)
+  "autonomy",
+  "validation",
+  // le pont corpo ↔ usine : l'état d'un signalement d'un collègue (`{id, state}` seulement ; repo null : poste réservé au propriétaire)
+  "signal",
   // éphémères
   "activity",
   "session",

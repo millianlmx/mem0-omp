@@ -1,5 +1,7 @@
 // Les runs : une feature de sa demande à son merge. Création, lecture, filtres,
 // compare-and-swap (`updateRunIf`) et consignes de reprise en attente.
+import { WORK_KINDS } from "../autonomy-rules.ts";
+import type { WorkKind } from "../autonomy-rules.ts";
 import { StoreCore } from "./core.ts";
 import type { FailCause, StepKind, RunState } from "../machine.ts";
 import type { Verdict } from "../verdict.ts";
@@ -44,6 +46,10 @@ export type RunRow = {
    * est annulé ou échoue, elle est annulée avec lui. `null` : aucun préalable.
    */
   afterRun: string | null;
+  /** Le type de travail déclaré à la création (`POST /v1/runs`) ; `null` : aucune règle d'autonomie ne s'applique. Jamais modifié ensuite. */
+  kind: WorkKind | null;
+  /** Les labels déclarés à la création, que les règles d'autonomie comparent. */
+  labels: string[];
   /** Le client qui a créé le run (`null` : service ou jeton historique). */
   createdBy: string | null;
   createdAt: number;
@@ -77,7 +83,17 @@ export type NewRun = Pick<RunRow, "id" | "repo" | "slug" | "title" | "request" |
   Partial<
     Pick<
       RunRow,
-      "projectId" | "projectOrder" | "modules" | "state" | "step" | "priority" | "createdBy" | "afterRun" | "reason"
+      | "projectId"
+      | "projectOrder"
+      | "modules"
+      | "state"
+      | "step"
+      | "priority"
+      | "createdBy"
+      | "afterRun"
+      | "reason"
+      | "kind"
+      | "labels"
     >
   >;
 
@@ -98,6 +114,11 @@ const FAIL_CAUSES: readonly FailCause[] = [
 function failCauseOf(value: string | null): FailCause | null {
   if (value === null) return null;
   return FAIL_CAUSES.find((cause) => cause === value) ?? "other";
+}
+
+/** Un type lu en base : connu, sinon `null` (une valeur inconnue ne casse pas la lecture). */
+function kindOf(value: string | null): WorkKind | null {
+  return WORK_KINDS.find((kind) => kind === value) ?? null;
 }
 
 function runOf(row: Row): RunRow {
@@ -129,6 +150,8 @@ function runOf(row: Row): RunRow {
     lastReviewSha: strOrNull(row, "last_review_sha"),
     rev: num(row, "rev"),
     afterRun: strOrNull(row, "after_run"),
+    kind: kindOf(strOrNull(row, "kind")),
+    labels: json<string[]>(row, "labels", []),
     createdBy: strOrNull(row, "created_by"),
     createdAt: num(row, "created_at"),
     updatedAt: num(row, "updated_at"),
@@ -160,8 +183,8 @@ export class RunStore extends StoreCore {
   createRun(input: NewRun): RunRow {
     const at = this.now();
     this.execute(
-      `INSERT INTO runs (id, repo, slug, title, request, state, step, branch, project_id, project_order, modules, priority, created_by, after_run, reason, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (id, repo, slug, title, request, state, step, branch, project_id, project_order, modules, priority, created_by, after_run, reason, kind, labels, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.id,
       input.repo,
       input.slug,
@@ -177,6 +200,8 @@ export class RunStore extends StoreCore {
       input.createdBy ?? null,
       input.afterRun ?? null,
       input.reason ?? null,
+      input.kind ?? null,
+      JSON.stringify(input.labels ?? []),
       at,
       at,
     );

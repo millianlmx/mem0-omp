@@ -46,6 +46,12 @@ private struct PalettePresenter: ViewModifier {
             .sheet(isPresented: $drafts.scheduleSheetShown) {
                 NewScheduleSheet(server: server, drafts: drafts)
             }
+            .sheet(isPresented: $drafts.intakeSheetShown) {
+                IntakeSheet(server: server, drafts: drafts)
+            }
+            .sheet(item: $drafts.intakeEdit) { intake in
+                IntakePlanSheet(server: server, drafts: drafts, intake: intake)
+            }
     }
 
     private func runPending() {
@@ -62,6 +68,8 @@ public enum ConsolePaletteActions {
         _ command: HarnessPaletteCommand, server: HarnessModel, drafts: HarnessDrafts, select: @MainActor (ConsoleSection) -> Void
     ) {
         switch command {
+        case .intake:
+            drafts.openIntake()
         case .section(let section):
             if section == .system { drafts.systemPage = nil }
             select(section)
@@ -104,7 +112,7 @@ struct CommandPalette: View {
             query: drafts.paletteQuery,
             search: drafts.paletteSearch,
             sections: sections,
-            systemPages: SystemPage.visible(isAdmin: server.isAdmin),
+            systemPages: SystemPage.visible(isAdmin: server.isAdmin, autonomy: server.autonomy.isServed),
             inbox: server.inbox,
             history: history.runs,
             canAct: server.canAct,

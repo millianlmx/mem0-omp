@@ -12,6 +12,11 @@
 //   ancienne en file, quand son navigateur est en ligne et le poste hors pause, quelle que
 //   soit l'autonomie ; ses actions lui sont rattachées, son compte rendu rendu par
 //   `workstation_request_report`. Une demande à la fois, dans l'ordre d'arrivée.
+// - `poste-signal` : le tri d'un signalement de collègue (pont corpo ↔ usine) ;
+// - `poste-veille` : la veille proactive (canaux/veille.ts), toutes les
+//   `workstation.watch.intervalMinutes` minutes aux heures ouvrées, quelle que soit l'autonomie,
+//   seulement quand le tri du serveur a trouvé quelque chose de dû ; ses outils ne font que
+//   proposer dans « À traiter ». Muet comme `poste-signal` : il lit des messages de collègues.
 //
 // Un seul job de chaque sorte à la fois. La garde d'envoi n'est pas ici : elle est dans la
 // file (workstation.ts) et dans l'extension, et aucun outil de l'agent n'approuve.
@@ -31,13 +36,19 @@ import * as path from "node:path";
 import type { HarnessConfig, RepoConfig, Tier } from "./config.ts";
 import { isRecord, repoDefaults } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
+import { replyPromptSection } from "./canaux/reponses.ts";
+import type { Watch, WatchPlan } from "./canaux/veille.ts";
+import type { SignalDesk, SignalInput } from "./corporate/signals.ts";
 import type { Meeting, StoredObservation, WorkstationAction, WorkstationProfile, WorkstationRequest } from "./db.ts";
+import { HarnessError } from "./errors.ts";
 import {
   nudgePrompt,
   workstationDigestPrompt,
   workstationProfilePrompt,
   workstationRequestPrompt,
   workstationShiftPrompt,
+  workstationSignalPrompt,
+  workstationWatchPrompt,
 } from "./prompts.ts";
 import type { HostToolResult } from "./rpc.ts";
 import type { WorkstationJob } from "./runner.ts";
@@ -59,15 +70,30 @@ import { untrusted } from "./workstation-guards.ts";
 /** La scope mémoire des jobs du poste. */
 export const WORKSTATION_SCOPE = "workstation";
 
-const JOBS: readonly WorkstationJob[] = ["poste-profil", "poste-digest", "poste-service", "poste-demande"];
+const JOBS: readonly WorkstationJob[] = [
+  "poste-profil",
+  "poste-digest",
+  "poste-service",
+  "poste-demande",
+  "poste-signal",
+  "poste-veille",
+];
 
-/** Le tier de chaque job : un gros modèle là où l'on juge (le profil, les actions), un moyen pour résumer. */
+/** Le tier de chaque job : un gros modèle là où l'on juge (le profil, les actions), un moyen pour résumer ou trier. */
 const JOB_TIERS: Record<WorkstationJob, Tier> = {
   "poste-profil": "heavy",
   "poste-digest": "standard",
   "poste-service": "heavy",
   "poste-demande": "heavy",
+  "poste-signal": "standard",
+  "poste-veille": "standard",
 };
+
+/** Les jobs qui lisent des messages de collègues : ni direct, ni `intent`, ni `progress` publiés. */
+const MUTED_JOBS: Partial<Record<WorkstationJob, true>> = { "poste-signal": true, "poste-veille": true };
+
+/** Les échecs de suite d'une veille avant que ses nouveautés soient tenues pour vues (pas de boucle de coût). */
+const WATCH_ATTEMPTS = 3;
 
 /** L'issue d'une demande coupée par l'arrêt ou le redémarrage du service : jamais relancée. */
 const SERVICE_STOPPED = "interrompu : service arrêté";
@@ -220,10 +246,18 @@ export class WorkstationAgent {
   #profileAttemptAt = 0;
   /** La demande que mène le job `poste-demande` vivant ; `null` sinon. */
   #requestId: string | null = null;
+  readonly #signals: SignalDesk;
+  readonly #watch: Watch;
+  /** Un passage de veille en cours de tri (avant son lancement) : un seul à la fois. */
+  #watchPlanning = false;
+  /** Les veilles en échec de suite (`WATCH_ATTEMPTS`). */
+  #watchFailures = 0;
 
-  constructor(ctx: HarnessContext, workstation: Workstation) {
+  constructor(ctx: HarnessContext, workstation: Workstation, signals: SignalDesk, watch: Watch) {
     this.#ctx = ctx;
     this.#ws = workstation;
+    this.#signals = signals;
+    this.#watch = watch;
   }
 
   /** Un tour : les échéances de la file, puis les jobs dus. */
@@ -232,10 +266,15 @@ export class WorkstationAgent {
     if (!this.#ws.enabled) return;
     this.#guardShift();
     this.#guardRequest();
+    this.#guardSignal();
+    this.#guardWatch();
     this.#digestNext();
     this.#profileIfDue(now);
     this.#shiftIfDue(now);
     this.#requestNext(now);
+    this.#signalNext();
+    // Le message d'une erreur n'est pas journalisé : il pourrait citer un contenu de canal.
+    this.watchPass(now).catch(() => this.#ctx.log("poste : passage de veille en échec", { level: "error" }));
   }
 
   /** Le job tourne en ce moment. */
@@ -278,11 +317,28 @@ export class WorkstationAgent {
     fs.mkdirSync(target.repo.path, { recursive: true });
     // Le dossier d'envoi (`upload`) vit dans le répertoire de travail, seul dossier où le runner écrit.
     fs.mkdirSync(uploadDir(this.#ctx.config), { recursive: true });
+    // Les jobs muets (`poste-signal`, `poste-veille`) lisent des messages de collègues : rien de ce
+    // qu'ils font ne sort vers un journal. Ni direct (aucune trame transmise), ni `intent` des
+    // outils, ni `progress`. `workstation_signal` des autres jobs ne montre pas non plus son
+    // `intent` (le direct, lui, est réservé au propriétaire, comme les pages que ces jobs lisent).
+    const muted = MUTED_JOBS[job] === true;
     const session = new RunnerSession(this.#ctx, target, {
       onHostTool: (name, args) =>
         name === "progress" ? Promise.resolve(this.#progress(job, args)) : onHostTool(name, args),
-      event: (type, payload) => this.#ctx.event(type, null, { workstation: job, ...payload }, null),
-      frame: (frame) => this.#ctx.sessions.frame(workstationOwner(job), job, frame),
+      event: (type, payload) =>
+        this.#ctx.event(
+          type,
+          null,
+          {
+            workstation: job,
+            ...payload,
+            ...(type === "activity" && (muted || payload.tool === "workstation_signal") ? { intent: null } : {}),
+          },
+          null,
+        ),
+      ...(muted
+        ? {}
+        : { frame: (frame: Record<string, unknown>) => this.#ctx.sessions.frame(workstationOwner(job), job, frame) }),
     });
     live.session = session;
     await session.open(JOB_TIERS[job], unitOf(job), live.abort.signal);
@@ -291,6 +347,7 @@ export class WorkstationAgent {
   }
 
   #progress(job: WorkstationJob, args: Record<string, unknown>): HostToolResult {
+    if (MUTED_JOBS[job]) return { text: "noté" };
     const message = typeof args.message === "string" ? args.message.slice(0, 500) : "";
     this.#ctx.event("progress", null, { workstation: job, message }, null);
     return { text: "noté" };
@@ -445,6 +502,119 @@ export class WorkstationAgent {
     live.abort.abort();
   }
 
+  // -- tri des signalements de collègues (pont corpo ↔ usine) ----------------------------------
+
+  /** Une détection en cours s'arrête dès que le poste passe en pause (arrêt d'urgence compris). */
+  #guardSignal(): void {
+    const live = this.#live.get("poste-signal");
+    if (!live || live.abort.signal.aborted || !this.#ws.settings().paused) return;
+    live.stopReason = "interrompu : poste mis en pause";
+    live.abort.abort();
+  }
+
+  /**
+   * Le plus ancien signalement reçu part en détection, quelle que soit l'autonomie : le job ne crée
+   * rien, il ne fait que proposer. Pas de détection en pause ; un refus de lancement (runner, plafond)
+   * laisse le signalement `received`, repris au tour suivant.
+   */
+  #signalNext(): void {
+    if (this.#live.has("poste-signal") || this.#ws.settings().paused) return;
+    const signal = this.#signals.nextReceived();
+    if (signal) this.#launch("poste-signal", (live) => this.#signal(signal.id, live));
+  }
+
+  /**
+   * Un verdict par signalement. Une session coupée par le serveur ne compte aucune tentative, pas
+   * plus qu'une session qui a jugé un extrait périmé (un message est arrivé depuis) ; seule une fin
+   * sans verdict ou une erreur du runner en compte une. Aucune erreur levée ici ne cite le signalement.
+   */
+  async #signal(id: string, live: LiveJob): Promise<void> {
+    const { store } = this.#ctx;
+    const signal = store.getSignal(id);
+    if (signal?.state !== "received") return;
+    const candidates = await this.#signals.candidates(signal);
+    if (candidates.length === 0) {
+      this.#signals.ignoreWithoutCandidate(id);
+      return;
+    }
+    const read = signal.excerpt;
+    const unjudged = (): boolean => {
+      const now = store.getSignal(id);
+      return now?.state === "received" && now.excerpt === read;
+    };
+    try {
+      const session = await this.#open("poste-signal", live, (name, args) => this.#signalTool(name, args, id, read));
+      const deadlineAt = Date.now() + this.#ctx.config.runner.stepTimeoutSec * 1000;
+      let result = await session.prompt(
+        workstationSignalPrompt({ signalId: id, channel: signal.channel, excerpt: read, candidates }),
+        live.abort.signal,
+        deadlineAt,
+      );
+      if (result.status === "completed" && unjudged())
+        result = await session.prompt(
+          nudgePrompt(
+            "poste-signal",
+            "le verdict n'a été rendu ni par `workstation_signal_propose` ni par `workstation_signal_ignore`",
+          ),
+          live.abort.signal,
+          deadlineAt,
+        );
+    } catch {
+      /* l'échec du runner compte une tentative, plus bas : son message n'est pas journalisé */
+    } finally {
+      await live.session?.stop();
+      live.session = null;
+    }
+    if (live.abort.signal.aborted || !unjudged()) return;
+    this.#signals.recordAttempt(id);
+  }
+
+  async #signalTool(name: string, args: Record<string, unknown>, id: string, read: string): Promise<HostToolResult> {
+    try {
+      switch (name) {
+        case "workstation_signal_propose":
+          return await this.#signals.propose(id, args);
+        case "workstation_signal_ignore":
+          return this.#signals.ignore(id, read, args);
+        default:
+          return { text: `outil inconnu : ${name}`, isError: true };
+      }
+    } catch (err) {
+      return { text: err instanceof HarnessError ? err.message : "erreur interne", isError: true };
+    }
+  }
+
+  /**
+   * `workstation_signal` d'un job du poste : le signalement lu dans une page (`chrome`, le fil est
+   * l'URL) ou, sans URL, dans une demande de l'humain (`manual`, le fil est la demande et le texte sa
+   * consigne, lue par le serveur). `requestId` : la demande que mène le job (`null` : le service).
+   */
+  #reportSignal(args: Record<string, unknown>, requestId: string | null): HostToolResult {
+    const url = typeof args.url === "string" ? args.url.trim() : "";
+    const personRef = typeof args.personRef === "string" ? args.personRef : null;
+    let input: SignalInput;
+    if (requestId !== null && url === "") {
+      const request = this.#ctx.store.getWorkstationRequest(requestId);
+      if (!request) return { text: "demande inconnue", isError: true };
+      input = { channel: "manual", threadRef: `request:${requestId}`, url: "", personRef, text: request.instruction };
+    } else {
+      const excerpt = typeof args.excerpt === "string" ? args.excerpt : "";
+      if (url === "" || excerpt.trim() === "")
+        return { text: "url et excerpt : texte non vide attendu", isError: true };
+      input = { channel: "chrome", threadRef: url, url, personRef, text: excerpt };
+    }
+    const result = this.#signals.reportSignal(input);
+    if (result.status === "refused") return { text: `signalement refusé : ${result.reason}`, isError: true };
+    return {
+      text:
+        result.status === "received"
+          ? "signalement enregistré : le service le juge puis le propose à l'humain. N'ouvre aucune issue."
+          : result.status === "duplicate"
+            ? "signalement déjà connu."
+            : "signalement déjà écarté par l'humain.",
+    };
+  }
+
   #shiftIfDue(now: number): void {
     if (this.#live.has("poste-service")) return;
     const settings = this.#ws.settings();
@@ -573,6 +743,8 @@ export class WorkstationAgent {
           text: lines === null ? "aucun meeting transcrit." : untrusted("résumés de meetings transcrits", lines),
         };
       }
+      case "workstation_signal":
+        return this.#reportSignal(args, null);
       default:
         return { text: `outil inconnu : ${name}`, isError: true };
     }
@@ -628,11 +800,14 @@ export class WorkstationAgent {
         this.#requestTool(name, args, counter, live, request.id, out),
       );
       const deadlineAt = Date.now() + config.runner.stepTimeoutSec * 1000;
+      // Une demande rattachée à une réponse validée : la marche à suivre et la réponse (non fiable).
+      const reply = store.watchItemOfRequest(request.id);
       let result = await session.prompt(
         workstationRequestPrompt({
           instruction: request.instruction,
           maxActions: config.workstation.shiftMaxActions,
           profile: profileText(store.latestWorkstationProfile()),
+          reply: reply === null ? null : replyPromptSection(reply),
         }),
         live.abort.signal,
         deadlineAt,
@@ -690,8 +865,90 @@ export class WorkstationAgent {
         out.report = args.report;
         return { text: "compte rendu enregistré. Termine ton tour." };
       }
+      case "workstation_signal":
+        return this.#reportSignal(args, requestId);
+      case "workstation_reply_type": {
+        // Le texte validé EXACT, tenu par le serveur : le modèle ne le recopie jamais.
+        const reply = this.#ctx.store.watchItemOfRequest(requestId);
+        if (reply === null || reply.channel !== "slack" || reply.state !== "validated")
+          return { text: "cette demande n'envoie aucune réponse Slack validée", isError: true };
+        return this.#deposit(
+          "workstation_act",
+          {
+            kind: "type",
+            params: { tabId: args.tabId, ref: args.ref, text: reply.text, submit: args.submit ?? true },
+            rationale: "saisir et envoyer la réponse validée par l'humain",
+          },
+          counter,
+          live,
+          requestId,
+          "plafond d'actions de cette demande atteint : rends ton compte rendu par `workstation_request_report` maintenant.",
+        );
+      }
       default:
         return { text: `outil inconnu : ${name}`, isError: true };
+    }
+  }
+
+  // -- veille proactive (canaux/veille.ts) -------------------------------------------------------
+
+  /** Une veille en cours s'arrête dès que le poste passe en pause (arrêt d'urgence compris). */
+  #guardWatch(): void {
+    const live = this.#live.get("poste-veille");
+    if (!live || live.abort.signal.aborted || !this.#ws.settings().paused) return;
+    live.stopReason = "interrompu : poste mis en pause";
+    live.abort.abort();
+  }
+
+  /**
+   * Le passage de la veille à `now` : le tri du serveur (`Watch.due`), puis le runner s'il y a
+   * quelque chose de dû. Rend `null` si rien n'est dû ou si le runner part, sinon la raison du
+   * refus (plafond journalier, slot runner) : la veille retente au passage suivant.
+   */
+  async watchPass(now = Date.now()): Promise<string | null> {
+    if (this.#live.has("poste-veille") || this.#watchPlanning) return null;
+    this.#watchPlanning = true;
+    try {
+      const plan = await this.#watch.due(now);
+      if (plan === null) return null;
+      // Le tri a pu attendre un brouillon Gmail : la pause posée entre-temps l'emporte.
+      if (!this.#ws.enabled || this.#ws.settings().paused) return "le poste est en pause";
+      return this.#launch("poste-veille", (live) => this.#watchRun(plan, live));
+    } finally {
+      this.#watchPlanning = false;
+    }
+  }
+
+  /**
+   * Un passage de veille : le modèle peut ne rien rendre (coût compté, aucune sortie). Un arrêt
+   * (pause, arrêt d'urgence, service) laisse ses nouveautés à revoir ; un échec du runner aussi,
+   * jusqu'à `WATCH_ATTEMPTS` de suite. Aucun message d'erreur n'est journalisé.
+   */
+  async #watchRun(plan: WatchPlan, live: LiveJob): Promise<void> {
+    let completed = false;
+    try {
+      const session = await this.#open("poste-veille", live, (name, args) => this.#watch.tool(plan, name, args));
+      const result = await session.prompt(
+        workstationWatchPrompt(this.#watch.promptOf(plan)),
+        live.abort.signal,
+        Date.now() + this.#ctx.config.runner.stepTimeoutSec * 1000,
+      );
+      completed = result.status === "completed";
+    } catch {
+      /* l'échec compte plus bas : son message n'est pas journalisé */
+    } finally {
+      await live.session?.stop();
+      live.session = null;
+    }
+    if (live.abort.signal.aborted) return;
+    if (completed) this.#watchFailures = 0;
+    else {
+      this.#watchFailures++;
+      this.#ctx.log(`poste : veille en échec (${this.#watchFailures}/${WATCH_ATTEMPTS})`, { level: "warn" });
+    }
+    if (completed || this.#watchFailures >= WATCH_ATTEMPTS) {
+      this.#watchFailures = 0;
+      this.#watch.finish(plan);
     }
   }
 
@@ -710,12 +967,12 @@ export class WorkstationAgent {
   }
 
   /**
-   * L'arrêt d'urgence : le service et la demande en cours sont coupés tout de suite (leur
+   * L'arrêt d'urgence : le service, la demande et la veille en cours sont coupés tout de suite (leur
    * runner arrêté, leur issue `reason`). Rend `true` s'il y en avait un.
    */
   async halt(reason: string): Promise<boolean> {
     let halted = false;
-    for (const job of ["poste-service", "poste-demande"] as const) {
+    for (const job of ["poste-service", "poste-demande", "poste-veille"] as const) {
       const live = this.#live.get(job);
       if (!live || live.abort.signal.aborted) continue;
       live.stopReason = reason;

@@ -21,8 +21,15 @@
 // (modules disjoints seulement) et le plafond de chaque dépôt (`maxParallel`).
 // L'admission est ÉQUITABLE : priorité d'abord, puis le dépôt et le projet qui ont le
 // moins de runs vivants, puis l'ancienneté — aucun projet ne prend tous les runners.
+import { Channels } from "./canaux/channels.ts";
+import { ChannelReader } from "./canaux/lecture.ts";
+import { PeopleGraph } from "./canaux/personnes.ts";
+import { AutonomyGates } from "./autonomy-gates.ts";
+import type { WorkKind } from "./autonomy-rules.ts";
 import { Auditor } from "./audits.ts";
 import { Dreamer } from "./dreams.ts";
+import { createFromPlan } from "./intake-create.ts";
+import { Intaker } from "./intake.ts";
 import { AuditPilot } from "./pilot.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
 import { retryBackoff } from "./config.ts";
@@ -67,6 +74,9 @@ import { SPECS_BASELINE, StepExecutor, challengeUnit, directSpecs, liveRun } fro
 import { Splitter, waitReason } from "./split.ts";
 import { Workstation } from "./workstation.ts";
 import { IssueDesk } from "./issues.ts";
+import { SignalDesk } from "./corporate/signals.ts";
+import { Replies } from "./canaux/reponses.ts";
+import { Watch } from "./canaux/veille.ts";
 import { WorkstationAgent } from "./workstation-agent.ts";
 import { VigieDesk } from "./vigie/desk.ts";
 import { BrowserDesk } from "./browser/desk.ts";
@@ -92,6 +102,9 @@ export type NewRunInput = {
   priority?: number;
   lane?: "full";
   budgetUsd?: number;
+  /** Le type de travail et les labels déclarés par le créateur (`POST /v1/runs`), lus par l'autonomie par paliers. */
+  kind?: WorkKind;
+  labels?: string[];
 };
 
 export type NewProjectInput = {
@@ -168,6 +181,18 @@ export class Orchestrator {
   readonly workstation: Workstation;
   /** L'agent 24/24 du poste et ses jobs (profil, digest des meetings, services). */
   readonly workstationAgent: WorkstationAgent;
+  /** Les canaux corpo lus par API (Gmail, Agenda, Slack) : connexion OAuth, état, client HTTP en liste blanche. */
+  readonly channels: Channels;
+  /** Le passage de lecture des canaux corpo (contenus gardés en base) et les canaux Slack suivis. */
+  readonly channelReader: ChannelReader;
+  /** Le graphe des personnes du poste : alimenté par les canaux lus et les signalements, corrigé par l'humain. */
+  readonly people: PeopleGraph;
+  /** La veille proactive du poste : ses éléments d'« À traiter » (réponses, relances, préparations, brief). */
+  readonly watch: Watch;
+  /** La validation des réponses proposées : écarter, modifier, valider (envoi par le navigateur seul). */
+  readonly replies: Replies;
+  /** Les signalements des collègues et leurs propositions (pont corpo ↔ usine) : `reportSignal` est le point d'entrée des canaux. */
+  readonly signals: SignalDesk;
   /** La santé du serveur au fil du temps (`GET /v1/metrics`). */
   readonly metrics: Metrics;
   /** Les issues GitHub des dépôts déclarés, lancées en run (`POST /v1/mcp`). */
@@ -180,8 +205,12 @@ export class Orchestrator {
   readonly digest: DigestSender;
   /** Les planifications récurrentes, déclenchées par le tour de scheduling. */
   readonly schedules: Schedules;
+  /** Les Demandes : une phrase libre classée par un job léger, confirmée en un objet par les chemins existants. */
+  readonly intake: Intaker;
   /** La vigie : réglages, battement de cœur, incidents, publications et corrections gardées. */
   readonly vigie: VigieDesk;
+  /** L'autonomie par paliers : lève seule certaines attentes humaines, selon les règles du dépôt. */
+  readonly #autonomy: AutonomyGates;
   #stopMetrics: (() => void) | null = null;
 
   constructor(deps: OrchestratorDeps) {
@@ -212,6 +241,7 @@ export class Orchestrator {
       revertMerge: (runId, actor) => this.#merger.revert(runId, actor),
       steer: (runId, message) => this.#live.get(runId)?.session?.steer(message) ?? Promise.resolve(false),
       specsAccepted: (run) => this.#splits.accepted(run),
+      liftable: (run) => this.#autonomy.liftable(run),
     });
     this.audits = new Auditor(this.#ctx, { createProject: (input, actor) => this.createProject(input, actor) });
     this.pilot = new AuditPilot(this.#ctx, {
@@ -225,9 +255,55 @@ export class Orchestrator {
       log: this.#ctx.log,
       ...(deps.browserLookup ? { lookup: deps.browserLookup } : {}),
     });
+    this.#autonomy = new AutonomyGates(this.#ctx, {
+      validate: (runId, approve, reason, actor, inscribe) =>
+        this.#human.validate(runId, approve, reason, actor, inscribe),
+      launchedByVigie: (runId) => this.vigie.launchedByVigie(runId),
+    });
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
-    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation);
+    this.signals = new SignalDesk(this.#ctx, { workstation: this.workstation, issues: this.issues });
+    this.channels = new Channels({
+      config: this.#ctx.config,
+      store: this.#ctx.store,
+      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
+      log: this.#ctx.log,
+      fetch: deps.fetch ?? ((url, init) => globalThis.fetch(url, init)),
+    });
+    this.channelReader = new ChannelReader({
+      config: this.#ctx.config,
+      store: this.#ctx.store,
+      channels: this.channels,
+      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
+      log: this.#ctx.log,
+      active: () => this.workstation.enabled && !this.workstation.settings().paused,
+    });
+    this.people = new PeopleGraph({
+      store: this.#ctx.store,
+      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
+      self: () => [
+        ...this.workstation.settings().selfIdentities,
+        ...this.channels
+          .view(false)
+          .channels.map((c) => c.account)
+          .filter((a): a is string => a !== null),
+      ],
+    });
+    this.watch = new Watch({
+      config: this.#ctx.config,
+      store: this.#ctx.store,
+      workstation: this.workstation,
+      channels: this.channels,
+      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
+    });
+    this.replies = new Replies({
+      store: this.#ctx.store,
+      workstation: this.workstation,
+      channels: this.channels,
+      watch: this.watch,
+      event: (type, runId, payload, repo) => this.#ctx.event(type, runId, payload, repo),
+    });
+    this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation, this.signals, this.watch);
     this.vps = new VpsBrowser(this.workstation, {
       config: () => this.#ctx.config.workstation.vps,
       log: this.#ctx.log,
@@ -245,6 +321,9 @@ export class Orchestrator {
       createAudit: (repo, focus, actor) => this.audits.create(repo, focus, actor),
       fixLabeled: (repo, label, actor) => this.issues.fixLabeled(this.#ctx.repo(repo), label, actor),
       runAutomation: (automationId, actor) => this.workstation.runAutomation(automationId, actor),
+    });
+    this.intake = new Intaker(this.#ctx, {
+      create: (plan, client, actor) => createFromPlan(this, client, actor, plan),
     });
   }
 
@@ -371,6 +450,7 @@ export class Orchestrator {
     }
     await Promise.allSettled(lives.map((live) => live.done));
     await this.audits.stop();
+    await this.intake.stop();
     await this.pilot.stop();
     await this.dreams.stop();
     // L'exécuteur du VPS lâche son long-poll et ferme sa connexion avant que le poste ne se ferme.
@@ -378,6 +458,7 @@ export class Orchestrator {
     // Les attentes du poste (long-polls de l'extension) rendent tout de suite.
     this.workstation.close();
     await this.workstationAgent.stop();
+    await this.channelReader.stop();
     await this.#ctx.logins.stop();
     // Un merge en cours n'est pas attendu (sa suite complète peut durer) : le run reste
     // `merging` en base et son merge repart au démarrage suivant.
@@ -431,8 +512,10 @@ export class Orchestrator {
       });
     }
     await this.audits.recover();
+    await this.intake.recover();
     await this.pilot.recover();
     await this.dreams.recover();
+    await this.#ctx.baseline.recover();
     await this.workstationAgent.recover();
     if (this.#ctx.config.workstation.enabled) this.vps.start();
   }
@@ -482,6 +565,11 @@ export class Orchestrator {
         err,
       });
     }
+    try {
+      await this.#autonomy.tick();
+    } catch (err) {
+      this.#ctx.log(`autonomie : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
+    }
     // Les planifications dues d'abord : un run ou un audit qu'elles créent part dès ce tour.
     try {
       void this.schedules.tick(Date.now());
@@ -489,6 +577,11 @@ export class Orchestrator {
       this.#ctx.log(`planifications : ${err instanceof Error ? err.message : String(err)}`);
     }
     this.audits.tick();
+    try {
+      this.intake.tick();
+    } catch (err) {
+      this.#ctx.log(`demandes : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
+    }
     try {
       this.pilot.tick();
     } catch (err) {
@@ -499,6 +592,19 @@ export class Orchestrator {
     } catch (err) {
       this.#ctx.log(`poste de travail : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
     }
+    // La lecture des canaux corpo : un passage dû part sans attendre (aucun runner).
+    try {
+      this.channelReader.tick();
+    } catch (err) {
+      this.#ctx.log(`lecture des canaux : ${err instanceof Error ? err.name : "inconnu"}`, { level: "error" });
+    }
+    // Le graphe des personnes reprend ce que les canaux et les signalements ont gardé depuis.
+    if (this.workstation.enabled)
+      try {
+        this.people.feed();
+      } catch (err) {
+        this.#ctx.log(`graphe des personnes : ${err instanceof Error ? err.name : "inconnu"}`, { level: "error" });
+      }
     this.#admit();
     // Après les runs : un dépôt ne rêve que sur un slot que nul run n'attend.
     this.dreams.tick();
@@ -791,11 +897,24 @@ export class Orchestrator {
             : run.step === "review" && run.lastFailCause === "missing_output"
               ? run.lastFailCause
               : null;
+        // Une attente que l'autonomie va lever seule : les notifications sont retenues (`hold`) jusqu'à
+        // son tour, qui valide ou y renonce et les publie (autonomy-gates.ts).
+        const held =
+          transition.state === "awaiting_human"
+            ? this.#autonomy.evaluate({
+                ...run,
+                state: transition.state,
+                step: transition.step,
+                reason: transition.reason,
+              })
+            : null;
         // Des specs acceptées sans porte : leur découpage part dans la même transaction.
         const moved = store.transaction(() => {
           const next = this.#ctx.transition(run, transition, ["running"], {
             patch: { notBefore: transition.notBefore, lastFailCause },
+            quiet: held?.ok === true,
           });
+          if (next && held?.ok) this.#ctx.event("autonomy", run.id, { action: "hold", gate: held.gate, rev: next.rev });
           if (next && acceptsSpecs(run.step, transition)) this.#splits.accepted(next);
           return next;
         });
@@ -866,6 +985,8 @@ export class Orchestrator {
         modules: input.modules ?? [],
         priority,
         createdBy: actor.by,
+        ...(input.kind !== undefined ? { kind: input.kind } : {}),
+        ...(input.labels !== undefined ? { labels: input.labels } : {}),
         ...(req !== "" ? { step: "specs" as const } : specs !== null ? { step: "impl" as const } : {}),
         ...(input.projectId ? { projectId: input.projectId, projectOrder: input.projectOrder ?? 0 } : {}),
         ...(input.afterRun ? { afterRun: input.afterRun.id, reason: waitReason(input.afterRun) } : {}),

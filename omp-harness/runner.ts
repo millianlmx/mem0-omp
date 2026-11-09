@@ -148,6 +148,8 @@ export type RunnerSpec = {
   memoryEnvFile?: string | null;
   /** Le dépôt est `local-only` : aucune clé de fournisseur distant chez le runner. */
   localOnly?: boolean;
+  /** `false` : aucun plugin mémoire — le classement des Demandes (intake.ts). */
+  memory?: false;
 };
 
 /** Le runner en conteneur frère : ses seuls montages sont son worktree, le clone en lecture, l'overlay, son HOME et ses clés. */
@@ -218,7 +220,10 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
     "--cwd",
     spec.cwd,
     ...(spec.model ? ["--model", `${spec.model.provider}/${spec.model.model}`] : []),
-    ...runnerExtensions(config).flatMap((extension) => ["-e", extension]),
+    ...(spec.memory === false
+      ? config.runner.extensions.filter((extension) => !isMemoryExtension(extension))
+      : runnerExtensions(config)
+    ).flatMap((extension) => ["-e", extension]),
   ];
   if (config.runner.isolation === "none") return { command: omp[0] as string, args: omp.slice(1) };
   if (config.runner.isolation === "container") return containerRunnerArgv(config, spec, omp);
@@ -374,7 +379,7 @@ const SET_MODULES_TOOL: HostToolDefinition = {
   name: "set_modules",
   label: "Harness — modules touchés",
   description:
-    "Pose tout de suite les chemins du dépôt que ce run touche (dossiers ou fichiers) : c'est ce qui décide du parallélisme avec les autres runs. Appelle-le dès que les chemins sont connus.",
+    "Pose tout de suite les chemins du dépôt que ce run touche (dossiers ou fichiers) : c'est ce qui décide du parallélisme avec les autres runs. Appelle-le dès que les chemins sont connus. Jamais les fichiers de `.harness/` (tes artefacts d'étape) : l'appel est refusé.",
   parameters: {
     type: "object",
     properties: { paths: { ...STRINGS, minItems: 1, description: "Chemins relatifs à la racine du dépôt." } },
@@ -697,9 +702,40 @@ const CHALLENGE_TOOL: HostToolDefinition = {
 };
 
 /** Les jobs du poste de travail menés par un runner (workstation-agent.ts) : le nom est l'en-tête de leur prompt. */
-export type WorkstationJob = "poste-profil" | "poste-digest" | "poste-service" | "poste-demande";
+export type WorkstationJob =
+  | "poste-profil"
+  | "poste-digest"
+  | "poste-service"
+  | "poste-demande"
+  | "poste-signal"
+  | "poste-veille";
 
 const NULLABLE_STRING = { type: ["string", "null"] } as const;
+
+/** Le rendu du classement d'une Demande (intake.ts) : tout est jugé par le serveur après la session. */
+const INTAKE_TOOL: HostToolDefinition = {
+  name: "intake_classify",
+  label: "Harness — classement de la demande",
+  description:
+    "Rend le classement de la demande, UNE fois : `clarification` seule si la demande est ambiguë ; sinon `kind` et les champs du plan, ou `answer` pour une `question`.",
+  parameters: {
+    type: "object",
+    properties: {
+      kind: { type: "string", enum: ["feature", "bug", "audit", "workstation_request", "schedule", "question"] },
+      clarification: { ...NULLABLE_STRING, description: "La question à poser, seule, si la demande est ambiguë." },
+      answer: { ...NULLABLE_STRING, description: "La réponse directe d'une `question`." },
+      repo: { ...NULLABLE_STRING, description: "Le dépôt déclaré ; null pour une workstation_request." },
+      title: { ...NULLABLE_STRING, description: "Le titre court du plan." },
+      statement: { ...NULLABLE_STRING, description: "La demande reformulée, autoportante." },
+      focus: { ...NULLABLE_STRING, description: "Le focus d'un audit, ou d'une planification d'audit." },
+      cron: { ...NULLABLE_STRING, description: "La planification cron à 5 champs d'une `schedule`." },
+      target: { ...NULLABLE_STRING, description: "La cible d'une `schedule` : run, audit ou issues." },
+      label: { ...NULLABLE_STRING, description: "Le label des issues d'une `schedule` de cible issues." },
+    },
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
 
 const WORKSTATION_ACT_TOOL: HostToolDefinition = {
   name: "workstation_act",
@@ -853,6 +889,24 @@ const WORKSTATION_REQUEST_REPORT_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+const WORKSTATION_REPLY_TYPE_TOOL: HostToolDefinition = {
+  name: "workstation_reply_type",
+  label: "Poste — saisir la réponse validée",
+  description:
+    "Seulement pour une demande qui envoie une réponse Slack validée : saisit dans le champ de message `ref` de l'onglet `tabId` le texte validé EXACT, tenu par le serveur, puis l'envoie (Entrée) si `submit` n'est pas `false`. L'envoi passe par la garde d'envoi : il ne part sans second geste que si l'extension voit exactement la réponse validée.",
+  parameters: {
+    type: "object",
+    properties: {
+      tabId: { type: "integer", description: "L'onglet de ta fenêtre où est ouverte la conversation Slack." },
+      ref: { type: "string", description: "La référence du champ de message (snapshot de la page)." },
+      submit: { type: "boolean", description: "Envoyer après la saisie (Entrée) ; `true` par défaut." },
+    },
+    required: ["tabId", "ref"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 const WORKSTATION_DIGEST_TOOL: HostToolDefinition = {
   name: "workstation_meeting_digest",
   label: "Poste — digest de meeting",
@@ -883,6 +937,136 @@ const WORKSTATION_DIGEST_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+const WORKSTATION_SIGNAL_TOOL: HostToolDefinition = {
+  name: "workstation_signal",
+  label: "Poste — signaler un bug ou une feature",
+  description:
+    "Remet au service un signalement de bug ou une demande de feature ADRESSÉ À L'UTILISATEUR, lu dans une page : le service le fait juger puis le propose à l'humain, qui décide seul d'ouvrir une issue. " +
+    "N'ouvre JAMAIS d'issue toi-même. `url` : l'adresse de la page ou du fil lu ; `excerpt` : ce que la page dit du problème, cité mot pour mot et court ; `personRef` : qui l'a signalé, tel que la page l'affiche (adresse ou pseudo), si c'est lisible. " +
+    "Dans une demande de l'humain, sans `url`, la consigne de l'humain sert de signalement (`excerpt` est ignoré).",
+  parameters: {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "L'adresse de la page ou du fil." },
+      excerpt: { type: "string", description: "Ce que la page dit du problème, mot pour mot, court." },
+      personRef: { type: "string", description: "Qui l'a signalé, tel qu'affiché (adresse, pseudo)." },
+    },
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_SIGNAL_PROPOSE_TOOL: HostToolDefinition = {
+  name: "workstation_signal_propose",
+  label: "Poste — proposer une issue",
+  description:
+    "Verdict : ce signalement est un bug ou une demande de feature adressé à l'utilisateur. Propose-le à l'humain avec le dépôt le plus probable (parmi les candidats), un titre et un corps d'issue GÉNÉRIQUES — sans nom, adresse, lien ni citation du message. " +
+    "Cet outil ne crée rien : l'humain relit puis confirme. Une fois, à la fin.",
+  parameters: {
+    type: "object",
+    properties: {
+      signalId: { type: "string", description: "L'identifiant du signalement jugé." },
+      repo: { type: "string", description: "Le nom d'un dépôt candidat." },
+      kind: { type: "string", enum: ["bug", "feature"] },
+      title: { type: "string", description: "Le titre de l'issue, générique, une ligne." },
+      body: {
+        type: "string",
+        description: "Le corps de l'issue : le problème ou le besoin reformulé, ce qui est attendu.",
+      },
+    },
+    required: ["signalId", "repo", "kind", "title", "body"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_SIGNAL_IGNORE_TOOL: HostToolDefinition = {
+  name: "workstation_signal_ignore",
+  label: "Poste — écarter un signalement",
+  description:
+    "Verdict : ce signalement n'est ni un bug ni une demande de feature adressé à l'utilisateur (conversation, remerciement, demande sans rapport avec un dépôt). Rien n'est créé. Une fois, à la fin.",
+  parameters: {
+    type: "object",
+    properties: {
+      signalId: { type: "string", description: "L'identifiant du signalement jugé." },
+      reason: { type: "string", description: "Pourquoi, en une phrase, sans citer le message." },
+    },
+    required: ["signalId", "reason"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+// La veille proactive (canaux/veille.ts) : ses outils ne font que PROPOSER dans « À traiter ».
+// Aucun n'envoie, n'approuve ni n'agit dans le navigateur ; le serveur vérifie chaque référence
+// (message retenu, relance due, réunion à préparer, brief dû) et le niveau de délégation.
+const WORKSTATION_WATCH_REPLY_TOOL: HostToolDefinition = {
+  name: "workstation_watch_reply",
+  label: "Veille — proposer une réponse",
+  description:
+    "Propose à l'utilisateur une réponse à un message retenu (section « Messages »). Rien ne part : la réponse attend sa validation dans « À traiter » (un brouillon Gmail est créé dans le fil d'un mail). " +
+    "`topic` : le sujet LISTÉ de la personne dont traite le message, mot pour mot, s'il y en a un ; sinon omets-le. Une fois par message au plus.",
+  parameters: {
+    type: "object",
+    properties: {
+      messageId: { type: "string", description: "La référence du message retenu." },
+      text: { type: "string", description: "Le texte complet de la réponse, prêt à partir." },
+      topic: { type: "string", description: "Le sujet listé de la personne dont traite le message." },
+    },
+    required: ["messageId", "text"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_WATCH_FOLLOWUP_TOOL: HostToolDefinition = {
+  name: "workstation_watch_followup",
+  label: "Veille — proposer une relance",
+  description:
+    "Propose une relance d'un fil resté sans réponse (section « Relances dues »). Rien ne part : elle attend la validation de l'utilisateur. Une fois par fil.",
+  parameters: {
+    type: "object",
+    properties: {
+      messageId: { type: "string", description: "La référence du dernier message de l'utilisateur." },
+      text: { type: "string", description: "Le texte complet de la relance." },
+    },
+    required: ["messageId", "text"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_WATCH_PREP_TOOL: HostToolDefinition = {
+  name: "workstation_watch_prep",
+  label: "Veille — préparer une réunion",
+  description:
+    "Rend la préparation d'une réunion de la section « Réunions à préparer » : qui sont les participants, ce qui est en cours avec eux, ce que disent les transcripts passés au même lien. Une fois par réunion.",
+  parameters: {
+    type: "object",
+    properties: {
+      eventId: { type: "string", description: "La référence de la réunion." },
+      text: { type: "string", description: "La préparation, en quelques lignes." },
+    },
+    required: ["eventId", "text"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
+const WORKSTATION_WATCH_BRIEF_TOOL: HostToolDefinition = {
+  name: "workstation_watch_brief",
+  label: "Veille — brief du matin",
+  description:
+    "Rend le brief du matin quand le prompt le demande : ce qui attend l'utilisateur aujourd'hui, en quelques puces. Une fois.",
+  parameters: {
+    type: "object",
+    properties: { text: { type: "string", description: "Le brief." } },
+    required: ["text"],
+    additionalProperties: false,
+  },
+  loadMode: "essential",
+};
+
 /**
  * Les outils hôtes d'une étape (ou de l'audit, du contradicteur et du rêve, qui ne
  * décident ni ne testent rien, ou d'un job du poste de travail) : `save_checkpoint` et
@@ -891,22 +1075,40 @@ const WORKSTATION_DIGEST_TOOL: HostToolDefinition = {
  * quand la revue a une prévisualisation (`options.qa`, browser/qa.ts).
  */
 export function hostToolsFor(
-  step: StepKind | "audit" | "pilot" | "challenge" | "dream" | WorkstationJob,
+  step: StepKind | "audit" | "intake" | "pilot" | "challenge" | "dream" | WorkstationJob,
   options: { qa?: boolean } = {},
 ): HostToolDefinition[] {
+  if (step === "intake") return [PROGRESS_TOOL, INTAKE_TOOL];
   if (step === "audit") return [PROGRESS_TOOL, RECALL_TOOL, AUDIT_TOOL];
   if (step === "pilot") return [PROGRESS_TOOL, RECALL_TOOL, PILOT_TOOL];
   if (step === "dream") return [PROGRESS_TOOL, RECALL_TOOL, DREAM_TOOL];
   if (step === "challenge") return [PROGRESS_TOOL, RECALL_TOOL, CHALLENGE_TOOL];
   if (step === "poste-profil") return [PROGRESS_TOOL, WORKSTATION_PROFILE_TOOL];
   if (step === "poste-digest") return [PROGRESS_TOOL, WORKSTATION_DIGEST_TOOL];
+  if (step === "poste-signal") return [PROGRESS_TOOL, WORKSTATION_SIGNAL_PROPOSE_TOOL, WORKSTATION_SIGNAL_IGNORE_TOOL];
+  if (step === "poste-veille")
+    return [
+      PROGRESS_TOOL,
+      WORKSTATION_WATCH_REPLY_TOOL,
+      WORKSTATION_WATCH_FOLLOWUP_TOOL,
+      WORKSTATION_WATCH_PREP_TOOL,
+      WORKSTATION_WATCH_BRIEF_TOOL,
+    ];
   if (step === "poste-demande")
-    return [PROGRESS_TOOL, WORKSTATION_ACT_TOOL, WORKSTATION_DECISION_TOOL, WORKSTATION_REQUEST_REPORT_TOOL];
+    return [
+      PROGRESS_TOOL,
+      WORKSTATION_ACT_TOOL,
+      WORKSTATION_DECISION_TOOL,
+      WORKSTATION_SIGNAL_TOOL,
+      WORKSTATION_REQUEST_REPORT_TOOL,
+      WORKSTATION_REPLY_TYPE_TOOL,
+    ];
   if (step === "poste-service")
     return [
       PROGRESS_TOOL,
       WORKSTATION_ACT_TOOL,
       WORKSTATION_DECISION_TOOL,
+      WORKSTATION_SIGNAL_TOOL,
       WORKSTATION_ACTIVITY_TOOL,
       WORKSTATION_MEETINGS_TOOL,
     ];

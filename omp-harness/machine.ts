@@ -277,9 +277,10 @@ function afterFailure(
     return to("failed", step, cursor, { attempts: cursor.attempts, reason: `/${step} a échoué : ${outcome.reason}` });
   }
   if (cursor.lastFailCause === outcome.cause && !WAITABLE_CAUSES.includes(outcome.cause)) {
+    const cause = isRunnerOom(outcome.reason) ? OOM_CAUSE : outcome.cause;
     return to("awaiting_human", step, cursor, {
       attempts: cursor.attempts,
-      reason: `/${step} a échoué deux fois de suite pour la même cause (${outcome.cause}) : ${outcome.reason}`,
+      reason: `/${step} a échoué deux fois de suite pour la même cause (${cause}) : ${outcome.reason}`,
     });
   }
   const backoffSec = limits.retryBackoffSec[cursor.attempts];
@@ -294,6 +295,14 @@ function afterFailure(
     attempts: cursor.attempts,
     reason: `/${step} a échoué ${limits.retryBackoffSec.length + 1} fois (${outcome.cause}), relances épuisées : ${outcome.reason}`,
   });
+}
+
+/** La cause nommée à l'humain quand le runner est tué faute de mémoire. */
+export const OOM_CAUSE = "mémoire du runner (code 137)";
+
+/** Un runner tué faute de mémoire : son processus est sorti en code 137 (SIGKILL de l'OOM killer). */
+export function isRunnerOom(reason: string): boolean {
+  return /runner arrêté : code 137\b/.test(reason);
 }
 
 /**
@@ -361,6 +370,13 @@ export function afterSpecsValidation(
   return to("queued", "specs", cursor, { reason: `specs refusées par ${who} : ${reason}` });
 }
 
+/** Une validation de specs prise seule par l'autonomie est renversée avant le merge : les specs reviennent à l'humain. */
+export function specsBackToHuman(cursor: RunCursor, seq: number): Transition {
+  return to("awaiting_human", "specs", cursor, {
+    reason: `${WAIT_REASON.specs} : validation de l'autonomie (#${seq}) renversée par l'humain`,
+  });
+}
+
 /**
  * Les specs sont-elles ACCEPTÉES par cette transition ? Le passage de /specs à /impl : sans
  * porte (`nextAfter`), ou validées par l'humain ou le pilote (`afterSpecsValidation`). Leur
@@ -410,14 +426,16 @@ export function isTerminal(state: RunState): boolean {
  * du service passe par `assertTransition` ; une transition absente d'ici est un bug.
  */
 export const TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = {
-  queued: ["queued", "running", "cancelled", "failed"],
+  // → awaiting_human depuis queued, escalated, awaiting_human et failed : le renversement, avant le
+  // merge, d'une validation de specs prise seule rend les specs à l'humain (`specsBackToHuman`).
+  queued: ["queued", "running", "awaiting_human", "cancelled", "failed"],
   running: ["running", "queued", "escalated", "awaiting_human", "merging", "failed", "cancelled"],
-  escalated: ["queued", "cancelled", "failed"],
-  awaiting_human: ["queued", "merging", "cancelled", "failed"],
+  escalated: ["queued", "awaiting_human", "cancelled", "failed"],
+  awaiting_human: ["queued", "awaiting_human", "merging", "cancelled", "failed"],
   merging: ["merged", "queued", "awaiting_human", "failed"],
   merged: [],
   // Un run échoué peut être rouvert (décision renversée) ou annulé.
-  failed: ["queued", "cancelled"],
+  failed: ["queued", "awaiting_human", "cancelled"],
   cancelled: [],
 };
 

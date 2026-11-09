@@ -9,6 +9,7 @@ import * as http from "node:http";
 import * as path from "node:path";
 import type { AddressInfo } from "node:net";
 import { ClientRegistry } from "../../omp-harness/auth.ts";
+import { PERSON_FIELDS } from "../../omp-harness/db.ts";
 import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/http.ts";
 import { APPROVER_ONLY } from "../../omp-harness/workstation.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
@@ -142,6 +143,7 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
     ['path: "/v1/push/devices"', "POST", "/v1/push/devices"],
     ['"/v1/push/devices/\\(id)"', "DELETE", "/v1/push/devices/ab12"],
     ['/proofs")', "GET", "/v1/runs/r1/proofs"],
+    ['/proofs/\\(n)")', "GET", "/v1/runs/r1/proofs/1"],
   ];
   for (const [client, method, sample] of calls) {
     assert.ok(model.includes(client), `le client n'appelle plus ${client}`);
@@ -350,6 +352,52 @@ test("serveur-de-pipelines/AC-6 : chaque route du poste de travail appelée par 
     "seule l'action « Approuver » d'une notification d'envoi, jeton approbateur, rend .approveSend",
   );
   assert.equal(code(model).split("decideFromNotification(").length - 1, 1, "le modèle ne s'appelle pas lui-même");
+  // Le graphe des personnes (WorkstationPeople.swift) : lecture viewer, correction operator, et
+  // chaque champ que le serveur rend est lu par le client.
+  const peopleModel = code(read("omp-console", "Sources", "ConsoleClient", "WorkstationPeople.swift"));
+  for (const [client, method, sample, role] of [
+    ['HarnessCall(method: "GET", path: "/v1/workstation/people")', "GET", "/v1/workstation/people", "viewer"],
+    [
+      'path: "/v1/workstation/people/\\(HarnessModel.pathComponent(person.id))"',
+      "PATCH",
+      "/v1/workstation/people/p1",
+      "operator",
+    ],
+  ] as const) {
+    assert.ok(peopleModel.includes(client), `le client n'appelle plus ${client}`);
+    const served = routes.find((route) => route.method === method && route.pattern.test(sample));
+    assert.equal(served?.role, role, `le serveur ne sert pas ${method} ${sample} au rôle ${role}`);
+  }
+  for (const field of [...PERSON_FIELDS, "id", "corrected", "rev", "createdAt", "updatedAt"])
+    assert.ok(peopleModel.includes(`public var ${field}:`), `le client ne lit pas le champ ${field} d'une personne`);
+  // La veille proactive (WorkstationWatch.swift) : lecture viewer de « À traiter » (proposées,
+  // validées en attente d'envoi, non envoyées) ; écarter et valider au rôle operator.
+  const watchModel = code(read("omp-console", "Sources", "ConsoleClient", "WorkstationWatch.swift"));
+  for (const [client, method, sample, role] of [
+    ['path: "/v1/workstation/watch?state=open,validated,failed&limit=', "GET", "/v1/workstation/watch", "viewer"],
+    [
+      'path: "/v1/workstation/watch/\\(HarnessModel.pathComponent(item.id))/dismiss"',
+      "POST",
+      "/v1/workstation/watch/wv1/dismiss",
+      "operator",
+    ],
+    [
+      'path: "/v1/workstation/watch/\\(HarnessModel.pathComponent(item.id))/validate"',
+      "POST",
+      "/v1/workstation/watch/wv1/validate",
+      "operator",
+    ],
+    [
+      'path: "/v1/workstation/watch/\\(HarnessModel.pathComponent(watchId))/validate"',
+      "POST",
+      "/v1/workstation/watch/wv1/validate",
+      "operator",
+    ],
+  ] as const) {
+    assert.ok(watchModel.includes(client), `le client n'appelle plus ${client}`);
+    const served = routes.find((route) => route.method === method && route.pattern.test(sample));
+    assert.equal(served?.role, role, `le serveur ne sert pas ${method} ${sample} au rôle ${role}`);
+  }
 });
 
 /** Une valeur JSON qui doit être un objet : vérifiée, puis rendue comme telle. */

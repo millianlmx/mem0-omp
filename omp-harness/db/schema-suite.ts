@@ -136,4 +136,192 @@ export const MIGRATIONS_SUITE: readonly string[] = [
      created_at INTEGER NOT NULL,
      updated_at INTEGER NOT NULL
    );`,
+  // Le pont corpo ↔ usine : un signalement d'un collègue (une ligne par fil), sa proposition
+  // « ouvrir une issue et lancer un correctif », l'issue créée et le texte caviardé dont le
+  // run est construit ; `corporate_signal_runs` garde l'origine de chaque run lancé depuis
+  // cette issue (relances comprises). Rien de cela n'est écrit sur la forge ni dans le dépôt.
+  `CREATE TABLE corporate_signals (
+     id TEXT PRIMARY KEY,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     channel TEXT NOT NULL,
+     thread_ref TEXT NOT NULL,
+     url TEXT NOT NULL,
+     person_ref TEXT,
+     excerpt TEXT NOT NULL,
+     state TEXT NOT NULL,
+     reason TEXT,
+     error TEXT,
+     attempts INTEGER NOT NULL DEFAULT 0,
+     repo TEXT,
+     kind TEXT,
+     title TEXT,
+     body TEXT,
+     issue_repo TEXT,
+     issue_number INTEGER,
+     issue_url TEXT,
+     run_title TEXT,
+     run_request TEXT,
+     policy TEXT,
+     run_id TEXT,
+     confirmed_by TEXT,
+     confirmed_at INTEGER,
+     UNIQUE (channel, thread_ref)
+   );
+   CREATE INDEX corporate_signals_state ON corporate_signals (state, created_at);
+   CREATE INDEX corporate_signals_issue ON corporate_signals (issue_repo, issue_number);
+   CREATE INDEX corporate_signals_person ON corporate_signals (person_ref, confirmed_at);
+   CREATE TABLE corporate_signal_runs (
+     run_id TEXT PRIMARY KEY,
+     signal_id TEXT NOT NULL,
+     created_at INTEGER NOT NULL
+   );
+   CREATE INDEX corporate_signal_runs_signal ON corporate_signal_runs (signal_id);`,
+  // L'autonomie par paliers : le type de travail et les labels d'un run (déclarés à sa création),
+  // et, pour une validation prise seule, la porte, la règle et les preuves (décisions).
+  `ALTER TABLE runs ADD COLUMN kind TEXT;
+   ALTER TABLE runs ADD COLUMN labels TEXT NOT NULL DEFAULT '[]';
+   ALTER TABLE decisions ADD COLUMN autonomy TEXT;`,
+  // Les Demandes (intake.ts) : une phrase libre classée par un job, confirmée en un objet.
+  `CREATE TABLE intakes (
+     id TEXT PRIMARY KEY,
+     text TEXT NOT NULL,
+     source TEXT NOT NULL,
+     repo TEXT NOT NULL DEFAULT '',
+     requested_repo TEXT,
+     scope TEXT NOT NULL,
+     state TEXT NOT NULL,
+     kind TEXT,
+     plan TEXT,
+     question TEXT,
+     answer TEXT,
+     exchanges TEXT NOT NULL DEFAULT '[]',
+     target_kind TEXT,
+     target_id TEXT,
+     reason TEXT,
+     created_by TEXT,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE INDEX intakes_state ON intakes (state, created_at);`,
+  // Les contenus lus des canaux corpo (canaux/lecture.ts, db/channel-contents.ts) : messages
+  // Gmail et Slack (un par identifiant de source, `seq` croissant à chaque nouveau), événements
+  // de l'Agenda (un par événement, mis à jour sur place), curseurs de lecture, conversations
+  // Slack (suivies ou non) et auteurs Slack. Purgés après `workstation.retentionDays`.
+  `CREATE TABLE channel_messages (
+     seq INTEGER PRIMARY KEY,
+     id TEXT NOT NULL UNIQUE,
+     channel TEXT NOT NULL,
+     source_id TEXT NOT NULL,
+     thread_id TEXT,
+     conversation TEXT,
+     conversation_kind TEXT,
+     origin TEXT NOT NULL,
+     author TEXT,
+     at INTEGER NOT NULL,
+     subject TEXT,
+     text TEXT NOT NULL DEFAULT '',
+     headers TEXT NOT NULL DEFAULT '{}',
+     labels TEXT NOT NULL DEFAULT '[]',
+     mentions_me INTEGER NOT NULL DEFAULT 0,
+     bot INTEGER NOT NULL DEFAULT 0,
+     read_at INTEGER NOT NULL
+   );
+   CREATE INDEX channel_messages_at ON channel_messages (at);
+   CREATE INDEX channel_messages_thread ON channel_messages (channel, thread_id);
+   CREATE TABLE channel_events (
+     id TEXT PRIMARY KEY,
+     summary TEXT,
+     start_at INTEGER NOT NULL,
+     end_at INTEGER NOT NULL,
+     all_day INTEGER NOT NULL DEFAULT 0,
+     organizer TEXT,
+     attendees TEXT NOT NULL DEFAULT '[]',
+     meet_url TEXT,
+     recurring_event_id TEXT,
+     updated_at INTEGER NOT NULL,
+     read_at INTEGER NOT NULL
+   );
+   CREATE INDEX channel_events_start ON channel_events (start_at);
+   CREATE TABLE channel_cursors (
+     key TEXT PRIMARY KEY,
+     value TEXT NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE TABLE slack_conversations (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     archived INTEGER NOT NULL DEFAULT 0,
+     followed INTEGER NOT NULL DEFAULT 0,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE TABLE slack_users (
+     id TEXT PRIMARY KEY,
+     name TEXT,
+     real_name TEXT,
+     email TEXT,
+     bot INTEGER NOT NULL DEFAULT 0,
+     updated_at INTEGER NOT NULL
+   );`,
+  // Le graphe des personnes du poste (db/people.ts, canaux/personnes.ts) : une personne par
+  // ligne, ses champs, ceux que l'humain a corrigés (figés contre l'alimentation automatique)
+  // et sa révision ; `workstation_person_keys` rattache chaque adresse (`email:…`) et chaque
+  // identifiant Slack (`slack:…`) à UNE personne.
+  `CREATE TABLE workstation_people (
+     id TEXT PRIMARY KEY,
+     name TEXT,
+     emails TEXT NOT NULL DEFAULT '[]',
+     slack_ids TEXT NOT NULL DEFAULT '[]',
+     role TEXT,
+     team TEXT,
+     projects TEXT NOT NULL DEFAULT '[]',
+     tone TEXT,
+     delegation TEXT NOT NULL DEFAULT 'jamais',
+     topics TEXT NOT NULL DEFAULT '[]',
+     corrected TEXT NOT NULL DEFAULT '[]',
+     rev INTEGER NOT NULL DEFAULT 1,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE TABLE workstation_person_keys (
+     key TEXT PRIMARY KEY,
+     person_id TEXT NOT NULL REFERENCES workstation_people (id) ON DELETE CASCADE
+   );
+   CREATE INDEX workstation_person_keys_person ON workstation_person_keys (person_id);`,
+  // La veille proactive du poste (db/watch-items.ts, canaux/veille.ts) : ce que la veille dépose
+  // dans « À traiter » — réponse proposée, relance, préparation de réunion, brief du matin. `key`
+  // (`reply:<message>`, `followup:<message>`, `prep:<événement>`, `brief:<jour>`) ne produit
+  // chaque élément qu'une fois ; `draft_id` est le brouillon Gmail créé par API (une réponse
+  // Slack garde son brouillon ici, dans `text`). Données de collègues : purgées avec le poste.
+  `CREATE TABLE workstation_watch_items (
+     id TEXT PRIMARY KEY,
+     key TEXT NOT NULL UNIQUE,
+     kind TEXT NOT NULL,
+     state TEXT NOT NULL DEFAULT 'open',
+     ready INTEGER NOT NULL DEFAULT 0,
+     channel TEXT,
+     message_id TEXT,
+     event_id TEXT,
+     person_id TEXT,
+     topic TEXT,
+     subject TEXT,
+     text TEXT NOT NULL,
+     context TEXT NOT NULL DEFAULT '{}',
+     draft_id TEXT,
+     draft_error TEXT,
+     rev INTEGER NOT NULL DEFAULT 1,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE INDEX workstation_watch_items_state ON workstation_watch_items (state, created_at);`,
+  // La validation des réponses proposées (canaux/reponses.ts) : la demande du poste rattachée à
+  // une réponse validée, l'empreinte SHA-256 des destinataires et du texte figée à la validation,
+  // l'action d'envoi qu'elle a autorisée (une seule), et la raison d'un envoi non abouti.
+  `ALTER TABLE workstation_watch_items ADD COLUMN request_id TEXT;
+   ALTER TABLE workstation_watch_items ADD COLUMN fingerprint TEXT;
+   ALTER TABLE workstation_watch_items ADD COLUMN send_seq INTEGER;
+   ALTER TABLE workstation_watch_items ADD COLUMN send_error TEXT;
+   ALTER TABLE workstation_watch_items ADD COLUMN validated_at INTEGER;
+   CREATE INDEX workstation_watch_items_request ON workstation_watch_items (request_id);`,
 ];

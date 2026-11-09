@@ -2,9 +2,11 @@
 // (`progress`, `oracle_recall`, `decision`, `save_checkpoint`, `set_modules`, `split_feature`,
 // `run_tests`, `review_verdict`, `qa_record_proof`, et en revue, avec une prévisualisation, les outils de
 // navigation `qa_*` de browser/qa.ts). Le runner n'a ni la base ni le jeton de l'API : tout passe par ici.
+import { baselineSummary } from "./baseline.ts";
 import type { QaPreview } from "./browser/qa.ts";
 import { isQaTool } from "./browser/qa-tools.ts";
 import type { HarnessContext } from "./context.ts";
+import { ARTIFACTS_DIR, isArtifactPath } from "./git.ts";
 import type { RunRow, StepRow } from "./db.ts";
 import type { DecisionInput, IrreversibleCategory } from "./decisions.ts";
 import { checkpointMessage, planDecision } from "./decisions.ts";
@@ -264,6 +266,12 @@ function setModulesTool(
   const paths = pathList(args.paths);
   if (paths === null || paths.length === 0)
     return { text: "set_modules refusé : paths est une liste non vide de chemins du dépôt", isError: true };
+  const artifacts = paths.filter(isArtifactPath);
+  if (artifacts.length > 0)
+    return {
+      text: `set_modules refusé : ${artifacts.join(", ")} est sous \`${ARTIFACTS_DIR}/\`, les artefacts d'étape ne sont jamais un module. Rappelle set_modules avec les seuls chemins du dépôt que la feature touchera ; les modules du run n'ont pas changé.`,
+      isError: true,
+    };
   const updated = store.transaction(() => {
     const row = store.updateRun(run.id, { modules: paths });
     ctx.event("modules", run.id, { modules: paths, step: step.kind, by: "runner" });
@@ -289,7 +297,11 @@ export function parseSplitFeatures(
     if (title === "" || request === "") return { ok: false, error: "title et request sont requis pour chaque feature" };
     const modules = pathList(record.modules ?? []);
     if (modules === null) return { ok: false, error: `modules de « ${title} » : liste de chemins` };
-    features.push({ title: title.slice(0, 120), request, modules });
+    features.push({
+      title: title.slice(0, 120),
+      request,
+      modules: modules.filter((module) => !isArtifactPath(module)),
+    });
   }
   return { ok: true, features };
 }
@@ -411,9 +423,14 @@ async function runTestsTool(
   if (scope !== "check" && !(result.cached && state.lastTests?.result.key === result.key))
     state.lastTests = { scope, result };
   if (scope === "full") state.lastFull = result;
+  // Un rouge que main a déjà n'est pas un bloquant : l'agent de revue le lit ici, avant son verdict.
+  const judged = scope === "full" ? await ctx.baseline.judge(run, repo, result) : null;
+  const baseline = judged
+    ? `\n\nROUGE DE BASE : ${baselineSummary(judged)}.${judged.new.length === 0 ? " Ce n'est pas un bloquant." : ""}`
+    : "";
   return {
-    text: heavyReport(result, config.heavy.memoryMax),
-    isError: result.outcome !== "pass",
+    text: heavyReport(result, config.heavy.memoryMax) + baseline,
+    isError: result.outcome !== "pass" && !(judged !== null && judged.new.length === 0),
     details: { outcome: result.outcome, cached: result.cached, tree: result.tree },
   };
 }

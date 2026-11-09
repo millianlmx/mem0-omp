@@ -40,6 +40,8 @@ struct ConsoleRootView: View {
     @ObservedObject var drafts: HarnessDrafts
     /// Le poste de travail du même serveur (`server.workstation`) : son badge.
     @ObservedObject var workstation: WorkstationModel
+    /// Les propositions des signalements de collègues (`server.signals`) : badge d'« À traiter ».
+    @ObservedObject var signals: CorporateSignalsModel
     @ObservedObject var filesModel: FilesModel
     /// Le déroulé de la sortie (porté par le délégué) : le bouton « Quitter » de
     /// la feuille de préparation bloquante y passe, comme ⌘Q.
@@ -84,11 +86,12 @@ struct ConsoleRootView: View {
         return { setup.reopen() }
     }
 
-    /// Le badge d'une section : ce qui attend l'humain (boîte et envois du poste) sur
-    /// « À traiter », les envois à approuver sur Poste, la vigie muette sur Système.
+    /// Le badge d'une section : ce qui attend l'humain (boîte, envois du poste et
+    /// propositions des signalements) sur « À traiter », les envois à approuver sur Poste,
+    /// la vigie muette sur Système.
     private func badge(for section: ConsoleSection) -> Int {
         switch section {
-        case .inbox: (server.inbox?.pendingCount ?? 0) + workstation.pendingCount
+        case .inbox: (server.inbox?.pendingCount ?? 0) + workstation.pendingCount + signals.pendingCount
         case .workstation: workstation.pendingCount
         case .system: server.vigie.isSilent ? 1 : 0
         default: 0
@@ -197,12 +200,15 @@ struct ConsoleRootView: View {
             await server.load()
             server.startLive()
         }
-        // L'état du poste et ses envois à approuver (badges, « À traiter »), relus à chaque
-        // serveur relié, et la vigie (badge de Système) ; le flux de la boîte les tient
-        // ensuite à jour. Un serveur relié : la permission de notifier est demandée (le
-        // système ne la demande qu'une fois).
+        // L'état du poste et ses envois à approuver, les propositions des signalements
+        // (badges, « À traiter »), relus à chaque serveur relié, et la vigie (badge de
+        // Système) ; le flux de la boîte les tient ensuite à jour. Un serveur relié : la
+        // permission de notifier est demandée (le système ne la demande qu'une fois).
         .task(id: server.address) {
             await workstation.refresh()
+            await signals.refresh()
+            await server.watch.refresh()
+            await server.intakes.refresh()
             await server.vigie.refresh()
             if server.isConfigured { _ = await notifications.requestAuthorization() }
         }

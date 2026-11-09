@@ -156,10 +156,12 @@ public struct PriorityMenu: View {
 extension View {
     /// Les feuilles et confirmations des gestes du serveur : refus (specs ou verdict),
     /// renversement d'une décision, direct d'une session, arrêt, relance avec consigne,
-    /// consigne et budget d'une feature, et annulation d'une fusion.
+    /// consigne et budget d'une feature, annulation d'une fusion, et confirmation d'une
+    /// proposition née d'un signalement de collègue.
     public func harnessGestures(server: HarnessModel, drafts: HarnessDrafts) -> some View {
         modifier(HarnessGestures(server: server, drafts: drafts))
             .modifier(RunControlSheets(server: server, drafts: drafts))
+            .modifier(SignalGestures(server: server, drafts: drafts))
     }
 }
 
