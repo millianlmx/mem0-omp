@@ -4,6 +4,7 @@
 // passe par ici.
 import { baselineSummary } from "./baseline.ts";
 import type { HarnessContext } from "./context.ts";
+import { ARTIFACTS_DIR, isArtifactPath } from "./git.ts";
 import type { RunRow, StepRow } from "./db.ts";
 import type { DecisionInput, IrreversibleCategory } from "./decisions.ts";
 import { checkpointMessage, planDecision } from "./decisions.ts";
@@ -254,6 +255,12 @@ function setModulesTool(
   const paths = pathList(args.paths);
   if (paths === null || paths.length === 0)
     return { text: "set_modules refusé : paths est une liste non vide de chemins du dépôt", isError: true };
+  const artifacts = paths.filter(isArtifactPath);
+  if (artifacts.length > 0)
+    return {
+      text: `set_modules refusé : ${artifacts.join(", ")} est sous \`${ARTIFACTS_DIR}/\`, les artefacts d'étape ne sont jamais un module. Rappelle set_modules avec les seuls chemins du dépôt que la feature touchera ; les modules du run n'ont pas changé.`,
+      isError: true,
+    };
   const updated = store.transaction(() => {
     const row = store.updateRun(run.id, { modules: paths });
     ctx.event("modules", run.id, { modules: paths, step: step.kind, by: "runner" });
@@ -279,7 +286,11 @@ export function parseSplitFeatures(
     if (title === "" || request === "") return { ok: false, error: "title et request sont requis pour chaque feature" };
     const modules = pathList(record.modules ?? []);
     if (modules === null) return { ok: false, error: `modules de « ${title} » : liste de chemins` };
-    features.push({ title: title.slice(0, 120), request, modules });
+    features.push({
+      title: title.slice(0, 120),
+      request,
+      modules: modules.filter((module) => !isArtifactPath(module)),
+    });
   }
   return { ok: true, features };
 }

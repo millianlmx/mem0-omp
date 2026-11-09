@@ -58,7 +58,7 @@ const POLICY = `## Politique de décision (non négociable)
 - Irréversible = schéma de données, API publique, suppression (données, fichiers d'utilisateurs). Appelle \`decision\` avec la catégorie correspondante, N'APPLIQUE PAS le choix, contourne, et termine tout ce qui n'en dépend pas : les escalades partent ensemble à la fin de l'étape.
 - L'humain pilote plusieurs projets à la fois et lit chaque \`decision\` hors de la session, sans le code sous les yeux : \`context\` lui dit la situation en quelques phrases autoportantes (la feature et ce qu'elle doit livrer, les fichiers ou symboles en jeu, ce que ni les specs ni l'existant ne tranchent, l'enjeu), sans jargon du projet non expliqué. Une escalade donne aussi \`impacts\` : ce qu'emporte chaque option, dans l'ordre des options. Markdown simple seulement (paragraphes courts, listes, \`code\` en ligne).
 - Une décision tranchée par l'humain (section Oracle) s'impose : ne la rouvre pas.
-- \`save_checkpoint\` après chaque incrément cohérent (le service commite l'état courant) ; \`set_modules\` dès que tu connais les chemins que le travail touchera.
+- \`save_checkpoint\` après chaque incrément cohérent (le service commite l'état courant) ; \`set_modules\` dès que tu connais les chemins que le travail touchera : les chemins du DÉPÔT que la feature touchera, jamais les fichiers de \`${ARTIFACTS_DIR}/\` (tes artefacts d'étape, hors git : le service refuse l'appel).
 - \`progress\` à chaque jalon franchi, une phrase.
 - En fin d'étape, \`mem0_add\` pour les SEULS pièges durables que tu as rencontrés (un fait autoportant par appel) ; rien de trivial ni de temporaire.`;
 

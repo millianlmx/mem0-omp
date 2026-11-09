@@ -372,7 +372,7 @@ const SET_MODULES_TOOL: HostToolDefinition = {
   name: "set_modules",
   label: "Harness — modules touchés",
   description:
-    "Pose tout de suite les chemins du dépôt que ce run touche (dossiers ou fichiers) : c'est ce qui décide du parallélisme avec les autres runs. Appelle-le dès que les chemins sont connus.",
+    "Pose tout de suite les chemins du dépôt que ce run touche (dossiers ou fichiers) : c'est ce qui décide du parallélisme avec les autres runs. Appelle-le dès que les chemins sont connus. Jamais les fichiers de `.harness/` (tes artefacts d'étape) : l'appel est refusé.",
   parameters: {
     type: "object",
     properties: { paths: { ...STRINGS, minItems: 1, description: "Chemins relatifs à la racine du dépôt." } },
