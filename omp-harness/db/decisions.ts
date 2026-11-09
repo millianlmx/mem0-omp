@@ -1,5 +1,6 @@
 // Les décisions (les checkpoints : prises seules, acceptées, renversées, caduques)
 // et les escalades (les questions posées à l'humain).
+import type { AutonomyProof } from "../autonomy-rules.ts";
 import { StepStore } from "./steps.ts";
 import type { DecisionCategory } from "../decisions.ts";
 import { str, strOrNull, num, numOrNull, json, repoClause } from "./sql.ts";
@@ -30,6 +31,8 @@ export type DecisionRow = {
   reversalReason: string | null;
   /** Le client qui a accepté ou renversé la décision. */
   decidedBy: string | null;
+  /** Une validation prise seule par l'autonomie par paliers : la porte, la règle et les preuves ; `null` sinon. */
+  autonomy: AutonomyProof | null;
   createdAt: number;
   decidedAt: number | null;
 };
@@ -78,6 +81,7 @@ function decisionOf(row: Row): DecisionRow {
     reversalOption: strOrNull(row, "reversal_option"),
     reversalReason: strOrNull(row, "reversal_reason"),
     decidedBy: strOrNull(row, "decided_by"),
+    autonomy: json<AutonomyProof | null>(row, "autonomy", null),
     createdAt: num(row, "created_at"),
     decidedAt: numOrNull(row, "decided_at"),
   };
@@ -119,7 +123,8 @@ export class DecisionStore extends StepStore {
       | "decidedAt"
       | "context"
       | "impacts"
-    > & { context?: string | null; impacts?: string[] },
+      | "autonomy"
+    > & { context?: string | null; impacts?: string[]; autonomy?: AutonomyProof | null },
     status: "auto" | "auto_timeout" = "auto",
   ): DecisionRow {
     return this.transaction(() => {
@@ -128,8 +133,8 @@ export class DecisionStore extends StepStore {
           .next,
       );
       const result = this.execute(
-        `INSERT INTO decisions (run_id, step_id, seq, question, options, chosen, rationale, context, impacts, category, status, checkpoint_sha, depends_on, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO decisions (run_id, step_id, seq, question, options, chosen, rationale, context, impacts, category, status, checkpoint_sha, depends_on, autonomy, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         input.runId,
         input.stepId,
         next,
@@ -143,6 +148,7 @@ export class DecisionStore extends StepStore {
         status,
         input.checkpointSha,
         JSON.stringify(input.dependsOn),
+        input.autonomy ? JSON.stringify(input.autonomy) : null,
         this.now(),
       );
       return decisionOf(this.selectOne("SELECT * FROM decisions WHERE id = ?", Number(result.lastInsertRowid)) as Row);

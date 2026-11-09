@@ -103,6 +103,10 @@ export const EVENT_TYPES = [
   // et son silence (plus de battement de cœur depuis vigie.SILENT_MS)
   "vigie_incident",
   "vigie_silent",
+  // l'autonomie par paliers : une attente retenue, validée seule ou rendue à l'humain (`autonomy`),
+  // et chaque validation ou refus d'une attente humaine, par qui que ce soit (`validation`)
+  "autonomy",
+  "validation",
   // le pont corpo ↔ usine : l'état d'un signalement d'un collègue (`{id, state}` seulement ; repo null : poste réservé au propriétaire)
   "signal",
   // éphémères
