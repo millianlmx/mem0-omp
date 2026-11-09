@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.36.0 — 2026-11-09
+
+- feat(harness,console): Jira et Confluence par le MCP Atlassian — plan du jour, savoir corpo (#438) (77c9314)
+
 ## omp-harness 1.35.1 — 2026-11-09
 
 - fix(harness): config.json monté en écriture dans la pile, pour les routes d'administration de l'API (#436) (158218d)
