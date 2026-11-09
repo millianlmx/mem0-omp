@@ -227,7 +227,7 @@ const BUG = {
   symptom: "TypeError à l'ouverture du worktree",
   evidence: ["run_failed : TypeError"],
   hypothesis: "worktree absent",
-  files: ["omp-harness/steps.ts"],
+  files: ["src/api/routes.ts"],
   criteria: ["un worktree absent est recréé"],
   costUsd: 0.4,
 };
@@ -795,7 +795,7 @@ const VERDICT = {
   symptom: "TypeError: x is undefined à l'ouverture du worktree",
   evidence: ["run_failed : TypeError: x is undefined"],
   hypothesis: "le worktree est retiré avant l'étape",
-  files: ["omp-harness/steps.ts"],
+  files: ["src/api/routes.ts"],
   criteria: ["un worktree absent est recréé avant /impl", "le run ne passe plus en échec"],
   repo: null,
 };
@@ -857,7 +857,7 @@ test("vigie/AC-9 : la vigie suit le flux, trie une empreinte nouvelle par une se
     assert.equal(args[args.indexOf("--title") + 1], `[vigie] ${VERDICT.title}`);
     const body = args[args.indexOf("--body") + 1] as string;
     assert.match(body, /## Critères d'acceptation\n\n- AC-1 : un worktree absent est recréé avant \/impl\n- AC-2 :/);
-    assert.match(body, /## Fichiers probables\n\n- `omp-harness\/steps\.ts`/);
+    assert.match(body, /## Fichiers probables\n\n- `src\/api\/routes\.ts`/);
     // Le contexte borné : le run, l'historique de main et les bugs connus ; aucun secret dans la session.
     const prompt = omp.log().find((entry) => entry.kind === "prompt");
     assert.match(String(prompt?.message), /^# \/vigie-triage/);

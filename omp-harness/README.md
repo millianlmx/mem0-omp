@@ -1995,8 +1995,8 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 |---|---|---|
 | `repos_list` | viewer | Les dépôts déclarés que le client voit, avec leur projet sur leur forge (`github` ou `gitlab` : `owner/name`) ; un dépôt sans forge n'a que son nom. |
 | `issues_list` `{repo?, label?, limit?}` | viewer | Les issues ouvertes, chacune avec le run qui la porte (`run: {id, state, slug}` ou `null`). |
-| `issue_fix` `{repo?, number}` | operator | Lance un run `Issue #N : <titre>` dont la demande porte le texte de l'issue et ses dix derniers commentaires. Une issue liée à un run vivant ou mergé le rend (`already`) ; liée à un run échoué ou annulé, elle est relancée. |
-| `issues_fix_labeled` `{repo?, label?}` | operator | Lance les issues ouvertes qui portent `label` (`issues.label` par défaut) et qu'aucun run ne porte, quel que soit son état, les plus anciennes d'abord, au plus `issues.maxLaunch` (`launched`, `skipped`, `remaining`). |
+| `issue_fix` `{repo?, number}` | operator | Lance un run `Issue #N : <titre>` dont la demande porte le texte de l'issue et ses dix derniers commentaires. Une issue liée à un run vivant ou mergé le rend (`already`) ; liée à un run échoué ou annulé, elle est relancée. Une issue dont le titre nomme le runner d'un run de ce harness (`omp-runner-<run>-<étape>`) est refusée (409) : c'est une trace de ce run, pas un bug du harness ; le refus est journalisé sur ce run. Un client pilote (la vigie) passe en plus les gardes de la vigie (§ « La vigie »). |
+| `issues_fix_labeled` `{repo?, label?}` | operator | Lance les issues ouvertes qui portent `label` (`issues.label` par défaut) et qu'aucun run ne porte, quel que soit son état, les plus anciennes d'abord, au plus `issues.maxLaunch` (`launched`, `skipped`, `remaining`). Une issue qui nomme le runner d'un run est sautée ; un client pilote est refusé (403). |
 | `run_start` `{repo, title, request, slug?, req?, modules?, priority?, lane?, budgetUsd?}` | operator | Lance un run libre sur un dépôt déclaré, sans passer par sa forge : il part en file (`queued`). Mêmes champs et mêmes contrôles que `POST /v1/runs`. |
 | `run_get` `{id}` | viewer | Le run (`run.state`, `run.step`, `run.verdict`, `run.rev`), ses étapes, escalades, tests, artefacts, coûts : le corps de `GET /v1/runs/{id}`. |
 | `runs_list` `{state?, repo?}` | viewer | Les runs que le client voit, filtrés par états et par dépôt : `GET /v1/runs`. |
@@ -2237,6 +2237,15 @@ clones (`<racine>/repos`) lui sont montés en lecture seule.
   l'emplacement et du message normalisés (ids, nombres, horodatages, chemins temporaires
   et personnels, IP retirés). Connue : une occurrence de plus, et au plus toutes les 6 h
   un commentaire de comptes sur son issue. Nouvelle : le tri.
+- **Traces des runners** (`vigie/attribution.ts`). Un signal dont la source ou
+  l'emplacement nomme un runner (`omp-runner-<run>-<étape>`, son unité ou son
+  conteneur), ou l'échec d'un run tué faute de mémoire (code 137, que le harness relance
+  déjà avec consigne puis rend à l'humain), vient de l'agent d'un run — sa mémoire de
+  1 Go, ses tests, ses commandes —, pas du harness. Le serveur le range en bruit
+  (`noise`), rattaché à ce run (`runId`), sans tri, et inscrit son `vigie_incident`
+  (`action: "runner"`) au journal du run ; la vigie n'en publie jamais l'issue (409) ni
+  n'en lance la correction. Un message du harness qui nomme un runner reste un signal
+  du harness.
 - **Tri.** Une session omp (`RpcRunner`, en-tête `# /vigie-triage`) au contexte borné —
   événements et journal ±5 min, le run concerné et sa session, `git log` de `main`, les
   bugs connus de la mémoire — rend `vigie_verdict` : bruit, ou bug avec symptôme, preuves,
@@ -2248,7 +2257,13 @@ clones (`<racine>/repos`) lui sont montés en lecture seule.
   (pages, meetings, actions, profil, identités) est retiré mot pour mot.
 - **Correction** (mode `fix`) : `issue_fix`, puis le pilotage du run quand il attend
   (`# /vigie-pilote`, `vigie_act` → `run_validate` ou `run_retry` avec consigne, au plus
-  3 gestes par run). Escalade, geste irréversible ou budget : rendus à l'humain sans
+  3 gestes par run). Son run ne réserve que les fichiers suivis de `main` que nomme
+  l'incident (fichiers du tri, pile, emplacement, message), jamais un dossier entier
+  comme `omp-harness` ou `test/harness`, qui chevaucherait tous les runs créés après
+  lui ; aucun fichier précis : rien ne part, l'issue reste ouverte et l'incident revient
+  à l'humain. Pendant ce run, `set_modules` refuse un dossier et la section `## Modules`
+  des specs n'en garde que les fichiers ; `issues_fix_labeled` est refusé à un client
+  pilote. Escalade, geste irréversible ou budget : rendus à l'humain sans
   session — et la boucle humaine refuse de toute façon ces gestes en 403 à un client
   pilote (`HUMAN_ONLY` de `pilot.ts`, escalades `schema`/`public_api`/`deletion`, envois
   du poste). Après le merge, l'empreinte est surveillée 24 h : absente, l'issue est

@@ -40,7 +40,7 @@ import type { StepState } from "./host-tools.ts";
 import { runHostTool } from "./host-tools.ts";
 import type { FailCause, StepKind, StepOutcome } from "./machine.ts";
 import { IRREVERSIBLE_GATE, isRunnerOom, stepTier } from "./machine.ts";
-import { parseModulesSection } from "./planner.ts";
+import { broadModules, parseModulesSection } from "./planner.ts";
 import {
   OOM_RETRY_NOTE,
   STEP_ARTIFACT,
@@ -1013,7 +1013,10 @@ export class StepExecutor {
     const { store } = this.#ctx;
     const specs = store.getArtifact(run.id, "specs.md") ?? "";
     store.putArtifact(run.id, SPECS_BASELINE, specs, stepId);
-    const modules = parseModulesSection(specs);
+    const declared = parseModulesSection(specs);
+    // Une correction de la vigie ne réserve que des fichiers : les dossiers entiers de la section sont écartés.
+    const broad = new Set(store.vigieIncidentByFixRun(run.id) ? broadModules(declared, run.worktree) : []);
+    const modules = declared.filter((module) => !broad.has(module));
     if (modules.length > 0) {
       store.transaction(() => {
         store.updateRun(run.id, { modules });

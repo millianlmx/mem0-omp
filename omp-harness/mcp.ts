@@ -198,7 +198,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "issue_fix",
     title: "Corriger une issue",
     description:
-      "Lance un pipeline du harness qui corrige l'issue donnée (GitHub ou GitLab, la forge du dépôt). Une issue déjà portée par un run vivant ou mergé n'est pas relancée ; elle l'est si ce run a échoué ou a été annulé. Un client pilote (la vigie) ne lance que ses propres issues, en mode fix, une fois par empreinte, dans ses plafonds.",
+      "Lance un pipeline du harness qui corrige l'issue donnée (GitHub ou GitLab, la forge du dépôt). Une issue déjà portée par un run vivant ou mergé n'est pas relancée ; elle l'est si ce run a échoué ou a été annulé. Une issue dont le titre nomme le runner d'un run (`omp-runner-<run>-<étape>`) n'est jamais lancée : c'est une trace de ce run. Un client pilote (la vigie) ne lance que ses propres issues, en mode fix, une fois par empreinte, dans ses plafonds, et son run ne réserve que les fichiers précis que nomme l'incident.",
     role: "operator",
     readOnly: false,
     properties: {
@@ -211,9 +211,9 @@ export const MCP_TOOLS: readonly Tool[] = [
       if (!Number.isInteger(args.number)) throw new HarnessError(400, "number : numéro d'issue attendu");
       const number = args.number as number;
       const vigie = call.client.pilot ? call.orchestrator.vigie : null;
-      const incident = vigie?.guardFix(repo, number, Date.now()) ?? null;
-      const outcome = await call.desk.fix(repo, number, call.actor);
-      if (vigie && incident) vigie.recordFix(incident, outcome.run.id, Date.now());
+      const guarded = vigie ? await vigie.guardFix(repo, number, Date.now()) : null;
+      const outcome = await call.desk.fix(repo, number, call.actor, guarded ? { modules: guarded.modules } : {});
+      if (vigie && guarded) vigie.recordFix(guarded.incident, outcome.run.id, Date.now());
       return { repo: repo.name, ...launched(outcome) };
     },
   },
@@ -221,7 +221,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "issues_fix_labeled",
     title: "Corriger les issues d'un label",
     description:
-      "Lance un pipeline pour chaque issue ouverte qui porte le label (celui de la configuration par défaut) et qu'aucun run ne porte encore, les plus anciennes d'abord, dans la limite de `issues.maxLaunch` par appel.",
+      "Lance un pipeline pour chaque issue ouverte qui porte le label (celui de la configuration par défaut) et qu'aucun run ne porte encore, les plus anciennes d'abord, dans la limite de `issues.maxLaunch` par appel. Refusé à un client pilote (la vigie), qui ne lance ses corrections que par issue_fix.",
     role: "operator",
     readOnly: false,
     properties: {
@@ -231,6 +231,8 @@ export const MCP_TOOLS: readonly Tool[] = [
     required: [],
     run: async (call, args) => {
       const repo = await targetRepo(call, args);
+      if (call.client.pilot)
+        throw new HarnessError(403, "un client pilote ne lance ses corrections que par issue_fix, une issue à la fois");
       const outcome = await call.desk.fixLabeled(repo, optionalText(args, "label"), call.actor);
       return { repo: repo.name, ...outcome, launched: outcome.launched.map(launched) };
     },
