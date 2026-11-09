@@ -1,8 +1,9 @@
 // Le LANCEMENT d'une feature, écrit une fois pour le Mac et l'iPhone/iPad : le dépôt
 // (parmi ceux que le serveur déclare), le titre, la demande, puis les options que
 // `POST /v1/runs` accepte — priorité, voie, modules touchés, cadrage `/req` déjà écrit
-// et budget propre (contrat C3, envoyé seulement s'il est renseigné). Posé dans
-// l'écran Pipelines et dans la feuille « Nouvelle feature » (⌘N).
+// et budget propre (contrat C3, envoyé seulement s'il est renseigné) — ainsi que le
+// type de travail et les labels qui choisissent la règle d'autonomie du dépôt. Posé
+// dans l'écran Pipelines et dans la feuille « Nouvelle feature » (⌘N).
 
 import ConsoleClient
 import ConsoleCore
@@ -60,6 +61,24 @@ public struct LaunchFeatureSections: View {
             Text(PipelineServerText.launchRunTitle)
         } footer: {
             Text(PipelineServerText.launchRunHint)
+        }
+
+        Section {
+            Picker(AutonomyText.kindLabel, selection: $drafts.runOptions.kind) {
+                Text(AutonomyText.kindUnset).tag(HarnessWorkKind?.none)
+                ForEach(HarnessWorkKind.allCases) { kind in
+                    Text(AutonomyText.kind(kind.rawValue)).tag(Optional(kind))
+                }
+            }
+            .consoleID("pipelines.launch.kind")
+            TextField(AutonomyText.labelsLabel, text: $drafts.runOptions.labels, prompt: Text(AutonomyText.labelsPrompt))
+                .consolePlainInput()
+                .consoleID("pipelines.launch.labels")
+            if drafts.runOptions.problem == .labels {
+                problem(AutonomyText.labelsInvalid)
+            }
+        } footer: {
+            Text(AutonomyText.kindHint)
         }
 
         Section {

@@ -30,7 +30,7 @@ struct IOSPaletteResults: View {
             query: query,
             search: false,
             sections: IOSSection.all,
-            systemPages: SystemPage.visible(isAdmin: server.isAdmin),
+            systemPages: SystemPage.visible(isAdmin: server.isAdmin, autonomy: server.autonomy.isServed),
             inbox: server.inbox,
             history: history.runs,
             canAct: server.canAct,

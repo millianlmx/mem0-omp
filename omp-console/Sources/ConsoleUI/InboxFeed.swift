@@ -574,9 +574,15 @@ struct DecisionsCard: View {
         VStack(alignment: .leading, spacing: 10) {
             QuestionPlaceView(place: inbox.question(decision))
             HStack(alignment: .firstTextBaseline) {
-                Text(PipelineServerText.category(decision.category))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                if decision.autonomy != nil {
+                    Label(AutonomyText.decidedAlone, systemImage: AutonomyText.decidedAloneSymbol)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tint)
+                } else {
+                    Text(PipelineServerText.category(decision.category))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
                 if let status = PipelineServerText.decisionStatus(decision.status) {
                     Text(status)
                         .font(.caption.weight(.semibold))
@@ -586,7 +592,9 @@ struct DecisionsCard: View {
             Text(MarkdownDocument.inline(decision.question))
                 .font(.headline)
                 .consoleReadable()
-            if let context = decision.shownContext {
+            if let autonomy = decision.autonomy {
+                AutonomyProofView(proof: autonomy)
+            } else if let context = decision.shownContext {
                 QuestionContextView(context: context)
             }
             VStack(alignment: .leading, spacing: 6) {

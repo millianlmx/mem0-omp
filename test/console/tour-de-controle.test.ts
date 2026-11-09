@@ -177,11 +177,11 @@ test("tour-de-controle/AC-3 : Vigie, Planifications, Issues et Administration so
   const section = read("Sources", "ConsoleCore", "Design", "ConsoleSection.swift");
   assert.match(
     section,
-    /public enum SystemPage[^{]*\{\s*case vigie\s*case schedules\s*case stats\s*case admin\s*case server/,
+    /public enum SystemPage[^{]*\{\s*case vigie\s*case schedules\s*case autonomy\s*case stats\s*case admin\s*case server/,
   );
   assert.match(section, /public enum RunsScope[^{]*\{\s*case features\s*case projects\s*case audits\s*case issues/);
   assert.match(section, /public var isAdminOnly: Bool \{ self == \.admin \}/);
-  assert.match(section, /allCases\.filter \{ isAdmin \|\| !\$0\.isAdminOnly \}/);
+  assert.match(section, /allCases\.filter \{ \(isAdmin \|\| !\$0\.isAdminOnly\) && /);
   const mac = read("Sources", "OMPConsole", "Server", "SystemPages.swift");
   const ios = read("ios", "OMPConsoleIOS", "IOSHarnessScreens.swift");
   for (const [name, macView, iosView] of [
@@ -208,13 +208,16 @@ test("tour-de-controle/AC-3 : Vigie, Planifications, Issues et Administration so
   // L'Administration est masquée hors admin : hub Système (partagé) et palettes des deux apps.
   assert.match(
     read("Sources", "ConsoleUI", "SystemViews.swift"),
-    /ForEach\(SystemPage\.visible\(isAdmin: server\.isAdmin\)/,
+    /ForEach\(SystemPage\.visible\(isAdmin: server\.isAdmin, autonomy: autonomy\.isServed\)/,
   );
   for (const palette of [
     read("Sources", "ConsoleUI", "CommandPalette.swift"),
     read("ios", "OMPConsoleIOS", "IOSSearchScreen.swift"),
   ])
-    assert.match(palette, /systemPages: SystemPage\.visible\(isAdmin: server\.isAdmin\)/);
+    assert.match(
+      palette,
+      /systemPages: SystemPage\.visible\(isAdmin: server\.isAdmin, autonomy: server\.autonomy\.isServed\)/,
+    );
   // La consigne s'envoie depuis la page d'une feature, dans les deux apps (vue partagée).
   assert.match(
     read("Sources", "OMPConsole", "Server", "RunPageView.swift"),

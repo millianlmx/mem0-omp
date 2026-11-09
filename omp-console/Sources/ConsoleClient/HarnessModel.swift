@@ -81,6 +81,8 @@ public final class HarnessModel: ObservableObject {
     public private(set) lazy var admin = HarnessAdmin(harness: self)
     /// Les issues des dépôts, lues et corrigées par le MCP du serveur.
     public private(set) lazy var issues = HarnessIssues(harness: self)
+    /// L'autonomie par paliers, en lecture : règles, validations prises seules, propositions.
+    public private(set) lazy var autonomy = HarnessAutonomy(harness: self)
     /// La remontée bornée des erreurs de l'app (contrat C2).
     var reporter: HarnessErrorReporter
     /// Les événements complets du flux, à qui en veut le détail (les notifications
@@ -279,6 +281,7 @@ public final class HarnessModel: ObservableObject {
         schedules.reset()
         admin.reset()
         issues.reset()
+        autonomy.reset()
         reporter.reset()
         health = nil
         healthReached = false
@@ -383,6 +386,7 @@ public final class HarnessModel: ObservableObject {
                         workstation.receive(names)
                         vigie.receive(names)
                         schedules.receive(names)
+                        autonomy.receive(names)
                         streamObserver?(events)
                     }
                 }
@@ -740,7 +744,9 @@ public final class HarnessModel: ObservableObject {
             priority: options.priority,
             lane: options.lane == .full ? HarnessLane.full.rawValue : nil,
             req: options.req,
-            budgetUsd: options.budgetUsd
+            budgetUsd: options.budgetUsd,
+            kind: options.kind?.rawValue,
+            labels: options.labels.isEmpty ? nil : options.labels
         )
         let reply: HarnessRunReply? = await launch("/v1/runs", body: body)
         return reply?.run
@@ -1132,6 +1138,8 @@ private struct RunBody: Encodable {
     var lane: String?
     var req: String?
     var budgetUsd: Double?
+    var kind: String?
+    var labels: [String]?
 }
 
 private struct ProjectBody: Encodable {

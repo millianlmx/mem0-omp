@@ -104,7 +104,7 @@ struct CommandPalette: View {
             query: drafts.paletteQuery,
             search: drafts.paletteSearch,
             sections: sections,
-            systemPages: SystemPage.visible(isAdmin: server.isAdmin),
+            systemPages: SystemPage.visible(isAdmin: server.isAdmin, autonomy: server.autonomy.isServed),
             inbox: server.inbox,
             history: history.runs,
             canAct: server.canAct,
