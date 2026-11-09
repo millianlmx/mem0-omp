@@ -8,8 +8,12 @@ import { HarnessError } from "./errors.ts";
 import type {
   ChangeRequest,
   ChangeState,
+  CheckConclusion,
+  CheckStatus,
+  FailedLog,
   Forge,
   ForgeAuth,
+  ForgeCheck,
   ForgeVisibility,
   Issue,
   IssueComment,
@@ -17,13 +21,25 @@ import type {
   IssueQuery,
   SquashMessage,
 } from "./forge.ts";
-import { failure, githubSlug, record, remoteLocation, textOf, urlIn, visibilityOf } from "./forge.ts";
+import {
+  failure,
+  githubSlug,
+  isRedCheck,
+  record,
+  remoteLocation,
+  textOf,
+  urlIn,
+  usefulLogLines,
+  visibilityOf,
+} from "./forge.ts";
 import { ghEnv } from "./policy.ts";
 import type { Exec, ProcResult } from "./proc.ts";
 
 /** Les gestes de PR attendent la forge plus longtemps que les lectures d'issues. */
 const PR_TIMEOUT_MS = 120_000;
 const ISSUE_TIMEOUT_MS = 60_000;
+/** Les logs d'un run CI (`gh run view --log-failed`) : leur fin seule est gardée au-delà. */
+const LOG_MAX_BYTES = 4 * 1024 * 1024;
 /** `gh` rend du JSON : la FIN seule (ce que garde `exec` au-delà) serait illisible. */
 const JSON_MAX_BYTES = 8 * 1024 * 1024;
 /** Les champs d'une issue listée, et ceux d'une issue lue en entier. */
@@ -63,6 +79,44 @@ function prState(stdout: string): ChangeState | null {
   } catch {
     return null;
   }
+}
+
+/** Le JSON de la sortie d'une CLI réussie, `null` si elle a échoué ou n'est pas du JSON. */
+function jsonOf(result: ProcResult): unknown {
+  if (result.code !== 0) return null;
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    return null;
+  }
+}
+
+function checkStatus(status: unknown): CheckStatus {
+  return status === "completed" ? "completed" : status === "in_progress" ? "running" : "pending";
+}
+
+/** `success`, `skipped`, `neutral`, `cancelled` ; tout autre résultat terminé (échec, délai, action requise…) est un échec. */
+function checkConclusion(conclusion: unknown): CheckConclusion | null {
+  if (typeof conclusion !== "string") return null;
+  if (conclusion === "success" || conclusion === "skipped" || conclusion === "neutral" || conclusion === "cancelled")
+    return conclusion;
+  return "failure";
+}
+
+/** Un état de statut de commit (`success`, `failure`, `error`, `pending`) en check. */
+function statusCheck(raw: unknown): ForgeCheck | null {
+  const value = record(raw);
+  const name = textOf(value.context);
+  if (name === "") return null;
+  const state = value.state;
+  const done = state === "success" || state === "failure" || state === "error";
+  return {
+    name,
+    status: done ? "completed" : "pending",
+    conclusion: done ? (state === "success" ? "success" : "failure") : null,
+    url: textOf(value.target_url) || null,
+    required: false,
+  };
 }
 
 export class GitHubForge implements Forge {
@@ -145,15 +199,16 @@ export class GitHubForge implements Forge {
     };
   }
 
-  async openChange(change: ChangeRequest, known: string | null): Promise<string | null> {
-    const created = await this.#run(
-      ["pr", "create", "-B", change.base, "-H", change.head, "-t", change.title, "-b", change.body],
-      PR_TIMEOUT_MS,
-    );
+  async openChange(change: ChangeRequest, known: string | null, draft = false): Promise<string | null> {
+    const args = ["pr", "create", "-B", change.base, "-H", change.head, "-t", change.title, "-b", change.body];
+    if (draft) args.push("--draft");
+    const created = await this.#run(args, PR_TIMEOUT_MS);
     // Une PR existe déjà pour la branche (merge relancé) : gh le dit, avec son URL.
     const url = urlIn(created.stdout) ?? urlIn(created.stderr) ?? known;
     if (created.code !== 0 && url === null)
       throw new HarnessError(502, `gh pr create : ${created.stderr.trim().slice(0, 300)}`);
+    // Une PR existante, sortie du brouillon par un merge précédent : remise en brouillon (sa fusion automatique tombe).
+    if (created.code !== 0 && draft) await this.#run(["pr", "ready", "--undo", change.head], PR_TIMEOUT_MS);
     return url;
   }
 
@@ -177,6 +232,90 @@ export class GitHubForge implements Forge {
   async changeState(head: string): Promise<ChangeState | null> {
     const view = await this.#run(["pr", "view", head, "--json", "state,mergedAt"], PR_TIMEOUT_MS);
     return view.code === 0 ? prState(view.stdout) : null;
+  }
+
+  async markReady(head: string): Promise<void> {
+    const ready = await this.#run(["pr", "ready", head], PR_TIMEOUT_MS);
+    // Une PR qui n'est pas un brouillon : gh le dit (« already ready for review »), le geste est fait.
+    if (ready.code !== 0 && !/already/i.test(`${ready.stdout}${ready.stderr}`))
+      throw new HarnessError(502, `gh pr ready refusé : ${failure(ready)}`);
+  }
+
+  /** Les contextes que la protection de la branche principale (ou un ruleset) exige, `∅` si elle n'en pose aucun. */
+  async #requiredContexts(slug: string): Promise<Set<string>> {
+    const base = this.#repo.mainBranch;
+    const names = new Set<string>();
+    const [protection, rules] = await Promise.all([
+      this.#run(["api", `repos/${slug}/branches/${base}/protection/required_status_checks`], ISSUE_TIMEOUT_MS),
+      this.#run(["api", `repos/${slug}/rules/branches/${base}`], ISSUE_TIMEOUT_MS),
+    ]);
+    const status = record(jsonOf(protection));
+    for (const context of Array.isArray(status.contexts) ? status.contexts : []) names.add(textOf(context));
+    for (const check of Array.isArray(status.checks) ? status.checks : []) names.add(textOf(record(check).context));
+    const list = jsonOf(rules);
+    for (const rule of Array.isArray(list) ? list : []) {
+      const required = record(record(rule).parameters).required_status_checks;
+      for (const check of Array.isArray(required) ? required : []) names.add(textOf(record(check).context));
+    }
+    names.delete("");
+    return names;
+  }
+
+  async checks(head: string): Promise<ForgeCheck[]> {
+    const slug = this.#slug();
+    const [runs, statuses, required] = await Promise.all([
+      this.#json(["api", `repos/${slug}/commits/${head}/check-runs?per_page=100`]),
+      this.#json(["api", `repos/${slug}/commits/${head}/status?per_page=100`]),
+      this.#requiredContexts(slug),
+    ]);
+    const found: ForgeCheck[] = [];
+    const checkRuns = record(runs).check_runs;
+    for (const raw of Array.isArray(checkRuns) ? checkRuns : []) {
+      const value = record(raw);
+      const name = textOf(value.name);
+      if (name === "") continue;
+      found.push({
+        name,
+        status: checkStatus(value.status),
+        conclusion: value.status === "completed" ? checkConclusion(value.conclusion) : null,
+        url: textOf(value.html_url) || textOf(value.details_url) || null,
+        required: required.has(name),
+      });
+    }
+    const commitStatuses = record(statuses).statuses;
+    for (const raw of Array.isArray(commitStatuses) ? commitStatuses : []) {
+      const check = statusCheck(raw);
+      if (check !== null) found.push({ ...check, required: required.has(check.name) });
+    }
+    // Un check exigé qui n'a encore rien rendu est en attente, pas absent.
+    for (const name of required)
+      if (!found.some((check) => check.name === name))
+        found.push({ name, status: "pending", conclusion: null, url: null, required: true });
+    return found;
+  }
+
+  async failedLogs(head: string, limit: number): Promise<FailedLog[]> {
+    const logs = new Map<string, Promise<string>>();
+    // `gh run view <id> --log-failed` : le log des étapes rouges de TOUS les jobs du run, une ligne `job\tétape\tmessage`.
+    const runLog = (id: string): Promise<string> => {
+      let log = logs.get(id);
+      if (log === undefined) {
+        log = this.#run(["run", "view", id, "--log-failed"], PR_TIMEOUT_MS, LOG_MAX_BYTES).then((result) =>
+          result.code === 0 ? result.stdout : "",
+        );
+        logs.set(id, log);
+      }
+      return log;
+    };
+    const failed: FailedLog[] = [];
+    for (const check of (await this.checks(head)).filter(isRedCheck)) {
+      const id = /\/actions\/runs\/(\d+)/.exec(check.url ?? "")?.[1];
+      const all = id === undefined ? "" : await runLog(id);
+      const own = all.split("\n").filter((line) => line.startsWith(`${check.name}\t`));
+      const log = usefulLogLines(own.length > 0 ? own.join("\n") : all, limit);
+      failed.push({ name: check.name, url: check.url, log });
+    }
+    return failed;
   }
 
   async issues(query: IssueQuery): Promise<Issue[]> {

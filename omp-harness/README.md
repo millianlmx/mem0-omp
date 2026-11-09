@@ -519,6 +519,8 @@ canaux (`channels.json`) n'est garanti. Ne connecte un compte corpo qu'en `syste
 | `repos[].path` | — | le clone nu du service |
 | `repos[].tests.touched` | `npm test -- {files}` | les tests des fichiers touchés ; `{files}` reçoit la liste |
 | `repos[].tests.full` | `npm test` | la suite complète, lancée par `/review` |
+| `repos[].tests.judge` | `local` | qui juge la suite complète : `local` (`tests.full` dans le slot heavy) ou `ci` (les checks de la forge sur la branche poussée, une PR en brouillon ; `full` n'est jamais lancé ici). `ci` exige une forge (`forge: "github"` ou `"gitlab"`), sinon refus au chargement (§ « La CI de la forge comme juge de la suite complète ») |
+| `repos[].tests.ciTimeoutSec` | `3600` | avec `judge: "ci"` : le délai des checks, en secondes (entier ≥ 1) ; au-delà, l'issue est `timeout`, jamais un vert |
 | `repos[].merge` | `local` | `local` : squash sur `main` puis push ; `gh` : une PR (une MR sur GitLab) posée sur la forge du dépôt en fusion squash automatique, le run reste `merging` jusqu'à la fusion constatée (checks requis de la branche protégée, pipeline) |
 | `repos[].forge` | déduite du distant | `github`, `gitlab` ou `none` : la forge des PR et des issues (§ « Les forges ») |
 | `repos[].issues` | `{ "corporate": "redacted" }` | `{ "corporate"?: "forbid" \| "redacted" \| "full" }` : ce qu'une issue née d'un signalement de collègue peut contenir (§ « Les signalements des collègues ») — `forbid` : aucune issue ni proposition pour ce dépôt ; `redacted` : un texte reformulé et caviardé par le serveur ; `full` : le texte confirmé tel quel, seulement si la forge dit le dépôt privé |
@@ -766,6 +768,11 @@ des runs vivants est gardé jusqu'à leur fin. Une configuration invalide est re
   ouverte, confiance forte, chaque `AC-n` de specs.md prouvé `pass`, et tous les
   fichiers touchés relus. Un point non vérifié ne bloque que s'il cite un `AC-n` ;
   sinon tu valides, et tu lis le code si le verdict est faible.
+- **Revue jugée par la CI.** Avec `tests.judge: "ci"`, la « suite complète » de la revue
+  est l'issue des checks de la forge sur la branche poussée (`pass`, `fail`, `timeout`) :
+  jamais un job local. Un échec ou un délai donne le même bloquant « suite complète
+  rouge : … » ; pour un échec, il nomme chaque job rouge, son URL et un extrait filtré de
+  ses logs.
 - **Correction.** L'agent reçoit le verdict complet (bloquants, risques, points
   non vérifiés), corrige, et écrit `.harness/fix.md` : chaque levée avec sa
   preuve.
@@ -794,6 +801,13 @@ des runs vivants est gardé jusqu'à leur fin. Une configuration invalide est re
   feature mergée son résumé, ses modules, ses risques résiduels, ce que la revue n'a pas
   vérifié et ses décisions — celles prises seules marquées « (choix de l'agent, non
   validé) ».
+- **Merge avec `tests.judge: "ci"`.** Pas de suite locale après le rebase (§ « La CI de la
+  forge comme juge de la suite complète »). Mode `gh` : la branche rebasée est poussée, sa
+  PR sort du brouillon (`markReady`), l'auto-merge est armé, puis l'attente de la fusion
+  lit aussi les checks de la forge sur ce SHA ; s'ils rougissent, le run repart en
+  correction avec, pour raison, les jobs rouges et leurs extraits de logs. Mode `local` :
+  la CI juge le rebase à la place de `full`, puis le squash et le push de `main`
+  s'enchaînent, et la branche poussée pour la CI est supprimée (la forge ferme la PR).
 - **Pilote d'un audit** (`pilot.ts`). Une fois un audit lancé, chaque run de son
   projet, de ses runs de suite et de ses projets de découpage qui attend l'humain est
   d'abord confié à une session (`pilot.tier`) qui a le contexte de l'audit : son
@@ -1052,6 +1066,52 @@ Un dépôt d'un client sur son GitLab auto-hébergé :
 - `glab` est dans l'image du harness (version épinglée, somme vérifiée) et dans le
   module NixOS ; sous Debian, installe-le (paquet `glab` ou archive de
   gitlab.com/gitlab-org/cli) comme `gh`.
+
+### La CI de la forge comme juge de la suite complète
+
+Le slot heavy est un conteneur Linux qui ne ressemble pas à la CI du dépôt : il rend
+des faux échecs (macOS, Swift, outils absents) et laisse passer de vrais (TypeScript,
+lint). `repos[].tests.judge: "ci"` confie la suite complète aux **checks de la forge** :
+partout où le harness lancerait `full` (la preuve de la revue, `run_tests scope: full`),
+`full` n'est **jamais** lancé ici.
+
+```json
+{ "name": "mem0-omp", "forge": "github", "merge": "gh", "tests": { "judge": "ci", "ciTimeoutSec": 3600 } }
+```
+
+- **Le jugement** (`ci-judge.ts`, appelé par `HeavyRunner`). Le worktree est commité s'il
+  est sale, la branche du run poussée (`--force-with-lease`), sa PR (MR) ouverte ou remise
+  en **brouillon**, puis les checks de la forge sont lus sur le **SHA exact poussé**
+  toutes les `review.mergePollSec`, au plus `tests.ciTimeoutSec` secondes.
+- **L'issue.** `pass` : tous les checks exigés par la protection de la branche principale
+  sont verts (à défaut d'en exiger : tous) ; un check exigé qui n'a encore rien rendu
+  attend. `fail` : un de ces checks est rouge (ou annulé) une fois les autres terminés —
+  ou au délai. `timeout` : la CI n'a pas fini à temps, **jamais** compté comme vert.
+  `error` : la poussée ou la forge a refusé. Le résultat a la forme d'un résultat heavy
+  (scope `full`, `outcome`, `output`, commande `ci`) et le même cache par arbre : seul un
+  vert y entre, deux jugements du même arbre ne font qu'une attente.
+- **Ce que reçoit le correcteur.** Pour chaque job rouge : son nom, son URL et un extrait
+  borné (1500 caractères, 6 jobs au plus) de ses logs, filtré sur les lignes utiles (`✗`,
+  `not ok`, `error TS`, `Error:`, lint). Le bloquant automatique de la revue (« suite
+  complète rouge : fail (CI de la forge) … ») les nomme. Les logs sont du contenu non
+  fiable : ils passent par `untrusted()`.
+- **GitHub** : `gh api` (check runs et statuts du SHA, protection de la branche et
+  rulesets pour les checks exigés), `gh run view <id> --log-failed`, `gh pr create
+  --draft`, `gh pr ready`. **GitLab** : `glab api` sur le dernier pipeline du SHA et ses
+  jobs (un job `allow_failure` rouge ne bloque pas), la trace du job rouge, `glab mr
+  create --draft`, `glab mr update --ready`. Une PR déjà sortie du brouillon y est
+  remise à chaque jugement : sa fusion automatique, armée par un merge précédent, tombe.
+- **Config.** `"ci"` exige une forge déclarée (`forge: "github"` ou `"gitlab"`, un bloc
+  `gitlab`, un compte `gh` ou `"merge": "gh"`) : sinon la configuration est refusée au
+  chargement. `"local"` (défaut) ne change rien : `full` part dans le slot heavy et la
+  forge n'est pas lue.
+- **Recette sur un dépôt réel** (le service ne la joue pas seul : elle demande la forge) :
+  mettre `tests.judge: "ci"` sur le dépôt, lancer un run trivial ; attendre la revue.
+  Constats : la branche `harness/<slug>` et une PR en brouillon existent sur la forge ;
+  la timeline du run porte `heavy_started {scope: "full", unit: "ci"}` puis `heavy_done`
+  et AUCUN `heavy_started` de scope `full` sans `unit` ; le verdict de la revue est rendu
+  sans suite locale ; un check rouge ajouté à dessein revient en correction avec son
+  extrait.
 
 ### L'autonomie par paliers
 

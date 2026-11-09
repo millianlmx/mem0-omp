@@ -18,7 +18,8 @@ import { createHash } from "node:crypto";
 import * as path from "node:path";
 import { TapCounter, tapTally } from "./tap.ts";
 import type { TapTally } from "./tap.ts";
-import { launch } from "./config.ts";
+import { CI_COMMAND, CiJudge } from "./ci-judge.ts";
+import { launch, testsJudge } from "./config.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
 import { containerUser, engine, forceStop } from "./runner.ts";
 import type { Store } from "./db.ts";
@@ -61,6 +62,8 @@ export type HeavyResult = {
   command: string;
   /** Le décompte TAP de toute la sortie du passage (pas de sa seule fin gardée) ; `null` sans lancement ni cache. */
   tap: TapTally | null;
+  /** `ci` : le verdict vient des checks de la forge (`tests.judge: "ci"`), non d'un job local ; `output` nomme les jobs rouges. */
+  judge?: "ci";
 };
 
 /** Les octets de sortie gardés d'un job : la fin, là où est l'échec. */
@@ -104,7 +107,7 @@ export function testFiles(repo: RepoConfig, files: string[]): string[] {
 export function testCommand(repo: RepoConfig, scope: TestScope, files: string[], check?: string): string | null {
   switch (scope) {
     case "full":
-      return repo.tests.full;
+      return testsJudge(repo) === "ci" ? CI_COMMAND : repo.tests.full;
     case "check":
       return check !== undefined && Object.hasOwn(repo.checks, check) ? repo.checks[check] : null;
     case "touched": {
@@ -313,9 +316,11 @@ export class HeavyRunner {
   #seq = 0;
   /** Le récepteur de la sortie en direct des jobs (posé par le contexte du service). */
   #output: TestOutputSink | null = null;
-
+  /** Le juge des suites complètes d'un dépôt en `tests.judge: "ci"`. */
+  readonly #ci: CiJudge;
   constructor(deps: HeavyDeps) {
     this.#deps = deps;
+    this.#ci = new CiJudge(deps);
   }
 
   /** Branche la sortie en direct des jobs. */
@@ -462,13 +467,15 @@ export class HeavyRunner {
     let oomRetries = 0;
     let failRetried = false;
     let last: HeavyResult = NOTHING_RAN;
+    // La CI de la forge juge la suite complète : ni slot, ni relance d'un rouge (le même SHA rendrait les mêmes checks).
+    const byCi = job.scope === "full" && testsJudge(job.repo) === "ci";
     for (;;) {
       attempts++;
-      last = await this.#attempt(job, id, attempts, signal);
+      last = byCi ? await this.#ci.judge(job, id, signal) : await this.#attempt(job, id, attempts, signal);
       // Un rouge suivi d'un vert sur le même arbre : un test instable, compté dans les statistiques.
       if (last.outcome === "pass" && failRetried)
         store.appendEvent("heavy_flaky", job.runId, { scope: job.scope, command: id.command, repo: job.repo.name });
-      if (last.outcome === "fail" && !failRetried) {
+      if (last.outcome === "fail" && !failRetried && !byCi) {
         failRetried = true;
         store.appendEvent("heavy_fail_retry", job.runId, {
           scope: job.scope,

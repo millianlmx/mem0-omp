@@ -93,6 +93,24 @@ export type ForgeKind = "github" | "gitlab" | "none";
 
 export const FORGES: readonly ForgeKind[] = ["github", "gitlab", "none"];
 
+/** Qui juge la suite complète d'un dépôt : le slot heavy (`local`) ou la CI de sa forge (`ci`). */
+export type TestJudge = "local" | "ci";
+
+export const TEST_JUDGES: readonly TestJudge[] = ["local", "ci"];
+
+/** Le délai par défaut de la CI de la forge, en secondes. */
+export const DEFAULT_CI_TIMEOUT_SEC = 3600;
+
+/** Qui juge la suite complète du dépôt : `local` sauf déclaration. */
+export function testsJudge(repo: Pick<RepoConfig, "tests">): TestJudge {
+  return repo.tests.judge ?? "local";
+}
+
+/** Le délai de la CI de la forge, en secondes. */
+export function ciTimeoutSec(repo: Pick<RepoConfig, "tests">): number {
+  return repo.tests.ciTimeoutSec ?? DEFAULT_CI_TIMEOUT_SEC;
+}
+
 /**
  * Ce qu'une issue d'origine corpo (un signalement d'un collègue) peut contenir, par dépôt :
  * `forbid` aucune issue, `redacted` un texte reformulé et caviardé par le serveur (défaut),
@@ -241,9 +259,12 @@ export type RepoConfig = {
   /**
    * Les commandes de test ; `{files}` reçoit les fichiers touchés, cités pour le
    * shell. `pattern` : le glob des fichiers de test (`test/**\/*.test.ts`) qui filtre
-   * `{files}` ; `null` = pas de filtre.
+   * `{files}` ; `null` = pas de filtre. `judge` : qui juge la suite complète — `local`
+   * (défaut) : `full` dans le slot heavy ; `ci` : les checks de la forge du dépôt sur la
+   * branche du run poussée (`full` n'est alors jamais lancé ici), au plus `ciTimeoutSec`
+   * secondes (3600 par défaut). `ci` exige une forge (`github` ou `gitlab`).
    */
-  tests: { touched: string; full: string; pattern: string | null };
+  tests: { touched: string; full: string; pattern: string | null; judge?: TestJudge; ciTimeoutSec?: number };
   /** Les commandes nommées (`{ "lint": "bash scripts/lint.sh" }`) que `run_tests scope:"check"` lance. */
   checks: Record<string, string>;
   /**
@@ -1021,6 +1042,20 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   for (const repo of config.repos) {
     if (repo.tests.pattern !== null && typeof repo.tests.pattern !== "string")
       fail(`repos.${repo.name}.tests.pattern : glob ou null`);
+    const { judge, ciTimeoutSec: timeout } = repo.tests;
+    if (judge !== undefined && !TEST_JUDGES.includes(judge))
+      fail(`repos.${repo.name}.tests.judge : ${TEST_JUDGES.map((value) => `"${value}"`).join(" | ")}`);
+    if (timeout !== undefined && !(Number.isInteger(timeout) && timeout >= 1))
+      fail(`repos.${repo.name}.tests.ciTimeoutSec : entier ≥ 1 (secondes)`);
+    // La forge se lit ici dans la configuration seule (forge.ts `forgeKindOf` y ajoute l'URL du distant, lue plus tard).
+    const hasForge =
+      repo.forge !== undefined
+        ? repo.forge !== "none"
+        : repo.gitlab !== undefined || repo.gh !== undefined || repo.merge === "gh";
+    if (judge === "ci" && !hasForge)
+      fail(
+        `repos.${repo.name}.tests.judge : "ci" juge la suite par les checks de la forge — déclare \`forge\` ("github" ou "gitlab") pour ce dépôt, ou garde "local"`,
+      );
     if (!isRecord(repo.checks) || Object.values(repo.checks).some((command) => typeof command !== "string"))
       fail(`repos.${repo.name}.checks : { nom: commande }`);
   }
