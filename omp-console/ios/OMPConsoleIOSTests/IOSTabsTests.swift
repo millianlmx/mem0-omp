@@ -81,7 +81,7 @@ struct IOSTabsTests {
         #expect(IOSRunTab.initial(.proofs) == .proofs)
         #expect(IOSRunTab.initial(.overview) == .overview)
         #expect(IOSRunTab.initial(.live) == .live)
-        #expect(IOSRunTab.allCases.map(\.session) == [nil, nil, .live, .changes, .tests, .timeline])
+        #expect(IOSRunTab.allCases.map(\.session) == [nil, nil, nil, .live, .changes, .tests, .timeline])
         // Les Preuves n'ont pas d'onglet quand le serveur ne les sert pas.
         #expect(IOSRunTab.shown(proofs: false) == [.overview, .live, .changes, .tests, .timeline])
         #expect(IOSRunTab.shown(proofs: true).contains(.proofs))
