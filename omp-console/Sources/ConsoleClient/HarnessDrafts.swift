@@ -130,6 +130,8 @@ public final class HarnessDrafts: ObservableObject {
     /// Les adresses et pseudos de l'utilisateur en cours de saisie (une par ligne) ;
     /// `nil` tant qu'il n'a rien touché : le champ montre alors celles du serveur.
     @Published public var workstationIdentities: String?
+    /// La proposition d'un signalement dont la feuille de confirmation est ouverte.
+    @Published public var signalShown: CorporateSignal?
 
     // MARK: Consigne, relance et budget d'une feature
 

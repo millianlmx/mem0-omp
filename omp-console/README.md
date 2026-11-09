@@ -361,7 +361,8 @@ elle-même.
 - **À traiter** — la file unique de ce qui vous attend (`GET /v1/inbox`), sans
   tuile ni graphique : en tête une seule **ligne de pouls** (`inbox.pulse` : direct
   ou hors ligne, features en cours, en file, coût sur 7 jours), le bandeau d'une
-  vigie muette s'il y a lieu, puis les envois du poste à approuver, puis chaque
+  vigie muette s'il y a lieu, puis les envois du poste à approuver, puis les
+  propositions nées des signalements de collègues, puis chaque
   élément de la boîte dans sa propre section, la plus vieille attente d'abord, sous
   un en-tête `genre · dépôt · il y a …`. Rien de vide n'est affiché ; une file vide
   dit « Rien ne vous attend », avec la ligne de pouls et « Nouvelle feature »
@@ -393,7 +394,21 @@ elle-même.
     `auto_timeout` (tranchée par le serveur à l'échéance d'une escalade) est
     marquée « Tranchée à l’échéance » ;
   - **Alertes** de la veille (agent muet, étape lente, boucle de corrections, budget
-    dépassé) et **audits à trier** (`inbox.audit.open`).
+    dépassé) et **audits à trier** (`inbox.audit.open`) ;
+  - **Signalements de collègues** (pont corpo ↔ usine, `GET /v1/signals?state=proposed`,
+    `SignalProposalsSection`) : chaque proposition « Ouvrir une issue et lancer un
+    correctif dans <dépôt> », avec son canal, la personne, l'extrait caviardé, comptée
+    au badge d'À traiter et relue à chaque événement `signal`. « Relire et confirmer »
+    (`signal.review.<id>`) ouvre sa feuille : le message du collègue, le dépôt
+    (modifiable parmi ceux du serveur), le titre et la description, puis **ce qui
+    partira à la forge**, relu par `POST /v1/signals/{id}/preview` après chaque
+    modification (politique `issues.corporate` appliquée et sa note). « Confirmer »
+    (`POST …/confirm {repo, title, body}`) crée l'issue et lance la feature liée ;
+    « Écarter la proposition » (`POST …/dismiss`, raison facultative) ne la repropose
+    jamais. Seul l'appareil approbateur confirme ou écarte : le refus du serveur est dit
+    dans la feuille, pas dans le bandeau de tête. Les signalements sont au
+    propriétaire : un jeton restreint à des dépôts (403) n'en voit rien, sans erreur.
+    Le serveur ne sert pas encore les brouillons de réponse au collègue : l'app n'en montre aucun.
 - **Features** — un sélecteur de portée en tête (`RunsScope`) :
   - **Features** : une ligne dense par feature (`RunListRow` : point d'état, animé
     si elle tourne, titre, `dépôt · étape · âge`, coût si connu), groupée « À vous »,
@@ -423,14 +438,17 @@ elle-même.
   en-tête fixe (`RunDetailHeader` : titre, pastille d'état, `dépôt · créée il y a …`,
   jalons Besoins → Specs → Implémentation → Revue → Fusion), puis six onglets
   segmentés (`run.tabs`) — **Aperçu** (ce que la feature attend de vous, en place,
-  la demande d'origine repliée, les specs et le verdict lisibles), **Preuves**,
-  **Direct**, **Fichiers**, **Tests**, **Frise** — et, en pied, le champ de consigne
-  à l'agent quand elle en accepte une. Elle s'ouvre sur les Preuves quand elle
-  attend la validation de sa revue, sur l'Aperçu quand elle vous attend autrement,
-  sur le Direct quand elle tourne, sur l'Aperçu sinon (`HarnessRunOpening`). Tous
-  ses gestes sont dans un seul menu « … » (`run.actions`, le même que le menu
-  contextuel d'une ligne) : consigne, budget, priorité, relancer, arrêter, annuler
-  la fusion, PR, suivre sur l'écran verrouillé (iPhone). Les onglets :
+  la demande d'origine repliée, les specs et le verdict lisibles, et la section
+  **Origine** d'une feature lancée depuis un signalement de collègue : canal,
+  personne telle que reçue, lien du fil, extrait caviardé, issue et confirmation, lus
+  par `GET /v1/runs/{id}/origin` ; rien sans origine ni pour un jeton restreint),
+  **Preuves**, **Direct**, **Fichiers**, **Tests**, **Frise** — et, en pied, le champ
+  de consigne à l'agent quand elle en accepte une. Elle s'ouvre sur les Preuves quand
+  elle attend la validation de sa revue, sur l'Aperçu quand elle vous attend
+  autrement, sur le Direct quand elle tourne, sur l'Aperçu sinon
+  (`HarnessRunOpening`). Tous ses gestes sont dans un seul menu « … » (`run.actions`,
+  le même que le menu contextuel d'une ligne) : consigne, budget, priorité, relancer,
+  arrêter, annuler la fusion, PR, suivre sur l'écran verrouillé (iPhone). Les onglets :
   - **Preuves** : ce que la revue joint (`GET /v1/runs/{id}/proofs`, contenu par
     `/proofs/{n}` lu à l'affichage), partagé Mac/iOS (`RunProofsSections`,
     ConsoleUI). Le tour de revue courant d'abord — les preuves créées depuis le
@@ -1827,6 +1845,7 @@ omp-console/
 │   ├── HarnessLiveActivity.swift  l'état d'une Live Activity, la forme exacte que pousse le serveur
 │   ├── WorkstationWire.swift      le contrat JSON du poste de travail (`/v1/workstation*`)
 │   ├── WorkstationModel.swift     le client du poste de travail, porté par `HarnessModel` (même transport, même flux)
+│   ├── CorporateSignals.swift     les signalements de collègues (propositions, aperçu, confirmation) et l'origine d'une feature
 │   ├── HarnessNotifications.swift les notifications : charge du serveur, catégories, routage d'une action vers un geste
 │   ├── HarnessNotificationCenter.swift  le pont vers UserNotifications (permission, actions, notifications locales du Mac)
 │   └── HarnessDrafts.swift        les brouillons de lancement et de geste
