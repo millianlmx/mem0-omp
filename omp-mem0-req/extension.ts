@@ -21,6 +21,7 @@ import {
   writePairing,
 } from "./harness.ts";
 import type { HarnessTarget, Inbox } from "./harness.ts";
+import { intakeDialog, registerIntakeTool } from "./intake.ts";
 import { registerHarnessTools } from "./tools.ts";
 import { registerWorkstationTools } from "./workstation.ts";
 
@@ -32,6 +33,7 @@ type Ctx = {
   ui?: {
     notify?: (message: string, level?: "info" | "warning" | "error") => void;
     input?: (title: string, placeholder?: string) => Promise<string | undefined>;
+    confirm?: (title: string, message: string) => Promise<boolean>;
   };
 };
 
@@ -96,6 +98,7 @@ export default function reqExtension(pi: ExtensionAPI) {
   const follower = createFollower(pi);
   registerHarnessTools(pi, { onLaunched: (resolved, runs) => follower.start(resolved, runs) });
   registerWorkstationTools(pi);
+  registerIntakeTool(pi);
   pi.on("session_shutdown", () => follower.stop());
 
   pi.registerCommand("req", {
@@ -104,6 +107,23 @@ export default function reqExtension(pi: ExtensionAPI) {
     handler: async (args: unknown, ctx: Ctx) => {
       const resolved = target(ctx, "req");
       if (resolved) pi.sendUserMessage(REQ_SEED(String(args ?? "").trim(), resolved.repo));
+    },
+  });
+
+  pi.registerCommand("demande", {
+    description:
+      "Pose une demande en langage naturel au harness (/demande <texte>) : il la classe en plan, question ou réponse ; rien n'est créé sans ta confirmation",
+    handler: async (args: unknown, ctx: Ctx) => {
+      const text = String(args ?? "").trim();
+      if (text === "") {
+        ctx.ui?.notify?.("[demande] écris ta demande : /demande <texte>.", "warning");
+        return;
+      }
+      const resolved = target(ctx, "demande");
+      if (!resolved) return;
+      await guarded(ctx, "demande", async () => {
+        await intakeDialog(resolved, text, ctx.ui, ctx.hasUI);
+      });
     },
   });
 
