@@ -377,6 +377,41 @@ public enum SignalText {
         default: raw
         }
     }
+
+    // MARK: - Réponses au collègue
+
+    public static let repliesTitle = L10n.text("Réponses à envoyer")
+    public static let repliesHint = L10n.text("Chaque brouillon répond au collègue dont le signalement a lancé une feature. Rien ne part sans votre approbation.")
+    public static let repliesSymbol = "arrowshape.turn.up.left"
+    public static let openReply = L10n.text("Relire la réponse")
+    public static let replySheetTitle = L10n.text("Réponse au collègue")
+    public static let replyTextLabel = L10n.text("Texte de la réponse")
+    public static let saveReply = L10n.text("Enregistrer le texte")
+    public static let approveReply = L10n.text("Approuver et envoyer par le poste")
+    public static let approveReplyHint = L10n.text("Le poste saisira ce texte dans le fil ; l’envoi attendra encore votre approbation.")
+    public static let archiveReply = L10n.text("Classer")
+    public static let archiveReplyHint = L10n.text("Une réponse classée quitte « À traiter » sans rien envoyer.")
+    public static let copyReply = L10n.text("Copier")
+    public static let copiedReply = L10n.text("Copié")
+    public static let copySymbol = "doc.on.doc"
+    public static let copyOnlyHint = L10n.text("Demande faite au poste : aucun fil où répondre. Copiez le texte et envoyez-le vous-même.")
+    public static let replyApproverOnly = L10n.text("Seul l’appareil approbateur peut modifier, approuver ou classer une réponse : appairez cette app avec le code approbateur (harness.sh approver sur le VPS).")
+    public static let replyLabel = L10n.text("Réponse")
+
+    /// La sorte du brouillon, brute (`final`, `attente`).
+    public static func replyKind(_ raw: String) -> String {
+        switch raw {
+        case "final": L10n.text("Réponse finale")
+        case "attente": L10n.text("Réponse d’attente")
+        default: raw
+        }
+    }
+
+    /// L’état de la réponse d’une feature (`origin.reply`), traduit par la section Origine.
+    public static let replyNone = L10n.text("Aucune")
+    public static let replyDraft = L10n.text("Brouillon à relire")
+    public static let replyAwaiting = L10n.text("En attente d’approbation")
+    public static let replySent = L10n.text("Envoyée")
 }
 
 /// L’écran Canaux du Poste : l’état de Gmail, de l’Agenda et de Slack, et leur connexion
