@@ -56,6 +56,7 @@ import type { LostWrites } from "./oracle.ts";
 import type { Proof } from "./proofs.ts";
 import { knownModules, modulesViaOracle, schedulable } from "./planner.ts";
 import { inboxOf, loadOf, runView } from "./queries.ts";
+import { forceStopQa } from "./browser/qa.ts";
 import { forceStop } from "./runner.ts";
 import { auditOwner } from "./session-feed.ts";
 import { Schedules } from "./schedules.ts";
@@ -68,6 +69,8 @@ import { Workstation } from "./workstation.ts";
 import { IssueDesk } from "./issues.ts";
 import { WorkstationAgent } from "./workstation-agent.ts";
 import { VigieDesk } from "./vigie/desk.ts";
+import { BrowserDesk } from "./browser/desk.ts";
+import { VpsBrowser } from "./browser/vps.ts";
 
 export { HarnessError } from "./errors.ts";
 export type { Actor, SpawnRunner } from "./context.ts";
@@ -169,6 +172,10 @@ export class Orchestrator {
   readonly metrics: Metrics;
   /** Les issues GitHub des dépôts déclarés, lancées en run (`POST /v1/mcp`). */
   readonly issues: IssueDesk;
+  /** Les contextes de navigation des outils MCP `browser_*` (Obscura éphémère). */
+  readonly browsers: BrowserDesk;
+  /** L'exécuteur du poste sur le VPS (`browserId: "vps"`, `obscura-poste`) : il loue la file comme une extension. */
+  readonly vps: VpsBrowser;
   /** Le rapport du matin, posté chaque jour à `notify.digestHour`. */
   readonly digest: DigestSender;
   /** Les planifications récurrentes, déclenchées par le tour de scheduling. */
@@ -214,9 +221,18 @@ export class Orchestrator {
     });
     this.issues = new IssueDesk(this.#ctx, { createRun: (input, actor) => this.createRun(input, actor) });
     this.vigie = new VigieDesk(this.#ctx, this.issues);
+    this.browsers = new BrowserDesk(() => this.#ctx.config.browser, {
+      log: this.#ctx.log,
+      ...(deps.browserLookup ? { lookup: deps.browserLookup } : {}),
+    });
     this.dreams = new Dreamer(this.#ctx);
     this.workstation = new Workstation(this.#ctx);
     this.workstationAgent = new WorkstationAgent(this.#ctx, this.workstation);
+    this.vps = new VpsBrowser(this.workstation, {
+      config: () => this.#ctx.config.workstation.vps,
+      log: this.#ctx.log,
+      ...deps.vps,
+    });
     this.digest = new DigestSender({
       config: this.#ctx.config,
       store: this.#ctx.store,
@@ -344,6 +360,7 @@ export class Orchestrator {
     this.digest.stop();
     this.#stopMetrics?.();
     await this.issues.stop();
+    await this.browsers.stop();
     await this.#ticking;
     // Une relève d'issues partie d'une échéance finit (ses runs sont créés ou non, jamais à moitié).
     await this.schedules.stop();
@@ -356,6 +373,8 @@ export class Orchestrator {
     await this.audits.stop();
     await this.pilot.stop();
     await this.dreams.stop();
+    // L'exécuteur du VPS lâche son long-poll et ferme sa connexion avant que le poste ne se ferme.
+    await this.vps.stop();
     // Les attentes du poste (long-polls de l'extension) rendent tout de suite.
     this.workstation.close();
     await this.workstationAgent.stop();
@@ -376,6 +395,9 @@ export class Orchestrator {
       // Le contradicteur d'une étape de contrat a sa propre unité, absente de la ligne de l'étape.
       if (step.kind === "req" || step.kind === "specs")
         await forceStop(config, exec, challengeUnit(step.runId, step.id));
+      // La QA de /review (prévisualisation et navigateur) n'a pas pu s'arrêter avec son process.
+      if (step.kind === "review" && config.heavy.isolation === "container")
+        await forceStopQa(config, exec, step.runId, step.id);
     }
     // Chaque worktree encore vivant est re-reconnu côté clone (jamais par son `.git`).
     for (const run of store.listRuns({ state: ["queued", "running", "escalated", "awaiting_human", "merging"] })) {
@@ -412,6 +434,7 @@ export class Orchestrator {
     await this.pilot.recover();
     await this.dreams.recover();
     await this.workstationAgent.recover();
+    if (this.#ctx.config.workstation.enabled) this.vps.start();
   }
 
   /** La rétention du journal : au démarrage, puis au plus une fois par heure. */

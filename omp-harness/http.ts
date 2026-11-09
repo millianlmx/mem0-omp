@@ -52,6 +52,7 @@ import type { BrowserHello, SessionJob, Workstation } from "./workstation.ts";
 import type { VigieStatus } from "./db.ts";
 import { VIGIE_STATUSES } from "./db.ts";
 import { handleMcp } from "./mcp.ts";
+import { parseLoginInput } from "./browser/vps-login.ts";
 import {
   APPROVER_ONLY,
   MAX_WAIT_SEC,
@@ -95,6 +96,7 @@ export const API_FEATURES = [
   "workstation-session",
   "workstation-captures",
   "workstation-files",
+  "workstation-vps",
   "mcp",
   "digest",
   "instructions",
@@ -861,6 +863,44 @@ export function apiRoutes(
       const stopped = workstationOf(call).stop(call.actor);
       await orchestrator.workstationAgent.halt("interrompu : arrêt d'urgence");
       send(call.res, 200, stopped);
+    }),
+    // Le navigateur du poste sur le VPS (`obscura-poste`) : l'import des cookies d'un domaine (ouvert par
+    // l'approbateur, une réponse de l'extension) et la connexion interactive (approbateur seulement).
+    route("POST", "/v1/workstation/vps/cookie-import", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(call.res, 201, { import: orchestrator.vps.openImport(body.domain) });
+    }),
+    route("GET", "/v1/workstation/vps/cookie-import", "operator", (call) => {
+      workstationOf(call);
+      send(call.res, 200, orchestrator.vps.importStatus());
+    }),
+    route("POST", "/v1/workstation/vps/cookies", "operator", async (call) => {
+      workstationOf(call);
+      const body = await readBody(call.req);
+      send(call.res, 200, await orchestrator.vps.acceptCookies(body.domain, body.cookies));
+    }),
+    route("POST", "/v1/workstation/vps/login", "operator", async (call) => {
+      approverOf(call);
+      const body = await readBody(call.req);
+      send(call.res, 201, { login: await orchestrator.vps.login.start(body.url) });
+    }),
+    route("GET", "/v1/workstation/vps/login", "operator", (call) => {
+      approverOf(call);
+      send(call.res, 200, { login: orchestrator.vps.login.view() });
+    }),
+    route("GET", "/v1/workstation/vps/login/frame", "operator", async (call) => {
+      approverOf(call);
+      send(call.res, 200, await orchestrator.vps.login.frame());
+    }),
+    route("POST", "/v1/workstation/vps/login/input", "operator", async (call) => {
+      approverOf(call);
+      await orchestrator.vps.login.input(parseLoginInput(await readBody(call.req)));
+      send(call.res, 200, { sent: true });
+    }),
+    route("DELETE", "/v1/workstation/vps/login", "operator", async (call) => {
+      approverOf(call);
+      send(call.res, 200, { closed: await orchestrator.vps.login.finish() });
     }),
     route("GET", "/v1/workstation/session", "viewer", (call) => {
       const workstation = workstationOf(call);

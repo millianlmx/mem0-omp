@@ -10,6 +10,8 @@ node_modules/
 .typecheck/
 # Biome épinglé de scripts/lint.sh (installé par `bash scripts/lint.sh --prepare`)
 .lint/
+# Binaire Obscura épinglé des tests du harness (installé par `bash scripts/obscura.sh --prepare`)
+.obscura/
 # Extension Chrome construite par scripts/chrome-extension.sh (et son dossier de construction transitoire)
 omp-chrome/dist/
 omp-chrome/dist.construction-*/

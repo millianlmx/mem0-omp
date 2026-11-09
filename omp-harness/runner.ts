@@ -14,6 +14,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { QA_TOOLS } from "./browser/qa-tools.ts";
 import { FINDING_KINDS, MAX_FINDINGS, SEVERITIES } from "./challenge.ts";
 import { launch } from "./config.ts";
 import type { HarnessConfig, ModelChoice } from "./config.ts";
@@ -256,7 +257,13 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
  * les jetons GitHub et GitLab que `gh` et `glab` lisent (le texte d'une issue est une
  * donnée de tiers).
  */
-export const SERVICE_SECRETS = ["HARNESS_TOKEN", ...GH_TOKEN_VARS, ...GITLAB_TOKEN_VARS] as const;
+export const SERVICE_SECRETS = [
+  "HARNESS_TOKEN",
+  "OBSCURA_CDP_TOKEN",
+  "OBSCURA_POSTE_CDP_TOKEN",
+  ...GH_TOKEN_VARS,
+  ...GITLAB_TOKEN_VARS,
+] as const;
 
 /** Ce que la politique du dépôt change à l'environnement d'un runner (policy.ts). */
 export type RunnerEnvPolicy = {
@@ -880,10 +887,12 @@ const WORKSTATION_DIGEST_TOOL: HostToolDefinition = {
  * Les outils hôtes d'une étape (ou de l'audit, du contradicteur et du rêve, qui ne
  * décident ni ne testent rien, ou d'un job du poste de travail) : `save_checkpoint` et
  * `set_modules` partout, `split_feature` en specs et impl, `run_tests` dès /impl,
- * `review_verdict` et `qa_record_proof` en revue seulement.
+ * `review_verdict` et `qa_record_proof` en revue seulement, plus les outils de navigation `qa_*`
+ * quand la revue a une prévisualisation (`options.qa`, browser/qa.ts).
  */
 export function hostToolsFor(
   step: StepKind | "audit" | "pilot" | "challenge" | "dream" | WorkstationJob,
+  options: { qa?: boolean } = {},
 ): HostToolDefinition[] {
   if (step === "audit") return [PROGRESS_TOOL, RECALL_TOOL, AUDIT_TOOL];
   if (step === "pilot") return [PROGRESS_TOOL, RECALL_TOOL, PILOT_TOOL];
@@ -904,6 +913,6 @@ export function hostToolsFor(
   const tools = [DECISION_TOOL, PROGRESS_TOOL, RECALL_TOOL, CHECKPOINT_TOOL, SET_MODULES_TOOL];
   if (step === "specs" || step === "impl") tools.push(SPLIT_TOOL);
   if (step === "impl" || step === "fix" || step === "review") tools.push(runTestsTool(step));
-  if (step === "review") tools.push(VERDICT_TOOL, RECORD_PROOF_TOOL);
+  if (step === "review") tools.push(VERDICT_TOOL, RECORD_PROOF_TOOL, ...(options.qa ? QA_TOOLS : []));
   return tools;
 }

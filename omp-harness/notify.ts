@@ -206,6 +206,18 @@ export function notificationFor(event: EventRow, run: RunRow | null): Notificati
         tags: ["moneybag"],
         click: null,
       };
+    // Le compte d'un navigateur du poste dont la session n'ouvre plus : l'humain doit se reconnecter ; les autres passages ne notifient pas.
+    case "workstation_account":
+      if (payload.state !== "expired") return null;
+      return {
+        title: "Poste — session expirée",
+        body: short(
+          `${text(payload.domain, "un compte")} : reconnecte le compte du navigateur du serveur (écran Poste).`,
+        ),
+        priority: 4,
+        tags: ["key", "warning"],
+        click: null,
+      };
     case "workstation_approval": {
       // Un envoi à quelqu'un d'autre que toi, ou une action de l'agent en `propose` : rien ne part sans ton geste.
       const recipients = Array.isArray(payload.recipients)

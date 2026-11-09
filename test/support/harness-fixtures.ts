@@ -159,6 +159,10 @@ export function fakeWorld(
     patch?: (config: HarnessConfig) => void;
     exec?: Exec;
     memAvailableMiB?: () => number | null;
+    /** Les réglages de l'exécuteur du VPS (délais courts, adresses de vérification, DNS) : `OrchestratorDeps.vps`. */
+    vps?: OrchestratorDeps["vps"];
+    /** Le journal du service (`ctx.log`), pour le lire ; sinon rien n'est journalisé. */
+    log?: OrchestratorDeps["log"];
   } = {},
 ): FakeWorld {
   const repo = options.repo ?? harnessRepo();
@@ -203,6 +207,8 @@ export function fakeWorld(
     spawn: spawnFake,
     exec,
     tickMs: 25,
+    ...(options.vps ? { vps: options.vps } : {}),
+    ...(options.log ? { log: options.log } : {}),
   };
   const orchestrator = new Orchestrator(deps);
   return {

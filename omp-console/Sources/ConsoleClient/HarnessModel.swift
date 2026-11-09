@@ -71,6 +71,9 @@ public final class HarnessModel: ObservableObject {
     /// Le poste de travail (extension Chrome, agent 24/24), servi par le même serveur :
     /// il passe par l'échange de ce modèle et reçoit les événements de son flux.
     public private(set) lazy var workstation = WorkstationModel(harness: self, reloadDelay: refreshDelay)
+    /// Le navigateur du serveur du poste (écran Poste du Mac) : import de la session de
+    /// Chrome et connexion interactive d'un compte, réservés à l'appareil approbateur.
+    public private(set) lazy var serverBrowser = ServerBrowserModel(harness: self)
     /// L'historique des features (`GET /v1/runs`), terminées comprises.
     public private(set) lazy var history = HarnessRunsHistory(harness: self)
     /// La vigie (surveillance 24/24 du harness) : réglages, battement, incidents.
@@ -274,6 +277,7 @@ public final class HarnessModel: ObservableObject {
     /// Ce qui appartient au serveur relié : poste, historique, services, remontée.
     private func resetServerState() {
         workstation.reset()
+        serverBrowser.reset()
         history.reset()
         vigie.reset()
         schedules.reset()

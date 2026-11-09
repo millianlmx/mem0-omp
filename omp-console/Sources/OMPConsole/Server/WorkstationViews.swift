@@ -5,7 +5,8 @@
 // pousse (`WorkstationPage` : réglages, automatisations, commande, profil, réunions,
 // journal, sessions). La colonne de détail du Mac n'a pas de pile de navigation : ce
 // cadre pose la sienne. Feuilles et confirmations : `workstationGestures`, posé par
-// `HarnessSection`.
+// `HarnessSection`. Propre au Mac : « Navigateur du serveur » (comptes, import de la
+// session de Chrome, connexion interactive dans une feuille), voir `ServerBrowserViews`.
 
 import ConsoleClient
 import ConsoleCore
@@ -16,14 +17,20 @@ struct WorkstationView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var drafts: HarnessDrafts
+    @State private var serverLoginShown = false
 
     var body: some View {
         NavigationStack {
             HarnessSection(server: server, drafts: drafts, catalog: false, reload: { await workstation.load() }) {
                 WorkstationSections(workstation: workstation, drafts: drafts)
+                ServerBrowserSection(workstation: workstation, model: server.serverBrowser, loginShown: $serverLoginShown)
             }
             .navigationTitle(ConsoleSection.workstation.title)
             .workstationDestinations(server: server, drafts: drafts)
+        }
+        .modifier(ServerBrowserTasks(model: server.serverBrowser))
+        .sheet(isPresented: $serverLoginShown) {
+            ServerBrowserLoginSheet(model: server.serverBrowser, isPresented: $serverLoginShown)
         }
         .task { await workstation.load() }
         .accessibilityIdentifier("workstation.harness")

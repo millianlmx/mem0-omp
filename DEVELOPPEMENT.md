@@ -31,6 +31,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/typecheck.sh               type-check des plugins, de test/ et de l'extension Chrome (tsc épinglé)
 ├── scripts/omp-host.sh                l'hôte OMP épinglé de la CI, préparé dans le cache (types et smoke)
 ├── scripts/lint.sh                    lint et format (Biome épinglé), sans réseau
+├── scripts/obscura.sh                 le binaire Obscura v0.2.6 épinglé des tests du harness, préparé dans .obscura/
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
 ├── scripts/swift-app.sh               tests release puis bundle .app de l'app Mac
 ├── scripts/ios-build.sh               compile et teste l'app iOS (Xcode)
@@ -138,6 +139,111 @@ mem0 et du faux runner, `GET /v1/status` et la timeline du run, puis la sortie 1
 Tout vert : 0. La pile est retirée à la fin, sauf avec `--keep`. La première fois,
 la construction de mem0-rs prend plusieurs minutes (`OMP_SMOKE_TIMEOUT`, 300 s par
 étape d'attente). Ni `check.sh` ni la CI ne la lancent.
+
+## Naviguer sans le Chrome du Mac (Obscura)
+
+Les outils MCP `browser_*` du serveur `POST /v1/mcp` du harness pilotent le
+navigateur headless `obscura` de la pile Docker, à la place du Chrome du Mac :
+il n'a ni l'identité ni les cookies de l'utilisateur.
+
+**Prérequis.** La pile Portainer est à jour, et `setup` a posé l'URL et le jeton
+CDP du navigateur dans `harness.env`.
+
+À recopier dans `~/.omp/agent/mcp.json` :
+
+```json
+{
+  "mcpServers": {
+    "omp-harness": {
+      "type": "http",
+      "url": "${OMP_HARNESS_URL}/v1/mcp",
+      "headers": {
+        "Authorization": "Bearer ${OMP_HARNESS_TOKEN}"
+      },
+      "timeout": 60000
+    }
+  }
+}
+```
+
+`OMP_HARNESS_URL` et `OMP_HARNESS_TOKEN` viennent de l'appairage de l'app ou de
+l'extension. Un jeton de rôle operator permet d'agir ; viewer suffit pour lire.
+Pour couper le relais Chrome de l'outil navigateur intégré d'omp, lance omp avec
+`PI_BROWSER_RELAY=0` (ou règle `browser.relay`).
+
+| Outil | Rôle | Effet |
+|---|---|---|
+| `browser_open {url}` | viewer | ouvre une page et rend un `context` |
+| `browser_snapshot {context}` | viewer | texte de la page et ses éléments (`ref`) |
+| `browser_click {context, ref}` | operator | clique un élément |
+| `browser_fill {context, ref, text}` | operator | saisit du texte dans un champ |
+| `browser_key {context, key, ref?}` | operator | envoie une touche |
+| `browser_screenshot {context}` | viewer | image PNG de la page |
+| `browser_close {context}` | viewer | ferme le contexte |
+
+`browser_open` rend un `context` (`bx_` + 16 hexadécimaux) à passer aux autres outils.
+
+**Limites.**
+
+- Rendu imparfait : style natif des boutons, iframes non dessinées.
+- Pas d'extensions.
+- Réseau privé, services de la pile et tailnet sont refusés par la garde d'Obscura.
+- L'adresse publique de l'hôte n'est coupée que si les règles pare-feu du README
+  du harness (« Couper l'hôte du navigateur ») sont posées.
+- Trois contextes par client au plus, douze en tout.
+- Un contexte est fermé après 600 s d'inactivité.
+
+### Smoke
+
+**Fait**
+
+- tests d'intégration contre un vrai `obscura serve` v0.2.6 épinglé
+  (`test/harness/obscura-socle.test.ts`) : client CDP, outils `browser_*`, garde réseau.
+- tests de la QA de `/review` (`test/harness/obscura-qa.test.ts`, faux moteur de conteneurs et vrai
+  `obscura serve` épinglé) : politique `preview` validée à la configuration ; construction exacte des
+  commandes `docker` (prévisualisation `--network=none` et worktree en lecture seule, navigateur de l'image
+  épinglée en `--allow-private-network` sur `--network=container:<prévisualisation>` et aucun autre réseau,
+  rien de publié, jeton hors ligne de commande, retrait des deux conteneurs à la fin de l'étape) ; canal CDP
+  par `docker exec` de bout en bout ; capture d'office de la page d'accueil et preuves `screenshot` ; outils
+  `qa_*` (refusés hors `/review` et sans `preview`, navigation limitée à la prévisualisation) ; repli en
+  preuve `log` quand rien ne démarre.
+- tests de l'exécuteur du poste sur le VPS (`test/harness/obscura-poste.test.ts`, vrai `obscura serve`
+  épinglé, pages servies sous `app.slack.com` / `mail.google.com` par un proxy témoin) : `vps` en ligne
+  ou hors ligne, `navigate`, geste impossible rendu `failed`, garde d'envoi (résumé, destinataires,
+  aperçu, empreinte de l'extension) et rejeu approuvé, hôtes permis, arrêt d'urgence et pause, navigateur
+  par défaut, import de cookies (domaines, expiration, rien en base ni au journal), connexion
+  interactive (images, clics, frappes, IdP listé), état des comptes et alerte d'expiration, imports de
+  l'exécuteur tous sous un dossier copié par `Dockerfile.harness`.
+
+**Non vérifié** (smoke humain délégué)
+
+- le smoke réel : pile démarrée, `browser_open` d'une page publique puis
+  `browser_screenshot` depuis une session omp du Mac ;
+- un conteneur du réseau `omp-harness` ne joint pas `obscura-poste` ;
+- depuis le conteneur `obscura`, `/busybox wget -T 3 -qO- http://<adresse publique de l'hôte>:<port d'un service de l'hôte>/`
+  échoue avec les règles pare-feu du README et aboutit sans elles — idem depuis le
+  conteneur `obscura-poste` ;
+- `obscura-poste` charge une page publique ;
+- QA de `/review` avec un vrai Docker : pour un dépôt qui déclare `repos[].preview`, la revue d'un run en
+  isolation `container` porte une preuve `screenshot` « rendu Obscura, fidélité visuelle non garantie »
+  sans que l'agent appelle `qa_*`, et `docker ps` ne montre plus de conteneur `omp-qa-*` après la revue ;
+- isolement réseau réel de la QA : depuis le conteneur `omp-qa-<run>-<étape>-browser`, ni `http://harness:8790`,
+  ni `http://mem0:8321`, ni `obscura-poste`, ni la prévisualisation d'une autre revue ne répondent, et depuis
+  un runner la prévisualisation d'une revue ne répond pas (les tests ne modélisent cet espace réseau que par
+  `--proxy` et prouvent la construction des commandes, pas le noyau) ;
+- `docker exec -i … /busybox nc 127.0.0.1 9222` relaie le WebSocket CDP sans altération avec le vrai CLI
+  (les tests passent par un faux CLI qui relie stdin/stdout à un vrai `obscura serve`) ;
+- les conteneurs `omp-qa-*` d'une revue interrompue par un redémarrage du service sont retirés au démarrage ;
+- l'exécuteur `vps` sur la vraie pile : `obscura-poste` charge une page publique pour une action
+  `navigate`, et l'import de cookies d'un vrai Chrome (Slack, Google) puis la connexion interactive
+  par l'écran Poste de l'app Mac donnent un compte `connected` — les tests ne servent que des pages
+  de test sous de faux noms ;
+- l'écran Swift de la connexion interactive (affichage des images, clics et frappes renvoyés) :
+  non écrit dans ce run, voir `.harness/impl.md` ; l'API `…/vps/login*` qu'il appellera est
+  prouvée par `obscura-poste/AC-28` ;
+- l'extension Chrome avec la permission `cookies` : le build et la réponse à un import (`lib/cookie-import.ts`)
+  sont éprouvés contre le vrai serveur, pas dans un vrai Chrome ;
+- `docker compose build` de `Dockerfile.harness` avec `omp-chrome/src/{lib,page}` (`.dockerignore`).
 
 ## CI et release
 
@@ -258,9 +364,10 @@ Chaque section exécutée se termine par sa durée sur stdout, `  · <n> s` (sec
 entières), pour lire dans un journal de CI où le temps part.
 
 À la racine du dépôt, `package.json` (privé, sans dépendance) donne cinq alias :
-`npm run setup` enchaîne les quatre préparations qui exigent le réseau
+`npm run setup` enchaîne les cinq préparations qui exigent le réseau
 (`bash scripts/lint.sh --prepare`, `bash scripts/typecheck.sh --prepare`,
-`bash scripts/omp-host.sh --prepare` et `bash scripts/mem0-http-contrat.sh --prepare`),
+`bash scripts/omp-host.sh --prepare`, `bash scripts/mem0-http-contrat.sh --prepare`
+et `bash scripts/obscura.sh --prepare`),
 à lancer une fois par clone ou par worktree — avant, un test qui dépend de Biome ou
 du TypeScript épinglé se saute par `prerequisAbsent` en nommant l'outil, et
 `--strict` (la CI) en fait un échec. `omp-host.sh` installe l'hôte OMP que la CI
