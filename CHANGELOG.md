@@ -1,5 +1,18 @@
 # Journal des versions
 
+## omp-harness 1.31.0 — 2026-11-09
+
+- feat(harness): Obscura conteneurisé sur le VPS (socle, agent corpo, QA de /review) (#411) (b402ad3)
+- fix(harness): alerte « étape lente » par dépôt, sans durée figée (#408) (86b4901)
+- fix(harness): set_modules refuse les artefacts .harness/ (#407) (3efa9e7)
+- feat(harness,chrome,console): validation et envoi des réponses proposées (écarter, modifier, valider, envoi par omp-chrome sous empreinte) (#406) (4fb3727)
+- fix(harness): reconnaître et prévenir le runner tué faute de mémoire (code 137) (#409) (9d20539)
+
+## omp-chrome 0.5.0 — 2026-11-09
+
+- feat(harness): Obscura conteneurisé sur le VPS (socle, agent corpo, QA de /review) (#411) (b402ad3)
+- feat(harness,chrome,console): validation et envoi des réponses proposées (écarter, modifier, valider, envoi par omp-chrome sous empreinte) (#406) (4fb3727)
+
 ## omp-harness 1.30.0 — 2026-11-09
 
 - feat(harness,console): veille proactive du poste (job poste-veille, À traiter, notifications) (#404) (85fc129)
