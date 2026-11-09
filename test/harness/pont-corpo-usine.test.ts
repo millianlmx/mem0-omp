@@ -828,6 +828,7 @@ test("pont-corpo-usine/AC-10 : l'approbateur confirme : une issue, un run lié q
       issue,
       confirmedBy: "app-approbateur",
       confirmedAt: rowOf(b, row.id).confirmedAt,
+      reply: "aucune",
     });
     const again = await api.call(api.tokens.approver, "POST", `/v1/signals/${row.id}/confirm`, sendOf(row));
     assert.deepEqual([again.status, again.json], [409, { error: "le signalement est déjà confirmed" }]);

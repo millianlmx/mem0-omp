@@ -31,6 +31,7 @@ import type {
   Meeting,
   MeetingNeed,
   Observation,
+  ReplyRow,
   RequestState,
   Segment,
   ShiftRow,
@@ -42,7 +43,7 @@ import type {
   WorkstationProfileBody,
   WorkstationRequest,
 } from "./db.ts";
-import { ACTION_KINDS, REQUEST_STATES } from "./db.ts";
+import { ACTION_KINDS, REPLY_INSTRUCTION_HEAD, REQUEST_STATES } from "./db.ts";
 import { parseCron } from "./cron.ts";
 import { HarnessError } from "./errors.ts";
 import { newId } from "./ids.ts";
@@ -269,6 +270,37 @@ export const REQUEST_CANCELLED = "demande annulée";
 export const APPROVER_ONLY =
   "seul l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut approuver, refuser ou régler le poste";
 
+export { REPLY_INSTRUCTION_HEAD };
+/** Les gestes qu'une demande de réponse à un collègue peut déposer : ni envoi de fichier, ni téléchargement, ni liste déroulante. */
+export const REPLY_ACTION_KINDS: readonly ActionKind[] = [
+  "tabs",
+  "open",
+  "navigate",
+  "snapshot",
+  "screenshot",
+  "scroll",
+  "hover",
+  "wait",
+  "wait_for",
+  "back",
+  "forward",
+  "reload",
+  "close",
+  "click",
+  "decision",
+  "type",
+  "key",
+];
+/** Pourquoi un geste d'une réponse sur une page `chrome` attend l'humain : il peut publier le texte saisi. */
+export const REPLY_SEND_GUARD = "réponse à un collègue : ce geste peut publier le texte saisi";
+/** Pourquoi un second envoi retenu d'une même réponse est clos : un seul envoi vivant par réponse. */
+export const REPLY_SEND_TAKEN = "un envoi de cette réponse est déjà retenu ou parti : un seul envoi par réponse";
+/** Le résumé que l'événement `workstation_approval` d'une demande de réponse porte à la place du geste (ni texte, ni fil). */
+export const REPLY_APPROVAL_SUMMARY = "Réponse à un collègue : un geste attend ton accord (détail dans l'app)";
+
+const norm = (text: string): string => text.replace(/\s+/g, " ").trim();
+/** La base d'une touche (`Control+Enter` → `Enter`). */
+const keyBase = (raw: unknown): string => String(raw).split("+").pop() ?? "";
 /** Le poste de travail est au propriétaire : un client restreint à des dépôts n'y a pas accès. */
 export function workstationFor(workstation: Workstation, client: Client): Workstation {
   if (client.repos !== "*") throw new HarnessError(403, "le poste est réservé au propriétaire");
@@ -1358,17 +1390,20 @@ export class Workstation {
     // L'envoi d'une réponse validée a abouti (« envoyée ») ou s'est fini sans partir, sa demande close.
     const reply = replyAfterSend(this.#ctx.store, action, Date.now());
     if (reply) this.#ctx.event("workstation_watch", null, watchEvent(reply), null);
-    if (action.state === "awaiting_approval")
+    if (action.state === "awaiting_approval") {
+      // Une demande de réponse à un collègue : ni le geste (URL, texte), ni les destinataires dans l'événement.
+      const masked = this.isReplyRequest(action.requestId);
       this.#ctx.event(
         "workstation_approval",
         null,
         {
           seq: action.seq,
-          summary: action.approval?.summary ?? action.rationale,
-          recipients: action.approval?.recipients ?? [],
+          summary: masked ? REPLY_APPROVAL_SUMMARY : (action.approval?.summary ?? action.rationale),
+          recipients: masked ? [] : (action.approval?.recipients ?? []),
         },
         null,
       );
+    }
   }
 
   /** Une transition d'action par compare-and-swap (état, et révision si `updatedAt`), son événement dans la même transaction. */
@@ -1410,6 +1445,8 @@ export class Workstation {
     const { store } = this.#ctx;
     const settings = this.settings();
     const request = requestId === null ? null : store.getWorkstationRequest(requestId);
+    const reply = requestId === null ? null : store.replyOfRequest(requestId);
+    if (reply !== null) this.#checkReplyGesture(input, reply);
     const browserId =
       input.browserId !== undefined ? this.#known(input.browserId) : (request?.browserId ?? this.defaultBrowserId());
     let state: ActionState = "done";
@@ -1423,6 +1460,8 @@ export class Workstation {
       // Le fichier d'un `upload` existe dans le dossier d'envoi, sous la borne : sinon rien n'est déposé.
       if (input.kind === "upload") this.#uploadPath(String(input.params.file));
       const reasons = this.#guards(input, origin, browserId);
+      if (reply !== null && requestId !== null && this.#publishesReply(input, reply, requestId))
+        reasons.push(REPLY_SEND_GUARD);
       const proposes = requestId === null && origin === "agent" && effective === "propose";
       state = proposes || reasons.length > 0 ? "awaiting_approval" : "queued";
       if (state === "awaiting_approval") {
@@ -1463,6 +1502,104 @@ export class Workstation {
     });
     if (action.state === "queued") this.#wakeQueue();
     return action;
+  }
+
+  /**
+   * Une demande de réponse à un collègue ne dépose que `REPLY_ACTION_KINDS`, des touches nommées
+   * hors Space (pas de coller ni d'annuler), et la seule saisie du texte approuvé. Rien n'est créé
+   * si le geste est refusé ; les messages ne citent ni texte ni adresse.
+   */
+  #checkReplyGesture(input: ActionInput, reply: ReplyRow): void {
+    if (!REPLY_ACTION_KINDS.includes(input.kind))
+      throw new HarnessError(409, `geste refusé dans une demande de réponse : ${input.kind}`);
+    if (input.kind === "key") {
+      const base = keyBase(input.params.key);
+      if (base === "Space" || !(NAMED_KEYS as readonly string[]).includes(base))
+        throw new HarnessError(
+          409,
+          "touche refusée dans une demande de réponse : seules les touches nommées hors Space (Enter, Tab, Backspace…)",
+        );
+    }
+    if (input.kind === "type" && input.params.text !== reply.text)
+      throw new HarnessError(409, "saisie refusée : seul le texte approuvé de la réponse se saisit dans cette demande");
+  }
+
+  /**
+   * Sur une page `chrome`, l'extension ne reconnaît pas toujours le bouton qui publie : tout clic,
+   * toute touche Entrée ou saisie avec envoi, une fois le texte saisi, attend l'approbateur.
+   */
+  #publishesReply(input: ActionInput, reply: ReplyRow, requestId: string): boolean {
+    const { store } = this.#ctx;
+    if (store.getSignal(reply.signalId)?.channel !== "chrome") return false;
+    if (input.kind === "type") return input.params.submit === true;
+    const sends = input.kind === "click" || (input.kind === "key" && keyBase(input.params.key) === "Enter");
+    return sends && store.listWorkstationActions({ requestId, limit: 10_000 }).some((entry) => entry.kind === "type");
+  }
+
+  /**
+   * Le brouillon dont cette action retenue est l'envoi : un clic, une touche ou une saisie avec envoi
+   * dont l'aperçu porte le texte approuvé (espaces normalisés). `null` pour tout autre geste retenu.
+   */
+  #replySend(action: WorkstationAction, preview: string): ReplyRow | null {
+    if (action.requestId === null) return null;
+    const reply = this.#ctx.store.replyOfRequest(action.requestId);
+    const sends =
+      action.kind === "click" || action.kind === "key" || (action.kind === "type" && action.params.submit === true);
+    return reply !== null && sends && norm(preview).includes(norm(reply.text)) ? reply : null;
+  }
+
+  /** La demande est une demande de réponse à un collègue, reconnue à l'en-tête de sa consigne (durable). */
+  isReplyRequest(requestId: string | null): boolean {
+    if (requestId === null) return false;
+    const request = this.#ctx.store.getWorkstationRequest(requestId);
+    return request?.instruction.startsWith(`${REPLY_INSTRUCTION_HEAD}\n`) ?? false;
+  }
+
+  /**
+   * Le `needs_approval` de l'extension pour une action en cours : la garde d'envoi (à l'humain, sauf
+   * message à soi ou envoi d'une réponse validée sous empreinte). Pour une demande de réponse à un
+   * collègue, l'action qui envoie le texte approuvé est marquée
+   * (`send_seq`) ; un second envoi tant que le premier attend, part ou est parti est clos (`failed`).
+   * Tout autre geste retenu suit la garde ordinaire, sans marque.
+   */
+  #retain(
+    seq: number,
+    action: WorkstationAction,
+    held: Pick<Approval, "summary" | "recipients" | "preview" | "fingerprint" | "replyFingerprint">,
+  ): WorkstationAction | null {
+    const { store } = this.#ctx;
+    const reply = this.#replySend(action, held.preview);
+    const marked =
+      reply !== null && reply.sendSeq !== null && reply.sendSeq !== seq ? this.getAction(reply.sendSeq) : null;
+    if (marked !== null && (marked.state === "done" || Workstation.PENDING.includes(marked.state)))
+      return this.#transition(seq, ["running"], {
+        state: "failed",
+        error: REPLY_SEND_TAKEN,
+        approved: false,
+        approval: { ...held, decidedBy: null, decidedAt: null, reason: null },
+        leasedAt: null,
+      });
+    // La garde d'envoi : seul un message à SOI (destinataires connus, tous à l'utilisateur) repart
+    // sans geste humain, ou l'envoi de la demande rattachée à une réponse validée dont l'empreinte
+    // (destinataires et texte complet) est STRICTEMENT celle figée à la validation (canaux/reponses.ts).
+    const self = isSelfOnly(held.recipients, this.settings().selfIdentities);
+    const outcome = validatedSend(store, action, held.replyFingerprint, Date.now());
+    if (outcome.item) this.#ctx.event("workstation_watch", null, watchEvent(outcome.item), null);
+    const approved = self || outcome.approved;
+    const approval: Approval = {
+      ...held,
+      decidedBy: self ? "soi" : outcome.approved ? REPLY_APPROVER : null,
+      decidedAt: approved ? Date.now() : null,
+      reason: null,
+    };
+    const updated = this.#transition(seq, ["running"], {
+      state: approved ? "queued" : "awaiting_approval",
+      approved,
+      approval,
+      leasedAt: null,
+    });
+    if (updated && reply !== null && action.requestId !== null) store.markReplySend(action.requestId, seq);
+    return updated;
   }
 
   /**
@@ -1656,28 +1793,7 @@ export class Workstation {
         leasedAt: null,
       });
     } else {
-      // La garde d'envoi : seul un message à SOI (destinataires connus, tous à l'utilisateur) repart
-      // sans geste humain, ou l'envoi de la demande rattachée à une réponse validée dont l'empreinte
-      // (destinataires et texte complet) est STRICTEMENT celle figée à la validation (canaux/reponses.ts).
-      const self = isSelfOnly(input.approval.recipients, this.settings().selfIdentities);
-      const reply = this.#ctx.store.transaction(() => {
-        const outcome = validatedSend(this.#ctx.store, action, input.approval.replyFingerprint, Date.now());
-        if (outcome.item) this.#ctx.event("workstation_watch", null, watchEvent(outcome.item), null);
-        return outcome.approved;
-      });
-      const approved = self || reply;
-      const approval: Approval = {
-        ...input.approval,
-        decidedBy: self ? "soi" : reply ? REPLY_APPROVER : null,
-        decidedAt: approved ? Date.now() : null,
-        reason: null,
-      };
-      updated = this.#transition(seq, ["running"], {
-        state: approved ? "queued" : "awaiting_approval",
-        approved,
-        approval,
-        leasedAt: null,
-      });
+      updated = this.#ctx.store.transaction(() => this.#retain(seq, action, input.approval));
     }
     if (!updated) throw new HarnessError(409, `l'action #${seq} a changé d'état`);
     return updated;

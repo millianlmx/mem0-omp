@@ -324,4 +324,28 @@ export const MIGRATIONS_SUITE: readonly string[] = [
    ALTER TABLE workstation_watch_items ADD COLUMN send_error TEXT;
    ALTER TABLE workstation_watch_items ADD COLUMN validated_at INTEGER;
    CREATE INDEX workstation_watch_items_request ON workstation_watch_items (request_id);`,
+  // Les réponses au collègue (pont corpo ↔ usine) : un brouillon rédigé par le serveur après la
+  // fusion (`final`) ou l'échec (`attente`) d'un run lié, une ligne par run et par sorte. L'état
+  // suit la demande du poste qui le saisit (`request_id`) et son action d'envoi (`send_seq`).
+  `CREATE TABLE corporate_replies (
+     id TEXT PRIMARY KEY,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     run_id TEXT NOT NULL,
+     signal_id TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     state TEXT NOT NULL,
+     text TEXT NOT NULL,
+     request_id TEXT,
+     send_seq INTEGER,
+     error TEXT,
+     approved_by TEXT,
+     approved_at INTEGER,
+     sent_at INTEGER,
+     archived_by TEXT,
+     archived_at INTEGER,
+     UNIQUE (run_id, kind)
+   );
+   CREATE INDEX corporate_replies_state ON corporate_replies (state, created_at);
+   CREATE INDEX corporate_replies_request ON corporate_replies (request_id);`,
 ];

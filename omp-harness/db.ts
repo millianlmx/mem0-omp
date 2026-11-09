@@ -13,13 +13,13 @@
 //        → sessions → usage → push → push-devices → workstation → workstation-meetings
 //        → workstation-captures → workstation-browsers → workstation-requests
 //        → issues → schedules → observability → vigie → corporate-signals → intakes
-//        → channel-contents → people → watch-items → Store
+//        → channel-contents → people → watch-items → corporate-replies → Store
 //
 // Ainsi `Store` garde l'API d'un seul objet pour tous ses appelants, et une couche
 // qui a besoin d'une autre (le journal lit le dépôt d'un run) la trouve en dessous.
-import { WatchStore } from "./db/watch-items.ts";
+import { CorporateReplyStore } from "./db/corporate-replies.ts";
 
-export class Store extends WatchStore {}
+export class Store extends CorporateReplyStore {}
 
 export { WATCH_KINDS } from "./db/watch-items.ts";
 export type { WatchItemInput, WatchItemRow, WatchKind } from "./db/watch-items.ts";
@@ -100,6 +100,7 @@ export type {
 } from "./db/workstation-meetings.ts";
 export type { WorkstationCapture } from "./db/workstation-captures.ts";
 export type { WorkstationBrowserRow } from "./db/workstation-browsers.ts";
+export { REPLY_INSTRUCTION_HEAD } from "./db/sql.ts";
 export { REQUEST_STATES } from "./db/workstation-requests.ts";
 export type {
   RequestPatch,
@@ -107,3 +108,5 @@ export type {
   WorkstationAutomation,
   WorkstationRequest,
 } from "./db/workstation-requests.ts";
+export { REPLY_KINDS, REPLY_STATES } from "./db/corporate-replies.ts";
+export type { LinkedRun, ReplyKind, ReplyPatch, ReplyRow, ReplyState } from "./db/corporate-replies.ts";

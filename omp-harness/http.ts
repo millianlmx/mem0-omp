@@ -54,8 +54,10 @@ import type { BrowserHello, SessionJob, Workstation } from "./workstation.ts";
 import type { VigieStatus } from "./db.ts";
 import { VIGIE_STATUSES } from "./db.ts";
 import { handleMcp } from "./mcp.ts";
+import { parseReplyStates } from "./corporate/replies.ts";
 import { parseLoginInput } from "./browser/vps-login.ts";
 import {
+  APPROVER_ONLY,
   MAX_WAIT_SEC,
   SESSION_JOBS,
   approverFor,
@@ -117,6 +119,7 @@ export const API_FEATURES = [
   "autonomy",
   "corporate-signals",
   "intake",
+  "corporate-replies",
   "proofs",
   "session-graph",
 ] as const;
@@ -372,6 +375,20 @@ export function apiRoutes(
   };
   const READS_SIGNALS = "réservé à l'humain — un client pilote ne lit pas les signalements";
   const ACTS_ON_SIGNALS = "geste réservé à l'humain — un client pilote ne confirme pas de signalement";
+  const READS_REPLIES = "réservé à l'humain — un client pilote ne lit pas les réponses aux collègues";
+  const ACTS_ON_REPLIES = "geste réservé à l'humain — un client pilote n'agit pas sur les réponses aux collègues";
+  /**
+   * Un geste sur un brouillon de réponse : propriétaire seul (restreint, puis pilote : 403), brouillon connu
+   * (404), puis appareil approbateur seulement (403). Avant toute lecture du texte du brouillon.
+   */
+  const replyActorOf = (call: Call): void => {
+    ownerOf(call, ACTS_ON_REPLIES);
+    orchestrator.corporateReplies.get(call.match[1] as string);
+    if (!call.client.approver) throw new HarnessError(403, APPROVER_ONLY);
+  };
+  /** Pour un client pilote, une demande de réponse à un collègue (son texte, son fil) est hors de ses lectures du poste. */
+  const repliesHiddenFrom = (call: Call, workstation: Workstation, requestId: string | null): boolean =>
+    call.client.pilot && workstation.isReplyRequest(requestId);
   const READS_WATCH = "réservé à l'humain — un client pilote ne lit pas la veille du poste";
   /** Approuver, refuser ou régler le poste : l'appareil approbateur seulement (`approverFor`). */
   const approverOf = (call: Call): Workstation => approverFor(orchestrator.workstation, call.client);
@@ -503,10 +520,43 @@ export function apiRoutes(
         signal: orchestrator.signals.dismiss(call.match[1] as string, await readBody(call.req), call.client),
       });
     }),
+    // Les réponses au collègue (pont corpo ↔ usine) : mêmes règles que les signalements, propriétaire seul ;
+    // modifier, approuver et classer : l'appareil approbateur. L'approbation pose une demande du poste.
+    route("GET", "/v1/replies", "viewer", (call) => {
+      ownerOf(call, READS_REPLIES);
+      const states = parseReplyStates(call.url.searchParams.get("state"));
+      send(call.res, 200, { replies: orchestrator.corporateReplies.list(states, limitOf(call.url, 50, 200)) });
+    }),
+    route("GET", "/v1/replies/{id}", "viewer", (call) => {
+      ownerOf(call, READS_REPLIES);
+      send(call.res, 200, { reply: orchestrator.corporateReplies.get(call.match[1] as string) });
+    }),
+    route("PUT", "/v1/replies/{id}", "operator", async (call) => {
+      replyActorOf(call);
+      send(call.res, 200, {
+        reply: orchestrator.corporateReplies.edit(call.match[1] as string, await readBody(call.req)),
+      });
+    }),
+    route("POST", "/v1/replies/{id}/approve", "operator", async (call) => {
+      replyActorOf(call);
+      send(
+        call.res,
+        201,
+        orchestrator.corporateReplies.approve(call.match[1] as string, await readBody(call.req), call.actor),
+      );
+      void orchestrator.tick();
+    }),
+    route("POST", "/v1/replies/{id}/archive", "operator", (call) => {
+      replyActorOf(call);
+      send(call.res, 200, { reply: orchestrator.corporateReplies.archive(call.match[1] as string, call.actor) });
+    }),
     route("GET", "/v1/runs/{id}/origin", "viewer", (call) => {
       const id = runId(call);
       ownerOf(call, READS_SIGNALS);
-      send(call.res, 200, { origin: orchestrator.signals.originOf(id) });
+      const origin = orchestrator.signals.originOf(id);
+      send(call.res, 200, {
+        origin: origin === null ? null : { ...origin, reply: orchestrator.corporateReplies.replyOf(id) },
+      });
     }),
     route("GET", "/v1/runs/{id}/timeline", "viewer", (call) =>
       send(call.res, 200, orchestrator.timeline(call.match[1] as string, call.repos)),
@@ -904,6 +954,8 @@ export function apiRoutes(
     // Le long-poll de l'extension : 200 `{ action }` (passée `running`), ou 204 après l'attente.
     route("GET", "/v1/workstation/next", "operator", async (call) => {
       const workstation = workstationOf(call);
+      // Louer une action en remet les `params` (le texte et le fil d'une réponse) : jamais à un client pilote.
+      if (call.client.pilot) throw new HarnessError(403, "le client pilote n'est pas l'extension du poste");
       const hello = helloOf(call);
       const signal = departure(call.res);
       const agentTabs = call.req.headers["x-omp-agent-tabs"];
@@ -934,18 +986,23 @@ export function apiRoutes(
         throw new HarnessError(400, `state : ${ACTION_STATES.join(" | ")}`);
       const before = Number(call.url.searchParams.get("before"));
       send(call.res, 200, {
-        actions: workstation.listActions({
-          states: states as ActionState[],
-          limit: limitOf(call.url, 50, 200),
-          ...(Number.isInteger(before) && before > 0 ? { before } : {}),
-        }),
+        actions: workstation
+          .listActions({
+            states: states as ActionState[],
+            limit: limitOf(call.url, 50, 200),
+            ...(Number.isInteger(before) && before > 0 ? { before } : {}),
+          })
+          .filter((action) => !repliesHiddenFrom(call, workstation, action.requestId)),
       });
     }),
     // `?wait=` : rend dès que l'action quitte la file et l'extension (l'image d'une capture, en mémoire seulement).
     route("GET", "/v1/workstation/actions/{n}", "viewer", async (call) => {
       const workstation = workstationOf(call);
+      const seq = Number(call.match[1]);
+      if (repliesHiddenFrom(call, workstation, workstation.getAction(seq).requestId))
+        throw new HarnessError(403, READS_REPLIES);
       const signal = departure(call.res);
-      const view = await workstation.waitAction(Number(call.match[1]), waitOf(call.url), signal);
+      const view = await workstation.waitAction(seq, waitOf(call.url), signal);
       if (!signal.aborted) send(call.res, 200, view);
     }),
     route("POST", "/v1/workstation/actions/{n}/result", "operator", async (call) => {
@@ -954,9 +1011,13 @@ export function apiRoutes(
         action: workstation.submitResult(Number(call.match[1]), await readBody(call.req), helloOf(call)),
       });
     }),
-    route("GET", "/v1/workstation/actions/{n}/capture", "viewer", (call) =>
-      send(call.res, 200, workstationOf(call).capture(Number(call.match[1]))),
-    ),
+    route("GET", "/v1/workstation/actions/{n}/capture", "viewer", (call) => {
+      const workstation = workstationOf(call);
+      const seq = Number(call.match[1]);
+      if (repliesHiddenFrom(call, workstation, workstation.getAction(seq).requestId))
+        throw new HarnessError(403, READS_REPLIES);
+      send(call.res, 200, workstation.capture(seq));
+    }),
     // Le fichier d'un `upload` en cours, lu dans le dossier d'envoi du poste : pour l'extension qui l'exécute.
     route("GET", "/v1/workstation/actions/{n}/file", "operator", (call) =>
       send(call.res, 200, workstationOf(call).uploadFile(Number(call.match[1]))),
@@ -1069,11 +1130,17 @@ export function apiRoutes(
     route("GET", "/v1/workstation/requests", "viewer", (call) => {
       const workstation = workstationOf(call);
       const states = parseRequestStates(call.url.searchParams.get("state"));
-      send(call.res, 200, { requests: workstation.listRequests({ states, limit: limitOf(call.url, 50, 200) }) });
+      const requests = workstation
+        .listRequests({ states, limit: limitOf(call.url, 50, 200) })
+        // Le client pilote ne lit pas les demandes de réponse à un collègue (texte et fil dans leur consigne).
+        .filter((request) => !repliesHiddenFrom(call, workstation, request.id));
+      send(call.res, 200, { requests });
     }),
-    route("GET", "/v1/workstation/requests/{id}", "viewer", (call) =>
-      send(call.res, 200, workstationOf(call).requestView(call.match[1] as string)),
-    ),
+    route("GET", "/v1/workstation/requests/{id}", "viewer", (call) => {
+      const workstation = workstationOf(call);
+      if (repliesHiddenFrom(call, workstation, call.match[1] as string)) throw new HarnessError(403, READS_REPLIES);
+      send(call.res, 200, workstation.requestView(call.match[1] as string));
+    }),
     route("POST", "/v1/workstation/requests/{id}/cancel", "operator", (call) => {
       const request = approverOf(call).cancelRequest(call.match[1] as string, call.actor);
       send(call.res, 200, { request });

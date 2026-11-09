@@ -123,6 +123,8 @@ export const EVENT_TYPES = [
   "validation",
   // le pont corpo ↔ usine : l'état d'un signalement d'un collègue (`{id, state}` seulement ; repo null : poste réservé au propriétaire)
   "signal",
+  // le pont corpo ↔ usine : l'état d'un brouillon de réponse au collègue (`{id, state}` seulement ; repo null : poste réservé au propriétaire)
+  "reply",
   // éphémères
   "activity",
   "session",
