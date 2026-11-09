@@ -1,5 +1,20 @@
 # Journal des versions
 
+## omp-mem0-req 2.6.0 — 2026-11-09
+
+- feat(req): /demande et outil harness_intake pour la Demande du harness (#393) (bb77448)
+
+## omp-harness 1.28.0 — 2026-11-09
+
+- feat(harness): rouge de base — un échec de la suite complète ne bloque que s'il est nouveau par rapport à main (#398) (c00d360)
+- feat(harness): lecture des canaux Gmail, Agenda et Slack par API (#396) (aa20e6d)
+- feat(harness): demande, point d'entrée unique en langage naturel (#389) (83877f1)
+- feat(harness): socle serveur des canaux Gmail, Agenda et Slack (#388) (f0297b3)
+
+## omp-chrome 0.4.0 — 2026-11-09
+
+- feat(chrome): Demande dans le popup via le service worker (#391) (cffe270)
+
 ## omp-harness 1.27.0 — 2026-11-09
 
 - feat(harness): autonomie par paliers par dépôt et type de travail (79201ca)
