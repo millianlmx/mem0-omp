@@ -286,7 +286,11 @@ export function parseSplitFeatures(
     if (title === "" || request === "") return { ok: false, error: "title et request sont requis pour chaque feature" };
     const modules = pathList(record.modules ?? []);
     if (modules === null) return { ok: false, error: `modules de « ${title} » : liste de chemins` };
-    features.push({ title: title.slice(0, 120), request, modules: modules.filter((module) => !isArtifactPath(module)) });
+    features.push({
+      title: title.slice(0, 120),
+      request,
+      modules: modules.filter((module) => !isArtifactPath(module)),
+    });
   }
   return { ok: true, features };
 }

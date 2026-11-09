@@ -83,8 +83,10 @@ test("set-modules-refuse-les-artefacts/AC-3 : set_modules sur un chemin du dép�
 });
 
 test("set-modules-refuse-les-artefacts/AC-4 : des specs dont `## Modules` ne liste que `.harness/…` laissent les modules du run inchangés à la fin de /specs", async () => {
-  const onlyArtifacts =
-    (OK.specs[0]?.content ?? "").replace("## Modules\n- src/api\n", "## Modules\n- .harness/req.md\n- `./.harness/specs.md`\n");
+  const onlyArtifacts = (OK.specs[0]?.content ?? "").replace(
+    "## Modules\n- src/api\n",
+    "## Modules\n- .harness/req.md\n- `./.harness/specs.md`\n",
+  );
   assert.match(onlyArtifacts, /- \.harness\/req\.md/);
   const world = fakeWorld(
     { req: [OK.req], specs: [[{ write: ".harness/specs.md", content: onlyArtifacts }]] },
@@ -114,13 +116,15 @@ test("set-modules-refuse-les-artefacts/AC-4 : des specs dont `## Modules` ne lis
 });
 
 test("set-modules-refuse-les-artefacts/attendu-modules : parseModulesSection et `## Découpage` ignorent `.harness/`, le reste est gardé", () => {
-  const specs = "## Modules\n- .harness\n- `.harness/req.md`\n- ./.harness/specs.md\n- src/api\n- docs/\n## Découpage\naucun\n";
+  const specs =
+    "## Modules\n- .harness\n- `.harness/req.md`\n- ./.harness/specs.md\n- src/api\n- docs/\n## Découpage\naucun\n";
   assert.deepEqual(parseModulesSection(specs), ["src/api", "docs"]);
   assert.deepEqual(parseModulesSection("## Modules\n- .harness/req.md\n"), []);
   // Un nom qui ressemble seulement à `.harness` reste un chemin du dépôt.
   assert.deepEqual(parseModulesSection("## Modules\n- .harness-tools/x.ts\n"), [".harness-tools/x.ts"]);
 
-  const split = "## Découpage\n- Export JSON — Exporter en JSON — .harness/specs.md, src/api, ./.harness/req.md\n- Export XML — Exporter en XML — .harness/req.md\n";
+  const split =
+    "## Découpage\n- Export JSON — Exporter en JSON — .harness/specs.md, src/api, ./.harness/req.md\n- Export XML — Exporter en XML — .harness/req.md\n";
   assert.deepEqual(parseSplitSection(split), [
     { title: "Export JSON", request: "Exporter en JSON", modules: ["src/api"] },
     { title: "Export XML", request: "Exporter en XML", modules: [] },
