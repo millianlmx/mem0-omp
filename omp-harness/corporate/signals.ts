@@ -466,12 +466,7 @@ export class SignalDesk {
     return run;
   }
 
-  async #confirm(
-    id: string,
-    input: Record<string, unknown>,
-    client: Client,
-    actor: Actor,
-  ): Promise<ConfirmResult> {
+  async #confirm(id: string, input: Record<string, unknown>, client: Client, actor: Actor): Promise<ConfirmResult> {
     this.#row(id);
     if (!client.approver) throw new HarnessError(403, APPROVER_ONLY);
     const signal = this.#proposed(id);

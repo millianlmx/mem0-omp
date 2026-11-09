@@ -507,7 +507,7 @@ export class WorkstationAgent {
   async #signal(id: string, live: LiveJob): Promise<void> {
     const { store } = this.#ctx;
     const signal = store.getSignal(id);
-    if (!signal || signal.state !== "received") return;
+    if (signal?.state !== "received") return;
     const candidates = await this.#signals.candidates(signal);
     if (candidates.length === 0) {
       this.#signals.ignoreWithoutCandidate(id);

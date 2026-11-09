@@ -690,12 +690,7 @@ const CHALLENGE_TOOL: HostToolDefinition = {
 };
 
 /** Les jobs du poste de travail menés par un runner (workstation-agent.ts) : le nom est l'en-tête de leur prompt. */
-export type WorkstationJob =
-  | "poste-profil"
-  | "poste-digest"
-  | "poste-service"
-  | "poste-demande"
-  | "poste-signal";
+export type WorkstationJob = "poste-profil" | "poste-digest" | "poste-service" | "poste-demande" | "poste-signal";
 
 const NULLABLE_STRING = { type: ["string", "null"] } as const;
 
@@ -913,7 +908,10 @@ const WORKSTATION_SIGNAL_PROPOSE_TOOL: HostToolDefinition = {
       repo: { type: "string", description: "Le nom d'un dépôt candidat." },
       kind: { type: "string", enum: ["bug", "feature"] },
       title: { type: "string", description: "Le titre de l'issue, générique, une ligne." },
-      body: { type: "string", description: "Le corps de l'issue : le problème ou le besoin reformulé, ce qui est attendu." },
+      body: {
+        type: "string",
+        description: "Le corps de l'issue : le problème ou le besoin reformulé, ce qui est attendu.",
+      },
     },
     required: ["signalId", "repo", "kind", "title", "body"],
     additionalProperties: false,
@@ -953,8 +951,7 @@ export function hostToolsFor(
   if (step === "challenge") return [PROGRESS_TOOL, RECALL_TOOL, CHALLENGE_TOOL];
   if (step === "poste-profil") return [PROGRESS_TOOL, WORKSTATION_PROFILE_TOOL];
   if (step === "poste-digest") return [PROGRESS_TOOL, WORKSTATION_DIGEST_TOOL];
-  if (step === "poste-signal")
-    return [PROGRESS_TOOL, WORKSTATION_SIGNAL_PROPOSE_TOOL, WORKSTATION_SIGNAL_IGNORE_TOOL];
+  if (step === "poste-signal") return [PROGRESS_TOOL, WORKSTATION_SIGNAL_PROPOSE_TOOL, WORKSTATION_SIGNAL_IGNORE_TOOL];
   if (step === "poste-demande")
     return [
       PROGRESS_TOOL,
