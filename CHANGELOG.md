@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.33.0 — 2026-11-09
+
+- feat(harness): session en graphe (serveur) et carte de décision (#417) (7bda257)
+
 ## omp-harness 1.32.0 — 2026-11-09
 
 - feat(harness): la CI de la forge comme juge de la suite complète (tests.judge: ci) (#415) (9dc6e53)
