@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.36.1 — 2026-11-09
+
+- fix(harness): runner conteneur sans journal du moteur (#414) (10e8038)
+
 ## omp-harness 1.36.0 — 2026-11-09
 
 - feat(harness,console): Jira et Confluence par le MCP Atlassian — plan du jour, savoir corpo (#438) (77c9314)
