@@ -238,7 +238,7 @@ private struct ProofThumbnails: View {
 }
 
 /// Une capture en grand, avec son titre.
-private struct ProofImageSheet: View {
+struct ProofImageSheet: View {
     @ObservedObject var proofs: HarnessRunProofs
     let proof: HarnessProof
     @Environment(\.dismiss) private var dismiss
@@ -261,7 +261,7 @@ private struct ProofImageSheet: View {
 }
 
 /// Une capture lue au serveur et décodée.
-private struct ProofImage: View {
+struct ProofImage: View {
     @ObservedObject var proofs: HarnessRunProofs
     let proof: HarnessProof
     @State private var image: CGImage?
