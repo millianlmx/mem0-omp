@@ -48,7 +48,6 @@ enum IOSSiriText {
     static func review(_ title: String) -> String { L10n.format("la revue de « %@ »", title) }
     static let send = L10n.text("un envoi du poste")
     static let intake = L10n.text("une demande à confirmer")
-    static let audit = L10n.text("un audit à trier")
     static let jira = L10n.text("un commentaire Jira")
     /// Entre deux décisions de la phrase.
     static let separator = ", "

@@ -87,6 +87,10 @@ public struct AtlassianStatus: Decodable, Equatable, Sendable {
     public var knowledge: AtlassianKnowledge
     /// Les commentaires proposés qui attendent l'humain.
     public var proposed: Int
+    /// L'espace de cette connexion ; `nil` : la connexion par défaut (hors espace), ou un serveur antérieur.
+    public var space: String?
+    /// La portée mémoire où va le savoir de cette connexion (`corpo`, ou `corpo:<espace>`) ; `nil` d'un serveur antérieur.
+    public var scope: String?
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -104,11 +108,13 @@ public struct AtlassianStatus: Decodable, Equatable, Sendable {
         plan = try c.decodeIfPresent(AtlassianPlanSchedule.self, forKey: .plan) ?? AtlassianPlanSchedule()
         knowledge = try c.decodeIfPresent(AtlassianKnowledge.self, forKey: .knowledge) ?? AtlassianKnowledge()
         proposed = try c.decodeIfPresent(Int.self, forKey: .proposed) ?? 0
+        space = try c.decodeIfPresent(String.self, forKey: .space)
+        scope = try c.decodeIfPresent(String.self, forKey: .scope)
     }
 
     private enum CodingKeys: String, CodingKey {
         case enabled, connected, site, accountId, connectedAt, connectedBy, expiresAt, lastError
-        case redirectUri, pasteBack, pending, plan, knowledge, proposed
+        case redirectUri, pasteBack, pending, plan, knowledge, proposed, space, scope
     }
 }
 
@@ -128,6 +134,8 @@ public struct AtlassianWrite: Decodable, Equatable, Sendable, Identifiable {
     public var decidedBy: String?
     public var createdAt: Double
     public var updatedAt: Double
+    /// L'espace de la connexion qui l'a écrite ; `nil` : la connexion par défaut, ou un serveur antérieur.
+    public var space: String?
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -142,10 +150,11 @@ public struct AtlassianWrite: Decodable, Equatable, Sendable, Identifiable {
         decidedBy = try c.decodeIfPresent(String.self, forKey: .decidedBy)
         createdAt = try c.decodeIfPresent(Double.self, forKey: .createdAt) ?? 0
         updatedAt = try c.decodeIfPresent(Double.self, forKey: .updatedAt) ?? 0
+        space = try c.decodeIfPresent(String.self, forKey: .space)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, issueKey, body, why, state, by, error, decidedBy, createdAt, updatedAt
+        case id, kind, issueKey, body, why, state, by, error, decidedBy, createdAt, updatedAt, space
     }
 }
 
@@ -198,6 +207,8 @@ public struct AtlassianPlan: Decodable, Equatable, Sendable, Identifiable {
     public var by: String
     public var summary: String
     public var items: [AtlassianPlanItem]
+    /// L'espace de la connexion dont c'est le plan ; `nil` : la connexion par défaut, ou un serveur antérieur.
+    public var space: String?
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -207,9 +218,10 @@ public struct AtlassianPlan: Decodable, Equatable, Sendable, Identifiable {
         by = try c.decodeIfPresent(String.self, forKey: .by) ?? ""
         summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
         items = try c.decodeIfPresent([AtlassianPlanItem].self, forKey: .items) ?? []
+        space = try c.decodeIfPresent(String.self, forKey: .space)
     }
 
-    private enum CodingKeys: String, CodingKey { case id, createdAt, trigger, by, summary, items }
+    private enum CodingKeys: String, CodingKey { case id, createdAt, trigger, by, summary, items, space }
 }
 
 /// `POST /v1/atlassian/connect`.
@@ -261,13 +273,32 @@ public final class AtlassianModel: ObservableObject {
     /// Le dernier échec (lecture ou geste), effacé par le prochain succès.
     @Published public private(set) var failure: HarnessFailure?
 
+    /// L'espace de cette connexion (`HarnessModel.atlassianConnection(for:)`) : chaque lecture et chaque
+    /// geste de connexion portent `?space=` ; `nil` : la connexion par défaut, hors espace.
+    public let space: String?
+
     weak var harness: HarnessModel?
     private let reloadDelay: Duration
     private var reloadTask: Task<Void, Never>?
 
-    init(harness: HarnessModel, reloadDelay: Duration) {
+    init(harness: HarnessModel, reloadDelay: Duration, space: String? = nil) {
         self.harness = harness
         self.reloadDelay = reloadDelay
+        self.space = space
+    }
+
+    /// `path` pour cette connexion : tel quel pour la connexion par défaut, avec `?space=` pour celle d'un espace.
+    private func scoped(_ path: String) -> String {
+        space.map { HarnessModel.path(path, space: $0) } ?? path
+    }
+
+    /// La connexion d'un espace n'existe que sur un serveur qui l'annonce (`space-knowledge`) :
+    /// ailleurs, `?space=` serait ignoré et la connexion par défaut passerait pour celle de
+    /// l'espace. `nil` : les capacités du serveur n'ont pas pu être lues.
+    private func isOffered(by harness: HarnessModel) async -> Bool? {
+        guard space != nil else { return true }
+        await harness.loadCapabilities()
+        return harness.capabilities == nil ? nil : harness.serves(.spaceKnowledge)
     }
 
     /// Le badge : les commentaires qui attendent l'humain (0 hors d'un serveur qui les sert).
@@ -291,7 +322,12 @@ public final class AtlassianModel: ObservableObject {
     /// Relit l'état, les commentaires proposés et le dernier plan.
     public func refresh() async {
         guard let harness, harness.isConfigured else { return }
-        let call = HarnessCall(method: "GET", path: "/v1/atlassian")
+        guard let offered = await isOffered(by: harness) else { return }
+        guard offered else {
+            clear(.absent)
+            return
+        }
+        let call = HarnessCall(method: "GET", path: scoped("/v1/atlassian"))
         do {
             let reply = try await harness.exchange(call)
             if reply.status == 404 {
@@ -300,9 +336,9 @@ public final class AtlassianModel: ObservableObject {
             }
             let read: AtlassianStatusReply = try harness.decode(reply, for: call)
             let writes: AtlassianWritesReply = try await harness.fetch(
-                HarnessCall(method: "GET", path: "/v1/atlassian/writes?state=proposed&limit=\(Self.proposalsLimit)")
+                HarnessCall(method: "GET", path: scoped("/v1/atlassian/writes?state=proposed&limit=\(Self.proposalsLimit)"))
             )
-            let latest: AtlassianPlanReply = try await harness.fetch(HarnessCall(method: "GET", path: "/v1/atlassian/plan"))
+            let latest: AtlassianPlanReply = try await harness.fetch(HarnessCall(method: "GET", path: scoped("/v1/atlassian/plan")))
             status = read.atlassian
             proposals = writes.writes.filter { $0.state == "proposed" && $0.kind == "comment" }
             plan = latest.plan
@@ -351,7 +387,7 @@ public final class AtlassianModel: ObservableObject {
     /// Ouvre un consentement : le lien d'autorisation à ouvrir dans le navigateur, `nil` sur
     /// un échec (dans `failure`).
     public func connect() async -> URL? {
-        guard let reply: AtlassianConnection = await send("POST", "/v1/atlassian/connect", body: EmptyBody(), gesture: Self.connectGesture)
+        guard let reply: AtlassianConnection = await send("POST", scoped("/v1/atlassian/connect"), body: EmptyBody(), gesture: Self.connectGesture)
         else { return nil }
         await refresh()
         guard let url = Self.webURL(reply.authorizeUrl) else {
@@ -366,7 +402,7 @@ public final class AtlassianModel: ObservableObject {
         let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         guard let reply: AtlassianStatusReply = await send(
-            "POST", "/v1/atlassian/callback", body: CallbackBody(url: trimmed), gesture: Self.callbackGesture
+            "POST", scoped("/v1/atlassian/callback"), body: CallbackBody(url: trimmed), gesture: Self.callbackGesture
         ) else { return false }
         status = reply.atlassian
         await refresh()
@@ -376,14 +412,15 @@ public final class AtlassianModel: ObservableObject {
     /// Débranche : le serveur supprime ses jetons.
     @discardableResult
     public func disconnect() async -> Bool {
-        guard let reply: AtlassianStatusReply = await send("DELETE", "/v1/atlassian", body: nil as EmptyBody?, gesture: Self.disconnectGesture)
+        guard let reply: AtlassianStatusReply = await send("DELETE", scoped("/v1/atlassian"), body: nil as EmptyBody?, gesture: Self.disconnectGesture)
         else { return false }
         status = reply.atlassian
         await refresh()
         return true
     }
 
-    /// Publie le commentaire, avec le texte édité par l'humain (`nil` : celui de l'agent).
+    /// Publie le commentaire, avec le texte édité par l'humain (`nil` : celui de l'agent). Une
+    /// écriture se tranche par son identifiant : le serveur retrouve sa connexion, sans `?space=`.
     @discardableResult
     public func approve(_ id: String, body: String? = nil) async -> Bool {
         let edited = body?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -400,14 +437,14 @@ public final class AtlassianModel: ObservableObject {
     /// Demande un nouveau plan du jour (le job tourne au prochain tour du poste).
     @discardableResult
     public func runPlan() async -> Bool {
-        let reply: AtlassianQueuedReply? = await send("POST", "/v1/atlassian/plan", body: EmptyBody(), gesture: Self.planGesture)
+        let reply: AtlassianQueuedReply? = await send("POST", scoped("/v1/atlassian/plan"), body: EmptyBody(), gesture: Self.planGesture)
         return reply != nil
     }
 
     /// Demande une passe de savoir de la boîte.
     @discardableResult
     public func runKnowledge() async -> Bool {
-        let reply: AtlassianQueuedReply? = await send("POST", "/v1/atlassian/knowledge", body: EmptyBody(), gesture: Self.knowledgeGesture)
+        let reply: AtlassianQueuedReply? = await send("POST", scoped("/v1/atlassian/knowledge"), body: EmptyBody(), gesture: Self.knowledgeGesture)
         return reply != nil
     }
 
@@ -428,6 +465,8 @@ public final class AtlassianModel: ObservableObject {
             failure = .unreachable
             return nil
         }
+        // La connexion d'un espace n'agit qu'une fois lue : jamais vers un serveur qui ignorerait `?space=`.
+        guard space == nil || availability == .available else { return nil }
         var encoded: Data?
         if let body {
             guard let data = try? JSONEncoder().encode(body) else {

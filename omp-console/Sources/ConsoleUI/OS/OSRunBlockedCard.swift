@@ -1,8 +1,10 @@
-// L'« OS agentique » : la carte BLOQUÉ d'une feature retenue en file. La cause en une
-// ligne, puis ce qui la lève : la feature qui bloque (modules partagés, parent non
-// fusionné) avec « Ouvrir », « Restreindre les modules… » (une ligne par chemin), l'heure
-// de reprise d'une relance différée, « Reprendre » quand tout est suspendu, le plafond de
-// l'espace quand son budget du jour est atteint — et « Arrêter… ».
+// L'« OS agentique » : la carte EN ATTENTE d'une tâche retenue en file. Une phrase de
+// l'app dit pourquoi, tirée du CODE de la cause (jamais la phrase du serveur) : « Attend
+// la fin de « X » (même zone du code) », « Reprend à 14:05 », « Client Acme est
+// suspendu », « Budget du jour de Client Acme atteint »… Puis ce qu'il y a à faire : rien
+// (« Rien à faire, ça partira seul »). Les gestes sont discrets : « Ouvrir « X » » (le fil
+// attendu), « Reprendre » quand tout est suspendu ; « Restreindre les modules… »,
+// l'autonomie et « Arrêter… » vivent dans le menu « … ».
 
 import ConsoleClient
 import ConsoleCore
@@ -11,22 +13,28 @@ import SwiftUI
 public struct OSRunBlockedCard: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var spaces: HarnessSpacesModel
+    @ObservedObject var pause: HarnessPauseModel
     let run: HarnessRun
+    /// Le titre de la tâche, quand son fil en a plusieurs.
+    let title: String?
     let open: @MainActor (String) -> Void
     let stop: @MainActor () -> Void
     let failed: @MainActor () -> Void
     @State private var restricting = false
     @State private var resuming = false
 
-    /// `open` : ouvre la feature qui bloque (son identifiant). `stop` : ouvre l'arrêt motivé.
-    /// `failed` : un geste a été refusé (`server.pause.failure` ou `server.failure` dit pourquoi).
+    /// `open` : ouvre le fil attendu (l'identifiant de sa tâche). `stop` : ouvre l'arrêt
+    /// motivé. `failed` : un geste a été refusé (`server.pause.failure` ou `server.failure`
+    /// dit pourquoi). `title` : le titre de la tâche, dans un fil qui en a plusieurs.
     public init(
         server: HarnessModel, run: HarnessRun, open: @escaping @MainActor (String) -> Void, stop: @escaping @MainActor () -> Void,
-        failed: @escaping @MainActor () -> Void = {}
+        failed: @escaping @MainActor () -> Void = {}, title: String? = nil
     ) {
         self.server = server
         spaces = server.spaces
+        pause = server.pause
         self.run = run
+        self.title = title
         self.open = open
         self.stop = stop
         self.failed = failed
@@ -36,33 +44,32 @@ public struct OSRunBlockedCard: View {
 
     public var body: some View {
         let gestures = server.osGestures(run)
+        let line = OSWaitLine.of(run, space: spaces.space(ofRepo: run.repo), globalPause: pause.isPaused)
         OSCard(tint: .secondary, emphasized: true) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "pause.circle.fill")
-                    Text(SessionGraphText.blocked.uppercased())
-                    Text("·")
-                    Text(OSThreads.clean(run.title).title).lineLimit(1)
+                HStack(spacing: 8) {
+                    OSPhaseMark(phase: .queued, size: 14)
+                    Text(OSDecideText.cardWaiting).font(.headline)
+                    if let title {
+                        Text(title).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    moreMenu(gestures)
                 }
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.secondary)
-                Text(OSDecideText.waitCause(cause))
-                    .font(.headline)
+                Text(line.headline)
                     .fixedSize(horizontal: false, vertical: true)
-                detail
-                OSLine(spacing: 8) {
-                    if cause == "paused", server.osFeatures.contains(OSCapability.pause), server.canAct {
-                        Button(OSDecideText.resume, systemImage: "play.fill", action: resume)
-                            .buttonStyle(.borderedProminent)
-                            .disabled(resuming)
+                if let hint = line.hint {
+                    Text(hint).font(.callout).foregroundStyle(.secondary)
+                }
+                if !run.blockedBy.isEmpty || canResume {
+                    OSLine(spacing: 8) {
+                        if canResume {
+                            Button(OSWatchText.resume, systemImage: "play.fill", action: resume)
+                                .disabled(resuming)
+                        }
+                        blockers
+                        Spacer()
                     }
-                    if gestures.modules, cause == "modules" {
-                        Button(OSDecideText.restrictModules) { restricting = true }
-                    }
-                    if gestures.stop {
-                        Button(OSDecideText.stop, action: stop)
-                    }
-                    Spacer()
                 }
             }
         }
@@ -70,92 +77,61 @@ public struct OSRunBlockedCard: View {
             OSRunModulesSheet(server: server, run: run)
         }
         .task(id: cause) {
-            if cause == "space_budget", spaces.availability == .unknown { await spaces.refresh() }
+            if spaces.availability == .unknown { await spaces.refresh() }
+            if cause == "paused", pause.availability == .unknown { await pause.refresh() }
         }
     }
 
-    /// Ce qui retient, au-delà de la cause : qui, jusqu'à quand, ou combien.
+    /// « Reprendre » : la pause de tout le serveur se lève d'ici ; celle d'un espace, depuis le Radar.
+    private var canResume: Bool {
+        cause == "paused" && pause.isPaused && server.osFeatures.contains(OSCapability.pause) && server.canAct
+    }
+
+    /// « Ouvrir « X » » : le fil dont on attend la fin (ou la livraison) ; à plusieurs, un bouton chacun.
     @ViewBuilder
-    private var detail: some View {
-        switch cause {
-        case "modules", "parent":
-            ForEach(run.blockedBy) { blocker in
-                // Sur le Mac, tout tient sur une ligne ; sur l'iPhone, l'état passe sous le titre.
-                #if os(macOS)
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    OSPhaseMark(phase: Self.phase(blocker.state), size: 11)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(OSThreads.clean(blocker.title).title).lineLimit(1)
-                        if !blocker.modules.isEmpty {
-                            Text(blocker.modules.joined(separator: " · "))
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    Spacer()
-                    Text(Self.phase(blocker.state).label).font(.caption).foregroundStyle(.secondary)
-                    Button(OSDecideText.open) { open(blocker.runId) }
-                }
-                #else
-                HStack(alignment: .center, spacing: 8) {
-                    OSPhaseMark(phase: Self.phase(blocker.state), size: 11)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(OSThreads.clean(blocker.title).title).lineLimit(2)
-                        Text(([Self.phase(blocker.state).label] + blocker.modules).joined(separator: " · "))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                    Spacer(minLength: 0)
-                    Button(OSDecideText.open) { open(blocker.runId) }
-                        .osRowButton()
-                }
-                #endif
-            }
-        case "backoff":
-            if let until = run.waitUntil ?? run.notBefore {
-                Label(PipelineServerText.resumeAt(ConsoleFormat.time(ms: until.timeIntervalSince1970 * 1000)), systemImage: "clock")
-                    .foregroundStyle(.secondary)
-            }
-        case "space_budget":
-            if let space = spaces.space(ofRepo: run.repo), let ceiling = space.dailyBudgetUsd {
-                Label(OSDecideText.spaceCeiling(space.name, ceiling: ceiling), systemImage: "dollarsign.circle")
-                    .foregroundStyle(.secondary)
-            }
-        case "paused", "inferring":
-            EmptyView()
-        default:
-            // La phrase du serveur (« slots runner pleins 5/5 ») précise les causes d'admission.
-            if let reason = run.reason, !reason.isEmpty {
-                Text(OSThreads.firstLine(reason)).foregroundStyle(.secondary).lineLimit(2)
-            }
+    private var blockers: some View {
+        ForEach(run.blockedBy.prefix(3)) { blocker in
+            Button(OSDecideText.openThread(OSThreads.clean(blocker.title).title)) { open(blocker.runId) }
+                .lineLimit(1)
         }
     }
 
-    /// La phase d'une feature qui bloque, d'après son état brut.
-    private static func phase(_ state: String) -> OSPhase {
-        switch HarnessRunState(rawValue: state) {
-        case .queued: .queued
-        case .escalated, .awaitingHuman: .yours
-        case .merged: .done
-        case .failed: .failed
-        case .cancelled: .stopped
-        case .running, .merging, nil: .working
+    /// Le menu « … » : restreindre les modules (pour ne plus recouper le fil attendu),
+    /// l'autonomie, l'arrêt motivé.
+    @ViewBuilder
+    private func moreMenu(_ gestures: OSRunGestures) -> some View {
+        let restricts = gestures.modules && cause == "modules"
+        if restricts || gestures.autonomy || gestures.stop {
+            Menu {
+                if restricts {
+                    Button(OSDecideText.restrictModules, systemImage: "square.dashed") { restricting = true }
+                }
+                OSAutonomyMenu(server: server, runs: [run], failed: failed)
+                if gestures.stop {
+                    Button(OSDecideText.stop, systemImage: "stop.circle", role: .destructive, action: stop)
+                }
+            } label: {
+                Label(OSDecideText.more, systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
+                    .frame(minWidth: ConsolePlatform.minimumTarget, minHeight: ConsolePlatform.minimumTarget)
+            }
+            .menuIndicator(.hidden)
+            .buttonStyle(.borderless)
+            .fixedSize()
         }
     }
 
     private func resume() {
         resuming = true
         Task {
-            if await !server.pause.setPause(paused: false) { failed() }
+            if await !pause.setPause(paused: false) { failed() }
             resuming = false
         }
     }
 }
 
-/// « Restreindre les modules… » : les chemins que la feature touchera, un par ligne. Des
-/// modules plus étroits ne recoupent plus ceux de la feature qui bloque : elle part.
+/// « Restreindre les modules… » : les chemins que la tâche touchera, un par ligne. Des
+/// modules plus étroits ne recoupent plus ceux du fil attendu : elle part.
 public struct OSRunModulesSheet: View {
     @ObservedObject var server: HarnessModel
     let run: HarnessRun

@@ -1,4 +1,4 @@
-// L'« OS agentique » : ce que l'humain peut FAIRE d'une feature, selon son état, son rôle
+// L'« OS agentique » : ce que l'humain peut FAIRE d'une tâche, selon son état, son rôle
 // et ce que le serveur relié annonce (`GET /v1/health`, `features`). Une capacité absente
 // retire le geste : ni bouton mort, ni erreur. Lu par la carte de décision, la page d'un
 // fil et l'arrêt avec son motif.
@@ -27,15 +27,18 @@ struct OSAlwaysRule: Equatable {
     var gate: HarnessAutonomyGate
 }
 
-/// Les gestes permis sur une feature.
+/// Les gestes permis sur une tâche.
 struct OSRunGestures: Equatable {
-    /// « Corriger… » : une consigne qui corrige la feature là où elle est.
+    /// « Corriger… » : une consigne qui corrige la tâche là où elle est.
     var amend = false
     /// « Arrêter… »
     var stop = false
+    /// « Relancer » : la tâche repart de l'étape où elle s'est arrêtée (en échec, à relancer
+    /// après des échecs répétés, budget à accorder).
+    var retry = false
     /// L'arrêt propose ses motifs et sa note (sinon une simple confirmation).
     var causes = false
-    /// Le menu « Refaire » d'une feature finie.
+    /// Le menu « Refaire » d'un fil fini (livré ou arrêté) ; un échec se relance.
     var redo = false
     /// Le curseur d'autonomie.
     var autonomy = false
@@ -55,15 +58,19 @@ struct OSRunGestures: Equatable {
         var gestures = OSRunGestures()
         // Sans `os-loop`, corriger passe par les gestes d'avant (refus d'une porte, consigne),
         // qui ne relancent pas une feature en échec.
+        let wait = OSHumanWait.of(run)
         gestures.amend = live || (loop && phase == .failed)
         gestures.stop = live
+        gestures.retry = phase == .failed || wait?.isRetry == true
         gestures.causes = loop
-        gestures.redo = features.contains(OSCapability.proposals) && [.merged, .failed, .cancelled].contains(phase)
+        gestures.redo = features.contains(OSCapability.proposals) && [.merged, .cancelled].contains(phase)
         gestures.autonomy = autonomy && live
         gestures.modules = loop && phase == .queued
         gestures.always = autonomy && live
-        if isAdmin, autonomy, phase == .awaitingHuman, let kind = run.kind.flatMap(HarnessWorkKind.init(rawValue:)) {
-            gestures.rule = OSAlwaysRule(repo: run.repo, kind: kind, gate: run.awaitsSpecs ? .specs : .review)
+        // La règle de palier ne lève que des specs ou une revue ordinaires : l'irréversible,
+        // un arbitrage, un budget et une relance reviennent toujours à l'humain.
+        if isAdmin, autonomy, wait == .specs || wait == .verdict, let kind = run.kind.flatMap(HarnessWorkKind.init(rawValue:)) {
+            gestures.rule = OSAlwaysRule(repo: run.repo, kind: kind, gate: wait == .specs ? .specs : .review)
         }
         return gestures
     }

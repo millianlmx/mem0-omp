@@ -120,19 +120,22 @@ public final class HarnessProposalsModel: ObservableObject {
     /// Le serveur relié sert les propositions (inconnu compris : rien ne clignote).
     public var isServed: Bool { availability != .absent }
 
-    /// Relit les propositions ; un serveur antérieur (404) n'en a pas, sans échec.
+    /// Relit les propositions de la portée courante (l'espace choisi, ou toutes) ; un serveur
+    /// antérieur (404) n'en a pas, sans échec.
     public func refresh() async {
         guard harness.isConfigured else { return }
         isLoading = true
         defer { isLoading = false }
         do {
-            guard let list: HarnessProposalList = try await harness.readBound("/v1/proposals") else {
+            let read: HarnessScopedRead<HarnessProposalList> = try await harness.readScoped("/v1/proposals")
+            guard let list = read.value else {
                 availability = .absent
                 proposals = []
                 failure = nil
                 return
             }
-            proposals = list.proposals
+            // Un serveur qui ne borne pas les propositions à un espace : elles le sont ici, par dépôt.
+            proposals = OSSpaces.proposals(list.proposals, in: read.filter)
             availability = .available
             failure = nil
         } catch {
@@ -194,6 +197,13 @@ public final class HarnessProposalsModel: ObservableObject {
     func receive(_ names: [String]) {
         guard availability == .available, names.contains("proposals") else { return }
         reloader.schedule { [weak self] in await self?.refresh() }
+    }
+
+    /// La portée a changé : les propositions de l'ancienne ne restent pas à l'écran, celles de la nouvelle sont lues.
+    func rescope() {
+        guard availability == .available else { return }
+        proposals = []
+        Task { [weak self] in await self?.refresh() }
     }
 
     func reset() {

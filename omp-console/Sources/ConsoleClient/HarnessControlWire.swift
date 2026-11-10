@@ -424,19 +424,26 @@ public struct HarnessManagedClient: Codable, Equatable, Sendable, Identifiable {
     public var approver: Bool
     /// Un client pilote (la vigie) : les gestes réservés à l'humain lui sont refusés.
     public var pilot: Bool?
+    /// Les espaces auxquels le client est borné (leurs identifiants) : `repos` porte alors leurs
+    /// dépôts du moment. `nil` : il n'est borné à aucun espace (la clé est alors absente).
+    public var spaces: [String]? = nil
 
     public var id: String { name }
 
-    public init(name: String, role: String, repos: [String]? = nil, createdAt: Double = 0, approver: Bool = false, pilot: Bool? = nil) {
+    public init(
+        name: String, role: String, repos: [String]? = nil, createdAt: Double = 0, approver: Bool = false, pilot: Bool? = nil,
+        spaces: [String]? = nil
+    ) {
         self.name = name
         self.role = role
         self.repos = repos
         self.createdAt = createdAt
         self.approver = approver
         self.pilot = pilot
+        self.spaces = spaces
     }
 
-    private enum CodingKeys: String, CodingKey { case name, role, repos, createdAt, approver, pilot }
+    private enum CodingKeys: String, CodingKey { case name, role, repos, createdAt, approver, pilot, spaces }
 
     /// `repos` vaut `"*"` (tous) ou une liste.
     public init(from decoder: Decoder) throws {
@@ -447,6 +454,7 @@ public struct HarnessManagedClient: Codable, Equatable, Sendable, Identifiable {
         createdAt = try container.decodeIfPresent(Double.self, forKey: .createdAt) ?? 0
         approver = try container.decodeIfPresent(Bool.self, forKey: .approver) ?? false
         pilot = try container.decodeIfPresent(Bool.self, forKey: .pilot)
+        spaces = try? container.decodeIfPresent([String].self, forKey: .spaces)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -457,6 +465,7 @@ public struct HarnessManagedClient: Codable, Equatable, Sendable, Identifiable {
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(approver, forKey: .approver)
         try container.encodeIfPresent(pilot, forKey: .pilot)
+        try container.encodeIfPresent(spaces, forKey: .spaces)
     }
 }
 

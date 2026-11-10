@@ -42,13 +42,6 @@ public enum OSGlyph {
         (0..<5).map { index in merged || index < step ? .done : index == step ? .current : .upcoming }
     }
 
-    /// La longueur d'une barre de diff, de 0 à 1, à l'échelle logarithmique : 10 lignes se voient,
-    /// 1 000 lignes remplissent la barre. Zéro ligne : rien.
-    public static func diffFill(lines: Int) -> Double {
-        guard lines > 0 else { return 0 }
-        return min(1, max(0.08, log10(Double(lines)) / 3))
-    }
-
     /// Le niveau d'un risque (1 faible, 2 moyen, 3 élevé) ; `nil` pour un risque que cette version ne connaît pas.
     public static func riskLevel(_ risk: String) -> Int? {
         switch risk {

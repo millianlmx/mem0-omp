@@ -29,6 +29,22 @@ private func sessionModel(_ transport: ScriptedHarnessTransport) -> HarnessModel
     HarnessModel(transport: transport, preferences: InMemoryClientPreferences(), tokens: InMemoryTokenStore(), retryDelay: .seconds(3600), refreshDelay: .milliseconds(1))
 }
 
+/// Un serveur dont le flux d'événements ne s'ouvre pas (un proxy qui retient les en-têtes,
+/// une coupure) : les lectures passent, le direct échoue.
+private final class StreamlessTransport: HarnessTransport, @unchecked Sendable {
+    let inner: ScriptedHarnessTransport
+
+    init(_ inner: ScriptedHarnessTransport) { self.inner = inner }
+
+    func send(_ call: HarnessCall, server: HarnessServer) async throws -> HarnessReply {
+        try await inner.send(call, server: server)
+    }
+
+    func events(_ call: HarnessCall, server: HarnessServer) async throws -> AsyncThrowingStream<Data, Error> {
+        throw URLError(.networkConnectionLost)
+    }
+}
+
 @Suite("Serveur de pipelines — direct d’une session")
 @MainActor
 struct HarnessSessionTests {
@@ -95,6 +111,24 @@ struct HarnessSessionTests {
         model.stopSession()
         #expect(model.session == nil)
         #expect(model.isSessionLive == false)
+    }
+
+    @Test("le tampon est montré AVANT l'ouverture du flux : un direct qui ne s'ouvre pas n'empêche pas de lire la session d'un fil fini")
+    func bufferShownBeforeStream() async {
+        let transport = ScriptedHarnessTransport()
+        transport.respond { call in
+            call.path == "/v1/runs/r1/session" ? reply(sessionJSON) : reply(sessionInbox)
+        }
+        let model = HarnessModel(
+            transport: StreamlessTransport(transport), preferences: InMemoryClientPreferences(), tokens: InMemoryTokenStore(),
+            retryDelay: .seconds(3600), refreshDelay: .milliseconds(1)
+        )
+        #expect(await model.configure(address: "vps.example", token: "t"))
+        model.followSession(runId: "r1")
+        #expect(await eventually { model.session?.isLoaded == true })
+        #expect(model.session?.entries.map(\.seq) == [1, 2])
+        #expect(model.isSessionLive == false && model.sessionFailure == nil, "une coupure se reprend, sans échec affiché")
+        model.stopSession()
     }
 
     @Test("un outil garde sa commande à côté de son intention, sa durée, et signale son détail ; un serveur plus ancien n'en dit rien")

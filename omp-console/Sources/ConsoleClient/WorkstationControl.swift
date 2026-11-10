@@ -96,10 +96,16 @@ extension WorkstationModel {
     // MARK: - Demandes
 
     /// Pose une demande en langage naturel ; le job `poste-demande` la mène dans le navigateur.
+    /// `space` : l'identifiant de l'espace pour lequel on demande — elle s'exécute alors dans UN
+    /// navigateur de cet espace, jamais ailleurs (refusée s'il n'en a pas : l'échec le dit). Un
+    /// serveur qui n'annonce pas `space-workstation` ne le reçoit pas.
     @discardableResult
-    public func createRequest(_ instruction: String, browserId: String? = nil) async -> WorkstationRequest? {
+    public func createRequest(_ instruction: String, browserId: String? = nil, space: String? = nil) async -> WorkstationRequest? {
         let text = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let encoded = try? JSONEncoder().encode(WorkstationRequestBody(instruction: text, browserId: browserId)),
+        var owner: String?
+        if let space, await harness?.supports(.spaceWorkstation) == true { owner = space }
+        guard !text.isEmpty,
+              let encoded = try? JSONEncoder().encode(WorkstationRequestBody(instruction: text, browserId: browserId, space: owner)),
               let reply: WorkstationRequestReply = await write("POST", "/v1/workstation/requests", body: encoded)
         else { return nil }
         await refresh()
@@ -147,6 +153,49 @@ extension WorkstationModel {
               let _: WorkstationRemoved = await write("DELETE", "/v1/workstation/automations/\(id)", body: nil)
         else { return false }
         await refresh()
+        return true
+    }
+
+    // MARK: - Le poste d'un espace
+
+    /// Rattache un navigateur à un espace (`space` : son identifiant) ou l'en détache (`nil`) :
+    /// tout ce qui en vient — observations, réunions, actions, captures — hérite de cet espace.
+    /// Approbateur seulement. Sans effet sur un serveur qui n'annonce pas `space-workstation`.
+    @discardableResult
+    public func setBrowserSpace(id: String, space: String?) async -> Bool {
+        guard let harness, await harness.supports(.spaceWorkstation),
+              let encoded = try? JSONEncoder().encode(WorkstationBrowserSpaceBody(space: space)),
+              let _: WorkstationBrowserReply = await write("PUT", "/v1/workstation/browsers/\(HarnessModel.pathComponent(id))", body: encoded)
+        else { return false }
+        await refresh()
+        // `poste` et l'étanchéité des espaces en dépendent.
+        if harness.spaces.availability == .available { await harness.spaces.refresh() }
+        return true
+    }
+
+    /// L'état du poste POUR un espace, tel que le serveur le compte : ses navigateurs, leur
+    /// présence, le temps observé chez ce client, ses identités, ses envois en attente, la date
+    /// de son profil. L'état publié (`status`) reste celui du poste entier. `nil` : échec,
+    /// espace disparu, ou serveur qui n'annonce pas `space-workstation`.
+    public func spaceStatus(_ space: String) async -> WorkstationStatus? {
+        guard let harness, await harness.supports(.spaceWorkstation) else { return nil }
+        return try? await optional(HarnessModel.path("/v1/workstation", space: space))
+    }
+
+    /// Le profil du poste POUR un espace : synthétisé sur les seules observations et réunions
+    /// de ses navigateurs. `nil` : échec, ou serveur qui n'annonce pas `space-workstation`
+    /// (le profil du poste, lui, reste dans `profile`).
+    public func spaceProfile(_ space: String) async -> WorkstationProfileReply? {
+        guard let harness, await harness.supports(.spaceWorkstation) else { return nil }
+        return try? await get(HarnessModel.path("/v1/workstation/profile", space: space))
+    }
+
+    /// Demande au serveur de reconstruire le profil d'un espace (refusé s'il n'a aucun navigateur).
+    @discardableResult
+    public func rebuildProfile(space: String) async -> Bool {
+        guard let harness, await harness.supports(.spaceWorkstation),
+              let _: WorkstationQueued = await write("POST", HarnessModel.path("/v1/workstation/profile/rebuild", space: space), body: Data("{}".utf8))
+        else { return false }
         return true
     }
 
@@ -207,3 +256,6 @@ extension WorkstationModel {
 
 /// `DELETE /v1/workstation/automations/{id}` : `{removed}`.
 struct WorkstationRemoved: Decodable {}
+
+/// `POST /v1/workstation/profile/rebuild` : `{queued}`.
+struct WorkstationQueued: Decodable {}

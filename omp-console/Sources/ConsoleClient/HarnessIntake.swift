@@ -113,6 +113,17 @@ public struct HarnessIntakeContext: Codable, Equatable, Sendable {
     }
 }
 
+/// L'espace où une demande a été posée : son identifiant et son nom.
+public struct HarnessIntakeSpace: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+
+    public init(id: String, name: String = "") {
+        self.id = id
+        self.name = name
+    }
+}
+
 /// Une demande telle que `/v1/intake` la rend.
 public struct HarnessIntake: Codable, Equatable, Sendable, Identifiable {
     public var id: String
@@ -122,6 +133,8 @@ public struct HarnessIntake: Codable, Equatable, Sendable, Identifiable {
     public var requestedRepo: String?
     /// Le contexte de page posé avec la demande ; `nil` sans contexte, ou d'un serveur antérieur.
     public var context: HarnessIntakeContext?
+    /// L'espace où la demande a été posée ; `nil` : hors espace, espace disparu, ou serveur antérieur.
+    public var space: HarnessIntakeSpace?
     /// `classifying`, `clarifying`, `planned`, `answered`, `confirmed`, `cancelled` ou `failed`.
     public var state: String
     public var kind: String?
@@ -246,13 +259,26 @@ public final class HarnessIntakes: ObservableObject {
 
     /// Pose une demande. `source` : `console` (Mac) ou `ios` ; `repo` vide : le serveur le déduit.
     /// `context` : la page d'où vient la demande (adresse, titre, sélection), s'il y en a une.
+    /// `space` : l'espace pour lequel on demande — le serveur ne classe alors que dans ses
+    /// dépôts. Un serveur qui n'annonce pas `space-scope` ne le reçoit pas ; si l'espace n'a
+    /// qu'un dépôt et qu'aucun n'est imposé, c'est lui qui borne la demande.
     @discardableResult
-    public func submit(text: String, source: String, repo: String? = nil, context: HarnessIntakeContext? = nil) async throws -> HarnessIntake {
-        let trimmed = repo?.trimmingCharacters(in: .whitespaces) ?? ""
+    public func submit(
+        text: String, source: String, space: HarnessSpace? = nil, repo: String? = nil, context: HarnessIntakeContext? = nil
+    ) async throws -> HarnessIntake {
+        var trimmed = repo?.trimmingCharacters(in: .whitespaces) ?? ""
+        var owner: String?
+        if let space {
+            if await harness?.supports(.spaceScope) == true {
+                owner = space.id
+            } else if trimmed.isEmpty, space.repos.count == 1 {
+                trimmed = space.repos[0]
+            }
+        }
         let reply: HarnessIntakeReply = try await post(
             "/v1/intake", body: SubmitBody(
-                text: text.trimmingCharacters(in: .whitespacesAndNewlines), source: source, repo: trimmed.isEmpty ? nil : trimmed,
-                context: context?.sendable
+                text: text.trimmingCharacters(in: .whitespacesAndNewlines), source: source, space: owner,
+                repo: trimmed.isEmpty ? nil : trimmed, context: context?.sendable
             )
         )
         upsert(reply.intake)
@@ -329,9 +355,11 @@ public final class HarnessIntakes: ObservableObject {
     }
 }
 
+/// `space`, `repo` et `context` absents du JSON quand ils sont `nil` : un serveur antérieur reçoit le corps d'avant.
 private struct SubmitBody: Encodable {
     var text: String
     var source: String
+    var space: String?
     var repo: String?
     var context: HarnessIntakeContext?
 }

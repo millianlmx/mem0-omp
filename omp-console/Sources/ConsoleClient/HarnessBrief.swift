@@ -228,7 +228,8 @@ public final class HarnessBriefModel: ObservableObject {
         since.map { "/v1/brief?since=\(Int($0))" } ?? "/v1/brief"
     }
 
-    /// Relit le brief depuis `since` (millisecondes) ; un serveur antérieur (404) n'en a pas, sans échec.
+    /// Relit le brief depuis `since` (millisecondes), dans la portée courante (l'espace choisi,
+    /// ou tous) ; un serveur antérieur (404) n'en a pas, sans échec.
     public func refresh(since: Double? = nil) async {
         window = since
         await reload()
@@ -239,13 +240,15 @@ public final class HarnessBriefModel: ObservableObject {
         isLoading = true
         defer { isLoading = false }
         do {
-            guard let read: HarnessBriefReply = try await harness.readBound(Self.path(since: window)) else {
+            let read: HarnessScopedRead<HarnessBriefReply> = try await harness.readScoped(Self.path(since: window))
+            guard let reply = read.value else {
                 availability = .absent
                 brief = nil
                 failure = nil
                 return
             }
-            brief = read.brief
+            // Un serveur qui ne borne pas le brief à un espace : ses listes le sont ici, par dépôt.
+            brief = OSSpaces.brief(reply.brief, in: read.filter)
             availability = .available
             failure = nil
         } catch {
@@ -272,6 +275,13 @@ public final class HarnessBriefModel: ObservableObject {
     func receive(_ names: [String]) {
         guard availability == .available, names.contains(where: Self.events.contains) else { return }
         reloader.schedule { [weak self] in await self?.reload() }
+    }
+
+    /// La portée a changé : le brief de l'ancienne ne reste pas à l'écran, celui de la nouvelle est lu.
+    func rescope() {
+        guard availability == .available else { return }
+        brief = nil
+        Task { [weak self] in await self?.reload() }
     }
 
     func reset() {
@@ -390,27 +400,36 @@ public final class HarnessScoreboardModel: ObservableObject {
     /// Le serveur relié sert les chiffres (inconnu compris : rien ne clignote).
     public var isServed: Bool { availability != .absent }
 
-    /// Relit les chiffres sur `days` jours (bornés de 1 à 90 ; absent : la fenêtre en cours) ;
-    /// un serveur antérieur (404) n'en a pas, sans échec.
+    /// Relit les chiffres sur `days` jours (bornés de 1 à 90 ; absent : la fenêtre en cours),
+    /// dans la portée courante ; un serveur antérieur (404) n'en a pas, sans échec.
     public func refresh(days requested: Int? = nil) async {
         if let requested { days = min(max(requested, Self.daysRange.lowerBound), Self.daysRange.upperBound) }
         guard harness.isConfigured else { return }
         isLoading = true
         defer { isLoading = false }
         do {
-            guard let read: HarnessScoreboardReply = try await harness.readBound("/v1/scoreboard?days=\(days)") else {
+            let read: HarnessScopedRead<HarnessScoreboardReply> = try await harness.readScoped("/v1/scoreboard?days=\(days)")
+            guard let reply = read.value else {
                 availability = .absent
                 scoreboard = nil
                 failure = nil
                 return
             }
-            scoreboard = read.scoreboard
+            // Un serveur qui ne borne pas les chiffres à un espace : ce qui se compte par dépôt l'est ici.
+            scoreboard = OSSpaces.scoreboard(reply.scoreboard, in: read.filter)
             availability = .available
             failure = nil
         } catch {
             availability = HarnessControlFailure.availability(after: error, current: availability)
             failure = HarnessModel.failure(of: error)
         }
+    }
+
+    /// La portée a changé : les chiffres de l'ancienne ne restent pas à l'écran, ceux de la nouvelle sont lus.
+    func rescope() {
+        guard availability == .available else { return }
+        scoreboard = nil
+        Task { [weak self] in await self?.refresh() }
     }
 
     func reset() {

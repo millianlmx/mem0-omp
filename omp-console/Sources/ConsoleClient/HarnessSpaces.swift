@@ -3,6 +3,13 @@
 // (`If-Match`), `DELETE /v1/spaces/{id}` (admin), le rapport d'un espace
 // (`GET /v1/spaces/{id}/report`), événement `space`.
 //
+// Multi-client : un espace est la frontière d'un client. Il porte sa politique de modèles,
+// les identités de l'utilisateur chez ce client, son étanchéité et l'état de sa connexion
+// Atlassian (HarnessSpaceFrontier.swift) ; `onboard` accueille un client en un geste
+// (`POST /v1/spaces/onboard`), `detail` relit un espace (`GET /v1/spaces/{id}`), `usage` et
+// `usageCSV` disent ce qu'il a coûté (`GET /v1/spaces/{id}/usage`). Chacun se tait sur un
+// serveur qui n'annonce pas sa capacité (`space-policy`, `space-workstation`, `space-scope`).
+//
 // Un serveur antérieur ne sert pas la route (404) : `availability == .absent`, et rien ne
 // se range par espace. Aucun texte ici.
 
@@ -20,12 +27,14 @@ public struct HarnessSpaceStats: Codable, Equatable, Sendable {
     public var cancelledWeek: Int
     public var costToday: Double
     public var costWeek: Double
+    /// Le coût du mois UTC en cours ; `nil` d'un serveur qui ne le compte pas.
+    public var costMonth: Double?
     /// Ce qu'il reste du budget du jour, en dollars ; `nil` sans budget.
     public var budgetLeftToday: Double?
 
     public init(
         working: Int = 0, yours: Int = 0, queued: Int = 0, mergedWeek: Int = 0, failedWeek: Int = 0, cancelledWeek: Int = 0,
-        costToday: Double = 0, costWeek: Double = 0, budgetLeftToday: Double? = nil
+        costToday: Double = 0, costWeek: Double = 0, budgetLeftToday: Double? = nil, costMonth: Double? = nil
     ) {
         self.working = working
         self.yours = yours
@@ -36,6 +45,7 @@ public struct HarnessSpaceStats: Codable, Equatable, Sendable {
         self.costToday = costToday
         self.costWeek = costWeek
         self.budgetLeftToday = budgetLeftToday
+        self.costMonth = costMonth
     }
 }
 
@@ -45,7 +55,8 @@ public struct HarnessSpace: Codable, Equatable, Sendable, Identifiable {
     public var name: String
     /// Ses dépôts : un dépôt appartient à un espace au plus.
     public var repos: [String]
-    /// Le poste de travail (extension Chrome, agent 24/24) travaille pour cet espace.
+    /// Le poste travaille pour cet espace. Sur un serveur `space-workstation` il est DÉRIVÉ :
+    /// vrai dès qu'un navigateur du poste lui est rattaché (ce qu'on écrit est ignoré).
     public var poste: Bool
     public var jiraProjects: [String]
     /// Le plafond de dépense du jour, en dollars ; `nil` : aucun.
@@ -61,11 +72,21 @@ public struct HarnessSpace: Codable, Equatable, Sendable, Identifiable {
     public var memoryScopes: [String] = []
     /// Ses chiffres (à zéro hors de la liste).
     public var stats: HarnessSpaceStats = HarnessSpaceStats()
+    /// Sa politique de modèles ; `nil` : aucune (ou serveur antérieur, ou lecteur borné).
+    public var policy: HarnessSpacePolicy? = nil
+    /// Les identités de l'utilisateur chez ce client (adresses, pseudos) : la garde d'envoi
+    /// de ses navigateurs les lit à la place de la liste du poste.
+    public var identities: [String] = []
+    /// Son étanchéité ; `nil` d'un serveur qui ne la calcule pas, ou d'une écriture.
+    public var isolation: HarnessIsolation? = nil
+    /// Sa connexion Atlassian ; `nil` : Atlassian désactivé, lecteur borné, serveur antérieur.
+    public var atlassian: HarnessSpaceAtlassian? = nil
 
     public init(
         id: String, name: String, repos: [String] = [], poste: Bool = false, jiraProjects: [String] = [], dailyBudgetUsd: Double? = nil,
         autonomy: HarnessRunAutonomy? = nil, by: String? = nil, createdAt: Double = 0, updatedAt: Double = 0, rev: Int = 0,
-        memoryScopes: [String] = [], stats: HarnessSpaceStats = HarnessSpaceStats()
+        memoryScopes: [String] = [], stats: HarnessSpaceStats = HarnessSpaceStats(), policy: HarnessSpacePolicy? = nil,
+        identities: [String] = [], isolation: HarnessIsolation? = nil, atlassian: HarnessSpaceAtlassian? = nil
     ) {
         self.id = id
         self.name = name
@@ -80,11 +101,19 @@ public struct HarnessSpace: Codable, Equatable, Sendable, Identifiable {
         self.rev = rev
         self.memoryScopes = memoryScopes
         self.stats = stats
+        self.policy = policy
+        self.identities = identities
+        self.isolation = isolation
+        self.atlassian = atlassian
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, repos, poste, jiraProjects, dailyBudgetUsd, autonomy, by, createdAt, updatedAt, rev, memoryScopes, stats
+        case policy, identities, isolation, atlassian
     }
+
+    /// L'espace est étanche ; `nil` : le serveur ne le dit pas.
+    public var isSealed: Bool? { isolation?.sealed }
 
     /// L'espace rendu par une écriture (`{space}`) peut ne porter ni portées ni chiffres ; un
     /// niveau d'autonomie inconnu de cette version se lit comme « les règles du dépôt ».
@@ -103,6 +132,10 @@ public struct HarnessSpace: Codable, Equatable, Sendable, Identifiable {
         rev = try container.decode(Int.self, forKey: .rev)
         memoryScopes = try container.decodeIfPresent([String].self, forKey: .memoryScopes) ?? []
         stats = try container.decodeIfPresent(HarnessSpaceStats.self, forKey: .stats) ?? HarnessSpaceStats()
+        policy = try container.decodeIfPresent(HarnessSpacePolicy.self, forKey: .policy)
+        identities = try container.decodeIfPresent([String].self, forKey: .identities) ?? []
+        isolation = try container.decodeIfPresent(HarnessIsolation.self, forKey: .isolation)
+        atlassian = try container.decodeIfPresent(HarnessSpaceAtlassian.self, forKey: .atlassian)
     }
 }
 
@@ -199,10 +232,38 @@ private struct SpaceBody: Encodable {
         try container.encode(draft.autonomy?.rawValue, forKey: .autonomy)
     }
 
-    private static func cleaned(_ values: [String]) -> [String] {
+    static func cleaned(_ values: [String]) -> [String] {
         var seen = Set<String>()
         return values.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && seen.insert($0).inserted }
     }
+}
+
+/// Le corps de `POST /v1/spaces/onboard` : le nom et les dépôts du client ; ce qui n'est
+/// pas donné ne part pas (le serveur pose ses défauts).
+private struct OnboardBody: Encodable {
+    var name: String
+    var repos: [String]
+    var jiraProjects: [String]?
+    var dailyBudgetUsd: Double?
+    var autonomy: String?
+    var policy: HarnessSpacePolicy?
+}
+
+/// `PUT /v1/spaces/{id} {policy}` : `null` lève la politique.
+private struct SpacePolicyBody: Encodable {
+    var policy: HarnessSpacePolicy?
+
+    private enum CodingKeys: String, CodingKey { case policy }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(policy, forKey: .policy)
+    }
+}
+
+/// `PUT /v1/spaces/{id} {identities}`.
+private struct SpaceIdentitiesBody: Encodable {
+    var identities: [String]
 }
 
 @MainActor
@@ -243,15 +304,23 @@ public final class HarnessSpacesModel: ObservableObject {
                 availability = .absent
                 spaces = []
                 failure = nil
+                harness.spacesRead([])
                 return
             }
-            spaces = list.spaces.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            spaces = Self.sorted(list.spaces)
             availability = .available
             failure = nil
+            // La portée suit ce qui vient d'être lu : restaurée, rafraîchie, ou tombée avec son espace.
+            harness.spacesRead(spaces)
+            await harness.loadCapabilities()
         } catch {
             availability = HarnessControlFailure.availability(after: error, current: availability)
             failure = HarnessModel.failure(of: error)
         }
+    }
+
+    private static func sorted(_ spaces: [HarnessSpace]) -> [HarnessSpace] {
+        spaces.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     /// Crée un espace (admin) ; rend celui que le serveur a gardé.
@@ -307,6 +376,143 @@ public final class HarnessSpacesModel: ObservableObject {
         }
     }
 
+    // MARK: - Frontière d'un client
+
+    /// Accueille un client en un geste (admin) : crée son espace et rend son étanchéité et ce
+    /// qu'il reste à faire ; l'espace créé devient la portée. Sur un serveur qui ne sait pas
+    /// accueillir (`space-policy` absent), l'espace est créé comme par `create`, sans
+    /// politique, sans étanchéité ni suite. `nil` : refusé, `failure` dit pourquoi.
+    @discardableResult
+    public func onboard(
+        name: String, repos: [String], jiraProjects: [String] = [], dailyBudgetUsd: Double? = nil, autonomy: HarnessRunAutonomy? = nil,
+        policy: HarnessSpacePolicy? = nil
+    ) async -> HarnessSpaceOnboarding? {
+        let draft = HarnessSpaceDraft(name: name, repos: repos, jiraProjects: jiraProjects, dailyBudgetUsd: dailyBudgetUsd, autonomy: autonomy)
+        guard draft.problem == nil else {
+            failure = .rejected("")
+            return nil
+        }
+        guard await harness.supports(.spacePolicy) else {
+            guard let created = await create(draft) else { return nil }
+            choose(created)
+            return HarnessSpaceOnboarding(space: created)
+        }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let projects = SpaceBody.cleaned(jiraProjects)
+            let reply: HarnessSpaceOnboardReply = try await harness.write(
+                "POST", "/v1/spaces/onboard",
+                body: OnboardBody(
+                    name: name.trimmingCharacters(in: .whitespacesAndNewlines), repos: SpaceBody.cleaned(repos),
+                    jiraProjects: projects.isEmpty ? nil : projects, dailyBudgetUsd: dailyBudgetUsd, autonomy: autonomy?.rawValue,
+                    policy: policy.flatMap { $0.isEmpty ? nil : $0 }
+                )
+            )
+            failure = nil
+            await refresh()
+            choose(reply.space)
+            return HarnessSpaceOnboarding(space: reply.space, isolation: reply.isolation ?? reply.space.isolation, next: reply.next ?? [])
+        } catch {
+            failure = HarnessModel.failure(of: error)
+            return nil
+        }
+    }
+
+    /// L'espace tout juste créé devient la portée — tel que la liste relue le montre.
+    private func choose(_ created: HarnessSpace) {
+        harness.setScope(spaces.first { $0.id == created.id } ?? created)
+    }
+
+    /// Relit UN espace, avec son étanchéité recalculée (`GET /v1/spaces/{id}`), et le range dans
+    /// la liste. `nil` : l'espace n'existe plus (la liste est relue). Un serveur qui ne sert
+    /// pas la route (`space-policy` absent) rend celui de la liste.
+    public func detail(_ id: String) async -> HarnessSpace? {
+        guard await harness.supports(.spacePolicy) else { return spaces.first { $0.id == id } }
+        do {
+            guard let reply: HarnessSpaceReply = try await harness.readBound("/v1/spaces/\(HarnessModel.pathComponent(id))") else {
+                await refresh()
+                return nil
+            }
+            spaces = Self.sorted(spaces.filter { $0.id != id } + [reply.space])
+            failure = nil
+            harness.spacesRead(spaces)
+            return reply.space
+        } catch {
+            failure = HarnessModel.failure(of: error)
+            return nil
+        }
+    }
+
+    /// Pose la politique de modèles d'un espace (admin, `If-Match`) ; `nil` la lève. Sans
+    /// effet sur un serveur qui n'annonce pas `space-policy`.
+    @discardableResult
+    public func setPolicy(_ space: HarnessSpace, _ policy: HarnessSpacePolicy?) async -> Bool {
+        guard await harness.supports(.spacePolicy) else { return false }
+        let kept = policy.flatMap { $0.isEmpty ? nil : $0 }
+        let reply: HarnessSpaceReply? = await gesture(space, "PUT", body: SpacePolicyBody(policy: kept), headers: ["If-Match": "\"\(space.rev)\""])
+        return reply != nil
+    }
+
+    /// Déclare les identités de l'utilisateur chez ce client (adresses, pseudos ; rognées, sans
+    /// doublon) : la garde d'envoi des navigateurs de l'espace les lit (admin, `If-Match`).
+    /// Sans effet sur un serveur qui n'annonce pas `space-workstation`.
+    @discardableResult
+    public func setIdentities(_ space: HarnessSpace, _ identities: [String]) async -> Bool {
+        guard await harness.supports(.spaceWorkstation) else { return false }
+        let reply: HarnessSpaceReply? = await gesture(
+            space, "PUT", body: SpaceIdentitiesBody(identities: SpaceBody.cleaned(identities)), headers: ["If-Match": "\"\(space.rev)\""]
+        )
+        return reply != nil
+    }
+
+    /// Le chemin de la consommation d'un espace ; sans fenêtre, le serveur prend le mois UTC en cours.
+    public nonisolated static func usagePath(spaceId: String, since: Double? = nil, until: Double? = nil, csv: Bool = false) -> String {
+        var query: [String] = []
+        if let since { query.append("since=\(Int(since))") }
+        if let until { query.append("until=\(Int(until))") }
+        if csv { query.append("format=csv") }
+        let path = "/v1/spaces/\(HarnessModel.pathComponent(spaceId))/usage"
+        return query.isEmpty ? path : path + "?" + query.joined(separator: "&")
+    }
+
+    /// Ce qu'un espace a coûté sur [since, until[ (millisecondes ; absents : le mois UTC en
+    /// cours) : total, par jour, par dépôt, par modèle, par nature. `nil` : espace disparu,
+    /// échec (dans `failure`), ou serveur qui n'annonce pas `space-scope`.
+    public func usage(spaceId: String, since: Double? = nil, until: Double? = nil) async -> HarnessSpaceUsage? {
+        guard await harness.supports(.spaceScope) else { return nil }
+        do {
+            let reply: HarnessSpaceUsageReply? = try await harness.readBound(Self.usagePath(spaceId: spaceId, since: since, until: until))
+            failure = nil
+            return reply?.usage
+        } catch {
+            failure = HarnessModel.failure(of: error)
+            return nil
+        }
+    }
+
+    /// La même consommation en CSV, tel que le serveur l'écrit (une ligne par jour, dépôt et
+    /// modèle ; séparateur `;`) : de quoi joindre à une facture. `nil` comme `usage`.
+    public func usageCSV(spaceId: String, since: Double? = nil, until: Double? = nil) async -> Data? {
+        guard await harness.supports(.spaceScope) else { return nil }
+        let call = HarnessCall(method: "GET", path: Self.usagePath(spaceId: spaceId, since: since, until: until, csv: true))
+        do {
+            let reply = try await harness.exchange(call)
+            failure = nil
+            switch reply.status {
+            case 200: return reply.body
+            case 404: return nil
+            default:
+                // Le statut dit l'échec (401, 403, 400…) : le même que pour une lecture JSON.
+                let _: HarnessAck = try harness.decode(reply, for: call)
+                throw HarnessFailure.unreadable
+            }
+        } catch {
+            failure = HarnessModel.failure(of: error)
+            return nil
+        }
+    }
+
     private func gesture<Body: Encodable, Reply: Decodable>(
         _ space: HarnessSpace, _ method: String, body: Body?, headers: [String: String]
     ) async -> Reply? {
@@ -325,11 +531,14 @@ public final class HarnessSpacesModel: ObservableObject {
         }
     }
 
-    /// L'événement `space` (un autre appareil admin) fait relire.
+    /// Ce qui change un espace fait relire : l'événement `space` (un autre appareil admin), un
+    /// navigateur rattaché ou détaché (`poste`, étanchéité), sa connexion Atlassian.
     func receive(_ names: [String]) {
-        guard availability == .available, names.contains("space") else { return }
+        guard availability == .available, names.contains(where: Self.events.contains) else { return }
         reloader.schedule { [weak self] in await self?.refresh() }
     }
+
+    static let events: Set<String> = ["space", "workstation_browser", "atlassian"]
 
     func reset() {
         reloader.cancel()

@@ -202,8 +202,8 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
     ["HarnessSpaces.swift", '(space.id))/report"', "GET", "/v1/spaces/e1/report"],
     ["HarnessBrief.swift", '?? "/v1/brief"', "GET", "/v1/brief"],
     ["HarnessBrief.swift", '"POST", "/v1/brief/seen"', "POST", "/v1/brief/seen"],
-    ["HarnessBrief.swift", 'readBound("/v1/scoreboard?days=', "GET", "/v1/scoreboard"],
-    ["HarnessProposals.swift", 'readBound("/v1/proposals")', "GET", "/v1/proposals"],
+    ["HarnessBrief.swift", 'readScoped("/v1/scoreboard?days=', "GET", "/v1/scoreboard"],
+    ["HarnessProposals.swift", 'readScoped("/v1/proposals")', "GET", "/v1/proposals"],
     ["HarnessProposals.swift", '(proposal.id))/accept"', "POST", "/v1/proposals/issue.0123456789abcdef/accept"],
     ["HarnessProposals.swift", '(proposal.id))/dismiss"', "POST", "/v1/proposals/issue.0123456789abcdef/dismiss"],
     ["HarnessLocalSessions.swift", 'readBound("/v1/local-sessions")', "GET", "/v1/local-sessions"],
@@ -598,6 +598,124 @@ test("serveur-de-pipelines/AC-29 : chaque champ des demandes et automatisations 
     ].map(([, name]) => name);
     assert.deepEqual(states, ["queued", "running", "done", "failed", "cancelled"]);
     assert.ok((API_FEATURES as readonly string[]).includes("workstation-requests"));
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await world.orchestrator.stop();
+  }
+});
+
+test("serveur-de-pipelines/AC-30 : multi-client — chaque route, chaque capacité et chaque champ d'espace que lit le client Swift existent dans le routeur et le JSON RÉEL du serveur", async () => {
+  const client = (file: string) => fs.readFileSync(path.join(CLIENT, file), "utf8");
+  const routes = apiRoutes({ store: {} } as never, new ClientRegistry(null, "t".repeat(64)));
+  const calls: [string, string, string, string][] = [
+    ["HarnessSpaces.swift", '"POST", "/v1/spaces/onboard"', "POST", "/v1/spaces/onboard"],
+    ["HarnessSpaces.swift", 'readBound("/v1/spaces/\\(HarnessModel.pathComponent(id))")', "GET", "/v1/spaces/e1"],
+    ["HarnessSpaces.swift", '(spaceId))/usage"', "GET", "/v1/spaces/e1/usage"],
+    ["WorkstationControl.swift", '"PUT", "/v1/workstation/browsers/\\(', "PUT", "/v1/workstation/browsers/b1"],
+  ];
+  for (const [file, literal, method, sample] of calls) {
+    assert.ok(client(file).includes(literal), `${file} n'appelle plus ${literal}`);
+    assert.ok(
+      routes.some((route) => route.method === method && route.pattern.test(sample)),
+      `le serveur ne sert pas ${method} ${sample}`,
+    );
+  }
+  // Les capacités que le client lit dans `features` sont celles que le serveur annonce.
+  const scope = client("HarnessScope.swift");
+  for (const feature of ["space-scope", "space-knowledge", "space-workstation", "space-policy"]) {
+    assert.ok(scope.includes(`= "${feature}"`), `le client ne lit plus la capacité ${feature}`);
+    assert.ok((API_FEATURES as readonly string[]).includes(feature), `le serveur n'annonce pas ${feature}`);
+  }
+  // `?space=` part sur ce que le serveur compose, jamais sur la pause (il suspendrait l'espace au lieu de tout).
+  assert.match(scope, /\+ "space=" \+ queryValue\(id\)/);
+  assert.ok(!client("HarnessLoop.swift").includes("readScoped("), "la pause se lit et se pose sans `?space=`");
+
+  const token = "t".repeat(64);
+  const world = fakeWorld({});
+  const server = http.createServer(createHandler({ orchestrator: world.orchestrator, token }));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const call = async (method: string, route: string, body?: unknown) => {
+      const response = await fetch(`http://127.0.0.1:${port}${route}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await response.text();
+      const json = (response.headers.get("content-type") ?? "").includes("json") && text ? JSON.parse(text) : {};
+      return { status: response.status, text, json: object(json, route) };
+    };
+    const repo = world.config.repos[0]?.name as string;
+
+    // L'accueil d'un client : le corps que le client envoie, la réponse qu'il décode.
+    const onboarded = await call("POST", "/v1/spaces/onboard", { name: "Client Acme", repos: [repo] });
+    assert.equal(onboarded.status, 201, onboarded.text);
+    for (const key of ["space", "isolation", "next"]) assert.ok(key in onboarded.json, `onboard.${key}`);
+    const step = (onboarded.json.next as Record<string, unknown>[])[0];
+    if (step) assert.deepEqual(Object.keys(step).sort(), ["code", "text"]);
+    const id = object(onboarded.json.space, "space").id as string;
+
+    // Un espace, dans la liste et seul : les champs de base du client Swift, puis ceux de la frontière.
+    const listed = firstOf((await call("GET", "/v1/spaces")).json.spaces, "spaces");
+    const alone = object((await call("GET", `/v1/spaces/${id}`)).json.space, "space");
+    for (const space of [listed, alone]) {
+      covers(space, swiftFields(client("HarnessSpaces.swift"), "HarnessSpace"), "HarnessSpace");
+      for (const key of ["memoryScopes", "stats", "policy", "identities", "isolation", "atlassian"])
+        assert.ok(key in space, `HarnessSpace.${key} : le client Swift le décode, le serveur ne l'envoie pas`);
+      const stats = object(space.stats, "stats");
+      covers(stats, swiftFields(client("HarnessSpaces.swift"), "HarnessSpaceStats"), "HarnessSpaceStats");
+      const isolation = object(space.isolation, "isolation");
+      covers(isolation, swiftFields(client("HarnessSpaceFrontier.swift"), "HarnessIsolation"), "HarnessIsolation");
+      for (const gap of isolation.gaps as Record<string, unknown>[])
+        covers(gap, swiftFields(client("HarnessSpaceFrontier.swift"), "HarnessIsolationGap"), "HarnessIsolationGap");
+    }
+    // Les codes de lacune que le client nomme sont ceux du serveur.
+    const codes = [...client("HarnessSpaceFrontier.swift").matchAll(/^ {4}case \w+ = "([a-z_]+)"$/gm)].map(
+      ([, code]) => code,
+    );
+    const isolation = read("omp-harness", "isolation.ts");
+    assert.ok(codes.length >= 8, "les codes de lacune du client");
+    for (const code of codes) assert.ok(isolation.includes(`"${code}"`), `code de lacune inconnu du serveur : ${code}`);
+
+    // La politique et les identités partent seules, à la révision lue.
+    const put = await fetch(`http://127.0.0.1:${port}/v1/spaces/${id}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "If-Match": `"${alone.rev}"` },
+      body: JSON.stringify({ identities: ["moi@exemple.fr"] }),
+    });
+    assert.equal(put.status, 200, await put.text());
+
+    // La consommation : JSON et CSV.
+    const usage = object((await call("GET", `/v1/spaces/${id}/usage`)).json.usage, "usage");
+    covers(usage, swiftFields(client("HarnessSpaceFrontier.swift"), "HarnessSpaceUsage"), "HarnessSpaceUsage");
+    const csv = await call("GET", `/v1/spaces/${id}/usage?format=csv`);
+    assert.equal(csv.status, 200);
+    assert.match(csv.text, /^jour;espace;depot;modele;cout_usd;jetons_entree;jetons_sortie\r\n/);
+
+    // La pause dit ses espaces ; l'état, ses avertissements.
+    const pause = object((await call("GET", "/v1/pause")).json.pause, "pause");
+    assert.ok(Array.isArray(pause.spaces), "pause.spaces");
+    assert.ok(Array.isArray((await call("GET", "/v1/status")).json.warnings), "status.warnings");
+
+    // Une consigne d'espace : le corps du client, le champ qu'il relit.
+    const rule = await call("POST", "/v1/rules", { text: "Chaque commit cite son ticket.", space: id });
+    assert.equal(rule.status, 201, rule.text);
+    assert.equal(object(rule.json.rule, "rule").space, id);
+    const rules = (await call("GET", "/v1/rules")).json.rules as Record<string, unknown>[];
+    covers(
+      rules[0] as Record<string, unknown>,
+      swiftFields(client("HarnessStandingRules.swift"), "HarnessStandingRule"),
+      "HarnessStandingRule",
+    );
+
+    // Ce que le serveur compose se lit pour un espace ; un espace inconnu n'existe pas.
+    for (const route of ["/v1/brief", "/v1/proposals", "/v1/scoreboard?days=7"]) {
+      const join = route.includes("?") ? "&" : "?";
+      assert.equal((await call("GET", `${route}${join}space=${id}`)).status, 200, `${route} pour un espace`);
+      assert.equal((await call("GET", `${route}${join}space=inconnu`)).status, 404, `${route} pour un espace inconnu`);
+    }
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));

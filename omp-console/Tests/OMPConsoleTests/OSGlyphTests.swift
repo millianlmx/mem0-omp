@@ -1,5 +1,5 @@
 // Les repères visuels de l'« OS agentique » : la logique pure derrière le chemin d'une feature,
-// la barre de diff, le niveau de risque, la part des tests et le compte à rebours.
+// le niveau de risque, la part des tests et le compte à rebours.
 
 @testable import ConsoleUI
 import Foundation
@@ -17,16 +17,6 @@ struct OSGlyphTests {
     func mergedIsAllDone() {
         #expect(OSGlyph.nodes(step: 4, merged: true) == Array(repeating: .done, count: 5))
         #expect(OSGlyph.nodes(step: 1, merged: true) == Array(repeating: .done, count: 5))
-    }
-
-    @Test("la barre de diff : vide sans ligne, visible dès une ligne, pleine à mille, jamais au-delà")
-    func diffScale() {
-        #expect(OSGlyph.diffFill(lines: 0) == 0)
-        #expect(OSGlyph.diffFill(lines: 1) == 0.08)
-        #expect(OSGlyph.diffFill(lines: 10) < OSGlyph.diffFill(lines: 100))
-        #expect(OSGlyph.diffFill(lines: 100) < OSGlyph.diffFill(lines: 900))
-        #expect(OSGlyph.diffFill(lines: 1000) == 1)
-        #expect(OSGlyph.diffFill(lines: 250_000) == 1)
     }
 
     @Test("le risque : trois niveaux connus, rien pour un risque d'une version plus récente")

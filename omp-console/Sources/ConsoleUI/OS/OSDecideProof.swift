@@ -1,6 +1,7 @@
 // L'« OS agentique » : la PREUVE d'une décision, montrée avant ses gestes. Pour une revue :
 // l'avant/après du premier critère (sinon les premières captures) en vignettes, les tests
-// du dernier rapport, l'ampleur (fichiers, lignes) et le risque. Les preuves sont celles de
+// du dernier rapport, l'ampleur (fichiers) et le risque ; la taille du changement se lit
+// dans la raison de la porte, sur la carte. Les preuves sont celles de
 // l'onglet « Preuves » (`HarnessRunProofs`, `ProofImage`) ; un serveur qui ne les sert pas
 // ne montre que les faits du verdict.
 
@@ -34,11 +35,6 @@ struct OSDecideReviewProof: View {
                     if !verdict.files.isEmpty {
                         OSMetric(symbol: "doc.on.doc", value: "\(verdict.files.count)", tint: .secondary, label: OSDecideText.files(verdict.files.count)) {
                             EmptyView()
-                        }
-                    }
-                    if let lines = OSReviewFacts.diffLines(reason: run.reason) {
-                        OSMetric(symbol: "plusminus", value: "\(lines)", tint: .accentColor, label: OSDecideText.lines(lines)) {
-                            OSBar(fill: OSGlyph.diffFill(lines: lines), tint: .accentColor)
                         }
                     }
                     if let level = OSGlyph.riskLevel(verdict.risk) {
