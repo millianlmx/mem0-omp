@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-console 1.2.0 — 2026-11-10
+
+- feat(console): les apps comprennent le multi-client — espace sur chaque carte, portée gardée, étanchéité (#451) (0b177c1)
+
 ## omp-mem0-memory 4.4.0 — 2026-11-10
 
 - feat(harness): multi-client — l'espace devient la frontière d'un client (#449) (c5a6618)
