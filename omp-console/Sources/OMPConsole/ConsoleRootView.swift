@@ -185,6 +185,11 @@ struct ConsoleRootView: View {
                 classic
             }
         }
+        // La feuille du Serveur appartient à la racine, pas à la coque classique : la palette ⌘K et les
+        // liens l'ouvrent aussi depuis la nouvelle interface, qui n'a pas de barre latérale pour la porter.
+        .sheet(isPresented: $drafts.serverSheetShown) {
+            ServerSheet(server: server, drafts: drafts)
+        }
         .sheet(isPresented: setupShown) {
             // OMP absent : la feuille est bloquante — ni « Fermer » ni ⎋ (Doc-1) ;
             // « Quitter » passe par le déroulé de la sortie.
@@ -256,9 +261,6 @@ struct ConsoleRootView: View {
             // Le titre de la fenêtre EST ce qu'elle montre (HIG Toolbars).
             .navigationTitle(windowTitle)
             .navigationSubtitle(windowTitle == model.selection.title ? "" : model.selection.title)
-            .sheet(isPresented: $drafts.serverSheetShown) {
-                ServerSheet(server: server, drafts: drafts)
-            }
             .consolePalette(server: server, drafts: drafts, sections: ConsoleSection.allCases, memory: true) { section in
                 model.select(section)
             }

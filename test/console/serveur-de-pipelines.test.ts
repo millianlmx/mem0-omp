@@ -722,3 +722,13 @@ test("serveur-de-pipelines/AC-30 : multi-client — chaque route, chaque capacit
     await world.orchestrator.stop();
   }
 });
+
+test("serveur-de-pipelines/AC-31 : la feuille du serveur est attachée à la racine du Mac, donc ⌘K › Serveur l'ouvre aussi depuis la nouvelle interface, qui n'a pas de barre latérale", () => {
+  const root = read("omp-console", "Sources", "OMPConsole", "ConsoleRootView.swift");
+  const classic = root.indexOf("private var classic");
+  const sheet = root.indexOf(".sheet(isPresented: $drafts.serverSheetShown)");
+  assert.ok(classic > 0, "la coque classique est repérée");
+  assert.ok(sheet > 0, "la feuille du serveur est présentée");
+  assert.ok(sheet < classic, "la feuille est présentée par la racine (body), pas par la coque classique seule");
+  assert.equal(root.split(".sheet(isPresented: $drafts.serverSheetShown)").length - 1, 1, "une seule présentation");
+});
