@@ -127,7 +127,9 @@ const LEVELS: Record<Level, number> = { patch: 1, minor: 2, major: 3 };
  * sur la référence `main` est ignoré. L'extension Chrome du poste de travail en est
  * un : son `package.json` porte la version que scripts/chrome-extension.sh écrit
  * dans le manifeste, et `omp-chrome.zip` est joint à chaque release
- * (.github/workflows/release-assets.yml).
+ * (.github/workflows/release-assets.yml). Les apps OMP Console (`omp-console/`) en sont un
+ * autre : son `package.json` ne porte que la version, bumpée d'après les commits qui touchent
+ * `omp-console/`, et les apps jointes à la release sont construites depuis le tag.
  */
 export const SERVICES: ReadonlyArray<{ name: string; dir: string; install: string }> = [
   {
@@ -140,6 +142,12 @@ export const SERVICES: ReadonlyArray<{ name: string; dir: string; install: strin
     dir: "omp-chrome",
     install:
       "bash scripts/chrome-extension.sh   # ou omp-chrome.zip joint à cette release, décompressé ; puis chrome://extensions → « Charger l'extension non empaquetée »",
+  },
+  {
+    name: "omp-console",
+    dir: "omp-console",
+    install:
+      "prends OMP-Console-macOS.zip (Mac) ou OMP-Console-iOS.ipa (iPhone, iPad) parmi les fichiers de cette release, ou construis-les : bash scripts/swift-app.sh --no-tests (Mac), bash scripts/ios-build.sh (iOS) ; omp-console/README.md",
   },
 ];
 
