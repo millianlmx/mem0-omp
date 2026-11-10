@@ -42,6 +42,7 @@ public struct OSBriefSections: View {
                         Spacer()
                         Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
                     }
+                    .frame(minHeight: ConsolePlatform.minimumTarget)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -110,6 +111,7 @@ public struct OSBriefSections: View {
                         Spacer()
                     }
                     .foregroundStyle(.secondary)
+                    .frame(minHeight: ConsolePlatform.minimumTarget)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -145,6 +147,9 @@ public struct OSBriefSections: View {
                             .frame(width: 18, height: 18)
                             .accessibilityLabel(phase.label)
                     }
+                    // Le titre et son détail : sur une ligne pour le Mac, l'un sous l'autre
+                    // sur l'iPhone et l'iPad, où la ligne est une cible de 44 pt.
+                    #if os(macOS)
                     Text(title)
                         .lineLimit(1)
                         .layoutPriority(1)
@@ -153,14 +158,33 @@ public struct OSBriefSections: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    #else
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(title).lineLimit(2)
+                            if let tag { OSTag(text: tag, symbol: "sparkle", tint: .green) }
+                        }
+                        Text(detail.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    .multilineTextAlignment(.leading)
+                    #endif
                     Spacer(minLength: 0)
                 }
+                .frame(minHeight: ConsolePlatform.minimumTarget)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            #if os(macOS)
             gestures()
                 .buttonStyle(.borderless)
                 .controlSize(.small)
+            #else
+            gestures()
+                .buttonStyle(OSTouchLinkStyle())
+            #endif
         }
     }
 }

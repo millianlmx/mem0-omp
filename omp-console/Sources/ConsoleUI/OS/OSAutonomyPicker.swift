@@ -26,24 +26,47 @@ public struct OSAutonomyPicker: View {
     private var targets: [HarnessRun] { runs.filter { server.osGestures($0).autonomy } }
 
     public var body: some View {
-        let targets = targets
-        if !targets.isEmpty {
-            Picker(OSDecideText.autonomy, selection: Binding(
-                get: { chosen ?? targets.last?.autonomy },
-                set: { level in apply(level, to: targets) }
-            )) {
-                Text(OSDecideText.askAll).tag(HarnessRunAutonomy?.some(.ask))
-                Text(OSDecideText.repoRules).tag(HarnessRunAutonomy?.none)
-                Text(OSDecideText.deliver).tag(HarnessRunAutonomy?.some(.deliver))
+        let live = self.targets
+        if !live.isEmpty {
+            #if os(iOS)
+            // Le menu du système porte sa propre marge : le mot qui le précède garde celle de la page.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 0) {
+                    Text(OSDecideText.autonomy).font(.callout).foregroundStyle(.secondary).accessibilityHidden(true)
+                    picker(live)
+                }
+                picker(live)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .disabled(saving)
-            .accessibilityLabel(OSDecideText.autonomy)
-            // Le serveur a rendu les features : son niveau fait foi.
-            .onChange(of: targets.map(\.autonomy)) { chosen = nil }
+            #else
+            picker(live)
+            #endif
         }
+    }
+
+    private func picker(_ targets: [HarnessRun]) -> some View {
+        Picker(OSDecideText.autonomy, selection: Binding(
+            get: { chosen ?? targets.last?.autonomy },
+            set: { level in apply(level, to: targets) }
+        )) {
+            Text(OSDecideText.askAll).tag(HarnessRunAutonomy?.some(.ask))
+            Text(OSDecideText.repoRules).tag(HarnessRunAutonomy?.none)
+            Text(OSDecideText.deliver).tag(HarnessRunAutonomy?.some(.deliver))
+        }
+        // Trois positions côte à côte sur le Mac ; sur l'iPhone, où elles ne tiennent pas en
+        // largeur, le menu du système montre la position retenue.
+        #if os(macOS)
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        #else
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .frame(minHeight: ConsolePlatform.minimumTarget)
+        #endif
+        .disabled(saving)
+        .accessibilityLabel(OSDecideText.autonomy)
+        // Le serveur a rendu les features : son niveau fait foi.
+        .onChange(of: targets.map(\.autonomy)) { chosen = nil }
     }
 
     private func apply(_ level: HarnessRunAutonomy?, to targets: [HarnessRun]) {

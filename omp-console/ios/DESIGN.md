@@ -33,6 +33,52 @@ marqueur `[test: <fonction>]` (une fonction de
 
 ## Navigation (feature `ios-navigation-onglets-adaptables`)
 
+L'app a deux interfaces, chacune une barre d'onglets native (`TabView`, style
+`.sidebarAdaptable`) : la **nouvelle interface** (l'« OS agentique », le défaut,
+`IOSOSRootView`) et l'**interface classique** à sections (`RootView`). Les feuilles, les
+confirmations, la palette, les liens et les notifications sont posés une fois, à la
+racine, pour les deux.
+
+La nouvelle interface :
+
+- Cinq onglets, dans cet ordre : Maintenant (le Radar et sa pause en tête, puis le
+  brief), Fils (le composeur, l'espace et le lieu, la liste), Décisions (le tri, une
+  décision à la fois), Propositions et Savoir (consignes, paliers, espaces, Automatismes,
+  Mémoire, « Interface classique »). C'est l'interface du premier lancement.
+  `[test: newInterfaceIsTheDefault]`
+- Un fil, la page d'un espace, les Automatismes et la Mémoire se poussent dans la pile
+  de l'onglet où on les ouvre ; le bouton retour rend la racine de l'onglet. Les écrans
+  partagés avec le Mac demandent un écran par `OSWorkspace` : `IOSOSNavigation` le
+  traduit en onglet et en page. `[test: sharedScreensDriveTheStacks]`
+  `[test: fixedScreensOpenTheirTab]`
+- « Comprendre » est un inspecteur : une colonne à côté de la pile sur iPad, une feuille
+  sur iPhone, avec « Fermer » dans sa barre. Chaque barre porte « Demander à l'OS »
+  (`ios.os.ask`), qui ouvre la feuille du composeur ; chaque écran se tire pour
+  actualiser. `[garde: coque-ios/AC-3]`
+- Les pastilles : Décisions compte ce qui attend l'humain, Propositions les propositions
+  ouvertes ; VoiceOver lit le nom de l'onglet suivi du nombre en attente. L'onglet
+  Propositions n'existe pas sur un serveur qui n'en sert pas.
+  `[test: badgesCountWhatWaits]`
+- Un lien `ompconsole://now`, `decisions` ou `threads/<id>` et une notification touchée
+  ouvrent leur écran de la nouvelle interface : ce qui attend l'humain mène aux
+  Décisions, une feature à son fil, la Mémoire au Savoir ; une page du hub Système, qui
+  n'y a pas d'équivalent, montre l'interface classique pour cette fois.
+  `[test: destinationsReachTheirScreen]`
+- Savoir ▸ « Interface classique » et Système ▸ « Nouvelle interface »
+  (`ios.system.newInterface`) changent d'interface ; le choix est gardé d'un lancement
+  à l'autre (`ConsoleInterfacePreference`, jamais un magasin nommé dans l'app).
+  `[test: interfaceChoiceIsKept]`
+- Les crochets de recette `-section`, `-ios.state` et `-memoire.recipe` ouvrent toujours
+  l'interface classique ; `-os.view <now|threads|decisions|proposals|knowledge>`,
+  `-os.thread <fil ou feature>` et `-os.space <espace>` ouvrent un écran de la nouvelle.
+  `[test: classicRecipeHooksAlwaysOpenTheClassicShell]`
+  `[test: storedChoiceAndRecipeScreens]` `[test: recipeFindsAThreadByItsRun]`
+- `-os.server <adresse> -os.token <jeton>` relient un serveur de recette quand l'app
+  n'en a enregistré aucun, sans rien écrire ni demander la permission de notifier
+  (`scripts/recette/os-ios-shots.sh`). `[test: recipeServerNeedsBothArguments]`
+
+L'interface classique :
+
 - Sur iPhone, la racine est une barre d'onglets native (`TabView`, style
   `.sidebarAdaptable`) de quatre sections — À traiter, Features, Poste, Système —
   puis l'onglet de recherche (`Tab(role: .search)`, la palette) ; chaque onglet
@@ -547,9 +593,10 @@ dialogue de Siri), jamais en silence.
   `[test: pauseTable]` `[test: decisionsPhrase]`
 - **Liens** : `ompconsole://threads/<id>`, `ompconsole://decisions`,
   `ompconsole://now`, en plus des sections (`HarnessWidgetLink.destination(of:)`).
-  Dans la coque à sections, un fil est la page de sa feature, le tri est « À traiter »
-  à ce qui attend, « Maintenant » est l'accueil.
-  `[test: linksOpenThreadsDecisionsAndNow]`
+  Dans la nouvelle interface, ils ouvrent le fil, l'onglet Décisions et l'onglet
+  Maintenant ; dans l'interface classique, un fil est la page de sa feature, le tri est
+  « À traiter » à ce qui attend, « Maintenant » est l'accueil.
+  `[test: linksOpenThreadsDecisionsAndNow]` `[test: destinationsReachTheirScreen]`
 - `OMPConsoleShared` porte les sources compilées à la fois par l'app et par
   l'extension de widgets : une `LiveActivityIntent` s'exécute dans le processus de
   l'app, et sa vue vit dans l'extension. `[garde: coque-ios/AC-1]`

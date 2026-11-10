@@ -22,6 +22,7 @@ public struct OSHomeView: View {
     @State private var sending = false
     /// Les chiffres des trois derniers jours : ce que les tuiles comparent à la semaine.
     @State private var recentScores: HarnessScoreboard?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// `decisions` : le nombre de décisions qui attendent (`OSDecisions.all`).
     public init(server: HarnessModel, pulse: OSPulse, workspace: OSWorkspace, threads: [OSThread], decisions: Int) {
@@ -53,7 +54,7 @@ public struct OSHomeView: View {
                 }
             }
             .frame(maxWidth: 760, alignment: .leading)
-            .padding(28)
+            .osPagePadding(28)
             .frame(maxWidth: .infinity)
         }
         .task(id: server.address) {
@@ -71,9 +72,16 @@ public struct OSHomeView: View {
 
     /// « Maintenant », puis la phrase du brief et sa fenêtre ; sans brief, la date du jour.
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
+        // Aux tailles de texte d'accessibilité (iPhone, iPad), « Vu » passe sous la phrase.
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+        return layout {
             VStack(alignment: .leading, spacing: 4) {
+                // Sur l'iPhone et l'iPad, « Maintenant » est le titre de la barre.
+                #if os(macOS)
                 Text(OSText.now).font(.largeTitle.weight(.bold))
+                #endif
                 if let current = brief.brief {
                     Text(current.headline)
                         .font(.title3)
@@ -93,6 +101,7 @@ public struct OSHomeView: View {
                     Task { await brief.markSeen() }
                 }
                 .disabled(seen)
+                .osRowButton()
             }
         }
     }
@@ -124,7 +133,7 @@ public struct OSHomeView: View {
                     Spacer(minLength: 0)
                     if intake.isSettled {
                         Button(OSText.done) { Task { _ = try? await intakes.cancel(intake) } }
-                            .buttonStyle(.borderless)
+                            .osBorderless()
                             .disabled(intakes.busy.contains(intake.id))
                     }
                 }
@@ -135,6 +144,13 @@ public struct OSHomeView: View {
     }
 
     // MARK: Les agents au travail
+
+    /// Une ligne par texte dans la colonne du Mac, deux sur l'iPhone et l'iPad.
+    #if os(macOS)
+    private static let rowLines = 1
+    #else
+    private static let rowLines = 2
+    #endif
 
     private func atWork(_ working: [OSThread]) -> some View {
         section(OSText.atWork) {
@@ -168,8 +184,8 @@ public struct OSHomeView: View {
                         OSPhaseMark(phase: .working, size: 16)
                     }
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(thread.title).font(.headline).lineLimit(1)
-                        Text("↳ " + line).foregroundStyle(.secondary).lineLimit(1)
+                        Text(thread.title).font(.headline).lineLimit(Self.rowLines).multilineTextAlignment(.leading)
+                        Text("↳ " + line).foregroundStyle(.secondary).lineLimit(Self.rowLines)
                     }
                     Spacer()
                     if let run { OSStepDots(run: run) }
@@ -182,15 +198,24 @@ public struct OSHomeView: View {
 
     // MARK: Sans brief : l'accueil d'avant
 
+    /// Cinq tuiles : en ligne sur le Mac, en grille sur l'iPhone et l'iPad.
+    @ViewBuilder
     private func legacyTiles(working: Int) -> some View {
-        HStack(spacing: 10) {
-            tile(decisions, OSText.yours, tint: decisions > 0 ? .orange : .secondary) { workspace.triage = decisions > 0 }
-            tile(working, OSText.atWork, tint: .accentColor, action: nil)
-            if let counts = server.digest?.counts {
-                tile(counts.merged, OSText.mergedTile, tint: .green, action: nil)
-                tile(counts.decisions, OSText.aloneTile, tint: .purple, action: nil)
-                tile(counts.failed, OSText.failedTile, tint: counts.failed > 0 ? .red : .secondary, action: nil)
-            }
+        #if os(macOS)
+        HStack(spacing: 10) { legacyTileItems(working: working) }
+        #else
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 10)], spacing: 10) { legacyTileItems(working: working) }
+        #endif
+    }
+
+    @ViewBuilder
+    private func legacyTileItems(working: Int) -> some View {
+        tile(decisions, OSText.yours, tint: decisions > 0 ? .orange : .secondary) { workspace.triage = decisions > 0 }
+        tile(working, OSText.atWork, tint: .accentColor, action: nil)
+        if let counts = server.digest?.counts {
+            tile(counts.merged, OSText.mergedTile, tint: .green, action: nil)
+            tile(counts.decisions, OSText.aloneTile, tint: .purple, action: nil)
+            tile(counts.failed, OSText.failedTile, tint: counts.failed > 0 ? .red : .secondary, action: nil)
         }
     }
 
@@ -212,6 +237,7 @@ public struct OSHomeView: View {
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
+                        .frame(minHeight: ConsolePlatform.minimumTarget)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)

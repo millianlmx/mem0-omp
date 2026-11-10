@@ -91,6 +91,9 @@ public struct OSProposalsView: View {
 
     private func row(_ proposal: HarnessProposal) -> some View {
         let busy = proposals.busy.contains(proposal.id)
+        // Le Mac pose les gestes au bout de la ligne ; l'iPhone et l'iPad les posent sous le
+        // texte, à la taille du doigt.
+        #if os(macOS)
         return HStack(alignment: .top, spacing: 10) {
             Image(systemName: Self.symbol(proposal.origin))
                 .foregroundStyle(Color.accentColor)
@@ -113,22 +116,66 @@ public struct OSProposalsView: View {
             }
             Spacer(minLength: 8)
             if busy { ProgressView().controlSize(.small) }
-            if let url = proposal.url.flatMap(URL.init(string:)) {
-                Link(destination: url) {
-                    Image(systemName: "arrow.up.right.square")
-                }
-                .help(OSWatchText.openLink)
-                .accessibilityLabel(OSWatchText.openLink)
-            }
-            Button(OSWatchText.proposalAction(proposal.action)) { accept(proposal) }
-                .buttonStyle(.borderedProminent)
-                .disabled(busy || !OSProposalGroups.canAccept(proposal, canAct: server.canAct, isAdmin: server.isAdmin, approver: server.client?.approver ?? false))
-            Button(OSText.dismiss) {
-                Task { await proposals.dismiss(proposal) }
-            }
-            .disabled(busy || !server.canAct)
+            link(proposal)
+            gestures(proposal, busy: busy)
         }
         .padding(.vertical, 2)
+        #else
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: Self.symbol(proposal.origin))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 22)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(proposal.title)
+                        .fontWeight(.semibold)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let repo = proposal.repo {
+                        OSTag(text: repo, symbol: "shippingbox")
+                    }
+                    if !proposal.detail.isEmpty {
+                        Text(proposal.detail)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+                if busy { ProgressView().controlSize(.small) }
+            }
+            OSLine {
+                gestures(proposal, busy: busy)
+                link(proposal)
+            }
+        }
+        .padding(.vertical, 4)
+        #endif
+    }
+
+    /// La page d'origine de la proposition (l'issue, l'incident, la PR), quand elle en a une.
+    @ViewBuilder
+    private func link(_ proposal: HarnessProposal) -> some View {
+        if let url = proposal.url.flatMap(URL.init(string:)) {
+            Link(destination: url) {
+                Image(systemName: "arrow.up.right.square")
+                    .frame(minWidth: ConsolePlatform.minimumTarget, minHeight: ConsolePlatform.minimumTarget)
+            }
+            .help(OSWatchText.openLink)
+            .accessibilityLabel(OSWatchText.openLink)
+        }
+    }
+
+    /// Accepter (le geste porte le nom de ce qu'il fait) et écarter.
+    @ViewBuilder
+    private func gestures(_ proposal: HarnessProposal, busy: Bool) -> some View {
+        Button(OSWatchText.proposalAction(proposal.action)) { accept(proposal) }
+            .buttonStyle(.borderedProminent)
+            .disabled(busy || !OSProposalGroups.canAccept(proposal, canAct: server.canAct, isAdmin: server.isAdmin, approver: server.client?.approver ?? false))
+        Button(OSText.dismiss) {
+            Task { await proposals.dismiss(proposal) }
+        }
+        .disabled(busy || !server.canAct)
     }
 
     /// Accepte la proposition ; la feature qu'elle crée ou relance ouvre son fil.

@@ -54,8 +54,11 @@ public struct OSRadar: View {
     }
 
     public var body: some View {
-        // La hauteur ne change jamais : en pause, la barre elle-même devient le bandeau orange.
+        // Sur le Mac, la hauteur ne change jamais : en pause, la barre elle-même devient le
+        // bandeau orange. Sur l'iPhone et l'iPad, le Radar tient en deux rangées qui suivent
+        // la taille du texte : la pause et le coût, puis les agents.
         TimelineView(.periodic(from: .now, by: 5)) { context in
+            #if os(macOS)
             HStack(spacing: 10) {
                 if pause.isPaused { pausedLabel }
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -67,8 +70,38 @@ public struct OSRadar: View {
                 if pause.isPaused { resumeButton } else { suspendMenu }
             }
             .padding(.horizontal, 12)
+            #else
+            VStack(alignment: .leading, spacing: 4) {
+                // Côte à côte quand la largeur le permet ; l'un sous l'autre aux grandes tailles de texte.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        if pause.isPaused { pausedLabel } else { gauges }
+                        Spacer(minLength: 0)
+                        if pause.isPaused { resumeButton.fixedSize() } else { suspendMenu }
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        if pause.isPaused { pausedLabel } else { HStack(spacing: 10) { gauges } }
+                        if pause.isPaused { resumeButton } else { suspendMenu }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                if pause.isPaused {
+                    HStack(spacing: 10) { gauges }
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    agents(now: context.date)
+                        .padding(.horizontal, 16)
+                }
+                .padding(.horizontal, -16)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            #endif
         }
+        #if os(macOS)
         .frame(height: 46)
+        #endif
         .background(pause.isPaused ? Color.orange.opacity(0.16) : Color.clear)
         .background(.bar)
         .background {
@@ -172,6 +205,7 @@ public struct OSRadar: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
+            .frame(minHeight: ConsolePlatform.minimumTarget)
             .background(Capsule().fill(phase == .yours ? Color.orange.opacity(0.12) : Color.primary.opacity(0.05)))
         }
         .buttonStyle(.plain)
@@ -249,16 +283,25 @@ public struct OSRadar: View {
                 if !pauseDetail.isEmpty {
                     Text(pauseDetail)
                         .font(.caption2)
-                        .lineLimit(1)
+                        .lineLimit(Self.pauseDetailLines)
                 }
             }
         }
         .foregroundStyle(.orange)
+        #if os(macOS)
         .frame(maxWidth: 300, alignment: .leading)
         .fixedSize(horizontal: true, vertical: false)
+        #endif
         .help(pauseDetail)
         .accessibilityElement(children: .combine)
     }
+
+    /// Qui, depuis quand, pourquoi : une ligne dans la barre du Mac, deux sur l'iPhone et l'iPad.
+    #if os(macOS)
+    private static let pauseDetailLines = 1
+    #else
+    private static let pauseDetailLines = 2
+    #endif
 
     /// « Reprendre » : relance le tour.
     private var resumeButton: some View {
@@ -301,7 +344,7 @@ public struct OSRadar: View {
             }
             .menuStyle(.button)
             .tint(.red)
-            .fixedSize()
+            .osFixedSize()
             .disabled(!server.canAct || pause.isSaving)
         case .absent:
             Menu {
@@ -313,7 +356,7 @@ public struct OSRadar: View {
             }
             .menuStyle(.button)
             .tint(.red)
-            .fixedSize()
+            .osFixedSize()
         default:
             EmptyView()
         }

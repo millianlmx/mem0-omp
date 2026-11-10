@@ -83,14 +83,14 @@ public struct OSThreadView: View {
                     }
                 }
                 .frame(maxWidth: 760, alignment: .leading)
-                .padding(24)
+                .osPagePadding(24)
                 .frame(maxWidth: .infinity)
             }
             if !thread.runs.isEmpty || thread.request != nil {
                 Divider()
                 composer
                     .frame(maxWidth: 760)
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, Self.composerMargin)
                     .padding(.vertical, 12)
                     .frame(maxWidth: .infinity)
             }
@@ -98,6 +98,13 @@ public struct OSThreadView: View {
         .osRunStop(server: server, run: $stopping)
         .task { await server.osReadFeatures() }
     }
+
+    /// La marge du pied : celle de la page.
+    #if os(macOS)
+    private static let composerMargin: CGFloat = 24
+    #else
+    private static let composerMargin: CGFloat = 16
+    #endif
 
     /// Ouvre une feature dans son fil (la coque le résout) ; sans coque, dans « Comprendre ».
     private func open(_ runId: String) {
@@ -118,7 +125,7 @@ public struct OSThreadView: View {
                     .font(.title2.weight(.bold))
                     .osSelectable()
             }
-            HStack(spacing: 8) {
+            OSLine(spacing: 8, gestures: false) {
                 OSTag(text: thread.origin.label, symbol: thread.origin.symbol)
                 OSTag(text: thread.phase.label, tint: thread.phase.color)
                 if thread.cost > 0 {
@@ -185,6 +192,8 @@ public struct OSThreadView: View {
                     } label: {
                         HStack(spacing: 8) {
                             OSPhaseMark(phase: OSThreads.phase(of: run, inbox: inbox), size: 11)
+                            // Le Mac aligne l'état et la date en colonnes ; l'iPhone les pose sous le titre.
+                            #if os(macOS)
                             Text(taskTitle(run, index: index))
                                 .lineLimit(1)
                                 .foregroundStyle(run.phase == .cancelled ? .secondary : .primary)
@@ -194,7 +203,20 @@ public struct OSThreadView: View {
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                                 .frame(width: 110, alignment: .trailing)
+                            #else
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(taskTitle(run, index: index))
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                    .foregroundStyle(run.phase == .cancelled ? .secondary : .primary)
+                                Text(run.osState + " · " + run.updatedAt.osRelative)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            #endif
                         }
+                        .frame(minHeight: ConsolePlatform.minimumTarget)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -283,7 +305,7 @@ public struct OSThreadView: View {
                     } else if let reason = run.reason, !reason.isEmpty {
                         Text("↳ " + OSThreads.firstLine(reason)).foregroundStyle(.secondary).lineLimit(2)
                     }
-                    HStack(spacing: 8) {
+                    OSLine(spacing: 8) {
                         if gestures.amend {
                             Button(OSDecideText.amend) { amend(run) }
                         }
@@ -292,11 +314,17 @@ public struct OSThreadView: View {
                         }
                         Spacer()
                         Group {
+                            // Sur l'iPhone, la rangée passe à la ligne : la date, les corrections
+                            // et le coût restent un seul texte.
+                            #if os(macOS)
                             Text(run.createdAt.osRelative)
                             if run.fixes > 0 { Text("· " + OSText.fixes(run.fixes)) }
                             if let cost = inbox?.costs[run.id], cost > 0 { Text("· " + MonitoringText.cost(cost)) }
+                            #else
+                            Text(liveFacts(run))
+                            #endif
                             Button(OSText.understand + " ›") { workspace.understand(runId: run.id, level: .raw) }
-                                .buttonStyle(.borderless)
+                                .osBorderless()
                         }
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -305,6 +333,16 @@ public struct OSThreadView: View {
             }
         }
     }
+
+    #if os(iOS)
+    /// « il y a 7 minutes · 2 corrections · 1,18 $ » : depuis quand, et ce que la feature a coûté.
+    private func liveFacts(_ run: HarnessRun) -> String {
+        var facts = [run.createdAt.osRelative]
+        if run.fixes > 0 { facts.append(OSText.fixes(run.fixes)) }
+        if let cost = inbox?.costs[run.id], cost > 0 { facts.append(MonitoringText.cost(cost)) }
+        return facts.joined(separator: " · ")
+    }
+    #endif
 
     /// Ce que l'agent a tranché seul : une ligne par décision, la garder ou la revoir.
     @ViewBuilder
@@ -325,7 +363,9 @@ public struct OSThreadView: View {
                             }
                             Spacer()
                             Button(OSText.keep) { Task { await server.accept(runId: run.id, seq: decision.seq) } }
+                                .osRowButton()
                             Button(OSText.revisit) { workspace.understand(runId: run.id, level: .summary) }
+                                .osRowButton()
                         }
                     }
                 }
@@ -338,7 +378,7 @@ public struct OSThreadView: View {
         let tint: Color = merged ? .green : run.phase == .failed ? .red : .secondary
         return OSCard(tint: tint, emphasized: merged) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
+                OSLine(spacing: 8, gestures: false) {
                     OSPhaseMark(phase: OSThreads.phase(of: run, inbox: nil), size: 14)
                     Text(merged ? OSText.merged : run.osState.capitalized)
                         .font(.headline)
@@ -346,10 +386,13 @@ public struct OSThreadView: View {
                     if run.fixes > 0 { OSTag(text: OSText.fixes(run.fixes)) }
                     Spacer()
                     if let pr = run.prUrl, let url = URL(string: pr) {
-                        Link(destination: url) { Label(OSText.openPR, systemImage: "arrow.up.right.square") }
+                        Link(destination: url) {
+                            Label(OSText.openPR, systemImage: "arrow.up.right.square")
+                                .frame(minHeight: ConsolePlatform.minimumTarget)
+                        }
                     }
                     Button(OSText.understand + " ›") { workspace.understand(runId: run.id, level: .summary) }
-                        .buttonStyle(.borderless)
+                        .osBorderless()
                 }
                 if let summary = run.verdict?.summary, merged {
                     Text(OSThreads.firstLine(summary)).foregroundStyle(.secondary).lineLimit(2)
@@ -357,7 +400,7 @@ public struct OSThreadView: View {
                     Text(OSThreads.firstLine(reason)).foregroundStyle(.secondary).lineLimit(2)
                 }
                 if gestures.amend || (gestures.redo && drafts != nil) {
-                    HStack(spacing: 8) {
+                    OSLine(spacing: 8) {
                         if gestures.amend {
                             Button(OSDecideText.amend) { amend(run) }
                         }
@@ -397,7 +440,7 @@ public struct OSThreadView: View {
                         Text(OSText.reportTitle).font(.headline)
                         Spacer()
                         Button(reportExpanded ? OSText.collapse : OSText.readAll) { reportExpanded.toggle() }
-                            .buttonStyle(.borderless)
+                            .osBorderless()
                     }
                     if reportExpanded {
                         ConsoleMarkdown(markdown: report)
@@ -454,6 +497,7 @@ public struct OSThreadView: View {
         return HStack(spacing: 8) {
             Image(systemName: target == nil ? "sparkles" : "text.bubble")
                 .foregroundStyle(Color.accentColor)
+                .accessibilityHidden(true)
             TextField(target == nil ? OSText.followUp : OSText.reply, text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...5)
@@ -467,6 +511,16 @@ public struct OSThreadView: View {
             }
             if sending { ProgressView().controlSize(.small) }
             if let sent { Text(sent).font(.caption).foregroundStyle(.secondary) }
+            // Sans touche ⏎ sous le doigt, la saisie part par son bouton.
+            #if os(iOS)
+            if !sending, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button(action: send) {
+                    Image(systemName: "arrow.up.circle.fill").font(.title2)
+                }
+                .buttonStyle(OSTouchLinkStyle())
+                .accessibilityLabel(OSText.send)
+            }
+            #endif
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))

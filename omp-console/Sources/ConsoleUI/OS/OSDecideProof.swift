@@ -115,11 +115,16 @@ struct OSFlow: Layout {
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for index in subviews.indices where isSpacer(subviews[index]) {
+            subviews[index].place(at: bounds.origin, proposal: .zero)
+        }
         for row in place(subviews, width: bounds.width) {
             var x = bounds.minX
             for index in row.indices {
-                let size = subviews[index].sizeThatFits(.unspecified)
-                subviews[index].place(at: CGPoint(x: x, y: bounds.minY + row.y), proposal: ProposedViewSize(size))
+                let size = fitted(subviews[index], width: bounds.width)
+                // Chaque élément est centré dans la hauteur de sa ligne.
+                let y = bounds.minY + row.y + (row.height - size.height) / 2
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
                 x += size.width + spacing
             }
         }
@@ -132,11 +137,26 @@ struct OSFlow: Layout {
         var y: CGFloat = 0
     }
 
+    /// La taille d'un élément : la sienne, bornée à la largeur offerte (un texte plus large
+    /// que la carte passe à la ligne au lieu d'en sortir).
+    private func fitted(_ subview: LayoutSubview, width: CGFloat) -> CGSize {
+        let ideal = subview.sizeThatFits(.unspecified)
+        return ideal.width > width ? subview.sizeThatFits(ProposedViewSize(width: width, height: nil)) : ideal
+    }
+
+    /// Un écarteur (`Spacer`) : il prend toute la largeur qu'on lui offre et n'a pas de
+    /// taille à lui. Dans une rangée qui passe à la ligne, il ne prend aucune place.
+    private func isSpacer(_ subview: LayoutSubview) -> Bool {
+        let offered: CGFloat = 100_000
+        return subview.sizeThatFits(.unspecified).width < 20
+            && subview.sizeThatFits(ProposedViewSize(width: offered, height: nil)).width >= offered
+    }
+
     private func place(_ subviews: Subviews, width: CGFloat) -> [Row] {
         var rows: [Row] = []
         var row = Row()
-        for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
+        for index in subviews.indices where !isSpacer(subviews[index]) {
+            let size = fitted(subviews[index], width: width)
             let extended = row.indices.isEmpty ? size.width : row.width + spacing + size.width
             if !row.indices.isEmpty, extended > width {
                 rows.append(row)

@@ -791,8 +791,9 @@ son budget, son autonomie). Présentation ▸ « Interface classique » (⌘⇧O
 classique et Savoir ▸ « Interface classique » y ramènent aussi. Les écrans sont écrits
 une fois dans `Sources/ConsoleUI/OS/` (Mac et iOS), leurs mots dans
 `ConsoleCore/Design/OSText.swift` et `OSWatchText.swift` ; la coque Mac est
-`Sources/OMPConsole/OS/OSRootView.swift`. Chaque partie que le serveur ne sert pas
-(404) est absente : ni erreur, ni écran vide, ni bouton mort.
+`Sources/OMPConsole/OS/OSRootView.swift`, celle de l'iPhone et de l'iPad
+`ios/OMPConsoleIOS/IOSOSRootView.swift` (cinq onglets, voir « Coque iOS »). Chaque partie
+que le serveur ne sert pas (404) est absente : ni erreur, ni écran vide, ni bouton mort.
 
 | Écran | Fichier | Ce qu'il montre |
 |---|---|---|
@@ -2053,10 +2054,44 @@ absence en échec.
 
 ## Coque iOS
 
-`omp-console/ios/OMPConsoleIOS.xcodeproj` est l'app iOS de la salle de contrôle :
-cinq sections, dérivées du type partagé `ConsoleSection` (Terminal et Fichiers
-sont hors périmètre) — À traiter, Features, Poste, Mémoire, Système —, une seule
-barre d'onglets native (`TabView`, style `.sidebarAdaptable`) :
+`omp-console/ios/OMPConsoleIOS.xcodeproj` est l'app iOS de la salle de contrôle. Elle
+s'ouvre sur la **nouvelle interface** (l'« OS agentique », `IOSOSRootView.swift`), la
+même que celle du Mac (voir « OS agentique : l'interface ») : une barre d'onglets native
+(`TabView`, style `.sidebarAdaptable` — en bas sur iPhone, en haut ou en barre latérale
+sur iPad) de cinq onglets.
+
+- **Maintenant** : le Radar en tête (les agents, le coût du jour, « Tout suspendre » et
+  « Reprendre »), puis le brief, les trois chiffres et les agents au travail.
+- **Fils** : le composeur « Demander à l'OS… », l'espace et le lieu, puis les fils par
+  sections. Toucher un fil pousse sa page dans la pile ; l'appui long ouvre « Comprendre »
+  et les gestes de sa feature.
+- **Décisions** (pastille : ce qui attend l'humain) : le tri, une décision à la fois,
+  les décisions de même sorte en lot.
+- **Propositions** (pastille) : lancer ou écarter ce que les agents proposent ; l'onglet
+  n'existe pas sur un serveur qui n'en sert pas.
+- **Savoir** : consignes permanentes, paliers d'autonomie, espaces et leur page, puis
+  Automatismes, Mémoire et **Interface classique**.
+
+« Comprendre » est un inspecteur (une colonne sur iPad, une feuille sur iPhone) ; chaque
+barre porte « Demander à l'OS » (`ios.os.ask`), qui ouvre la feuille de la Demande ;
+chaque écran se tire pour actualiser. Les liens `ompconsole://now`, `decisions` et
+`threads/<id>` et une notification touchée ouvrent leur écran. Sur un serveur qui
+n'annonce aucune capacité de la nouvelle interface, elle reste utilisable : fils,
+décisions et composeur passent par les routes d'avant, et ce que le serveur ne sert pas
+n'apparaît pas. La logique de la coque est pure (`IOSOSNavigation.swift`, testée par
+`IOSOSShellTests`) ; identifiants : `ios.os.tab.<onglet>`, `ios.os.screen.<onglet>`,
+`ios.os.screen.thread`, `ios.os.understand`, `ios.os.ask`.
+
+L'**interface classique** reste à un geste : Savoir ▸ « Interface classique », et
+retour par Système ▸ « Nouvelle interface » (`ios.system.newInterface`). Le choix est
+gardé d'un lancement à l'autre (`ConsoleInterfacePreference`, la clé `ui.os` du Mac).
+Les arguments de recette `-section`, `-ios.state` et `-memoire.recipe` ouvrent toujours
+l'interface classique ; `-os.view <now|threads|decisions|proposals|knowledge>`,
+`-os.thread <fil ou feature>` et `-os.space <espace>` ouvrent un écran de la nouvelle.
+
+L'interface classique a cinq sections, dérivées du type partagé `ConsoleSection`
+(Terminal et Fichiers sont hors périmètre) — À traiter, Features, Poste, Mémoire,
+Système —, sur une barre d'onglets native (`TabView`, style `.sidebarAdaptable`) :
 
 - **iPhone** : quatre onglets en bas, **À traiter**, **Features**, **Poste**,
   **Système**, puis l'onglet de **recherche** (`Tab(role: .search)`, la palette :
@@ -2247,6 +2282,22 @@ La capture de l'état d'erreur (artefact de PR, hors des 52) :
 xcrun simctl launch --terminate-running-process <UDID> com.omp.console.ios -section memory -ios.state error
 xcrun simctl io <UDID> screenshot omp-console/build/ios-shots/error-memory.png
 ```
+
+### Captures de la nouvelle interface (iOS)
+
+```bash
+bash scripts/recette/os-ios-shots.sh
+```
+
+Le script compile l'app, démarre `scripts/recette/os-demo-serveur.ts` (le serveur de
+démonstration des captures du Mac), puis relance l'app une fois par écran sur un iPhone
+et un iPad, reliée à ce serveur par ses arguments de lancement
+(`-os.server <adresse> -os.token <jeton>` : rien n'est enregistré dans le simulateur,
+l'invite de notification n'est pas posée). Seize images sous
+`omp-console/build/os-ios-shots/` (dossier ignoré par git), `iphone-` et `ipad-` :
+`maintenant`, `fils`, `decisions`, `propositions`, `savoir`, `fil-au-travail`,
+`fil-revue`, `espace`. Codes de sortie : 0 les seize images produites, 1 échec, 2 non
+exécuté (pas macOS, Xcode ou Node inutilisable, aucun runtime iOS ≥ 26).
 
 ### Recettes historiques
 

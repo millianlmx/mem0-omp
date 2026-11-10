@@ -80,6 +80,11 @@ public struct OSLocalSessionCard: View {
                             Button(OSDecideText.forget, role: .destructive, action: forget)
                         }
                     }
+                    // Sur l'iPhone et l'iPad, chaque geste porte le cadre du système, à la taille du doigt.
+                    #if os(iOS)
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    #endif
                     .disabled(busy)
                 }
             }

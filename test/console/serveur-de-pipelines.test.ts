@@ -245,8 +245,9 @@ test("serveur-de-pipelines/AC-3 : la coque Mac et l'app iOS ouvrent la feuille d
     assert.match(
       app,
       // Le Mac y ajoute le serveur de `~/.omp/harness.json` et l'écriture d'un appairage ;
-      // l'app iOS le pose dans son `init`, avec la mémoire que porte l'appairage.
-      /@StateObject private var server = HarnessModel\.live(\(\)|\(\n\s+fallback: )|IOSSharedServer\.install\(HarnessModel\.live\(onPaired:/,
+      // l'app iOS le pose dans son `init`, avec la mémoire que porte l'appairage et le
+      // serveur de recette de ses arguments de lancement (`-os.server`, jamais enregistré).
+      /@StateObject private var server = HarnessModel\.live(\(\)|\(\n\s+fallback: )|IOSSharedServer\.install\(HarnessModel\.live\(fallback: \{ recipeServer \}, onPaired:/,
       `${shell.app.at(-1)} : le modèle partagé`,
     );
     assert.match(

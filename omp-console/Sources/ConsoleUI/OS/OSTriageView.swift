@@ -14,61 +14,96 @@ public struct OSTriageView: View {
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var intakes: HarnessIntakes
     @ObservedObject var workspace: OSWorkspace
+    /// Le tri est la page d'un onglet (iPhone, iPad) : la barre porte son titre, et rien ne
+    /// le referme.
+    let embedded: Bool
     @Environment(\.dismiss) private var dismiss
     @State private var skipped: Set<String> = []
     @State private var checks = OSLotChecks()
 
-    public init(server: HarnessModel, workstation: WorkstationModel, intakes: HarnessIntakes, workspace: OSWorkspace) {
+    /// `embedded` : la coque le montre en page et non en feuille — ni titre, ni « OK ».
+    public init(
+        server: HarnessModel, workstation: WorkstationModel, intakes: HarnessIntakes, workspace: OSWorkspace, embedded: Bool = false
+    ) {
         self.server = server
         self.workstation = workstation
         self.intakes = intakes
         self.workspace = workspace
+        self.embedded = embedded
     }
 
     public var body: some View {
         let steps = OSTriage.steps(OSDecisions.all(server: server), skipped: skipped)
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text(OSText.triage).font(.title2.weight(.bold))
-                Spacer()
-                if !steps.isEmpty {
-                    Text(OSText.decisions(OSTriage.count(steps))).foregroundStyle(.secondary).monospacedDigit()
+            if !embedded {
+                HStack {
+                    Text(OSText.triage).font(.title2.weight(.bold))
+                    Spacer()
+                    if !steps.isEmpty {
+                        Text(OSText.decisions(OSTriage.count(steps))).foregroundStyle(.secondary).monospacedDigit()
+                    }
                 }
+            } else if !steps.isEmpty {
+                Text(OSText.decisions(OSTriage.count(steps))).foregroundStyle(.secondary).monospacedDigit()
             }
             if let current = steps.first {
-                ScrollView {
-                    switch current {
-                    case let .one(decision):
-                        OSDecisionCard(server: server, workstation: workstation, intakes: intakes, workspace: workspace, decision: decision, large: true)
-                            .id(current.id)
-                    case let .lot(lot):
-                        OSTriageLotCard(server: server, workstation: workstation, workspace: workspace, lot: lot, checks: $checks)
-                    }
-                }
-                .scrollBounceBehavior(.basedOnSize)
-                HStack {
-                    Button(OSText.skip + " →") { skipped.formUnion(current.decisions.map(\.id)) }
-                        .keyboardShortcut(.rightArrow, modifiers: [])
-                    Spacer()
-                    if case let .one(decision) = current, let runId = decision.runId {
-                        Button(OSText.understand + " ↑") {
-                            dismiss()
-                            workspace.understand(runId: runId, level: .summary)
+                if embedded {
+                    // En page : la carte et ses gestes défilent ensemble, à toute taille de texte.
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            card(current)
+                            OSLine { footer(current) }
+                                .foregroundStyle(.secondary)
                         }
-                        .keyboardShortcut(.upArrow, modifiers: [])
                     }
+                } else {
+                    ScrollView {
+                        card(current)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                    HStack { footer(current) }
+                        .foregroundStyle(.secondary)
                 }
-                .foregroundStyle(.secondary)
             } else {
                 ContentUnavailableView(OSText.nothing, systemImage: "checkmark.circle")
+                    .frame(maxWidth: .infinity, maxHeight: embedded ? .infinity : nil)
             }
-            HStack {
-                Spacer()
-                Button(OSText.done) { dismiss() }.keyboardShortcut(.cancelAction)
+            if !embedded {
+                HStack {
+                    Spacer()
+                    Button(OSText.done) { dismiss() }.keyboardShortcut(.cancelAction)
+                }
             }
         }
-        .padding(24)
+        .padding(embedded ? 16 : 24)
         .task { await server.osReadFeatures() }
+    }
+
+    /// L'étape montrée : une décision en grand, ou un lot.
+    @ViewBuilder
+    private func card(_ current: OSTriageStep) -> some View {
+        switch current {
+        case let .one(decision):
+            OSDecisionCard(server: server, workstation: workstation, intakes: intakes, workspace: workspace, decision: decision, large: true)
+                .id(current.id)
+        case let .lot(lot):
+            OSTriageLotCard(server: server, workstation: workstation, workspace: workspace, lot: lot, checks: $checks)
+        }
+    }
+
+    /// « Passer → » et, pour une décision seule, « Comprendre ↑ ».
+    @ViewBuilder
+    private func footer(_ current: OSTriageStep) -> some View {
+        Button(OSText.skip + " →") { skipped.formUnion(current.decisions.map(\.id)) }
+            .keyboardShortcut(.rightArrow, modifiers: [])
+        Spacer()
+        if case let .one(decision) = current, let runId = decision.runId {
+            Button(OSText.understand + " ↑") {
+                dismiss()
+                workspace.understand(runId: runId, level: .summary)
+            }
+            .keyboardShortcut(.upArrow, modifiers: [])
+        }
     }
 }
 
@@ -99,7 +134,7 @@ struct OSTriageLotCard: View {
                 if let failure {
                     ConsoleFailureBanner(failure: failure)
                 }
-                HStack {
+                OSLine {
                     Button {
                         settle(checked)
                     } label: {
@@ -151,7 +186,7 @@ struct OSTriageLotCard: View {
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: ConsolePlatform.minimumTarget, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -162,7 +197,7 @@ struct OSTriageLotCard: View {
                 } label: {
                     Label(OSText.read, systemImage: "text.magnifyingglass").labelStyle(.iconOnly)
                 }
-                .buttonStyle(.borderless)
+                .osBorderless()
             }
         }
     }

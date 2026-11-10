@@ -43,7 +43,7 @@ struct OSSpacesSection: View {
                     Spacer()
                     if server.osManagesSpaces {
                         Button(OSWatchText.add, systemImage: "plus") { editing = OSSpaceEditing(space: nil) }
-                            .buttonStyle(.borderless)
+                            .osBorderless()
                     }
                 }
                 .sheet(item: $editing) { editing in
@@ -64,6 +64,13 @@ struct OSSpacesSection: View {
         Binding(get: { deleting != nil }, set: { shown in if !shown { deleting = nil } })
     }
 
+    /// Ce que l'espace réunit tient sur une ligne sur le Mac, sur deux sur l'iPhone et l'iPad.
+    #if os(macOS)
+    private static let summaryLines = 1
+    #else
+    private static let summaryLines = 2
+    #endif
+
     /// Un espace : son nom, ce qu'il réunit ; un clic ouvre sa page.
     private func row(_ space: HarnessSpace) -> some View {
         let busy = spaces.busy.contains(space.id)
@@ -80,10 +87,12 @@ struct OSSpacesSection: View {
                         Text(space.osSummary)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .lineLimit(Self.summaryLines)
+                            .multilineTextAlignment(.leading)
                     }
                     Spacer(minLength: 8)
                 }
+                .frame(minHeight: ConsolePlatform.minimumTarget)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -94,6 +103,8 @@ struct OSSpacesSection: View {
                     Button(OSWatchText.delete, systemImage: "trash", role: .destructive) { deleting = space }
                 } label: {
                     Image(systemName: "ellipsis.circle")
+                        .frame(minWidth: ConsolePlatform.minimumTarget, minHeight: ConsolePlatform.minimumTarget)
+                        .accessibilityLabel(OSDecideText.more)
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -296,7 +307,7 @@ public struct OSSpacePage: View {
                         weekly
                     }
                     .frame(maxWidth: 760, alignment: .leading)
-                    .padding(28)
+                    .osPagePadding(28)
                     .frame(maxWidth: .infinity)
                 }
                 .navigationTitle(space.name)
@@ -319,6 +330,8 @@ public struct OSSpacePage: View {
     /// Le nom, ce que l'espace réunit en étiquettes, ce qui y vit maintenant.
     private func header(_ space: HarnessSpace) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            // Sur l'iPhone et l'iPad, le nom de l'espace est le titre de la barre.
+            #if os(macOS)
             HStack(alignment: .firstTextBaseline) {
                 Text(space.name).font(.largeTitle.weight(.bold))
                 Spacer(minLength: 0)
@@ -326,6 +339,12 @@ public struct OSSpacePage: View {
                     Button(OSWatchText.edit, systemImage: "pencil") { editing = OSSpaceEditing(space: space) }
                 }
             }
+            #else
+            if server.osManagesSpaces {
+                Button(OSWatchText.edit, systemImage: "pencil") { editing = OSSpaceEditing(space: space) }
+                    .osRowButton()
+            }
+            #endif
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(space.repos, id: \.self) { repo in
@@ -338,7 +357,7 @@ public struct OSSpacePage: View {
                     OSTag(text: OSWatchText.autonomy(space.autonomy?.rawValue), symbol: "dial.medium")
                 }
             }
-            HStack(spacing: 6) {
+            OSLine(spacing: 6, gestures: false) {
                 if space.stats.yours > 0 { OSTag(text: "\(space.stats.yours) " + OSText.phaseYours, symbol: OSPhase.yours.symbol, tint: .orange) }
                 if space.stats.working > 0 { OSTag(text: "\(space.stats.working) " + OSText.phaseWorking, symbol: OSPhase.working.symbol, tint: .accentColor) }
                 if space.stats.queued > 0 { OSTag(text: "\(space.stats.queued) " + OSText.phaseQueued, symbol: OSPhase.queued.symbol) }
@@ -355,6 +374,7 @@ public struct OSSpacePage: View {
                 OSTile(value: "\(stats.cancelledWeek)", label: OSWatchText.weekStopped, tint: .secondary)
                 OSTile(value: MonitoringText.cost(stats.costWeek), label: OSWatchText.weekCost)
             }
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -402,7 +422,7 @@ public struct OSSpacePage: View {
                     }
                 }
             }
-            .buttonStyle(.borderless)
+            .osBorderless()
             if let text = report?.text, !text.isEmpty {
                 OSCard {
                     ConsoleMarkdown(markdown: text)

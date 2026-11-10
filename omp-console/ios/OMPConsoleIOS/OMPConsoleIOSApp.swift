@@ -12,6 +12,12 @@ import SwiftUI
 ///   fonctionnalité ;
 /// - `-memoire.recipe <…>` : l'état du graphe de la mémoire (`IOSMemoryGraphRecipe`).
 ///
+/// Ces trois crochets ouvrent toujours l'interface classique. Sans eux, l'app s'ouvre sur
+/// la nouvelle interface (`IOSOSRootView`), sauf si l'interface classique a été choisie
+/// (`IOSInterface`) ; `-os.view`, `-os.thread` et `-os.space` y ouvrent un écran précis, et
+/// `-os.server` / `-os.token` relient un serveur de recette quand l'app n'en a enregistré
+/// aucun (`IOSShellLaunch`, `IOSRecipeServer`).
+///
 /// L'App POSSÈDE les deux accès au serveur du VPS, posés par le MÊME code
 /// d'appairage (feuille Serveur) : ses pipelines (`HarnessModel`), qui servent les
 /// cinq sections de pilotage, et sa mémoire (`MemoryAccess`). Aucun Mac : l'app
@@ -27,9 +33,13 @@ struct OMPConsoleIOSApp: App {
     private let initialSection: ConsoleSection
     private let initialState: IOSScreenState
     private let memoryRecipe: IOSMemoryGraphRecipe?
+    /// Le serveur de recette donné par les arguments de lancement (`-os.server`), ou `nil`.
+    private let recipeServer: (address: String, token: String)?
     @StateObject private var memory: MemoryAccess
     @StateObject private var server: HarnessModel
     @StateObject private var drafts = HarnessDrafts()
+    /// L'interface montrée : la nouvelle (le défaut) ou la classique.
+    @StateObject private var interface: IOSInterface
     /// Les Live Activities des features suivies sur l'écran verrouillé.
     @StateObject private var activities: IOSLiveActivityCenter
     /// Le widget d'écran d'accueil, nourri par le groupe d'apps.
@@ -44,11 +54,14 @@ struct OMPConsoleIOSApp: App {
         initialSection = IOSSection.resolve(arguments)
         initialState = IOSScreenState.resolve(arguments)
         memoryRecipe = IOSMemoryGraphRecipe.resolve(arguments)
+        _interface = StateObject(wrappedValue: IOSInterface(arguments: arguments))
         let memory = MemoryAccess.live()
         _memory = StateObject(wrappedValue: memory)
         // Le code d'appairage accepté porte aussi la mémoire du serveur. L'instance
         // est celle que résolvent les App Intents (`IOSSharedServer`).
-        let server = IOSSharedServer.install(HarnessModel.live(onPaired: { pairing in
+        let recipeServer = IOSRecipeServer.resolve(arguments)
+        self.recipeServer = recipeServer
+        let server = IOSSharedServer.install(HarnessModel.live(fallback: { recipeServer }, onPaired: { pairing in
             Task { @MainActor in
                 await memory.configure(address: pairing.memoryAddress, token: pairing.memoryToken)
             }
@@ -71,6 +84,7 @@ struct OMPConsoleIOSApp: App {
                 server: server,
                 drafts: drafts,
                 notifications: notifications,
+                interface: interface,
                 selection: initialSection,
                 state: initialState,
                 memoryRecipe: memoryRecipe
@@ -89,7 +103,8 @@ struct OMPConsoleIOSApp: App {
             .task(id: server.address) {
                 widgets.sync(with: server)
                 await activities.serverChanged(server)
-                if server.isConfigured { await IOSPush.enable(notifications) }
+                // Sur un serveur de recette, l'invite du système ne doit pas couvrir les captures.
+                if server.isConfigured, recipeServer == nil { await IOSPush.enable(notifications) }
             }
             .onReceive(appDelegate.$deviceToken) { token in
                 guard let token else { return }

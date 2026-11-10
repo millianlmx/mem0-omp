@@ -46,6 +46,7 @@ public struct OSStepDots: View {
                     .help(OSText.steps[index])
             }
         }
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(OSText.steps[current])
     }
 }
@@ -91,7 +92,7 @@ public struct OSTag: View {
 
     public var body: some View {
         HStack(spacing: 4) {
-            if let symbol { Image(systemName: symbol) }
+            if let symbol { Image(systemName: symbol).accessibilityHidden(true) }
             Text(text)
         }
         .font(.caption.weight(.medium))
@@ -118,7 +119,7 @@ public struct OSPlace: View {
     }
 
     public var body: some View {
-        HStack(spacing: 6) {
+        OSLine(spacing: 6, gestures: false) {
             switch subject {
             case let .run(run):
                 OSTag(text: OSText.vps, symbol: "server.rack")
@@ -174,12 +175,25 @@ struct OSTile: View {
                         .accessibilityLabel(mark.label)
                 }
             }
+            // Sur l'iPhone, trois ou quatre tuiles se partagent la largeur : le mot passe à la
+            // ligne plutôt que d'être coupé, et les tuiles gardent la même hauteur.
+            #if os(macOS)
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+            #else
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            #endif
         }
+        #if os(macOS)
         .frame(maxWidth: .infinity, alignment: .leading)
+        #else
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        #endif
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.04)))
         .accessibilityElement(children: .combine)
@@ -207,4 +221,94 @@ extension View {
         self
         #endif
     }
+
+    /// Un menu à sa taille sur le Mac ; sur l'iPhone et l'iPad, il se serre dans la largeur de
+    /// l'écran aux grandes tailles de texte.
+    @ViewBuilder
+    func osFixedSize() -> some View {
+        #if os(macOS)
+        fixedSize()
+        #else
+        fixedSize(horizontal: false, vertical: true)
+        #endif
+    }
+
+    /// La marge d'une page : celle du Mac, ou celle d'un écran d'iPhone ou d'iPad (16 pt).
+    @ViewBuilder
+    func osPagePadding(_ mac: CGFloat) -> some View {
+        #if os(macOS)
+        padding(mac)
+        #else
+        padding(16)
+        #endif
+    }
+
+    /// Un geste sans cadre (« Lire », « Comprendre › », un symbole seul) : le bouton sans
+    /// bordure du Mac ; sur l'iPhone et l'iPad, le même, dont la cible fait au moins 44 pt.
+    @ViewBuilder
+    func osBorderless() -> some View {
+        #if os(macOS)
+        buttonStyle(.borderless)
+        #else
+        buttonStyle(OSTouchLinkStyle())
+        #endif
+    }
+
+    /// Un bouton seul dans une rangée : sur l'iPhone et l'iPad il porte le cadre du système à
+    /// la taille du doigt (sans cadre, la rangée entière d'un formulaire le déclencherait) ;
+    /// le Mac garde son bouton par défaut.
+    @ViewBuilder
+    func osRowButton() -> some View {
+        #if os(macOS)
+        self
+        #else
+        buttonStyle(.bordered)
+            .controlSize(.large)
+        #endif
+    }
 }
+
+/// Une rangée de gestes ou d'étiquettes : une ligne sur le Mac ; sur l'iPhone et l'iPad,
+/// elle passe à la ligne quand la largeur manque. `gestures` : ses boutons prennent la
+/// taille du doigt (cadre du système, 44 pt au moins) ; sans eux, une rangée d'étiquettes.
+struct OSLine<Content: View>: View {
+    let spacing: CGFloat
+    let gestures: Bool
+    let content: Content
+
+    init(spacing: CGFloat = 8, gestures: Bool = true, @ViewBuilder content: () -> Content) {
+        self.spacing = spacing
+        self.gestures = gestures
+        self.content = content()
+    }
+
+    var body: some View {
+        #if os(macOS)
+        HStack(spacing: spacing) { content }
+        #else
+        if gestures {
+            OSFlow(spacing: spacing) { content }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+        } else {
+            OSFlow(spacing: spacing) { content }
+        }
+        #endif
+    }
+}
+
+#if os(iOS)
+/// Le bouton sans bordure de l'iPhone et de l'iPad : le libellé teinté, dans une cible de
+/// 44 pt au moins.
+struct OSTouchLinkStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(isEnabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+            .frame(minWidth: ConsolePlatform.minimumTarget, minHeight: ConsolePlatform.minimumTarget)
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.5 : 1)
+    }
+}
+#endif

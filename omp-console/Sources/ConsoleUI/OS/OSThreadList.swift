@@ -23,6 +23,9 @@ public struct OSThreadList: View {
     /// Le nom de chaque navigateur du poste, par identifiant.
     let browsers: [String: String]
     let decisions: Int
+    /// Les brouillons de la coque : sur l'iPhone et l'iPad, l'appui long sur un fil ouvre
+    /// les gestes de sa feature (les mêmes que la liste des features).
+    let drafts: HarnessDrafts?
 
     @State private var draft = ""
     @State private var sending = false
@@ -31,9 +34,10 @@ public struct OSThreadList: View {
     /// `threads` : les fils de l'espace et du lieu retenus (`OSThreadScope.threads`).
     /// `places` : les lieux proposés (`OSThreadScope.places`). `browsers` : le nom de chaque
     /// navigateur du poste, par identifiant. `decisions` : le nombre de décisions qui attendent.
+    /// `drafts` : les brouillons de la coque, pour le menu contextuel d'un fil (iPhone, iPad).
     public init(
         server: HarnessModel, intakes: HarnessIntakes, pulse: OSPulse, workspace: OSWorkspace,
-        threads: [OSThread], places: [String], browsers: [String: String], decisions: Int
+        threads: [OSThread], places: [String], browsers: [String: String], decisions: Int, drafts: HarnessDrafts? = nil
     ) {
         self.server = server
         self.intakes = intakes
@@ -45,6 +49,7 @@ public struct OSThreadList: View {
         self.places = places
         self.browsers = browsers
         self.decisions = decisions
+        self.drafts = drafts
     }
 
     private var shown: [OSThread] {
@@ -64,65 +69,14 @@ public struct OSThreadList: View {
             scope
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-            List(selection: $workspace.selection) {
-                Section {
-                    Label(OSText.now, systemImage: "dot.radiowaves.left.and.right")
-                        .tag(OSWorkspace.now)
-                    Button {
-                        workspace.triage = true
-                    } label: {
-                        Label(OSWatchText.decisions, systemImage: "rectangle.stack.fill")
-                            .foregroundStyle(decisions > 0 ? Color.orange : Color.primary)
-                    }
-                    .buttonStyle(.plain)
-                    .badge(decisions)
-                    .disabled(decisions == 0)
-                    .keyboardShortcut("t", modifiers: .command)
-                    if proposals.isServed {
-                        Label(OSWatchText.proposals, systemImage: "lightbulb")
-                            .badge(proposals.proposals.count)
-                            .tag(OSWorkspace.proposals)
-                    }
-                    Label(OSText.automations, systemImage: "gearshape.arrow.triangle.2.circlepath")
-                        .tag(OSWorkspace.automations)
-                    Label(OSWatchText.knowledge, systemImage: "books.vertical")
-                        .tag(OSWorkspace.knowledge)
-                    if !draft.trimmingCharacters(in: .whitespaces).isEmpty {
-                        Button {
-                            OSAskComposer.send($draft, sending: $sending, intakes: intakes)
-                        } label: {
-                            Label(OSText.askThis(draft), systemImage: "return")
-                                .lineLimit(2)
-                                .foregroundStyle(Color.accentColor)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                let waiting = intakes.open.filter { $0.isClassifying }
-                if !waiting.isEmpty {
-                    Section {
-                        ForEach(waiting) { intake in
-                            HStack(spacing: 8) {
-                                ProgressView().controlSize(.small)
-                                Text(intake.text).lineLimit(1).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-                ForEach(OSThreads.sections(shown), id: \.0) { section, items in
-                    if section == .stopped {
-                        Section(isExpanded: $showsStopped) {
-                            rows(items)
-                        } header: {
-                            Text(section.title + " · \(items.count)")
-                        }
-                    } else {
-                        Section(section.title) {
-                            rows(items)
-                        }
-                    }
-                }
-            }
+            // Sur le Mac, la liste porte la sélection du détail. Sur l'iPhone et l'iPad, un fil
+            // touché s'ouvre (la coque le pousse dans sa pile), et les entrées fixes sont les
+            // onglets de la coque.
+            #if os(macOS)
+            List(selection: $workspace.selection) { content }
+            #else
+            List { content }
+            #endif
         }
         .task(id: server.address) {
             await spaces.refresh()
@@ -136,12 +90,119 @@ public struct OSThreadList: View {
         }
     }
 
-    private func rows(_ items: [OSThread]) -> some View {
-        ForEach(items) { thread in
-            OSThreadRow(thread: thread, pulse: pulse, browsers: browsers)
-                .tag(thread.id)
+    /// « Demander : « … » » : la saisie de la liste, prête à partir.
+    @ViewBuilder
+    private var askRow: some View {
+        if !draft.trimmingCharacters(in: .whitespaces).isEmpty {
+            Button {
+                OSAskComposer.send($draft, sending: $sending, intakes: intakes)
+            } label: {
+                Label(OSText.askThis(draft), systemImage: "return")
+                    .lineLimit(2)
+                    .foregroundStyle(Color.accentColor)
+            }
+            .buttonStyle(.plain)
         }
     }
+
+    @ViewBuilder
+    private var content: some View {
+        #if os(iOS)
+        if !draft.trimmingCharacters(in: .whitespaces).isEmpty {
+            Section { askRow }
+        }
+        #else
+        Section {
+            Label(OSText.now, systemImage: "dot.radiowaves.left.and.right")
+                .tag(OSWorkspace.now)
+            Button {
+                workspace.triage = true
+            } label: {
+                Label(OSWatchText.decisions, systemImage: "rectangle.stack.fill")
+                    .foregroundStyle(decisions > 0 ? Color.orange : Color.primary)
+            }
+            .buttonStyle(.plain)
+            .badge(decisions)
+            .disabled(decisions == 0)
+            .keyboardShortcut("t", modifiers: .command)
+            if proposals.isServed {
+                Label(OSWatchText.proposals, systemImage: "lightbulb")
+                    .badge(proposals.proposals.count)
+                    .tag(OSWorkspace.proposals)
+            }
+            Label(OSText.automations, systemImage: "gearshape.arrow.triangle.2.circlepath")
+                .tag(OSWorkspace.automations)
+            Label(OSWatchText.knowledge, systemImage: "books.vertical")
+                .tag(OSWorkspace.knowledge)
+            askRow
+        }
+        #endif
+        let waiting = intakes.open.filter { $0.isClassifying }
+        if !waiting.isEmpty {
+            Section {
+                ForEach(waiting) { intake in
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(intake.text).lineLimit(1).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        ForEach(OSThreads.sections(shown), id: \.0) { section, items in
+            if section == .stopped {
+                Section(isExpanded: $showsStopped) {
+                    rows(items)
+                } header: {
+                    Text(section.title + " · \(items.count)")
+                }
+            } else {
+                Section(section.title) {
+                    rows(items)
+                }
+            }
+        }
+    }
+
+    private func rows(_ items: [OSThread]) -> some View {
+        ForEach(items) { thread in
+            #if os(macOS)
+            OSThreadRow(thread: thread, pulse: pulse, browsers: browsers)
+                .tag(thread.id)
+            #else
+            Button {
+                workspace.open(thread.id)
+            } label: {
+                HStack(spacing: 8) {
+                    OSThreadRow(thread: thread, pulse: pulse, browsers: browsers)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, minHeight: ConsolePlatform.minimumTarget, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .contextMenu { menu(thread) }
+            #endif
+        }
+    }
+
+    #if os(iOS)
+    /// L'appui long sur un fil : « Comprendre », puis les gestes de sa feature.
+    @ViewBuilder
+    private func menu(_ thread: OSThread) -> some View {
+        if let run = thread.focusRun {
+            Button(OSText.understand, systemImage: "text.magnifyingglass") {
+                workspace.open(thread.id)
+                workspace.understand(runId: run.id, level: .summary)
+            }
+            if let drafts {
+                RunMenuItems(server: server, drafts: drafts, run: run, includesOpen: false)
+            }
+        }
+    }
+    #endif
 
     /// L'espace, puis le lieu : côte à côte quand la colonne est assez large, sinon l'un sous l'autre.
     private var scope: some View {
@@ -174,14 +235,14 @@ public struct OSThreadList: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
-                .fixedSize()
+                .osFixedSize()
                 if let id = workspace.spaceId {
                     Button {
                         workspace.selection = OSWorkspace.space(id)
                     } label: {
                         Image(systemName: "info.circle")
                     }
-                    .buttonStyle(.borderless)
+                    .osBorderless()
                     .help(OSWatchText.openSpace)
                     .accessibilityLabel(OSWatchText.openSpace)
                 }
@@ -211,7 +272,7 @@ public struct OSThreadList: View {
         }
         .pickerStyle(.menu)
         .labelsHidden()
-        .fixedSize()
+        .osFixedSize()
     }
 }
 
@@ -238,6 +299,7 @@ public struct OSAskComposer: View {
         HStack(spacing: 6) {
             Image(systemName: "sparkles")
                 .foregroundStyle(Color.accentColor)
+                .accessibilityHidden(true)
             TextField(OSText.ask, text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...5)
@@ -245,9 +307,22 @@ public struct OSAskComposer: View {
                 .onSubmit { Self.send($draft, sending: $sending, intakes: intakes) }
                 .disabled(sending)
             if sending { ProgressView().controlSize(.small) }
+            // Sans touche ⏎ sous le doigt, la saisie part par son bouton.
+            #if os(iOS)
+            if !sending, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button {
+                    Self.send($draft, sending: $sending, intakes: intakes)
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill").font(.title2)
+                }
+                .buttonStyle(OSTouchLinkStyle())
+                .accessibilityLabel(OSText.send)
+            }
+            #endif
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+        .frame(minHeight: ConsolePlatform.minimumTarget)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(composing ? Color.accentColor.opacity(0.6) : .clear))
         .background {
@@ -286,6 +361,13 @@ public struct OSThreadRow: View {
         self.browsers = browsers
     }
 
+    /// Le titre tient sur une ligne dans la colonne du Mac, sur deux sur l'iPhone et l'iPad.
+    #if os(macOS)
+    private static let titleLines = 1
+    #else
+    private static let titleLines = 2
+    #endif
+
     public var body: some View {
         HStack(alignment: .top, spacing: 8) {
             if thread.isLocalSession {
@@ -299,12 +381,12 @@ public struct OSThreadRow: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(thread.title)
-                    .lineLimit(1)
+                    .lineLimit(Self.titleLines)
                     .foregroundStyle(thread.phase == .stopped ? .secondary : .primary)
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(thread.phase == .yours ? Color.orange : .secondary)
-                    .lineLimit(1)
+                    .lineLimit(Self.titleLines)
             }
             Spacer(minLength: 0)
             if max(thread.runs.count, thread.requests.count) > 1 {

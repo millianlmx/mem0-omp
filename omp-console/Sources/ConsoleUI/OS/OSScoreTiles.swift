@@ -85,6 +85,7 @@ public struct OSScoreTiles: View {
                     better: .up
                 )
             }
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
