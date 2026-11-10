@@ -537,7 +537,7 @@ test("os-propositions/AC-1 : chaque cause donne une proposition — id stable `<
       "PR #12 : Pagination des exports",
       "ni la PR touchée hier, ni celle d'un run vivant du harness",
     );
-    assert.equal(pr.detail, "Ouverte par bob, sans activité depuis 5 jour(s), branche feature/pagination");
+    assert.equal(pr.detail, "Ouverte par bob, sans activité depuis 5 jours, branche feature/pagination");
     const ci = only(proposals, "ci");
     assert.equal(ci.title, "CI de main en échec");
     assert.match(
@@ -565,7 +565,7 @@ test("os-propositions/AC-1 : chaque cause donne une proposition — id stable `<
       [
         proposalId("audit", "a-1"),
         "Audit — robustesse",
-        "2 proposition(s) : Borner la taille des exports · Exporter en JSON",
+        "2 propositions : Borner la taille des exports · Exporter en JSON",
       ],
     );
 
@@ -1372,13 +1372,13 @@ test("os-propositions/AC-13 : la reprise d'une PR n'est proposée que pour une P
     assert.deepEqual(
       proposals.map((proposal) => [proposal.source, proposal.title, proposal.detail]),
       [
-        ["pr", `PR #29 : ${hostile}`, "Ouverte par carole, sans activité depuis 4 jour(s), branche fix/titre"],
+        ["pr", `PR #29 : ${hostile}`, "Ouverte par carole, sans activité depuis 4 jours, branche fix/titre"],
         [
           "pr",
           "PR #12 : Pagination des exports",
-          "Ouverte par bob, sans activité depuis 5 jour(s), branche feature/pagination",
+          "Ouverte par bob, sans activité depuis 5 jours, branche feature/pagination",
         ],
-        ["pr", "PR #30 : Du propriétaire", "Ouverte par moi, sans activité depuis 6 jour(s), branche moi/tri_1.2"],
+        ["pr", "PR #30 : Du propriétaire", "Ouverte par moi, sans activité depuis 6 jours, branche moi/tri_1.2"],
       ],
     );
 

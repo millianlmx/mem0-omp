@@ -468,7 +468,8 @@ export class ProposalDesk {
         // La PR d'un run vivant du harness avance toute seule.
         if (change.head.startsWith("harness/") && live.has(change.head)) continue;
         if (taken(repo, (run) => run.title.startsWith(changeRunHead(change.number)))) continue;
-        const idle = `sans activité depuis ${Math.floor((now - updatedAt) / DAY_MS)} jour(s)`;
+        const idleDays = Math.floor((now - updatedAt) / DAY_MS);
+        const idle = `sans activité depuis ${idleDays} jour${idleDays > 1 ? "s" : ""}`;
         add({ source: "pr", repo, change }, `${repo}#${change.number}`, {
           repo,
           title: `PR #${change.number} : ${change.title}`,
@@ -524,7 +525,7 @@ export class ProposalDesk {
       add({ source: "audit", auditId: audit.id, items: audit.proposals.map((_, item) => item) }, audit.id, {
         repo: audit.repo,
         title: `Audit — ${audit.focus || audit.repo}`,
-        detail: `${titles.length} proposition(s) : ${titles.join(" · ")}`,
+        detail: `${titles.length} proposition${titles.length > 1 ? "s" : ""} : ${titles.join(" · ")}`,
         url: null,
         createdAt: audit.updatedAt,
         action: "launch",
@@ -580,7 +581,7 @@ export class ProposalDesk {
           title: raise
             ? `Valider seul ${GATE_NAMES[proposed.gate]} des « ${proposed.kind} » de ${proposed.repo}`
             : `Redemander ${GATE_NAMES[proposed.gate]} des « ${proposed.kind} » de ${proposed.repo}`,
-          detail: `${proposed.corrections} run(s) corrigé(s) sur ${proposed.runs} en ${windowDays} jours (${Math.round(proposed.rate * 100)} %)`,
+          detail: `${proposed.corrections} feature${proposed.corrections > 1 ? "s corrigées" : " corrigée"} sur ${proposed.runs} en ${windowDays} jours (${Math.round(proposed.rate * 100)} %)`,
           url: null,
           createdAt: this.#firstSeen.get(id) ?? now,
           action: "apply",
