@@ -7,11 +7,6 @@
 		<string>fr</string>
 		<string>en</string>
 	</array>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-	</dict>
 	<key>OMPAppGroup</key>
 	<string>$(OMP_APP_GROUP)</string>
 	<key>NSExtension</key>

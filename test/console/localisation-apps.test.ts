@@ -33,7 +33,6 @@ const MAC_INFOPLIST_STRINGS = "omp-console/Bundle/en.lproj/InfoPlist.strings";
 const PBXPROJ = "omp-console/ios/OMPConsoleIOS.xcodeproj/project.pbxproj";
 const IOS_PLIST = "omp-console/ios/OMPConsoleIOS-Info.plist";
 const WIDGET_PLIST = "omp-console/ios/OMPConsoleWidgets-Info.plist";
-const SHARE_PLIST = "omp-console/ios/OMPConsoleShare-Info.plist";
 const SCHEME = "omp-console/ios/OMPConsoleIOS.xcodeproj/xcshareddata/xcschemes/OMPConsoleIOS.xcscheme";
 
 /** Les sources des apps (les suites de tests Swift exclues : leurs clés ne sont pas des textes de l'app). */
@@ -44,7 +43,6 @@ const ROOTS = [
   "omp-console/ios/OMPConsoleIOS",
   "omp-console/ios/OMPConsoleWidgets",
   "omp-console/ios/OMPConsoleShared",
-  "omp-console/ios/OMPConsoleShare",
 ] as const;
 
 const NBSP = " ";
@@ -388,7 +386,6 @@ function declarationFaults(files: Map<string, string>): string[] {
     [MAC_PLIST, mac],
     [IOS_PLIST, read(IOS_PLIST)],
     [WIDGET_PLIST, read(WIDGET_PLIST)],
-    [SHARE_PLIST, read(SHARE_PLIST)],
   ] as const) {
     const localizations = plistArray(plist, "CFBundleLocalizations");
     if (localizations?.join(",") !== "fr,en")
@@ -421,10 +418,7 @@ const read = (rel: string): string => fs.readFileSync(path.join(ROOT, rel), "utf
 const SOURCES = swiftSourceTree(ROOT, ROOTS);
 const TABLE_TEXT = read(TABLE);
 const DECLARED = new Map(
-  [PACKAGE, MAC_PLIST, MAC_INFOPLIST_STRINGS, PBXPROJ, IOS_PLIST, WIDGET_PLIST, SHARE_PLIST, TABLE].map((rel) => [
-    rel,
-    read(rel),
-  ]),
+  [PACKAGE, MAC_PLIST, MAC_INFOPLIST_STRINGS, PBXPROJ, IOS_PLIST, WIDGET_PLIST, TABLE].map((rel) => [rel, read(rel)]),
 );
 
 /** Une copie des sources où `from` (présent) est remplacé par `to` dans `file`. */

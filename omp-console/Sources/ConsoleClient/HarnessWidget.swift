@@ -8,11 +8,10 @@
 // rafraîchissement (`HarnessInboxReader`), app fermée ; sans réseau, il montre le
 // dernier instantané, daté.
 //
-// Les mêmes identifiants partagés servent ce qui se fait HORS de l'app : l'extension de
-// partage « Demander à l'OS » (`HarnessShareDraft`) et le bouton « Valider » d'une Live
-// Activity (`HarnessRemote`) passent par un `HarnessModel` relié par le groupe d'apps
-// (`HarnessModel.shared`). Les liens `ompconsole://` de ces surfaces sont décrits ici
-// (`HarnessWidgetLink`).
+// Les mêmes identifiants partagés servent ce qui se fait HORS de l'app : le bouton
+// « Valider » d'une Live Activity (`HarnessRemote`) passe par un `HarnessModel` relié par
+// le groupe d'apps (`HarnessModel.shared`). Les liens `ompconsole://` de ces surfaces sont
+// décrits ici (`HarnessWidgetLink`).
 
 import ConsoleCore
 import Foundation
@@ -244,7 +243,7 @@ public struct HarnessWidgetStore: Sendable {
 }
 
 extension HarnessModel {
-    /// Le modèle d'une EXTENSION (partage, bouton d'une Live Activity) : relié au serveur
+    /// Le modèle de ce qui agit hors de l'app (le bouton d'une Live Activity) : relié au serveur
     /// de l'app par le groupe d'apps, boîte lue, rien d'enregistré ni de retenu. `nil` : le
     /// groupe n'est pas déclaré, ou l'app n'a relié aucun serveur.
     public static func shared(
@@ -270,9 +269,8 @@ extension HarnessModel {
 /// Les gestes faits hors de l'app, sur un modèle relié par le groupe d'apps.
 public enum HarnessRemote {
     /// La source d'une Demande dictée ou tapée hors de l'app (Siri, Raccourcis, bouton
-    /// Action), et celle d'un partage (`INTAKE_SOURCES` d'omp-harness/intake.ts).
+    /// Action) : `INTAKE_SOURCES` d'omp-harness/intake.ts.
     public static let voiceSource = "voice"
-    public static let shareSource = "ios"
 
     /// Valide la revue d'une feature depuis sa Live Activity, à la révision que le serveur
     /// vient de rendre : `false` si elle n'attend plus de validation (déjà tranchée, specs
@@ -286,67 +284,13 @@ public enum HarnessRemote {
 
 extension HarnessIntakeFailure {
     /// La phrase d'une Demande qui n'est pas partie, pour ce qui la pose hors de l'app
-    /// (Siri, l'extension de partage) : la cause, puis le remède.
+    /// (Siri, Raccourcis) : la cause, puis le remède.
     public var message: String {
         switch self {
         case .unsupported: IntakeText.unsupported
         case .server(.approverOnly): IntakeText.approverOnly
         case .server(let failure): failure.message
         }
-    }
-}
-
-/// Ce que l'extension de partage reçoit (une page, un texte, ou les deux) et la Demande
-/// qu'elle en fait : la consigne saisie, sinon une demande par défaut, avec la page en
-/// contexte (`context {url, title, selection}`).
-public struct HarnessShareDraft: Equatable, Sendable {
-    /// La longueur que le serveur accepte pour le texte d'une demande.
-    public static let maxTextLength = 4000
-
-    /// L'adresse de la page partagée.
-    public var url: String?
-    /// Son titre, quand l'app d'origine le donne.
-    public var title: String?
-    /// Le texte partagé (une sélection, une note).
-    public var text: String?
-
-    /// Champs rognés ; une adresse qui n'est pas une page web (un fichier) est écartée, et
-    /// un texte qui ne fait que répéter le titre aussi.
-    public init(url: String? = nil, title: String? = nil, text: String? = nil) {
-        func kept(_ value: String?) -> String? {
-            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return trimmed.isEmpty ? nil : trimmed
-        }
-        let page = kept(url)
-        let scheme = page.flatMap { URL(string: $0)?.scheme?.lowercased() }
-        self.url = scheme == "http" || scheme == "https" ? page : nil
-        self.title = kept(title)
-        self.text = kept(text) == self.title ? nil : kept(text)
-    }
-
-    /// Rien n'a été partagé : il n'y a pas de demande à faire.
-    public var isEmpty: Bool { url == nil && text == nil }
-
-    /// Ce que l'extension montre du contenu partagé : le titre, sinon le texte, sinon l'adresse.
-    public var headline: String { title ?? text ?? url ?? "" }
-
-    /// L'adresse, montrée sous le titre quand elle n'est pas déjà la ligne principale.
-    public var detail: String? { headline == url ? nil : url }
-
-    /// Le contexte de la demande : la page et, quand elle accompagne une page ou une
-    /// consigne, la sélection. `nil` s'il ne reste rien à joindre.
-    public func context(instruction: String) -> HarnessIntakeContext? {
-        let asked = !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return HarnessIntakeContext(url: url, title: title, selection: url != nil || asked ? text : nil).sendable
-    }
-
-    /// Le texte de la demande : la consigne saisie ; sinon, pour une page, `pageRequest`
-    /// appliqué à son titre (ou à son adresse) ; sinon le texte partagé lui-même. Borné à
-    /// ce que le serveur accepte ; `nil` : rien à demander.
-    public func request(instruction: String, pageRequest: (String) -> String) -> String? {
-        let asked = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        let request = !asked.isEmpty ? asked : (url.map { pageRequest(title ?? $0) } ?? text)
-        return request.map { String($0.prefix(Self.maxTextLength)) }
     }
 }
 

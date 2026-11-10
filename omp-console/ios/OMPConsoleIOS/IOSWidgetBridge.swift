@@ -4,13 +4,12 @@ import Foundation
 import WidgetKit
 
 // Le pont entre l'app et ce qui vit hors d'elle (le widget d'écran d'accueil, le bouton
-// « Valider » d'une Live Activity, l'extension de partage) : à chaque boîte relue,
-// l'instantané de la boîte part dans le groupe d'apps et le widget se redessine s'il a
-// changé ; à chaque changement de serveur, l'adresse et le jeton y sont copiés (le jeton
-// dans un article de trousseau du groupe), pour que le widget relise la boîte lui-même,
-// app fermée, et que les extensions agissent sur le même serveur. Un serveur relié
-// mais injoignable se partage aussi : l'extension dit alors la vraie cause. Oublier le
-// serveur les efface.
+// « Valider » d'une Live Activity) : à chaque boîte relue, l'instantané de la boîte part
+// dans le groupe d'apps et le widget se redessine s'il a changé ; à chaque changement de
+// serveur, l'adresse et le jeton y sont copiés (le jeton dans un article de trousseau du
+// groupe), pour que le widget relise la boîte lui-même, app fermée, et que « Valider »
+// agisse sur le même serveur. Un serveur relié mais injoignable se partage aussi : ce
+// qui agit hors de l'app échoue alors pour la vraie cause. Oublier le serveur les efface.
 
 @MainActor
 final class IOSWidgetBridge: ObservableObject {

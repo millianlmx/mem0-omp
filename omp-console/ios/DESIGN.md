@@ -526,7 +526,7 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
 
 Ce qui se fait sans ouvrir l'app. Chaque geste est un vrai geste du serveur ; écrire
 exige l'appareil déverrouillé ; un échec se dit (notification « Geste non abouti »,
-dialogue de Siri, ligne rouge de la feuille de partage), jamais en silence.
+dialogue de Siri), jamais en silence.
 
 - **Notification d'une question unique recommandée** (catégorie `omp.answer`) :
   « Prendre la recommandation », « Répondre… » (saisie, bouton « Répondre ») et
@@ -545,11 +545,6 @@ dialogue de Siri, ligne rouge de la feuille de partage), jamais en silence.
   point final, au vouvoiement (`IOSSiriText`) ; la décision d'agir ou non est une
   table pure (`IOSSiriRemote.swift`). `[test: askSubmitsTheRequest]`
   `[test: pauseTable]` `[test: decisionsPhrase]`
-- **Extension de partage « Demander à l'OS »** (`OMPConsoleShare`, quatrième cible) :
-  une feuille native — le contenu partagé (titre, adresse), un champ de consigne
-  facultatif, « Annuler » et « Envoyer » dans la barre. Sans consigne, la demande est
-  « Traiter cette page : <titre> » ou le texte partagé. Les mots viennent de
-  `OSRemoteText`. `[test: aSharedPageBecomesARequest]` `[garde: coque-ios/AC-1]`
 - **Liens** : `ompconsole://threads/<id>`, `ompconsole://decisions`,
   `ompconsole://now`, en plus des sections (`HarnessWidgetLink.destination(of:)`).
   Dans la coque à sections, un fil est la page de sa feature, le tri est « À traiter »

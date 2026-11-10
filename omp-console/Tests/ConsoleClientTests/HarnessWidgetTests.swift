@@ -2,7 +2,7 @@
 // l'humain d'abord, features terminées exclues), le lien qui ouvre l'Accueil, et la
 // lecture de la boîte hors du modèle de l'app — sur la doublure de transport. Et la
 // télécommande hors de l'app : les liens `ompconsole://`, le choix de la Live Activity
-// démarrée seule, la validation d'une revue depuis l'activité, la Demande d'un partage.
+// démarrée seule, la validation d'une revue depuis l'activité.
 
 @testable import ConsoleClient
 import ConsoleCore
@@ -115,34 +115,6 @@ struct HarnessWidgetTests {
         #expect(await HarnessRemote.validateReview(runId: "inconnue", on: model) == false)
         #expect(transport.count("POST", "/v1/runs/r2/validate") == 0)
         #expect(await HarnessModel.linked(address: "pas une adresse", token: "t", transport: transport) == nil)
-    }
-
-    @Test("un partage devient une Demande : la consigne saisie, sinon une demande par défaut sur la page, sinon le texte partagé ; la page et la sélection partent en contexte")
-    func shareDraft() {
-        let page = HarnessShareDraft(url: " https://example.com/article ", title: "Un article", text: "un passage choisi")
-        #expect(page.headline == "Un article" && page.detail == "https://example.com/article")
-        #expect(page.request(instruction: "  résume-le  ") { "page : \($0)" } == "résume-le")
-        #expect(page.request(instruction: " ") { "page : \($0)" } == "page : Un article")
-        #expect(page.context(instruction: "") == HarnessIntakeContext(url: "https://example.com/article", title: "Un article", selection: "un passage choisi"))
-
-        let bare = HarnessShareDraft(url: "https://example.com/article")
-        #expect(bare.headline == "https://example.com/article" && bare.detail == nil)
-        #expect(bare.request(instruction: "") { "page : \($0)" } == "page : https://example.com/article")
-
-        let note = HarnessShareDraft(text: "corriger le bandeau de l'accueil")
-        #expect(note.request(instruction: "") { _ in "jamais" } == "corriger le bandeau de l'accueil", "le texte partagé est la demande")
-        #expect(note.context(instruction: "") == nil, "rien à joindre : la demande dit déjà tout")
-        #expect(note.request(instruction: "planifie ça") { _ in "jamais" } == "planifie ça")
-        #expect(note.context(instruction: "planifie ça") == HarnessIntakeContext(selection: "corriger le bandeau de l'accueil"))
-
-        let long = HarnessShareDraft(text: String(repeating: "a", count: 5000))
-        #expect(long.request(instruction: "") { $0 }?.count == HarnessShareDraft.maxTextLength)
-        #expect(HarnessShareDraft(url: " ", title: "Titre seul", text: "\n").isEmpty)
-        #expect(HarnessShareDraft(url: " ", text: "\n").request(instruction: "") { $0 } == nil)
-        // Une adresse qui n'est pas une page web est écartée ; un texte qui répète le titre aussi.
-        let file = HarnessShareDraft(url: "file:///tmp/x", text: "note")
-        #expect(file.url == nil && file.request(instruction: "") { _ in "jamais" } == "note")
-        #expect(HarnessShareDraft(url: "https://example.com", title: "Un article", text: "Un article").text == nil)
     }
 
     @Test("l'instantané fait l'aller-retour par le groupe d'apps ; un bundle sans groupe n'en a pas")

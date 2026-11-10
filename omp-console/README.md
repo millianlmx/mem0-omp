@@ -607,12 +607,6 @@ elle-même.
   (`POST /v1/pause`), **Décisions en attente** (lecture : le compte et les premières
   décisions). Chacun dit ce qu'il a fait, ou pourquoi il n'a rien fait (aucun serveur
   relié, serveur antérieur à la fonction, jeton sans le droit). Voir « Siri » plus bas.
-- **Extension de partage « Demander à l'OS » (iPhone, iPad).** Depuis la feuille de
-  partage de n'importe quelle app, une page web ou un texte devient une Demande : la
-  consigne saisie, sinon « Traiter cette page : <titre> » (ou le texte partagé
-  lui-même), avec la page en contexte (`context {url, title, selection}`). L'extension
-  (`ios/OMPConsoleShare`) passe par `ConsoleClient` avec l'adresse et le jeton du
-  groupe d'apps ; un échec se lit dans sa feuille, qui reste ouverte.
 - **Liens.** `ompconsole://<section>`, `ompconsole://threads/<id>` (le fil d'une
   feature ; `runs/<id>` aussi), `ompconsole://decisions`, `ompconsole://now` et
   `ompconsole://system/<page>` ouvrent l'app à cet endroit (`HarnessWidgetLink`).
@@ -1971,7 +1965,7 @@ omp-console/
 │   └── Resources/en.lproj/Localizable.strings  la table anglaise des textes des deux apps (`L10n`)
 ├── Tests/OMPConsoleTests/         la suite Swift Testing de la coque
 ├── Tests/ConsoleClientTests/      la suite hermétique des clients distants
-├── ios/                           l'app iOS/iPadOS, son extension de widgets et son extension de partage (voir « Coque iOS »)
+├── ios/                           l'app iOS/iPadOS et son extension de widgets (voir « Coque iOS »)
 ├── Bundle/Info.plist              le plist du bundle .app (et `Bundle/AppIcon.icns`, `Bundle/en.lproj/InfoPlist.strings`)
 └── build/                         artefacts (bundle .app, captures), ignorés par git
 ```
@@ -2313,10 +2307,10 @@ AltStore). Le détail : `PUBLISHING.md` § Apps jointes aux releases. Avec Xcode
 3. Ouvrir l'onglet *Signing & Capabilities* de la cible, cocher *Automatically
    manage signing*, puis choisir son **compte** (Team) — un compte du programme
    développeur : l'app déclare un groupe d'apps (widget) et les notifications push
-   (Live Activities et alertes), que Xcode enregistre seul. Faire de même pour les cibles
-   `OMPConsoleWidgets` et `OMPConsoleShare`. Si l'identifiant de bundle du dépôt
-   (`com.omp.console.ios`) est déjà pris, en choisir un **unique**, pour les trois cibles
-   (`<id>`, `<id>.widgets` et `<id>.share`), et changer `OMP_APP_GROUP` du projet en
+   (Live Activities et alertes), que Xcode enregistre seul. Faire de même pour la cible
+   `OMPConsoleWidgets`. Si l'identifiant de bundle du dépôt (`com.omp.console.ios`)
+   est déjà pris, en choisir un **unique**, pour les deux cibles
+   (`<id>` et `<id>.widgets`), et changer `OMP_APP_GROUP` du projet en
    `group.<id>`.
 4. Lancer (⌘R). L'app s'installe et démarre.
 5. À la première exécution, approuver le certificat de développement sur

@@ -480,19 +480,17 @@ refusé et la cause.
 | `IOS_SIGNING_P12_PASSWORD` | le mot de passe de ce `.p12` |
 | `IOS_PROFILE_APP_BASE64` | le profil de provisionnement de `com.omp.console.ios`, encodé en base64 |
 | `IOS_PROFILE_WIDGETS_BASE64` | celui de `com.omp.console.ios.widgets`, l'extension de widgets embarquée dans l'app |
-| `IOS_PROFILE_SHARE_BASE64` | celui de `com.omp.console.ios.share`, l'extension de partage « Demander à l'OS » embarquée dans l'app |
 | `IOS_TEAM_ID` | l'identifiant d'équipe (10 caractères, developer.apple.com → Membership details) |
 
 Et une **variable** de dépôt (onglet *Variables*, pas un secret),
 `IOS_EXPORT_METHOD` : `ad-hoc` (défaut si elle est absente) ou `development`. Elle
-doit correspondre au type du certificat et des trois profils.
+doit correspondre au type du certificat et des deux profils.
 
 - **Le certificat** : comme celui du Mac (Certificates → **+** → *Apple
   Distribution* ou *Apple Development*, export `.p12`, `base64 -i`).
 - **Les profils** : Identifiers → **+** → App IDs, un pour `com.omp.console.ios`
   (capacités *App Groups* avec `group.com.omp.console.ios`, et *Push
-  Notifications*), un pour `com.omp.console.ios.widgets` (*App Groups*) et un pour
-  `com.omp.console.ios.share` (*App Groups*) ; puis
+  Notifications*) et un pour `com.omp.console.ios.widgets` (*App Groups*) ; puis
   Devices pour enregistrer les UDID des appareils cibles ; puis Profiles → **+** →
   *Ad Hoc* (ou *iOS App Development*), un profil par App ID, avec le certificat
   ci-dessus et les appareils. Télécharge chaque `.mobileprovision` et encode-le :

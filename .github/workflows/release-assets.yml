@@ -72,7 +72,6 @@ jobs:
           IOS_SIGNING_P12_PASSWORD: ${{ matrix.app == 'ios' && secrets.IOS_SIGNING_P12_PASSWORD || '' }}
           IOS_PROFILE_APP_BASE64: ${{ matrix.app == 'ios' && secrets.IOS_PROFILE_APP_BASE64 || '' }}
           IOS_PROFILE_WIDGETS_BASE64: ${{ matrix.app == 'ios' && secrets.IOS_PROFILE_WIDGETS_BASE64 || '' }}
-          IOS_PROFILE_SHARE_BASE64: ${{ matrix.app == 'ios' && secrets.IOS_PROFILE_SHARE_BASE64 || '' }}
           IOS_TEAM_ID: ${{ matrix.app == 'ios' && secrets.IOS_TEAM_ID || '' }}
           # Variable de dépôt, pas un secret : ad-hoc (défaut) ou development.
           IOS_EXPORT_METHOD: ${{ vars.IOS_EXPORT_METHOD }}

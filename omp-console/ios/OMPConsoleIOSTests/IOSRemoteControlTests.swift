@@ -1,7 +1,7 @@
 // Les preuves Swift de la télécommande hors de l'app, vue de l'app iOS : les gestes de
-// la notification d'une question, les liens `ompconsole://`, le choix de la Live
-// Activity démarrée seule, et la Demande que l'extension de partage pose. La logique
-// vit dans ConsoleClient ; ces tests la lisent avec les mots français de l'app.
+// la notification d'une question, les liens `ompconsole://` et le choix de la Live
+// Activity démarrée seule. La logique vit dans ConsoleClient ; ces tests la lisent avec
+// les mots français de l'app.
 
 import ConsoleClient
 import ConsoleCore
@@ -10,7 +10,7 @@ import Testing
 
 @testable import OMPConsoleIOS
 
-@Suite("télécommande iOS — notification, liens, Live Activity, partage")
+@Suite("télécommande iOS — notification, liens, Live Activity")
 struct IOSRemoteControlTests {
     @Test("la notification d'une question unique offre « Prendre la recommandation » et « Répondre… » ; la toucher ouvre le fil")
     func answerNotificationOffersItsGestures() {
@@ -46,17 +46,5 @@ struct IOSRemoteControlTests {
         #expect(HarnessActivityStart.candidate(inbox: inbox, running: ["travail"]) == nil)
         #expect(HarnessActivityState(run: run("revue", "awaiting_human", step: "review"), inbox: inbox).awaitsReview, "« Valider » s'offre sur une revue qui attend")
         #expect(!HarnessActivityState(run: run("travail", "running"), inbox: inbox).awaitsReview)
-    }
-
-    @Test("une page partagée sans consigne devient « Traiter cette page : <titre> », avec la page en contexte ; une consigne la remplace")
-    func aSharedPageBecomesARequest() {
-        // L'adresse est normalisée par le client : aucune adresse n'est écrite en dur dans la coque iOS.
-        let page = HarnessModel.normalizedAddress("example.com/article") ?? ""
-        let draft = HarnessShareDraft(url: page, title: "Un article")
-        #expect(draft.request(instruction: "", pageRequest: OSRemoteText.sharePage) == "Traiter cette page : Un article")
-        #expect(draft.request(instruction: "résume-le", pageRequest: OSRemoteText.sharePage) == "résume-le")
-        #expect(draft.context(instruction: "") == HarnessIntakeContext(url: page, title: "Un article"))
-        #expect(draft.url?.hasSuffix("example.com/article") == true)
-        #expect(HarnessShareDraft().isEmpty)
     }
 }
