@@ -1,5 +1,15 @@
 # Journal des versions
 
+## omp-harness 1.38.0 — 2026-11-10
+
+- feat(harness,console): appairage d'un iPhone par QR code — ticket à usage unique, jeton propre à l'appareil (#447) (9386fc1)
+- feat(harness): reprises d'openbot.run — idempotence, déclencheur entrant, CLI de script, garde-fous de code (#446) (b6b3f8f)
+
+## omp-console 1.1.0 — 2026-11-10
+
+- feat(harness,console): appairage d'un iPhone par QR code — ticket à usage unique, jeton propre à l'appareil (#447) (9386fc1)
+- feat(harness): reprises d'openbot.run — idempotence, déclencheur entrant, CLI de script, garde-fous de code (#446) (b6b3f8f)
+
 ## omp-mem0-req 2.7.0 — 2026-11-10
 
 - feat(harness,console,chrome,req): OS agentique — boucle, autonomie, espaces, propositions, sessions locales, nouvelle interface Mac (#441) (b828a33)
