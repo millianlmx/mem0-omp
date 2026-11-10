@@ -52,6 +52,23 @@ const LOCAL_INTENTS: readonly [tool: string, intent: string][] = [
   ["bash", "Lançant les tests d'accessibilité"],
 ];
 
+/** Ce qu'une feature a dépensé à une étape : le coût du jour, de l'espace et du brief en vivent. */
+function spend(world: FakeWorld, runId: string, repo: string, step: string, cost: number): void {
+  world.store.addUsage({
+    runId,
+    auditId: null,
+    repo,
+    step,
+    provider: "demo",
+    model: "modele-demo",
+    input: Math.round(cost * 40_000),
+    output: Math.round(cost * 6_000),
+    cacheRead: 0,
+    cacheWrite: 0,
+    cost,
+  });
+}
+
 /** Les objets posés tels quels : un échec, un arrêt motivé, un audit proposé, les espaces et les consignes. */
 function seed(world: FakeWorld): void {
   const { store, orchestrator } = world;
@@ -88,6 +105,22 @@ function seed(world: FakeWorld): void {
     cancelCause: "too_big",
     reason: "annulé par l'humain : trop gros — à découper en trois features",
   });
+  spend(world, DEMO_RUN, "demo", "review", 2.31);
+  spend(world, GRAPH_RUN, "demo", "impl", 0.64);
+  spend(world, "demo-echec", CLIENT_REPO, "impl", 0.87);
+  spend(world, "demo-arret", CLIENT_REPO, "specs", 0.12);
+  // Une documentation validée à la main puis fusionnée : le serveur en tire une proposition de palier.
+  store.createRun({
+    id: "demo-guide",
+    repo: "demo",
+    slug: "guide-installation",
+    title: "Mettre à jour le guide d'installation",
+    request: "Décrire l'installation sur un poste neuf.",
+    branch: "harness/guide-installation",
+    state: "merged",
+    kind: "docs",
+  });
+  store.appendEvent("validation", "demo-guide", { gate: "verdict", approve: true, liftable: true });
   store.createAudit({ id: "demo-audit", repo: CLIENT_REPO, focus: "Accessibilité des formulaires" });
   store.updateAuditIf("demo-audit", ["queued"], {
     state: "proposed",
@@ -173,6 +206,17 @@ export async function osDemoWorld(): Promise<{
         patch: (config) => {
           const first = config.repos[0];
           if (!first) throw new Error("monde de test sans dépôt");
+          // Une règle de palier (les bogues : specs validées seules) et un apprentissage qui propose vite.
+          first.autonomy = {
+            rules: [
+              {
+                match: { kind: "bug", maxDiffLines: 80 },
+                require: { reproTest: true, greenChecks: true },
+                gates: { specs: "auto", review: "human" },
+              },
+            ],
+          };
+          config.autonomyLearning.minRuns = 1;
           config.repos.push(
             repoDefaults({
               name: CLIENT_REPO,
@@ -233,6 +277,8 @@ export async function osDemoWorld(): Promise<{
     },
     ACTOR,
   );
+  spend(world, delivered.id, "demo", "impl", 0.42);
+  spend(world, working.id, "demo", "impl", 1.18);
   let turn = 0;
   const beat = () => {
     const [tool, intent] = LOCAL_INTENTS[turn % LOCAL_INTENTS.length] as [string, string];

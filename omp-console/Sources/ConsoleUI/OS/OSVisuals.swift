@@ -144,6 +144,48 @@ public struct OSPlace: View {
     }
 }
 
+/// Une tuile : une valeur en grand, son mot dessous, et au besoin un symbole à côté de la
+/// valeur (une tendance). Une valeur absente se lit « — », en gris.
+struct OSTile: View {
+    /// Le symbole posé à côté de la valeur : son nom, sa couleur, ce que VoiceOver en dit.
+    struct Mark {
+        let symbol: String
+        let tint: Color
+        let label: String
+    }
+
+    let value: String?
+    let label: String
+    var tint: Color = .primary
+    var mark: Mark?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(value ?? OSWatchText.none)
+                    .font(.system(size: 26, weight: .semibold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(value == nil ? Color.secondary : tint)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                if let mark {
+                    Image(systemName: mark.symbol)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(mark.tint)
+                        .accessibilityLabel(mark.label)
+                }
+            }
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.04)))
+        .accessibilityElement(children: .combine)
+    }
+}
+
 extension View {
     /// Un texte de l'agent ou de l'humain, sélectionnable sur le Mac. Sur iOS, seules les
     /// specs, la fiche d'un souvenir et le direct le sont (ios-gestes-et-retours-natifs).
@@ -151,6 +193,16 @@ extension View {
     func osSelectable() -> some View {
         #if os(macOS)
         textSelection(.enabled)
+        #else
+        self
+        #endif
+    }
+
+    /// La taille d'une feuille sur le Mac ; l'iPhone et l'iPad gardent celle du système.
+    @ViewBuilder
+    func osSheetSize(width: CGFloat, minHeight: CGFloat) -> some View {
+        #if os(macOS)
+        frame(width: width).frame(minHeight: minHeight)
         #else
         self
         #endif

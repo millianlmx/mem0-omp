@@ -145,8 +145,12 @@ Tout se fait depuis l'app, sans terminal :
    serveur et son jeton d'accès (voir « Serveur de pipelines »). La même feuille
    s'ouvre par la ligne de connexion au pied de la barre latérale (`server.open`)
    et par Système › Serveur.
-3. **Piloter** — **À traiter** est la file unique de ce qui vous attend (envois du
-   poste à approuver, questions à trancher, specs et verdicts à valider, décisions
+3. **Piloter** — la fenêtre s'ouvre sur l'**OS agentique** (voir « OS agentique :
+   l'interface ») : le Radar des agents en haut, les fils à gauche avec « Demander à
+   l'OS… », et « Maintenant » au centre — ce qui vous attend, ce qui a été livré, ce
+   qui bloque. L'**interface classique** reste à un geste (Présentation ▸ « Interface
+   classique », ⌘⇧O) : **À traiter** y est la file unique de ce qui vous attend (envois
+   du poste à approuver, questions à trancher, specs et verdicts à valider, décisions
    à relire, audits à trier) ; **Features** liste les features groupées (À vous,
    En cours, En file, Terminées) et ouvre la page de chacune. Le « + » lance une
    feature, un projet ou un audit, toujours dans une feuille. Le serveur conduit
@@ -722,11 +726,13 @@ une portée de **Features**. Un serveur qui ne sert pas une fonction le dit
   désactiver (`PUT`, `If-Match`), « Déclencher maintenant » (`POST …/run`), supprimer
   (confirmé). Le serveur ne rend que la prochaine échéance : elle s'affiche dès la
   création.
-- **Autonomie** (`AutonomyViews.swift`, `server.autonomy`) : en lecture seule, les
+- **Autonomie** (`AutonomyViews.swift`, `server.autonomy`) : la page de Système lit les
   règles de chaque dépôt visible, les validations prises seules de la fenêtre
   d'apprentissage et les propositions de palier avec la modification de configuration
-  suggérée (`changes`), lues par `GET /v1/autonomy`. Un serveur qui ne sert pas la
-  route (404) retire la page du hub et de la palette. La feuille « Nouvelle feature »
+  suggérée (`changes`), par `GET /v1/autonomy` (tout lecteur). La seule écriture est une
+  règle de palier (`POST /v1/autonomy/rules`, admin) : « Appliquer » sur une proposition
+  du Savoir de l'OS agentique, offert aux seuls administrateurs. Un serveur qui ne sert
+  pas la route (404) retire la page du hub et de la palette. La feuille « Nouvelle feature »
   envoie le type de travail et les labels (`POST /v1/runs {kind?, labels?}`), et la
   carte d'une décision prise seule par l'autonomie (`decision.autonomy`) montre la
   porte franchie, la règle (rang, `match`, exigences, portes) et chaque preuve avec sa
@@ -744,6 +750,50 @@ La garde `test/console/tour-de-controle.test.ts` confronte chaque route de ces �
 au routeur du serveur (rôle compris), chaque champ décodé au JSON réel, et vérifie
 leur câblage dans les deux apps ; `test/console/autonomie-console.test.ts` fait de même
 pour l'autonomie.
+
+### OS agentique : l'interface
+
+L'app Mac s'ouvre sur l'OS agentique (préférence `ui.os`, vraie par défaut) : quatre
+objets — le **fil** (une intention, de la demande au résultat), l'**agent** (usine,
+poste, vigie, session omp locale), la **décision** (ce qui vous attend), le **savoir**
+(mémoire, consignes permanentes, paliers) — plus l'**espace** (un client : ses dépôts,
+son budget, son autonomie). Présentation ▸ « Interface classique » (⌘⇧O) rend la coque
+à barre latérale ; les sections ⌘1…⌘7, une commande de la palette vers une section
+classique et Savoir ▸ « Interface classique » y ramènent aussi. Les écrans sont écrits
+une fois dans `Sources/ConsoleUI/OS/` (Mac et iOS), leurs mots dans
+`ConsoleCore/Design/OSText.swift` et `OSWatchText.swift` ; la coque Mac est
+`Sources/OMPConsole/OS/OSRootView.swift`. Chaque partie que le serveur ne sert pas
+(404) est absente : ni erreur, ni écran vide, ni bouton mort.
+
+| Écran | Fichier | Ce qu'il montre |
+|---|---|---|
+| Radar (toujours en haut) | `OSRadar.swift` | une pastille par agent et ce qu'il fait (`OSPulse`) : features vivantes, Poste, Vigie, **Sessions locales** ; le coût du jour, et le reste du budget de l'espace retenu ; « Tout suspendre » = la pause du serveur (« Après l'étape en cours » ou « Tout de suite », confirmée) — en pause la barre devient orange, dit « En pause » et porte « Reprendre » ; sans la capacité `pause`, l'arrêt du poste et des fils |
+| Liste des fils | `OSThreadList.swift` | le composeur « Demander à l'OS… » (filtre, ⏎ = Demande) ; l'espace puis le lieu ; les entrées Maintenant, Décisions (n), Propositions (n), Automatismes, Savoir ; les fils par état — une session omp locale en est un (ordinateur portable, « machine · branche · ↳ intention ») |
+| Maintenant | `OSHomeView.swift`, `OSBriefSections.swift`, `OSScoreTiles.swift` | le brief : sa phrase, « depuis … », « Vu » ; le composeur et, dessous, la réponse de l'OS à une question d'état ; les trois chiffres (sept jours, tendance des trois derniers jours) ; les agents au travail ; les sections repliables Vous attend, Livré (« seul »), Bloqué (sa cause), Échecs, Décidé seul (Garder / Revoir), Arrêtés (le motif). Sans la capacité `brief`, l'accueil d'avant |
+| Propositions | `OSProposalsView.swift` | le travail que les agents proposent, groupé par source ; le geste porte le nom de ce qu'il fait (Lancer, Corriger, Appliquer, Confirmer, Relancer) et ouvre le fil qu'il crée ; « Écarter ». Appliquer un palier revient à l'admin, confirmer un signalement et lancer un item Jira à l'approbateur |
+| Savoir | `OSKnowledgeView.swift`, `OSSpaceViews.swift` | les consignes permanentes (interrupteur, modifier, supprimer, ajouter, dépôt ou partout, origine) ; les paliers d'autonomie par dépôt (règles en phrases, confiance, « Appliquer » pour un admin) ; les espaces (créer, modifier, supprimer pour un admin non borné) ; la mémoire et l'interface classique |
+| Page d'un espace | `OSSpaceViews.swift` | les chiffres de la semaine, le budget du jour, le rapport hebdomadaire (Markdown rendu), « Copier » et le partage natif |
+| Fil, décisions, tri, Comprendre, Automatismes | `OSThreadView.swift`, `OSDecisionCard.swift`, `OSTriageView.swift`, `OSUnderstandView.swift`, `OSAutomationsView.swift` | la page d'un fil et ses cartes, le tri des décisions en feuille, l'inspecteur « Comprendre », ce que l'OS lance seul |
+
+Raccourcis du Mac : ⌘L le composeur, ⌘T le tri, ⌘⇧P suspendre (après confirmation) ou
+reprendre, ⌥⌘I l'inspecteur « Comprendre », ⌘N une nouvelle feature, ⌘K la palette,
+⌘⇧O l'interface classique. Liens : `ompconsole://runs/<id>` ouvre le fil de la feature,
+`ompconsole://threads/<id>` un fil, `ompconsole://decisions` (comme `inbox` et
+`workstation`) le tri, `ompconsole://now` « Maintenant » ; un lien vers une section sans
+équivalent (Mémoire, Terminal, Fichiers, Système) ramène l'interface classique.
+
+Variables de recette (captures, `scripts/recette/os-shots.sh`) : `OMP_CONSOLE_OS_VIEW`
+(`now`, `proposals`, `knowledge`, `automations`, `space:<identifiant ou nom>`),
+`OMP_CONSOLE_OS_SPACE` (l'espace retenu dans la liste, par identifiant ou par nom),
+`OMP_CONSOLE_OS_THREAD` (un fil), `OMP_CONSOLE_OS_RUN` (le fil d'une feature),
+`OMP_CONSOLE_OS_TRIAGE` (le tri), `OMP_CONSOLE_OS_LEVEL` (le niveau de « Comprendre »),
+`OMP_CONSOLE_OS_NEW` (la feuille « Nouvelle feature »).
+
+Tests : `Tests/OMPConsoleTests/OSWatchTests.swift` (tri par espace et par lieu,
+regroupement des propositions et qui les accepte, règles de palier en phrases, tendance
+d'un chiffre) ; les gardes `test/console/autonomie-console.test.ts` (la seule écriture
+de l'autonomie, réservée à l'admin) et `test/console/serveur-de-pipelines.test.ts` (chaque
+route de l'OS agentique appelée par le client est servie).
 
 ### OS agentique : la couche client
 
@@ -1095,6 +1145,25 @@ dossier personnel et une racine de support jetables (`CFFIXED_USER_HOME`,
 `OMP_CONSOLE_SUPPORT_ROOT`, recette de préparation `succes`) : ni les préférences, ni
 le trousseau, ni le `~/.omp` de l'utilisateur ne sont touchés. Codes de sortie :
 0 image produite, 1 échec, 2 non exécuté hors macOS.
+
+### Captures de la nouvelle interface
+
+```bash
+bash scripts/recette/os-shots.sh
+```
+
+Même principe que la capture de l'onglet « Preuves », sur l'interface par défaut : le
+script construit l'app, démarre `scripts/recette/os-demo-serveur.ts` (le vrai
+gestionnaire HTTP et le vrai orchestrateur d'omp-harness sur un monde de test : une
+revue à valider, une question, une feature au travail, une feature retenue en file, un
+échec, un arrêt motivé, un audit proposé, deux espaces, des consignes permanentes, une
+règle de palier, une session omp locale), puis relance une COPIE de l'app
+(`com.omp.console.recette-os`, préférences vides : `ui.os` n'est pas posée) une fois
+par écran, ouvert par les variables `OMP_CONSOLE_OS_*`. Six images sous
+`omp-console/build/os-shots/` (dossier ignoré par git) : `maintenant.png`, `fil.png`,
+`tri.png`, `propositions.png`, `savoir.png`, `espace.png`. Codes de sortie : 0 les six
+images produites, 1 échec, 2 non exécuté hors macOS. `mac-shots.sh` pose `ui.os` à faux :
+l'onglet « Preuves » est celui de l'interface classique.
 
 ### Liste attendue des intents Siri
 

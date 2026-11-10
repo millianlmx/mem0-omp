@@ -1,11 +1,15 @@
-// L'« OS agentique » sur le Mac : la COQUE du nouveau paradigme. Le Radar en haut ; les
-// fils à gauche (avec « Demander à l'OS… » en tête) ; le fil choisi au centre ;
-// « Comprendre » en inspecteur à droite ; le Tri des décisions en feuille (⌘T). Les
-// écrans eux-mêmes sont partagés avec l'iPhone/iPad (`ConsoleUI/OS/`) : ce fichier ne
-// porte que ce qui est propre au Mac — colonnes, inspecteur, barre d'outils, raccourcis,
-// direct d'une session, variables de recette. Activée par Présentation ▸ « Nouvelle
-// interface (prototype) » (⌘⇧O), préférence `ui.os`.
+// L'« OS agentique » sur le Mac : la COQUE de l'interface par défaut. Le Radar en haut ;
+// les fils à gauche (avec « Demander à l'OS… » en tête, l'espace et le lieu, les entrées
+// fixes) ; au centre « Maintenant », les Propositions, le Savoir, les Automatismes, la
+// page d'un espace ou le fil choisi ; « Comprendre » en inspecteur à droite ; le Tri des
+// décisions en feuille (⌘T). Les écrans eux-mêmes sont partagés avec l'iPhone/iPad
+// (`ConsoleUI/OS/`) : ce fichier ne porte que ce qui est propre au Mac — colonnes,
+// inspecteur, barre d'outils, raccourcis (⌘L composeur, ⌘T tri, ⌘⇧P pause, ⌥⌘I
+// inspecteur), presse-papiers, direct d'une session, variables de recette. L'interface
+// classique reste à un geste : Présentation ▸ « Interface classique » (⌘⇧O), préférence
+// `ui.os`.
 
+import AppKit
 import ConsoleClient
 import ConsoleCore
 import ConsoleUI
@@ -19,24 +23,38 @@ struct OSRootView: View {
     @ObservedObject var history: HarnessRunsHistory
     @ObservedObject var vigie: HarnessVigie
     @ObservedObject var atlassian: AtlassianModel
+    @ObservedObject var spaces: HarnessSpacesModel
+    @ObservedObject var localSessions: HarnessLocalSessionsModel
     @StateObject private var workspace: OSWorkspace
-    @AppStorage("ui.os") private var osMode = false
+    @AppStorage("ui.os") private var osMode = true
+    /// Un lien ou une notification demande ce qui attend l'humain : le tri s'ouvre.
+    @Binding var triageRequested: Bool
     /// Ouvre une section de l'interface classique (une commande de la palette qui n'a pas d'équivalent ici).
     let select: @MainActor (ConsoleSection) -> Void
 
     /// Recette : `OMP_CONSOLE_OS_LEVEL` nomme un niveau de « Comprendre » par son mot
     /// français, quelle que soit la langue de l'app (ou par son code : `summary`, `story`…).
     private static let recipeLevels: [String: OSLevel] = ["Résumé": .summary, "Récit": .story, "Preuves": .proofs, "Brut": .raw]
+    /// Recette : `OMP_CONSOLE_OS_VIEW` nomme l'écran du centre ; `space:<identifiant ou nom>`
+    /// ouvre la page d'un espace.
+    private static let recipeViews = ["now": OSWorkspace.now, "proposals": OSWorkspace.proposals, "knowledge": OSWorkspace.knowledge, "automations": OSWorkspace.automations]
+    private static let recipeSpacePrefix = "space:"
 
-    init(server: HarnessModel, drafts: HarnessDrafts, select: @escaping @MainActor (ConsoleSection) -> Void) {
+    init(
+        server: HarnessModel, drafts: HarnessDrafts, triageRequested: Binding<Bool>,
+        select: @escaping @MainActor (ConsoleSection) -> Void
+    ) {
         self.server = server
         self.drafts = drafts
+        _triageRequested = triageRequested
         self.select = select
         _workstation = ObservedObject(wrappedValue: server.workstation)
         _intakes = ObservedObject(wrappedValue: server.intakes)
         _history = ObservedObject(wrappedValue: server.history)
         _vigie = ObservedObject(wrappedValue: server.vigie)
         _atlassian = ObservedObject(wrappedValue: server.atlassian)
+        _spaces = ObservedObject(wrappedValue: server.spaces)
+        _localSessions = ObservedObject(wrappedValue: server.localSessions)
         _workspace = StateObject(wrappedValue: OSWorkspace(server: server))
     }
 
@@ -47,7 +65,8 @@ struct OSRootView: View {
             projects: server.projects,
             audits: server.audits,
             requests: workstation.requests ?? [],
-            incidents: vigie.incidents
+            incidents: vigie.incidents,
+            localSessions: localSessions.sessions
         )
     }
 
@@ -56,34 +75,24 @@ struct OSRootView: View {
         Dictionary((workstation.status?.browsers ?? []).map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
     }
 
-    /// Les lieux où l'OS travaille : les dépôts déclarés (et ceux des fils), puis le Poste.
-    private func places(_ threads: [OSThread]) -> [String] {
-        let repos = Set(server.repos.map(\.name) + threads.compactMap(\.repo)).sorted()
-        return repos + (threads.contains { !$0.requests.isEmpty } ? [OSWorkspace.postePlace] : [])
-    }
-
-    /// Les fils du lieu retenu.
-    private func filtered(_ threads: [OSThread]) -> [OSThread] {
-        guard let place = workspace.place else { return threads }
-        if place == OSWorkspace.postePlace { return threads.filter { !$0.requests.isEmpty } }
-        return threads.filter { $0.repo == place }
-    }
-
     var body: some View {
         let threads = threads
-        let decisions = OSDecision.all(server: server, workstation: workstation)
+        let decisions = OSDecisions.all(server: server).count
+        let space = spaces.spaces.first { $0.id == workspace.spaceId }
         VStack(spacing: 0) {
             OSRadar(server: server, workstation: workstation, vigie: vigie, pulse: workspace.pulse, workspace: workspace, threads: threads)
             Divider()
             NavigationSplitView {
                 OSThreadList(
                     server: server, intakes: intakes, pulse: workspace.pulse, workspace: workspace,
-                    threads: filtered(threads), places: places(threads), browsers: browserNames, decisions: decisions.count
+                    threads: OSThreadScope.threads(threads, spaceId: workspace.spaceId, place: workspace.place, spaces: spaces.spaces),
+                    places: OSThreadScope.places(repos: server.repos.map(\.name), threads: threads, space: space),
+                    browsers: browserNames, decisions: decisions
                 )
                 .listStyle(.sidebar)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320)
             } detail: {
-                detail(threads, decisions: decisions.count)
+                detail(threads, decisions: decisions)
             }
         }
         .toolbar {
@@ -107,11 +116,8 @@ struct OSRootView: View {
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
             }
-            ToolbarItem(placement: .automatic) {
-                Button(OSText.classic) { osMode = false }
-            }
         }
-        .navigationTitle(workspace.selection == OSWorkspace.automations ? OSText.automations : threads.first { $0.id == workspace.selection }?.title ?? OSText.now)
+        .navigationTitle(title(threads))
         // Les feuilles de création (nouvelle feature ⌘N, projet, audit, planification, Demande) et la
         // palette ⌘K : celles de l'interface classique. Une commande vers une section classique y bascule.
         .consolePalette(server: server, drafts: drafts, sections: ConsoleSection.allCases, memory: true) { section in
@@ -137,21 +143,69 @@ struct OSRootView: View {
                 workspace.understanding = true
             }
             if environment["OMP_CONSOLE_OS_TRIAGE"] != nil { workspace.triage = true }
+            if let view = environment["OMP_CONSOLE_OS_VIEW"].flatMap({ Self.recipeViews[$0] }) { workspace.selection = view }
             await history.refresh()
             await workstation.load()
             await vigie.load()
             await intakes.refresh()
             await atlassian.refresh()
+            await localSessions.refresh()
+            await spaces.refresh()
             await server.refreshCatalog()
+            // Recette : l'espace retenu dans la liste, et la page d'un espace (par identifiant ou par nom).
+            if let chosen = recipeSpace(environment["OMP_CONSOLE_OS_SPACE"]) { workspace.choose(space: chosen) }
+            if let view = environment["OMP_CONSOLE_OS_VIEW"], view.hasPrefix(Self.recipeSpacePrefix),
+               let shown = recipeSpace(String(view.dropFirst(Self.recipeSpacePrefix.count))) {
+                workspace.selection = OSWorkspace.space(shown.id)
+            }
         }
-        // Un lien `ompconsole://runs/<id>` ou une notification touchée : le fil de la feature.
-        .onChange(of: (drafts.openedRun ?? "") + "|\(history.runs.count)", initial: true) {
-            guard let runId = drafts.openedRun,
-                  let thread = threads.first(where: { $0.runs.contains { $0.id == runId } }) else { return }
-            workspace.open(thread.id)
-            drafts.openedRun = nil
+        // Un lien `ompconsole://runs/<id>`, une notification touchée, une proposition acceptée : le
+        // fil de la feature s'ouvre dès qu'il existe.
+        .onChange(of: "\(drafts.openedRun ?? "")|\(workspace.pendingRunId ?? "")|\(threads.count)", initial: true) {
+            if let runId = drafts.openedRun {
+                drafts.openedRun = nil
+                workspace.open(runId: runId, in: threads)
+            } else {
+                workspace.settle(threads)
+            }
+        }
+        .onChange(of: triageRequested, initial: true) {
+            guard triageRequested else { return }
+            triageRequested = false
+            workspace.triage = true
+        }
+        // Les liens propres à cette interface : `ompconsole://now`, `ompconsole://decisions`,
+        // `ompconsole://threads/<id>` (ceux des sections classiques passent par la racine).
+        .onOpenURL { url in
+            switch url.host {
+            case "now": workspace.selection = OSWorkspace.now
+            case "decisions": workspace.triage = true
+            case "threads":
+                if let thread = url.pathComponents.dropFirst().first { workspace.open(thread) }
+            default: break
+            }
         }
         .onDisappear { workspace.pulse.stop() }
+    }
+
+    /// L'espace qu'une variable de recette nomme, par identifiant ou par nom.
+    private func recipeSpace(_ name: String?) -> HarnessSpace? {
+        guard let name else { return nil }
+        return spaces.spaces.first { $0.id == name } ?? spaces.spaces.first { $0.name == name }
+    }
+
+    /// Le titre de la fenêtre : ce que montre le centre.
+    private func title(_ threads: [OSThread]) -> String {
+        switch workspace.selection {
+        case OSWorkspace.automations: return OSText.automations
+        case OSWorkspace.proposals: return OSWatchText.proposals
+        case OSWorkspace.knowledge: return OSWatchText.knowledge
+        default: break
+        }
+        if let id = OSWorkspace.spaceId(of: workspace.selection), let space = spaces.spaces.first(where: { $0.id == id }) {
+            return space.name
+        }
+        return threads.first { $0.id == workspace.selection }?.title ?? OSText.now
     }
 
     @ViewBuilder
@@ -160,10 +214,27 @@ struct OSRootView: View {
         Group {
             if workspace.selection == OSWorkspace.automations {
                 OSAutomationsView(server: server, drafts: drafts)
+            } else if workspace.selection == OSWorkspace.proposals {
+                OSProposalsView(server: server, workspace: workspace, threads: threads)
+            } else if workspace.selection == OSWorkspace.knowledge {
+                OSKnowledgeView(
+                    server: server, workspace: workspace,
+                    openMemory: {
+                        osMode = false
+                        select(.memory)
+                    },
+                    openClassic: { osMode = false }
+                )
+            } else if let spaceId = OSWorkspace.spaceId(of: workspace.selection) {
+                OSSpacePage(server: server, spaceId: spaceId) { text in
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+                .id(spaceId)
             } else if let thread {
                 OSThreadView(
                     server: server, workstation: workstation, intakes: intakes, pulse: workspace.pulse, workspace: workspace,
-                    thread: thread, browsers: browserNames
+                    thread: thread, browsers: browserNames // drafts: drafts
                 )
                 .id(thread.id)
             } else {
