@@ -32,6 +32,10 @@
 #      Les trois tournent SANS court-circuit : la sortie de chacun est transmise
 #      telle quelle (chemins `fichier.ts(l,c): error TSxxxx`), et le script sort
 #      non nul dès qu'un seul a échoué.
+#
+# MEM0_OMP_TSC_ARGS (facultative) : options ajoutées telles quelles à CHAQUE
+# programme tsc — c'est ainsi que scripts/types-ratchet.ts rejoue les mêmes trois
+# programmes avec une option stricte de plus. Vide ou absente : comportement inchangé.
 set -u
 
 cd "$(dirname "$0")/.." || exit 1
@@ -135,7 +139,10 @@ ln -sfn "$ROOT" .typecheck/node_modules
 
 echo "  · tsc : $TSC (TypeScript $TS_VERSION)"
 STATUS=0
-node "$TSC" -p tsconfig.json || STATUS=1
-node "$TSC" -p tsconfig.test.json || STATUS=1
-node "$TSC" -p omp-chrome/tsconfig.json || STATUS=1
+# shellcheck disable=SC2086 # le découpage en mots de MEM0_OMP_TSC_ARGS est voulu
+node "$TSC" -p tsconfig.json ${MEM0_OMP_TSC_ARGS:-} || STATUS=1
+# shellcheck disable=SC2086
+node "$TSC" -p tsconfig.test.json ${MEM0_OMP_TSC_ARGS:-} || STATUS=1
+# shellcheck disable=SC2086
+node "$TSC" -p omp-chrome/tsconfig.json ${MEM0_OMP_TSC_ARGS:-} || STATUS=1
 exit "$STATUS"

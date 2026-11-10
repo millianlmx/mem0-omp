@@ -1,0 +1,27 @@
+// Interdit : remplacer du code réel par une doublure dans un test — `mock.module`, `mock.method`, `mock.getter`,
+// `mock.setter` de node:test, `jest.mock`, `vi.mock`, `jest.spyOn`, `vi.spyOn`.
+// Pourquoi : le test prouve alors l'écho de la doublure, pas le comportement du module. On injecte une dépendance
+// (paramètre, fabrique) ou on lance le vrai code contre un faux serveur/processus. `mock.fn` et `mock.timers` restent permis.
+language js(typescript);
+
+`$f($args)` as $call where {
+  $f <: or {
+    `mock.module`,
+    `$_.mock.module`,
+    `mock.method`,
+    `$_.mock.method`,
+    `mock.getter`,
+    `$_.mock.getter`,
+    `mock.setter`,
+    `$_.mock.setter`,
+    `jest.mock`,
+    `jest.spyOn`,
+    `vi.mock`,
+    `vi.spyOn`
+  },
+  register_diagnostic(
+    span = $call,
+    message = "Doublure d'un module ou d'une méthode réelle interdite : injecte la dépendance ou lance le vrai code (anti-slop/no-module-mocking).",
+    severity = "error"
+  )
+}

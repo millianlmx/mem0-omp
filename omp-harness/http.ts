@@ -26,6 +26,8 @@ import { TEST_JUDGES, testsJudge } from "./config.ts";
 import type { ActionState, ClientSource, DecisionStatus, EventRow, RepoFilter, SignalState } from "./db.ts";
 import { ACTION_STATES, CLIENT_SOURCES, SIGNAL_STATES } from "./db.ts";
 import { HarnessError } from "./errors.ts";
+import { IdempotencyGuard, fingerprintOf, idempotencyKey } from "./idempotency.ts";
+import type { Reply } from "./idempotency.ts";
 import {
   alwaysInput,
   autonomyField,
@@ -145,6 +147,8 @@ export const API_FEATURES = [
   "brief",
   "scoreboard",
   "proposals",
+  "idempotency",
+  "schedule-payload",
 ] as const;
 
 /** Le refus d'un geste du poste (ou d'un signalement de collègue) à un client restreint à des dépôts. */
@@ -371,6 +375,23 @@ export function apiRoutes(
     pattern: new RegExp(`^${path.replace(/\{n\}/g, "(\\d+)").replace(/\{(id|name)\}/g, "([\\w.-]+)")}$`),
     handle,
   });
+  const idempotency = new IdempotencyGuard(store);
+  /**
+   * Une création qui honore `Idempotency-Key` (idempotency.ts) : `make` ne tourne qu'à la première requête
+   * de la clé, les suivantes rejouent sa réponse. `body` entre dans l'empreinte de la requête.
+   */
+  const once = async (call: Call, body: unknown, make: () => Promise<Reply> | Reply): Promise<void> => {
+    const reply = await idempotency.run(
+      call.client.name,
+      idempotencyKey(call.req),
+      fingerprintOf(call.req.method ?? "POST", call.url.pathname, body),
+      make,
+    );
+    send(call.res, reply.status, reply.body, {
+      ...reply.headers,
+      ...(reply.replayed ? { "Idempotent-Replay": "true" } : {}),
+    });
+  };
   const visibleAudit = (call: Call, id: string) => {
     const audit = store.getAudit(id);
     if (!audit || !canSeeRepo(call.client, audit.repo)) throw new HarnessError(404, `audit inconnu : ${id}`);
@@ -537,8 +558,10 @@ export function apiRoutes(
     }),
     route("POST", "/v1/runs", "operator", async (call) => {
       const body = await readBody(call.req);
-      const run = orchestrator.createRun(newRunInput(body, call.client, { typed: true }), call.actor);
-      send(call.res, 201, { run }, { ETag: `"${run.rev}"` });
+      await once(call, body, () => {
+        const run = orchestrator.createRun(newRunInput(body, call.client, { typed: true }), call.actor);
+        return { status: 201, body: { run }, headers: { ETag: `"${run.rev}"` } };
+      });
     }),
     route("GET", "/v1/runs/{id}", "viewer", (call) => {
       const view = orchestrator.runView(call.match[1] as string, call.repos);
@@ -867,9 +890,12 @@ export function apiRoutes(
       }),
     ),
     route("POST", "/v1/intake", "operator", async (call) => {
-      const intake = orchestrator.intake.create(await readBody(call.req), call.client, call.actor);
-      void orchestrator.tick();
-      send(call.res, 201, { intake: intakeView(intake, call.client) });
+      const body = await readBody(call.req);
+      await once(call, body, () => {
+        const intake = orchestrator.intake.create(body, call.client, call.actor);
+        void orchestrator.tick();
+        return { status: 201, body: { intake: intakeView(intake, call.client) } };
+      });
     }),
     route("GET", "/v1/intake/{id}", "viewer", (call) =>
       send(call.res, 200, {
@@ -1022,10 +1048,22 @@ export function apiRoutes(
       orchestrator.schedules.delete(call.match[1] as string, call.actor, call.repos);
       send(call.res, 200, { deleted: true });
     }),
+    // Le déclencheur entrant : une planification (même désactivée) lancée à la demande. `payload` — ce que
+    // l'appelant (CI, webhook, script) veut dire au run — rejoint la demande d'un run comme donnée non fiable.
     route("POST", "/v1/schedules/{id}/run", "operator", async (call) => {
-      const fired = await orchestrator.schedules.runNow(call.match[1] as string, call.actor, call.repos);
-      void orchestrator.tick();
-      send(call.res, 201, fired, { ETag: `"${fired.schedule.rev}"` });
+      const body = await readBody(call.req);
+      const payload = instructionsInput(body, "payload", false);
+      await once(call, body, async () => {
+        const fired = await orchestrator.schedules.runNow(
+          call.match[1] as string,
+          call.actor,
+          call.repos,
+          Date.now(),
+          payload,
+        );
+        void orchestrator.tick();
+        return { status: 201, body: fired, headers: { ETag: `"${fired.schedule.rev}"` } };
+      });
     }),
     // Le poste de travail (extension Chrome, outils OMP, apps) : propriétaire seulement.
     route("GET", "/v1/workstation", "viewer", (call) => send(call.res, 200, workstationOf(call).status())),

@@ -1363,6 +1363,23 @@ au serveur :
   (`sudo -u omp-runner -H omp --profile pipeline`, puis `/login`). Les fournisseurs
   qu'omp ne sait connecter qu'au terminal (GitHub Copilot) rendent son message.
 
+  **Conditions des fournisseurs.** Le harness travaille sans toi, la nuit, en parallèle,
+  sur un serveur : c'est le cas que les abonnements grand public prévoient le moins, et
+  chaque fournisseur reste seul juge de son usage. Pour Claude, la page
+  [Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance) de
+  Claude Code (relue le 2026-11-10) dit que l'OAuth d'abonnement est « conçu pour un
+  usage ordinaire » de Claude Code et des applications d'Anthropic, que les plafonds
+  annoncés de Pro, Max et Ultra supposent « un usage ordinaire et individuel », que
+  les développeurs de produits ou de services doivent employer une clé d'API (Console
+  ou fournisseur cloud) et qu'on ne peut pas collecter ni stocker des identifiants
+  Claude.ai ; Anthropic peut faire appliquer ces règles sans préavis. Ici, omp stocke
+  la connexion dans le HOME des runners, sur ton serveur, pour ton seul usage : rien
+  ne l'autorise ni ne l'interdit explicitement, et le risque est celui de ton compte.
+  **Pour un usage continu, prends une clé d'API** (`anthropic` ci-dessus) et garde les
+  abonnements aux essais et aux petits dépôts ; pour un doute sur ton cas, Anthropic
+  renvoie à son équipe commerciale. Les autres fournisseurs ont leurs propres règles :
+  lis-les avant de connecter leur abonnement. Ce paragraphe n'est pas un avis juridique.
+
 Puis les chaînes : pour chaque tier (`fast`, `standard`, `heavy`), la liste ordonnée
 des `fournisseur/modèle` à essayer (bascule sur le suivant après un rate limit, un 5xx ou une panne réseau ; seul de sa chaîne, un fournisseur est réessayé après son `retry-after`). Une
 capacité et un remplissage par minute (`capacity`, `refillPerMinute`) donnent au
@@ -2084,6 +2101,28 @@ supprimée entre-temps, l'échéance est `failed` (404).
 Côté omp, `harness_schedule` crée une planification du dépôt courant (avec l'accord de
 l'utilisateur, comme `harness_launch`) et `harness_schedules` les liste.
 
+### Le déclencheur entrant
+
+`POST /v1/schedules/{id}/run` lance une planification à la demande, hors échéance, **même
+désactivée** : c'est le point d'entrée d'une CI, d'un webhook ou d'un script (« le build est
+rouge, corrige »). On crée la planification une fois (`enabled: false`, un `cron` quelconque
+qui ne sert pas), puis l'appelant la déclenche avec le jeton d'un client `operator` borné
+au dépôt (`omp-harness-client add ci-demo operator demo`).
+
+- **`payload`** (corps JSON, facultatif, 4000 caractères au plus, 400 sinon) : ce que
+  l'appelant veut dire au run (le log d'un build, un identifiant d'alerte). Il est ajouté à
+  la `request` de la cible **entre délimiteurs de contenu non fiable** (`untrusted()`) : une
+  donnée à lire, jamais une consigne, et ses chevrons triples sont neutralisés pour qu'il ne
+  referme pas le bloc. Seule une cible `run` en reçoit une (400 pour `audit`, `issues`,
+  `automation`).
+- **La voie complète est forcée** avec une `payload` (`lane: "full"`, /req puis /specs) : un
+  texte reçu ne peut pas faire passer la demande pour « déjà cadrée » en portant une
+  section `## Critères d'acceptation`.
+- **Pas d'empilement ni d'emballement** : tant que le run lancé par le déclenchement
+  précédent n'est pas fini, ou si le plafond journalier est atteint, 409. C'est le seul
+  limiteur : un webhook qui boucle ne crée pas de runs en rafale.
+- Avec `Idempotency-Key` (§ « API »), une relance de la CI ne lance pas deux fois.
+
 ## Observabilité
 
 - **Journal JSON.** Une ligne par événement, sur stderr et dans
@@ -2479,7 +2518,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/digest?since=` | viewer | Le rapport du matin des dépôts du client : `{since, until, text, counts {merged, decisions, waiting, failed}}`. `since` en ms epoch (défaut : il y a 24 h ; 400 s'il est illisible). `text` (Markdown, français) liste les runs mergés dans la fenêtre (lien de la PR ou sha court), les décisions prises seules dans la fenêtre et pas encore relues, les runs qui attendent l'humain à cet instant (`awaiting_human`, `escalated`, avec la raison), les runs échoués dans la fenêtre, les échéances des planifications de la fenêtre (lancées, sautées ou manquées), puis le coût de la fenêtre si la consommation est connue, et pour un client qui voit tous les dépôts la section « Santé » (mémoire, sauvegardes) ; une section vide est omise, « Rien de neuf. » si tout est vide. Sa dernière ligne nomme le commit déployé (`Commit déployé : <sha court>`, ou inconnu), celui de `/v1/health`. |
 | `GET /v1/schedules` · `POST /v1/schedules` `{name, cron, target, enabled?}` | viewer · operator | Les planifications des dépôts que le client voit (`{timezone, schedules}` ; chacune `id`, `name`, `cron`, `target`, `repo`, `enabled`, `nextRunAt`, `lastRunAt`, `lastOutcome`, `lastFired`, `createdBy`, `rev`), créer (201, `ETag` = `rev` ; 403 pour un dépôt non permis, 404 non déclaré, 400 pour un cron illisible ou une cible invalide). § « Les planifications ». |
 | `PUT /v1/schedules/{id}` `{name?, cron?, target?, enabled?}` · `DELETE /v1/schedules/{id}` | operator | Modifier (seuls les champs présents ; un nouveau `cron` ou une réactivation réarment `nextRunAt` depuis maintenant) ou supprimer. `If-Match: <rev>` facultatif : périmé, 412. Une planification d'un dépôt que le client ne voit pas : 404. |
-| `POST /v1/schedules/{id}/run` | operator | Déclencher tout de suite, hors échéance, même désactivée (`{schedule, outcome}`, 201) ; 409 si le lancement précédent n'est pas fini ou le plafond journalier atteint. `nextRunAt` ne bouge pas. |
+| `POST /v1/schedules/{id}/run` `{payload?}` | operator | Déclencher tout de suite, hors échéance, même désactivée (`{schedule, outcome}`, 201) ; 409 si le lancement précédent n'est pas fini ou le plafond journalier atteint. `nextRunAt` ne bouge pas. `payload` (4000 caractères au plus) : une donnée jointe à la demande d'un run, entre délimiteurs non fiables, voie complète forcée ; 400 pour une cible qui n'est pas un run (§ « Le déclencheur entrant »). |
 | `GET /metrics` | viewer | L'exposition Prometheus du service (§ Observabilité) ; 403 à un client borné à des dépôts. |
 | `POST /v1/client-errors` `{source, version, kind, message, context?}` | viewer | Une erreur d'un client (`source` : `mac` \| `ios` \| `chrome` \| `omp` \| `vigie` ; `context` : objet de 8 Kio au plus) : 202 `{id}`, événement `client_error`, ligne de journal error ; 60 par minute et par client, puis 429 avec `Retry-After`. |
 | `GET /v1/client-errors?since=&source=&limit=` | viewer | Les erreurs des clients, les plus récentes d'abord (200 par défaut, 1000 au plus) ; un client borné à des dépôts ne voit que les siennes. |
@@ -2555,6 +2594,17 @@ Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un r�
 insuffisant rend 403, un dépôt non permis 403 à la création et 404 en lecture. Une
 erreur imprévue rend 500 `erreur interne (réf. <8 hex>)` : sa cause (qui peut citer un
 chemin ou une commande) ne va qu'au journal du service, sous la même référence.
+
+**Idempotence des créations.** `POST /v1/runs`, `POST /v1/intake` et
+`POST /v1/schedules/{id}/run` honorent l'en-tête `Idempotency-Key` (1 à 128 caractères parmi
+lettres, chiffres, `.`, `_`, `:` et `-`, sinon 400) : un client qui rejoue sa requête après
+une coupure réseau ou un geste en double ne crée pas deux fois la même chose, et chaque run
+coûte des dollars. La première réponse 2xx est gardée 24 h, **par client**, et rendue telle
+quelle (même statut, mêmes en-têtes, `Idempotent-Replay: true`) ; la vue du run rejouée est
+celle de la première réponse, pas son état actuel (`GET /v1/runs/{id}` rend le courant).
+La même clé pour une autre requête (autre route, autre corps) : 422, rien n'est créé. La même
+clé pendant que la première requête court encore : 409, le client réessaie. Un refus ou un
+échec n'est jamais gardé : la relance repart de zéro. Sans en-tête, rien ne change.
 
 ## Architecture
 
@@ -2778,3 +2828,77 @@ rien n'est tranché. Les notifications d'un run se groupent (`thread-id` : l'id 
 même silence d'agent, même sauvegarde en échec), et porte sa clé en `apns-collapse-id`.
 Un jeton refusé par Apple (410, `BadDeviceToken`, `Unregistered`) est oublié ; l'app
 le réenregistre à son prochain lancement.
+
+## La CLI de script
+
+`omp-harness/cli.ts` lance une feature et l'attend depuis un shell ou une CI, sans app ni
+plugin : `node --experimental-strip-types omp-harness/cli.ts <commande> …` (Node ≥ 22.6, aucune
+dépendance). Elle parle à l'API REST avec un jeton d'**opérateur** (`run`) ou de lecteur
+(`status`, `wait`, `list`).
+
+```sh
+node --experimental-strip-types omp-harness/cli.ts run --repo mon-produit \
+  --title "Ajouter X" --request "Faire X : …" --wait --timeout 2h --json
+echo "$LONGUE_DEMANDE" | node --experimental-strip-types omp-harness/cli.ts run \
+  --repo mon-produit --title "Ajouter X" --request - --key livraison-42
+```
+
+| Commande | Rôle |
+|---|---|
+| `run --repo <dépôt> --title <titre> (--request <texte> \| --request -) [--lane full\|direct] [--priority n] [--budget usd] [--key <clé>] [--wait] [--timeout 90s\|5m\|2h] [--json]` | `POST /v1/runs` (le corps de `newRunInput`) ; sans `--wait`, rend dès que le run est créé |
+| `status <runId> [--json]` | `GET /v1/runs/{id}` : l'état d'un run, une fois |
+| `wait <runId> [--timeout …] [--json]` | sonde `GET /v1/runs/{id}` jusqu'à la fin du run |
+| `list [--repo <dépôt>] [--json]` | `GET /v1/runs` |
+
+- **Connexion** : `HARNESS_URL` et `HARNESS_TOKEN`, sinon `~/.omp/harness.json`
+  (`{"url", "token"}`, le fichier qu'écrit `harness.sh pair`). Le jeton ne se passe jamais en
+  argument (une option `--token` n'existe pas : elle rend 2) et n'est écrit dans aucune
+  sortie, même quand le serveur le répète dans un message d'erreur.
+- **`--request -`** lit la demande sur stdin, jusqu'à 1 Mio (la limite d'un corps que le
+  serveur lit) ; au-delà, ou vide, la ligne de commande est fausse (2).
+- **`--lane`** : `full` force la voie complète (`/req`). `direct` est la voie que le serveur
+  choisit seul quand la demande porte ses critères d'acceptation (il n'accepte pas de la
+  forcer) : la CLI n'envoie alors rien. Sans `--lane`, même chose.
+- **`--key`** envoie l'en-tête `Idempotency-Key` : relancer la même commande avec la même
+  clé rend le même run (voir « Idempotence »). Sans `--key`, `run` tire une clé aléatoire,
+  qu'il garde pour sa propre relance : une erreur réseau ou un 502/503/504 est retentée UNE
+  fois avec la même clé (un 4xx ne l'est jamais), et un run n'est donc pas créé deux fois
+  par une réponse perdue. La clé utilisée est rendue dans le JSON de `run` (`key`).
+- **`--wait`** attend la FIN du run (`merged`, `failed`, `cancelled`) ou une attente de
+  l'humain : il sonde toutes les 3 s (`--poll 500ms` pour changer) jusqu'à `--timeout`
+  (défaut 30 min ; `90s`, `5m`, `2h`, un nombre seul vaut des secondes). Le délai n'arrête que
+  l'attente : le run continue sur le serveur, et `wait <runId>` la reprend. Les sondes qui
+  échouent (réseau, 502/503/504) sont tolérées jusqu'à 5 de suite : un serveur qui redémarre
+  ne perd pas une attente de deux heures.
+
+### Codes de sortie
+
+Le contrat est figé : un script peut s'y fier.
+
+| Code | Sens |
+|---|---|
+| `0` | livré : le run est `merged` ; ou, pour `run` sans `--wait`, le run est créé ; ou `list` réussie |
+| `1` | échoué ou annulé (`failed`, `cancelled`), ou refusé par le serveur (un 4xx, un 5xx autre que 502/503/504) |
+| `2` | ligne de commande fausse : option ou commande inconnue, valeur manquante ou invalide, demande vide ou trop grosse |
+| `3` | le run attend un humain : `awaiting_human` (specs à valider, verdict, arbitrage, budget, échec à relancer) ou `escalated` (questions à trancher) |
+| `4` | délai d'attente dépassé (`--timeout`) ; `status` rend aussi 4 pour un run encore en cours |
+| `5` | serveur injoignable (réseau, 502/503/504 persistant) ou harness non configuré |
+
+Pour `3`, la raison est `run.reason` (celle de la machine d'états : « specs à valider avant
+/impl : … », « validation humaine : … », « budget dépassé », « 1 décision(s) irréversible(s) à
+trancher », etc.) ; le genre est `waiting.kind` : `specs`, `irreversible`, `verdict`,
+`arbitration`, `budget`, `failure` (`awaiting_human`) ou `questions` (`escalated`, avec les
+questions ouvertes). La CLI ne tranche rien : répondre, valider ou relancer se fait depuis une
+app, l'API (`/escalations`, `/validate`, `/retry`) ou l'outil MCP.
+
+### Sorties
+
+- Sans `--json` : sur stdout, `<runId> <état>` puis, indentées, la raison (sauf livré) et la
+  PR ; `list` rend `<runId> <état> <dépôt> <titre>` par ligne. Sur stderr : la phrase d'erreur
+  pour un code non nul, et l'avancement de l'attente (« état : running (impl) »).
+- Avec `--json` : UN objet sur stdout, rien sur stderr, y compris pour un échec :
+  `{"ok": true, "exitCode": 0, "runId", "state", "outcome", "run", "key"?}` ;
+  `{"ok": false, "exitCode": 3, "error", "outcome": "waiting_human", "waiting": {"kind", "reason", "questions"?}, …}`.
+  `outcome` vaut `created`, `delivered`, `failed`, `cancelled`, `waiting_human`, `timeout` ou
+  `running` (`status` d'un run en cours) ; une ligne de commande fausse ou un serveur muet
+  rendent `{"ok": false, "exitCode": 2 | 5, "error"}`.

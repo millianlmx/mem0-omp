@@ -378,8 +378,11 @@ test("known-flaky-tests-registry/AC-9 : ces tests tournent dans la section tests
   }
   const check = fs.readFileSync(path.join(ROOT, "scripts/check.sh"), "utf8");
   const ids = /^SECTION_IDS="([^"]*)"$/m.exec(check)?.[1];
-  // `lint` vient de no-ts-lint-formatter, pas de cette feature.
-  assert.equal(ids, "catalogue noms plugins versions extension types lint rust smoke tests noyau app-swift app-ios");
+  // `lint` vient de no-ts-lint-formatter, `plafond-types` de anti-slop, pas de cette feature.
+  assert.equal(
+    ids,
+    "catalogue noms plugins versions extension types lint plafond-types rust smoke tests noyau app-swift app-ios",
+  );
 });
 
 // ── Expiration des entrées (raison, expire, issue facultative) ──

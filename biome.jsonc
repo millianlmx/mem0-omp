@@ -41,5 +41,17 @@
     }
   },
   // Le tri des imports n'est ni du lint ni du format (hors B-1) : l'ordre des imports reste celui écrit à la main.
-  "assist": { "enabled": false }
+  "assist": { "enabled": false },
+  // Règles « anti-slop » en GritQL (scripts/biome-rules/*.grit, documentées dans DEVELOPPEMENT.md § CI) qui font
+  // respecter la politique de tests du dépôt (CONTRIBUTING.md : on prouve un comportement, pas un état figé ni l'écho
+  // d'une doublure). Les globs sont comparés au chemin ABSOLU : d'où le `**/` initial. Ces quatre-là n'avaient aucune
+  // violation à la pose : ERREUR sur tout leur périmètre. Les deux qui en avaient (no-sleep-in-tests, no-unknown-returns)
+  // sont dans scripts/biome-rules/baseline.jsonc, qui ne fait que décroître.
+  "extends": ["./scripts/biome-rules/baseline.jsonc"],
+  "plugins": [
+    { "path": "./scripts/biome-rules/no-snapshot-tests.grit", "includes": ["**/test/**/*.ts"] },
+    { "path": "./scripts/biome-rules/no-module-mocking.grit", "includes": ["**/test/**/*.ts"] },
+    { "path": "./scripts/biome-rules/no-only-tests.grit", "includes": ["**/test/**/*.ts"] },
+    { "path": "./scripts/biome-rules/no-tautological-assertions.grit", "includes": ["**/test/**/*.ts"] }
+  ]
 }

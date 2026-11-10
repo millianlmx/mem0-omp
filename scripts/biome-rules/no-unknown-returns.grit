@@ -1,0 +1,22 @@
+// Interdit : une fonction EXPORTÉE qui déclare `: unknown` (ou `: Promise<unknown>`) comme type de retour.
+// Pourquoi : `unknown` renvoie le travail de typage à chaque appelant, qui le refait par un `as` sans preuve. Type le
+// retour (le type réel, une union, un générique) ; `unknown` reste permis en ENTRÉE (valeur non fiable à valider).
+// Limites de GritQL : les génériques ne sont reconnus que sous la forme `<T>` ; une fonction non exportée n'est pas visée.
+language js(typescript);
+
+or {
+  `export function $name($params): unknown { $body }`,
+  `export function $name($params): Promise<unknown> { $body }`,
+  `export function $name<T>($params): unknown { $body }`,
+  `export function $name<T>($params): Promise<unknown> { $body }`,
+  `export default function $name($params): unknown { $body }`,
+  `export const $name = ($params): unknown => $body`,
+  `export const $name = async ($params): Promise<unknown> => $body`,
+  `export const $name = function ($params): unknown { $body }`
+} where {
+  register_diagnostic(
+    span = $name,
+    message = "Retour `unknown` sur une fonction exportée : type le résultat (anti-slop/no-unknown-returns).",
+    severity = "error"
+  )
+}

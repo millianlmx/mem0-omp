@@ -1,0 +1,31 @@
+// Interdit : une assertion qui compare une expression à elle-même (`assert.equal(x, x)`, `assert.deepEqual(a.b, a.b)`)
+// ou qui affirme une constante (`assert.ok(true)`, `assert(true)`).
+// Pourquoi : elle passe quel que soit le code testé. Compare à une valeur écrite à la main, ou supprime le test.
+language js(typescript);
+
+`$f($args)` as $call where {
+  or {
+    and {
+      $f <: or {
+        `assert.equal`,
+        `assert.strictEqual`,
+        `assert.deepEqual`,
+        `assert.deepStrictEqual`,
+        `$_.assert.equal`,
+        `$_.assert.strictEqual`,
+        `$_.assert.deepEqual`,
+        `$_.assert.deepStrictEqual`
+      },
+      $args <: [$a, $a, ...]
+    },
+    and {
+      $f <: or { `assert.ok`, `assert`, `$_.assert.ok` },
+      $args <: [`true`, ...]
+    }
+  },
+  register_diagnostic(
+    span = $call,
+    message = "Assertion tautologique : elle passe quel que soit le code testé (anti-slop/no-tautological-assertions).",
+    severity = "error"
+  )
+}

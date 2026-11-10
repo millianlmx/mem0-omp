@@ -1,0 +1,56 @@
+{
+  // BASELINE des règles anti-slop (scripts/biome-rules/*.grit) qui avaient déjà des violations quand elles ont été
+  // posées. Biome ne sait pas tolérer un fichier à un seul niveau « warn » sans casser `--error-on-warnings`, donc la
+  // dette existante est exclue du PÉRIMÈTRE de la règle (`!**/<chemin>`) : ce qui n'est pas listé ici est jugé en erreur.
+  //
+  // Cette liste ne fait que DÉCROÎTRE (test/outillage/anti-slop.test.ts) :
+  //  - une NOUVELLE violation dans un fichier non listé fait échouer `bash scripts/lint.sh` ;
+  //  - un fichier listé qui ne viole plus la règle (ou qui a disparu) doit être RETIRÉ d'ici, le test l'exige ;
+  //  - ne jamais AJOUTER un chemin : corrige le code.
+  // Les règles sans violation à la pose sont déclarées dans biome.jsonc, sans exclusion.
+  "plugins": [
+    {
+      "path": "./scripts/biome-rules/no-sleep-in-tests.grit",
+      "includes": [
+        "**/test/**/*.ts",
+        "!**/test/extension/poste-capacites.test.ts",
+        "!**/test/extension/poste-execution.test.ts",
+        "!**/test/harness/demande.test.ts",
+        "!**/test/harness/harness-backups.test.ts",
+        "!**/test/harness/harness-events.test.ts",
+        "!**/test/harness/harness-fairness.test.ts",
+        "!**/test/harness/harness-http.test.ts",
+        "!**/test/harness/harness-monitoring.test.ts",
+        "!**/test/harness/harness-oauth.test.ts",
+        "!**/test/harness/harness-observabilite.test.ts",
+        "!**/test/harness/harness-plafond-cout.test.ts",
+        "!**/test/harness/harness-portainer.test.ts",
+        "!**/test/harness/harness-proc.test.ts",
+        "!**/test/harness/harness-raison-de-file.test.ts",
+        "!**/test/harness/harness-reves.test.ts",
+        "!**/test/harness/harness-rpc.test.ts",
+        "!**/test/harness/harness-sse.test.ts",
+        "!**/test/harness/issues-auto-par-label.test.ts",
+        "!**/test/harness/moli-poste.test.ts",
+        "!**/test/harness/moli-socle.test.ts",
+        "!**/test/harness/poste-serveur.test.ts",
+        "!**/test/stack/mem0-rs-migration.test.ts",
+        "!**/test/stack/mem0-stack-bascule-rust.test.ts",
+        "!**/test/support/atlassian-double.ts",
+        "!**/test/support/fake-omp-rpc.ts",
+        "!**/test/support/harness-fixtures.ts",
+        "!**/test/support/moli.ts"
+      ]
+    },
+    {
+      "path": "./scripts/biome-rules/no-unknown-returns.grit",
+      "includes": [
+        "**/omp-harness/**/*.ts",
+        "**/omp-mem0-req/**/*.ts",
+        "**/omp-chrome/**/*.ts",
+        "**/scripts/**/*.ts",
+        "!**/omp-chrome/src/cdp.ts"
+      ]
+    }
+  ]
+}

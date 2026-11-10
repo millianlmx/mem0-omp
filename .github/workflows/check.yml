@@ -144,7 +144,7 @@ jobs:
   # vers `main`, ils ne tournent pas (mesuré le 2026-10-22 : 16 jobs macOS par
   # feature pour 5 runners, dont 8 au push qui reprouvaient l'arbre que la PR de
   # release venait de prouver). L'union de leurs `--sections` couvre
-  # les 13 sections de check.sh : rien de ce que le job macOS vérifiait ne disparaît.
+  # les 14 sections de check.sh : rien de ce que le job macOS vérifiait ne disparaît.
   #
   # Les deux jobs d'app ne compilent que si le diff de la PR peut avoir changé
   # l'app (scripts/ci-scope.sh : omp-console/, scripts/, mem0-stack/, ce
@@ -273,7 +273,7 @@ jobs:
         part: ["1/2", "2/2"]
         include:
           - part: "1/2"
-            sections: catalogue,noms,plugins,versions,extension,types,lint,rust,smoke,tests,noyau
+            sections: catalogue,noms,plugins,versions,extension,types,lint,plafond-types,rust,smoke,tests,noyau
           - part: "2/2"
             sections: tests
     runs-on: macos-latest

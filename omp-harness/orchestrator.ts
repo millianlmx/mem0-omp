@@ -46,6 +46,7 @@ import type { Brief, HeldBy } from "./brief.ts";
 import { HumanLoop } from "./gestures.ts";
 import type { AmendVia, Delivered, EscalationAnswer } from "./gestures.ts";
 import { newId } from "./ids.ts";
+import { IDEMPOTENCY_TTL_MS } from "./idempotency.ts";
 import { budgetUsd } from "./input.ts";
 import type { CancelMotive } from "./input.ts";
 import { changesOf, fileDiffOf, timelineOf } from "./inspect.ts";
@@ -590,6 +591,7 @@ export class Orchestrator {
     const before = now - this.#ctx.config.events.retentionDays * 24 * 60 * 60 * 1000;
     const pruned = this.store.pruneEvents(before);
     this.store.pruneSessions(before);
+    this.store.pruneIdempotency(now - IDEMPOTENCY_TTL_MS);
     if (pruned > 0)
       this.#ctx.log(`journal : ${pruned} événement(s) de plus de ${this.#ctx.config.events.retentionDays} j purgé(s)`);
   }

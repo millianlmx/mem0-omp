@@ -31,7 +31,7 @@ const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
 const NESTED = "copie jetable — l'arbre réel est éprouvé au premier niveau";
 
-/** Les 13 en-têtes de check.sh, dans l'ordre d'exécution (S-1). */
+/** Les 14 en-têtes de check.sh, dans l'ordre d'exécution (S-1). */
 const HEADERS = [
   "── Catalogue marketplace",
   "── Noms",
@@ -40,6 +40,7 @@ const HEADERS = [
   "── Extension",
   "── Types",
   "── Lint TypeScript",
+  "── Plafond de types",
   "── Rust mem0-rs",
   "── Plugins réels (OMP)",
   "── Tests",
@@ -100,11 +101,11 @@ function testFiles(cwd: string, args: string[] = []) {
 }
 
 const lines = (text: string) => text.split("\n").filter((line) => line !== "");
-// Seuls les 13 en-têtes de section comptent : le harnais de `── Plugins réels`
+// Seuls les 14 en-têtes de section comptent : le harnais de `── Plugins réels`
 // imprime ses propres lignes `── <plugin>`.
 const headersOf = (text: string) => text.split("\n").filter((line) => HEADERS.includes(line));
 
-/** Les 13 identifiants de section de check.sh (S-1). */
+/** Les 14 identifiants de section de check.sh (S-1). */
 const SECTION_IDS = [
   "catalogue",
   "noms",
@@ -113,6 +114,7 @@ const SECTION_IDS = [
   "extension",
   "types",
   "lint",
+  "plafond-types",
   "rust",
   "smoke",
   "tests",
@@ -193,7 +195,7 @@ function lightCopy(tests: Record<string, string>): string {
   return dir;
 }
 
-test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 13 sections et toute la suite node", (t) => {
+test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 14 sections et toute la suite node", (t) => {
   if (DEPTH > 0) {
     t.skip(NESTED);
     return;
@@ -234,15 +236,14 @@ test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 13 sect
   assert.deepEqual(lines(fs.readFileSync(marker, "utf8")).sort(), ["fixture/a", "fixture/b"]);
 });
 
-test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections listées, un id inconnu ne lance rien, et les jobs macOS couvrent les 13 sections", () => {
+test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections listées, un id inconnu ne lance rien, et les jobs macOS couvrent les 14 sections", () => {
   const only = runCheck(ROOT, ["--sections=noms,catalogue"]);
   assert.equal(only.status, 0, output(only));
   // Ordre du script, pas celui de la liste.
   assert.deepEqual(headersOf(output(only)), ["── Catalogue marketplace", "── Noms"], output(only));
   assert.ok(only.stdout.includes("Dépôt prêt à publier."), output(only));
 
-  const ids =
-    "catalogue, noms, plugins, versions, extension, types, lint, rust, smoke, tests, noyau, app-swift, app-ios";
+  const ids = SECTION_IDS.join(", ");
   const cases: Array<[string[], string]> = [
     [["--sections=bogus"], `✗ section inconnue : « bogus » (attendu : ${ids})`],
     [["--sections="], `✗ section inconnue : «  » (attendu : ${ids})`],
@@ -260,7 +261,7 @@ test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections lis
     assert.equal(bad.stdout, "", `${args.join(" ")} : aucune section ne doit s'exécuter`);
   }
 
-  // Volet CI : l'union des --sections des jobs macOS couvre les 13 sections.
+  // Volet CI : l'union des --sections des jobs macOS couvre les 14 sections.
   const jobs = workflowJobs(readWorkflow());
   const covered: string[] = [];
   for (const id of MACOS_JOBS) {

@@ -13,14 +13,14 @@
 //        → sessions → usage → push → push-devices → workstation → workstation-meetings
 //        → workstation-captures → workstation-browsers → workstation-requests
 //        → issues → schedules → observability → vigie → corporate-signals → intakes → atlassian
-//        → standing-rules → spaces → proposals → local-sessions
+//        → standing-rules → spaces → proposals → local-sessions → idempotency
 //        → Store
 //
 // Ainsi `Store` garde l'API d'un seul objet pour tous ses appelants, et une couche
 // qui a besoin d'une autre (le journal lit le dépôt d'un run) la trouve en dessous.
-import { LocalSessionStore } from "./db/local-sessions.ts";
+import { IdempotencyStore } from "./db/idempotency.ts";
 
-export class Store extends LocalSessionStore {}
+export class Store extends IdempotencyStore {}
 
 export { MIGRATIONS } from "./db/schema.ts";
 export type { RepoFilter } from "./db/sql.ts";

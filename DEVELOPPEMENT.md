@@ -31,6 +31,9 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/typecheck.sh               type-check des plugins, de test/ et de l'extension Chrome (tsc épinglé)
 ├── scripts/omp-host.sh                l'hôte OMP épinglé de la CI, préparé dans le cache (types et smoke)
 ├── scripts/lint.sh                    lint et format (Biome épinglé), sans réseau
+├── scripts/biome-rules/               les règles anti-slop (GritQL) du lint et leur baseline
+├── scripts/types-ratchet.ts           plafond d'erreurs TypeScript par fichier pour une option stricte (tsc épinglé)
+├── scripts/types-ratchet-baseline.json   les plafonds courants de ce plafond de types, par fichier
 ├── scripts/moli.sh                    le binaire Moli v1.1.22 épinglé des tests du harness, préparé dans .moli/
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
 ├── scripts/swift-app.sh               tests release puis bundle .app de l'app Mac
@@ -280,7 +283,7 @@ service mem0 étant remplacé par un stub local, donc sans conteneur ni credenti
 Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux statuts
 ainsi que `release-simulation` : le merge est bloqué.
 
-Sur Ubuntu, le job `check` lance `./scripts/check.sh --strict` : ses 13
+Sur Ubuntu, le job `check` lance `./scripts/check.sh --strict` : ses 14
 sections à chaque run ; en pull_request il ajoute `--tests-base=<sha de la base>` et la
 section tests se réduit aux fichiers que le diff de la PR concerne, au push vers `main`
 la suite node tourne entière (filet des trous de sélection). Les jobs macOS ne tournent
@@ -415,6 +418,54 @@ et la copie de `scripts/release-simulation.sh` réutilisent ainsi celle de la
 racine. Chaque job CI qui lance `check.sh` prépare l'outil juste avant. Pour
 corriger en local ce que la section signale :
 `.lint/node_modules/.bin/biome check --write omp-mem0-req omp-harness scripts test`.
+
+Le même lint porte des règles « anti-slop » en GritQL, un fichier par règle dans
+`scripts/biome-rules/`, déclarées sous `plugins` dans `biome.jsonc` (les globs y
+sont comparés au chemin absolu, d'où le `**/` initial). Elles font respecter la
+politique de tests de CONTRIBUTING.md — on prouve un comportement, pas un état
+figé ni l'écho d'une doublure — et chaque diagnostic cite `anti-slop/<règle>` :
+
+| Règle | Ce qu'elle interdit | Pourquoi | Périmètre | État |
+|---|---|---|---|---|
+| `no-snapshot-tests` | `toMatchSnapshot`, `toMatchInlineSnapshot`, `t.assert.snapshot`… | un instantané fige la sortie courante sans dire ce qu'elle doit être, et se met à jour d'un geste | `test/` | erreur |
+| `no-sleep-in-tests` | `await sleep(n)`, `await new Promise((r) => setTimeout(r, n))`, `await setTimeout(n)` | un délai fixe est trop court (instable sous charge) ou trop long (suite lente) : attends l'événement, l'état observé ou `t.mock.timers.tick` | `test/` | baseline |
+| `no-module-mocking` | `mock.module`, `mock.method`, `mock.getter`/`setter`, `jest.mock`, `vi.spyOn`… | le test prouve alors l'écho de la doublure, pas le module ; injecte la dépendance ou lance le vrai code (`mock.fn`, `mock.timers` restent permis) | `test/` | erreur |
+| `no-only-tests` | `test.only`, `describe.only`, `{ only: true }` | un `only` oublié fait taire le reste du fichier en laissant la suite verte | `test/` | erreur |
+| `no-tautological-assertions` | `assert.equal(x, x)`, `assert.deepEqual(a.b, a.b)`, `assert.ok(true)` | elle passe quel que soit le code testé | `test/` | erreur |
+| `no-unknown-returns` | une fonction **exportée** dont le retour est `unknown` ou `Promise<unknown>` | l'appelant refait le typage par un `as` sans preuve ; `unknown` reste permis en entrée | `omp-harness/`, `omp-mem0-req/`, `omp-chrome/`, `scripts/` | baseline |
+
+Mesuré à la pose (2026-11-10) : 51 sites dans 27 fichiers pour `no-sleep-in-tests`,
+1 pour `no-unknown-returns` (`omp-chrome/src/cdp.ts`, une commande CDP dont le
+résultat est réellement non typé), aucun pour les quatre autres — celles-là sont en
+**erreur** sur tout leur périmètre. Une règle qui avait déjà des violations est dans
+`scripts/biome-rules/baseline.jsonc` (chargé par `extends`) : les fichiers listés sont
+exclus de son périmètre (`!**/<chemin>`), le reste est jugé en erreur, donc une
+**nouvelle** violation fait échouer `bash scripts/lint.sh`. La baseline ne fait que
+**décroître** : un fichier qui ne viole plus sa règle doit en être retiré, et en
+ajouter un fait échouer `test/outillage/anti-slop.test.ts` — corrige le code. Les
+limites de GritQL sont dans l'en-tête de chaque `.grit` (par exemple, les génériques ne
+sont reconnus que sous la forme `<T>`).
+
+La section `── Plafond de types` (id `plafond-types`, juste après `lint`) passe
+`scripts/types-ratchet.ts` : il rejoue les trois programmes de `scripts/typecheck.sh`
+(même tsc épinglé, mêmes types de l'hôte, hors réseau) avec une option stricte que les
+`tsconfig` n'activent pas, `noUncheckedIndexedAccess`, passée par
+`MEM0_OMP_TSC_ARGS`, puis compte les erreurs **par fichier** (une erreur vue par deux
+programmes compte une fois) et les compare au plafond de
+`scripts/types-ratchet-baseline.json`. Mesuré à la pose (2026-11-10, sur `main`) :
+`noUncheckedIndexedAccess` donne 372 erreurs brutes sur les trois programmes (316 distinctes,
+dans 48 fichiers), `exactOptionalPropertyTypes` 122 brutes, `noImplicitOverride` aucune ;
+la première est la
+seule à la fois bornée et utile (chaque erreur est un `tab[i]` ou un `.find()` non
+gardé). Elle n'impose aucun changement de comportement : la convention `!` après un
+accès indexé (biome.jsonc) reste valable, le plafond empêche seulement d'en ajouter
+un sans garde. Une erreur en plus dans un fichier, ou dans un fichier absent de la
+baseline, rougit la section (code 1) ; un fichier sous son plafond est signalé sans
+échec et invite à `node --experimental-strip-types scripts/types-ratchet.ts --write`,
+qui réécrit la baseline — à n'utiliser que pour **baisser** (une hausse s'affiche
+`plafond RELEVÉ` et se refuse en revue). Sans TypeScript épinglé ni types de l'hôte, la
+section annonce « plafond non vérifié » sans `✓` (la section Types rougit déjà pour un
+tsc absent) ; elle fait partie du job `macos-tests (1/2)`.
 
 La section `── Rust mem0-rs` joue le **contrat boîte noire** de l'API mémoire
 (`scripts/mem0-http-contrat.sh --run`) contre mem0-rs : il exerce par HTTP les 9 routes du

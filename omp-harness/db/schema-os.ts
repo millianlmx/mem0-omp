@@ -71,4 +71,17 @@ export const MIGRATIONS_OS: readonly string[] = [
      updated_at INTEGER NOT NULL
    );
    CREATE INDEX events_type ON events (type, id);`,
+  // Les clés d'idempotence (`Idempotency-Key`) : la réponse 2xx d'une création, rejouée telle quelle à la
+  // même clé du même client pendant 24 h (idempotency.ts). `fingerprint` : la requête qui l'a produite.
+  `CREATE TABLE idempotency_keys (
+     client TEXT NOT NULL,
+     key TEXT NOT NULL,
+     fingerprint TEXT NOT NULL,
+     status INTEGER NOT NULL,
+     headers TEXT NOT NULL,
+     body TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     PRIMARY KEY (client, key)
+   );
+   CREATE INDEX idempotency_keys_created ON idempotency_keys (created_at);`,
 ];

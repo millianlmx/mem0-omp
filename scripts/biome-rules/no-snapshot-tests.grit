@@ -1,0 +1,19 @@
+// Interdit : les tests d'instantané (`expect(x).toMatchSnapshot()`, `t.assert.snapshot(x)`, fichiers d'instantané).
+// Pourquoi : un instantané fige la sortie courante sans dire ce qu'elle DOIT être ; il se met à jour d'un geste
+// (`--test-update-snapshots`) et fait passer pour un contrat ce qui n'est qu'un état. Écris l'attendu à la main.
+language js(typescript);
+
+`$f($args)` as $call where {
+  $f <: or {
+    `$_.toMatchSnapshot`,
+    `$_.toMatchInlineSnapshot`,
+    `$_.toMatchFileSnapshot`,
+    `$_.assert.snapshot`,
+    `$_.assert.fileSnapshot`
+  },
+  register_diagnostic(
+    span = $call,
+    message = "Test d'instantané interdit : écris la valeur attendue dans le test (anti-slop/no-snapshot-tests).",
+    severity = "error"
+  )
+}
