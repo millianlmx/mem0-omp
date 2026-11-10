@@ -1,7 +1,7 @@
 // Les FILS de l'OS agentique (OSThreads, OSDecisions, OSPulse) : le titre nettoyé, le
 // regroupement des features en fils, l'ordre et la phase d'un fil, les sections de la
-// liste, une session omp locale devenue fil, l'espace d'un fil, les lots de décisions de
-// même sorte et l'activité d'une session locale dans le pouls. Pur, sauf le pouls (flux
+// liste, une session omp locale devenue fil, l'espace d'un fil et d'une décision, les lots
+// de décisions de même sorte et l'activité d'une session locale dans le pouls. Pur, sauf le pouls (flux
 // scripté sur la doublure de transport).
 
 @testable import ConsoleClient
@@ -181,7 +181,7 @@ struct OSThreadsTests {
         #expect(threads.first?.id == "w:q3", "ce qui vit passe devant")
     }
 
-    @Test("un audit ouvert sans projet est son propre fil : « à vous » quand ses propositions attendent ; lancé en projet, il devient l'origine du fil du projet")
+    @Test("un audit ouvert sans projet est son propre fil : au travail tant qu'il analyse, livré une fois ses propositions rendues (elles ne sont pas une décision) ; lancé en projet, il devient l'origine du fil du projet")
     func audits() throws {
         let audits = [
             HarnessAudit(id: "a1", repo: "demo", focus: "## Sécurité\ndes formulaires", state: "proposed", createdAt: 10),
@@ -192,7 +192,9 @@ struct OSThreadsTests {
         let threads = OSThreads.build(runs: [run("p1", "Cache HTTP", at: 50, project: "p")], inbox: nil, audits: audits)
         #expect(Set(threads.map(\.id)) == ["a:a1", "a:a2", "r:p1"])
         let proposed = try #require(threads.first { $0.id == "a:a1" })
-        #expect(proposed.phase == .yours && proposed.pending == 1 && proposed.title == "Sécurité" && proposed.origin == .audit("## Sécurité\ndes formulaires"))
+        #expect(proposed.phase == .done && proposed.pending == 0, "des propositions d'audit ne mettent pas le fil « à vous » : elles vivent dans Propositions")
+        #expect(proposed.title == "Sécurité" && proposed.origin == .audit("## Sécurité\ndes formulaires") && proposed.audit?.isProposed == true)
+        #expect(!threads.contains { $0.phase == .yours })
         let analysing = try #require(threads.first { $0.id == "a:a2" })
         #expect(analysing.phase == .working && analysing.pending == 0 && analysing.title == "docs", "sans périmètre : le dépôt")
         #expect(threadOf("p1", in: threads)?.origin == .audit("perf"))
@@ -363,7 +365,7 @@ struct OSThreadsTests {
 
     // MARK: Décisions
 
-    @Test("les décisions de même sorte forment un lot, dans l'ordre de lecture ; un lot de plusieurs se tranche d'un geste ; aucune sorte vide")
+    @Test("les décisions de même sorte forment un lot, dans l'ordre de lecture ; un lot de plusieurs se tranche d'un geste ; aucune sorte vide ; un audit proposé n'est pas une décision")
     func decisionLots() throws {
         let question = HarnessEscalation(id: 7, runId: "r1", category: "schema", question: "Où ?", options: ["a", "b"])
         let inbox = HarnessInbox(
@@ -393,12 +395,13 @@ struct OSThreadsTests {
         let write = try JSONDecoder().decode(AtlassianWrite.self, from: Data(#"{"id":"w1","issueKey":"ACME-1","body":"Fait."}"#.utf8))
 
         let all = OSDecisions.all(inbox: inbox, approvals: approvals, intakes: [planned, classifying], writes: [write])
-        #expect(all.map(\.id) == ["q:r1", "s:r2", "v:r3", "s:r4", "a:a1", "w:9", "w:10", "i:i1", "j:w1"])
-        #expect(all.map(\.repo) == ["demo", "docs", "demo", "demo", "demo", nil, nil, "demo", nil])
+        #expect(all.map(\.id) == ["q:r1", "s:r2", "v:r3", "s:r4", "w:9", "w:10", "i:i1", "j:w1"], "l'audit proposé de la boîte n'y est pas")
+        #expect(all.map(\.repo) == ["demo", "docs", "demo", "demo", nil, nil, "demo", nil])
+        #expect(OSDecisionKind.allCases == [.questions, .specs, .verdict, .approval, .intake, .jira])
 
         let lots = OSDecisions.lots(all)
-        #expect(lots.map(\.kind) == [.questions, .specs, .verdict, .approval, .intake, .audit, .jira])
-        #expect(lots.map(\.items.count) == [1, 2, 1, 2, 1, 1, 1])
+        #expect(lots.map(\.kind) == [.questions, .specs, .verdict, .approval, .intake, .jira])
+        #expect(lots.map(\.items.count) == [1, 2, 1, 2, 1, 1])
         let specs = try #require(lots.first { $0.kind == .specs })
         #expect(specs.isBatch && specs.id == "specs" && specs.runIds == ["r2", "r4"], "deux specs : un seul geste peut les valider")
         #expect(specs.items.map(\.id) == ["s:r2", "s:r4"])
@@ -408,6 +411,40 @@ struct OSThreadsTests {
         #expect(OSDecisions.of(runId: "r2", inbox: inbox).map(\.id) == ["s:r2"])
         #expect(OSDecisions.of(runId: "r9", inbox: inbox).isEmpty, "les questions d'une feature terminée n'attendent plus personne")
         #expect(OSDecisions.lots([]).isEmpty && OSDecisions.all(inbox: nil).isEmpty)
+    }
+
+    @Test("chaque décision a son espace : celui de son dépôt, l'espace du poste pour un envoi ou une Demande au poste, l'espace du projet Jira pour un commentaire ; l'espace retenu ne garde que les siennes, et le rangement par espace met le hors-espace en dernier")
+    func decisionSpaces() throws {
+        let spaces = [
+            HarnessSpace(id: "s1", name: "Acme", repos: ["boutique"], jiraProjects: ["acme"]),
+            HarnessSpace(id: "s2", name: "Perso", repos: ["demo"], poste: true),
+        ]
+        let review = OSDecision.verdict(run("r1", "A", .awaitingHuman, repo: "boutique", at: 1))
+        let specs = OSDecision.specs(run("r2", "B", .awaitingHuman, repo: "demo", step: "specs", at: 2))
+        let orphan = OSDecision.verdict(run("r3", "C", .awaitingHuman, repo: "ailleurs", at: 3))
+        let send = OSDecision.approval(WorkstationAction(seq: 9, kind: "type", rationale: "r", state: "awaiting_approval"))
+        let comment = OSDecision.jira(try JSONDecoder().decode(AtlassianWrite.self, from: Data(#"{"id":"w1","issueKey":"ACME-12","body":"Fait."}"#.utf8)))
+        let stray = OSDecision.jira(try JSONDecoder().decode(AtlassianWrite.self, from: Data(#"{"id":"w2","issueKey":"AUTRE-1","body":"Fait."}"#.utf8)))
+        let desk = OSDecision.intake(try JSONDecoder().decode(HarnessIntake.self, from: JSONSerialization.data(withJSONObject: [
+            "id": "i1", "text": "t", "source": "console", "state": "planned", "exchanges": [] as [Any], "statement": "t",
+            "plan": ["kind": "workstation_request", "title": "T", "statement": "t"], "createdAt": 1, "updatedAt": 2,
+        ] as [String: Any])))
+        let all = [review, specs, orphan, send, comment, stray, desk]
+
+        #expect(all.map { OSDecisions.space(of: $0, spaces: spaces)?.id } == ["s1", "s2", nil, "s2", "s1", nil, "s2"])
+        #expect(OSDecisions.space(of: send, spaces: [spaces[0]]) == nil, "aucun espace ne porte le poste")
+        #expect(desk.repo == nil && review.repo == "boutique")
+
+        #expect(OSDecisions.scoped(all, spaceId: "s1", spaces: spaces).map(\.id) == ["v:r1", "j:w1"])
+        #expect(OSDecisions.scoped(all, spaceId: "s2", spaces: spaces).map(\.id) == ["s:r2", "w:9", "i:i1"])
+        #expect(OSDecisions.scoped(all, spaceId: nil, spaces: spaces) == all && OSDecisions.scoped(all, spaceId: "inconnu", spaces: spaces) == all)
+
+        let groups = OSDecisions.bySpace(all, spaces: spaces)
+        #expect(groups.map { $0.space?.id } == ["s1", "s2", nil])
+        #expect(groups.map { $0.items.map(\.id) } == [["v:r1", "j:w1"], ["s:r2", "w:9", "i:i1"], ["v:r3", "j:w2"]])
+        #expect(OSDecisions.bySpace([specs], spaces: spaces).map(\.id) == ["s2"], "aucun groupe vide")
+        #expect(OSDecisions.bySpace(all, spaces: []).map(\.items.count) == [7], "sans espace sur le serveur : un seul groupe")
+        #expect(OSDecisionLot(kind: .verdict, items: [review], spaceId: "s1").id == "s1/verdict" && OSDecisionLot(kind: .verdict, items: [review]).id == "verdict")
     }
 
     @Test("les décisions du serveur relié réunissent la boîte et les Demandes ouvertes")

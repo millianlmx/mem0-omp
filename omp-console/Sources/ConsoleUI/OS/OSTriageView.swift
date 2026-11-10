@@ -1,9 +1,12 @@
-// L'« OS agentique » : le TRI, partagé par le Mac et l'iPhone/iPad. Les décisions en grand,
-// une étape à la fois : une décision seule (⏎ prend le geste principal), ou un LOT de
-// décisions de même sorte qui se tranchent d'un geste — commentaires Jira, envois du poste,
-// revues à risque faible sans réserve : une ligne par élément, cases cochées, « Tout
-// envoyer (n) » ou « Tout valider (n) ». → passe l'étape, ↑ ouvre « Comprendre » sur la
-// feature. La coque le présente (en feuille sur le Mac) et lui donne sa taille.
+// L'« OS agentique » : le TRI de ce qui est « À vous », partagé par le Mac et
+// l'iPhone/iPad. Les décisions en grand, une étape à la fois, espace après espace : une
+// décision seule (⏎ prend le geste principal), ou un LOT de décisions de même sorte ET de
+// même espace qui se tranchent d'un geste — commentaires Jira, envois du poste, revues à
+// risque faible sans réserve : une ligne par élément, cases cochées, « Tout envoyer (n) »
+// ou « Tout valider (n) ». L'en-tête dit la position (« 1 sur 3 ») ; quand les décisions
+// sont de plusieurs espaces, l'espace de l'étape est annoncé (« ● Client Acme — 2 ») ;
+// avec un espace choisi, le tri ne montre que les siennes. → remet l'étape à plus tard.
+// La coque le présente (en feuille sur le Mac) et lui donne sa taille.
 
 import ConsoleClient
 import ConsoleCore
@@ -14,14 +17,18 @@ public struct OSTriageView: View {
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var intakes: HarnessIntakes
     @ObservedObject var workspace: OSWorkspace
+    @ObservedObject var spaces: HarnessSpacesModel
     /// Le tri est la page d'un onglet (iPhone, iPad) : la barre porte son titre, et rien ne
     /// le referme.
     let embedded: Bool
     @Environment(\.dismiss) private var dismiss
+    /// Les décisions remises à plus tard : elles ne reviennent pas dans ce tri.
     @State private var skipped: Set<String> = []
+    /// Toutes les décisions vues depuis l'ouverture du tri : le total de la position.
+    @State private var known: Set<String> = []
     @State private var checks = OSLotChecks()
 
-    /// `embedded` : la coque le montre en page et non en feuille — ni titre, ni « OK ».
+    /// `embedded` : la coque le montre en page et non en feuille — ni titre, ni « Fermer ».
     public init(
         server: HarnessModel, workstation: WorkstationModel, intakes: HarnessIntakes, workspace: OSWorkspace, embedded: Bool = false
     ) {
@@ -29,54 +36,84 @@ public struct OSTriageView: View {
         self.workstation = workstation
         self.intakes = intakes
         self.workspace = workspace
+        spaces = server.spaces
         self.embedded = embedded
     }
 
     public var body: some View {
-        let steps = OSTriage.steps(OSDecisions.all(server: server), skipped: skipped)
+        let decisions = OSDecisions.scoped(OSDecisions.all(server: server), spaceId: workspace.spaceId, spaces: spaces.spaces)
+        let ids = decisions.map(\.id)
+        let steps = OSTriage.steps(decisions, skipped: skipped, spaces: spaces.spaces)
         VStack(alignment: .leading, spacing: 16) {
             if !embedded {
-                HStack {
-                    Text(OSText.triage).font(.title2.weight(.bold))
+                HStack(alignment: .firstTextBaseline) {
+                    Text(OSText.yours).font(.title2.weight(.bold))
                     Spacer()
-                    if !steps.isEmpty {
-                        Text(OSText.decisions(OSTriage.count(steps))).foregroundStyle(.secondary).monospacedDigit()
-                    }
+                    position(steps, total: max(known.count, ids.count))
                 }
-            } else if !steps.isEmpty {
-                Text(OSText.decisions(OSTriage.count(steps))).foregroundStyle(.secondary).monospacedDigit()
+            } else {
+                position(steps, total: max(known.count, ids.count))
             }
             if let current = steps.first {
                 if embedded {
                     // En page : la carte et ses gestes défilent ensemble, à toute taille de texte.
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
+                            spaceHeader(current, in: steps)
                             card(current)
                             OSLine { footer(current) }
                                 .foregroundStyle(.secondary)
                         }
                     }
                 } else {
+                    spaceHeader(current, in: steps)
                     ScrollView {
                         card(current)
                     }
                     .scrollBounceBehavior(.basedOnSize)
-                    HStack { footer(current) }
-                        .foregroundStyle(.secondary)
                 }
             } else {
                 ContentUnavailableView(OSText.nothing, systemImage: "checkmark.circle")
                     .frame(maxWidth: .infinity, maxHeight: embedded ? .infinity : nil)
             }
             if !embedded {
-                HStack {
+                HStack(spacing: 8) {
+                    if let current = steps.first { footer(current) }
                     Spacer()
-                    Button(OSText.done) { dismiss() }.keyboardShortcut(.cancelAction)
+                    Button(PipelineServerText.close) { dismiss() }.keyboardShortcut(.cancelAction)
                 }
             }
         }
         .padding(embedded ? 16 : 24)
-        .task { await server.osReadFeatures() }
+        .task {
+            await server.osReadFeatures()
+            if spaces.availability == .unknown { await spaces.refresh() }
+        }
+        .onChange(of: ids, initial: true) { known.formUnion(ids) }
+    }
+
+    /// « 1 sur 3 » : où l'on en est ; rien quand plus rien n'attend.
+    @ViewBuilder
+    private func position(_ steps: [OSTriageStep], total: Int) -> some View {
+        if let current = steps.first {
+            let range = OSTriage.position(total: total, remaining: OSTriage.count(steps), size: current.decisions.count)
+            Text(OSDecideText.position(first: range.lowerBound, last: range.upperBound, total: total))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+    }
+
+    /// « ● Client Acme — 2 » : l'espace de l'étape, quand le tri en traverse plusieurs.
+    @ViewBuilder
+    private func spaceHeader(_ current: OSTriageStep, in steps: [OSTriageStep]) -> some View {
+        if let found = OSTriage.group(of: current, in: steps, spaces: spaces.spaces) {
+            HStack(spacing: 6) {
+                if let space = found.space { OSSpaceMark(space: space, size: 11) }
+                Text(OSDecideText.spaceGroup(found.space?.name ?? OSDecideText.noSpace, count: found.count))
+                    .font(.headline)
+            }
+            .accessibilityElement(children: .combine)
+        }
     }
 
     /// L'étape montrée : une décision en grand, ou un lot.
@@ -88,46 +125,53 @@ public struct OSTriageView: View {
                 .id(current.id)
         case let .lot(lot):
             OSTriageLotCard(server: server, workstation: workstation, workspace: workspace, lot: lot, checks: $checks)
+                .id(current.id)
         }
     }
 
-    /// « Passer → » et, pour une décision seule, « Comprendre ↑ ».
-    @ViewBuilder
+    /// « Plus tard → » : l'étape est remise, la suivante arrive.
     private func footer(_ current: OSTriageStep) -> some View {
-        Button(OSText.skip + " →") { skipped.formUnion(current.decisions.map(\.id)) }
-            .keyboardShortcut(.rightArrow, modifiers: [])
-        Spacer()
-        if case let .one(decision) = current, let runId = decision.runId {
-            Button(OSText.understand + " ↑") {
-                dismiss()
-                workspace.understand(runId: runId, level: .summary)
+        Button {
+            skipped.formUnion(current.decisions.map(\.id))
+        } label: {
+            HStack(spacing: 6) {
+                Text(OSDecideText.later)
+                OSKeyHint(key: "→")
             }
-            .keyboardShortcut(.upArrow, modifiers: [])
         }
+        .keyboardShortcut(.rightArrow, modifiers: [])
     }
 }
 
-/// Un lot du tri : une ligne par décision, sa case cochée d'emblée, et le geste qui tranche
-/// toutes les cochées.
+/// Un lot du tri : pour qui, une ligne par décision, sa case cochée d'emblée, et le geste
+/// qui tranche toutes les cochées.
 struct OSTriageLotCard: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var workspace: OSWorkspace
+    @ObservedObject var spaces: HarnessSpacesModel
     let lot: OSDecisionLot
     @Binding var checks: OSLotChecks
     @State private var working = false
     @State private var failure: HarnessFailure?
 
+    init(server: HarnessModel, workstation: WorkstationModel, workspace: OSWorkspace, lot: OSDecisionLot, checks: Binding<OSLotChecks>) {
+        self.server = server
+        self.workstation = workstation
+        self.workspace = workspace
+        spaces = server.spaces
+        self.lot = lot
+        _checks = checks
+    }
+
     var body: some View {
-        let checked = checks.checked(in: lot)
+        let ticked = checks.checked(in: lot)
         OSCard(tint: .orange, emphasized: true) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 6) {
-                    Image(systemName: symbol)
-                    Text(title.uppercased())
-                }
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.orange)
+                OSSpaceLine(
+                    space: spaces.spaces.first { $0.id == lot.spaceId },
+                    items: [OSSpaceLine.Item(title, strong: true, tint: .orange, symbol: symbol)]
+                )
                 ForEach(lot.items) { item in
                     row(item)
                 }
@@ -136,13 +180,16 @@ struct OSTriageLotCard: View {
                 }
                 OSLine {
                     Button {
-                        settle(checked)
+                        settle(ticked)
                     } label: {
-                        Label(primary(checked.count), systemImage: lot.kind == .verdict ? "checkmark" : "paperplane")
+                        HStack(spacing: 6) {
+                            Label(primary(ticked.count), systemImage: lot.kind == .verdict ? "checkmark" : "paperplane")
+                            OSKeyHint(key: "⏎")
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(checked.isEmpty || !server.canAct)
+                    .disabled(ticked.isEmpty || !server.canAct)
                     Spacer()
                 }
             }
@@ -193,16 +240,18 @@ struct OSTriageLotCard: View {
             .accessibilityAddTraits(checks.isChecked(item) ? .isSelected : [])
             if let runId = item.runId {
                 Button {
+                    workspace.triage = false
                     workspace.understand(runId: runId, level: .summary)
                 } label: {
-                    Label(OSText.read, systemImage: "text.magnifyingglass").labelStyle(.iconOnly)
+                    Label(OSText.understand, systemImage: "text.magnifyingglass").labelStyle(.iconOnly)
                 }
                 .osBorderless()
             }
         }
     }
 
-    /// Ce qu'une ligne dit de sa décision : de quoi la reconnaître, puis l'essentiel de son contenu.
+    /// Ce qu'une ligne dit de sa décision : de quoi la reconnaître (son dépôt compris), puis
+    /// l'essentiel — le message à envoyer, ou pourquoi la revue vous revient.
     private static func line(_ item: ConsoleClient.OSDecision) -> (title: String, detail: String) {
         switch item {
         case let .jira(write):
@@ -210,7 +259,7 @@ struct OSTriageLotCard: View {
         case let .approval(action):
             (action.approval?.summary ?? action.kind, OSText.to(action.approval?.recipients ?? []))
         case let .verdict(run):
-            (OSThreads.clean(run.title).title + " · " + run.repo, run.verdict.map { OSThreads.firstLine($0.summary) } ?? "")
+            (run.repo + " · " + OSThreads.clean(run.title).title, OSGateReason.of(run).first?.text ?? "")
         default:
             ("", "")
         }

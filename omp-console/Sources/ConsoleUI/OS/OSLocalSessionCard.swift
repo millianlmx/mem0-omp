@@ -1,8 +1,9 @@
 // L'« OS agentique » : la SESSION LOCALE d'un fil — une session omp qui travaille sur une
 // machine de l'humain. Où elle tourne (machine, dossier, branche), avec quoi (modèle), ce
-// qu'elle a coûté, ce qu'elle fait à l'instant (le pouls). Trois gestes : « Continuer sur le
-// serveur » (l'usine reprend la branche dans une feature, dont le fil s'ouvre), « Copier la
-// commande de reprise » (la branche à récupérer sur une autre machine), « Oublier ».
+// qu'elle fait à l'instant (le pouls) ; son coût est dans l'en-tête du fil. Trois gestes :
+// « Continuer sur le serveur » (l'usine reprend la branche dans une tâche, dont le fil
+// s'ouvre), « Copier la commande de reprise » (la branche à récupérer sur une autre
+// machine), « Écarter » (la session quitte la liste).
 
 import ConsoleClient
 import ConsoleCore
@@ -37,7 +38,7 @@ public struct OSLocalSessionCard: View {
     private var state: String {
         switch session.phase {
         case .working: OSText.phaseWorking
-        case .idle: OSDecideText.sessionIdle
+        case .idle: OSDecideText.stateWaiting
         case .ended: OSDecideText.sessionEnded
         case nil: session.state
         }
@@ -60,7 +61,6 @@ public struct OSLocalSessionCard: View {
                         fact(OSDecideText.folder, session.cwd)
                         fact(OSDecideText.branch, session.branch)
                         fact(OSDecideText.model, session.model)
-                        fact(OSDecideText.cost, session.cost.map(MonitoringText.cost))
                     }
                     if failed, let failure = sessions.failure {
                         ConsoleFailureBanner(failure: failure)
@@ -71,13 +71,13 @@ public struct OSLocalSessionCard: View {
                                 .buttonStyle(.borderedProminent)
                         }
                         if let command = OSLocalSessionCommand.resume(branch: session.branch) {
-                            Button(copied ? OSDecideText.copied : OSDecideText.copyResume, systemImage: copied ? "checkmark" : "doc.on.doc") {
+                            Button(copied ? OSWatchText.copied : OSDecideText.copyResume, systemImage: copied ? "checkmark" : "doc.on.doc") {
                                 OSLocalSessionClipboard.copy(command)
                                 copied = true
                             }
                         }
                         if server.canAct {
-                            Button(OSDecideText.forget, role: .destructive, action: forget)
+                            Button(OSText.dismiss, role: .destructive, action: forget)
                         }
                     }
                     // Sur l'iPhone et l'iPad, chaque geste porte le cadre du système, à la taille du doigt.
@@ -94,17 +94,10 @@ public struct OSLocalSessionCard: View {
     /// Ce que fait la session à l'instant : le pouls, sinon sa dernière intention connue.
     @ViewBuilder
     private func intent(now: Date) -> some View {
-        let activity = pulse.current(.localSession(session.id), now: now)
-        if let line = activity?.line ?? (session.isLive ? session.intent : nil), !line.isEmpty {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("↳")
-                Text(line)
-                if let tool = activity?.tool ?? session.tool {
-                    Text(tool).font(.caption.monospaced()).foregroundStyle(.tertiary)
-                }
-            }
-            .foregroundStyle(.secondary)
-            .lineLimit(2)
+        if let line = pulse.current(.localSession(session.id), now: now)?.line ?? (session.isLive ? session.intent : nil), !line.isEmpty {
+            Text(verbatim: "↳ " + line)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
         }
     }
 

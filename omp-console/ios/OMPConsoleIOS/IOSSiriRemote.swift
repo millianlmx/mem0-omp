@@ -117,7 +117,6 @@ enum IOSSiriDecisions {
         case .verdict(let run): return IOSSiriText.review(OSThreads.clean(run.title).title)
         case .approval: return IOSSiriText.send
         case .intake: return IOSSiriText.intake
-        case .audit: return IOSSiriText.audit
         case .jira: return IOSSiriText.jira
         }
     }

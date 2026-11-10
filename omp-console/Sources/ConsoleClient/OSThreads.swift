@@ -52,7 +52,7 @@ public struct OSThread: Identifiable, Equatable, Sendable {
     /// La session omp locale du fil : seule, ou reprise par une feature (passage de relais).
     public var localSession: HarnessLocalSession? = nil
     public var phase: OSPhase
-    /// Ce qui attend l'humain dans ce fil (questions, specs, verdicts, propositions).
+    /// Ce qui attend l'humain dans ce fil (questions, specs, revues).
     public var pending: Int
     /// Les décisions prises seules, à relire.
     public var autonomous: Int
@@ -280,12 +280,13 @@ public enum OSThreads {
             ))
         }
 
-        // Un audit ouvert sans projet encore : son propre fil.
+        // Un audit ouvert sans projet encore : son propre fil. Une fois ses propositions
+        // rendues, il a livré : elles ne sont pas une décision, elles vivent dans Propositions.
         for audit in audits where audit.isOpen && audit.projectId == nil {
             threads.append(OSThread(
                 id: "a:" + audit.id, title: audit.focus.isEmpty ? audit.repo : firstLine(audit.focus), repo: audit.repo,
                 origin: .audit(audit.focus), runs: [], requests: [], audit: audit, intake: nil,
-                phase: audit.isProposed ? .yours : .working, pending: audit.isProposed ? 1 : 0, autonomous: 0, cost: 0,
+                phase: audit.isProposed ? .done : .working, pending: 0, autonomous: 0, cost: 0,
                 createdAt: audit.createdAt, updatedAt: audit.createdAt
             ))
         }
