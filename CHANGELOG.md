@@ -1,5 +1,17 @@
 # Journal des versions
 
+## omp-mem0-req 2.7.0 — 2026-11-10
+
+- feat(harness,console,chrome,req): OS agentique — boucle, autonomie, espaces, propositions, sessions locales, nouvelle interface Mac (#441) (b828a33)
+
+## omp-harness 1.37.0 — 2026-11-10
+
+- feat(harness,console,chrome,req): OS agentique — boucle, autonomie, espaces, propositions, sessions locales, nouvelle interface Mac (#441) (b828a33)
+
+## omp-chrome 0.9.0 — 2026-11-10
+
+- feat(harness,console,chrome,req): OS agentique — boucle, autonomie, espaces, propositions, sessions locales, nouvelle interface Mac (#441) (b828a33)
+
 ## omp-harness 1.36.1 — 2026-11-09
 
 - fix(harness): runner conteneur sans journal du moteur (#414) (10e8038)
