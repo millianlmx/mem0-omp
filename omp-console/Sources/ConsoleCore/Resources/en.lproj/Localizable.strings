@@ -1746,3 +1746,34 @@
 "Demander à l’OS" = "Ask the OS";
 "Nouvelle interface" = "New Interface";
 "Ce fil n’existe plus" = "This Thread No Longer Exists";
+
+/* Appairage par QR code */
+"Appairer un iPhone…" = "Pair an iPhone…";
+"Appairer un iPhone" = "Pair an iPhone";
+"Scannez ce code avec l’appareil photo de l’iPhone. Il expire dans 10 minutes et ne sert qu’une fois." = "Scan this code with the iPhone camera. It expires in 10 minutes and can be used only once.";
+"Nom de l’appareil" = "Device Name";
+"iPhone" = "iPhone";
+"Cet iPhone approuve les envois du poste" = "This iPhone approves workstation submissions";
+"Afficher le code" = "Show Code";
+"Refaire un code" = "New Code";
+"Création du code…" = "Creating the code…";
+"Code d’appairage de l’iPhone" = "iPhone pairing code";
+"Scannez-le avec l’appareil photo de l’iPhone." = "Scan it with the iPhone camera.";
+"seul un appareil approbateur peut en appairer un autre comme approbateur" = "only an approver device can pair another one as an approver";
+"Ce code a expiré. Refaites-en un." = "This code has expired. Make a new one.";
+"Expire dans %lld s" = "Expires in %lld s";
+"Expire dans %lld min %lld s" = "Expires in %lld min %lld s";
+"Appairer cet appareil avec %@ ?" = "Pair this device with %@?";
+"Cet appareil sera relié à ce serveur et y recevra son propre accès. Ne continuez que si ce code vient de votre propre Mac." = "This device will be linked to that server and get its own access there. Continue only if this code comes from your own Mac.";
+"Appairer" = "Pair";
+"Appairage en cours…" = "Pairing…";
+"Appareil appairé" = "Device Paired";
+"Cet appareil est relié à %@." = "This device is linked to %@.";
+"Appairage impossible" = "Pairing Failed";
+"Ce lien d’appairage est incomplet ou illisible. Affichez un nouveau code sur le Mac." = "This pairing link is incomplete or unreadable. Show a new code on the Mac.";
+"Ce code n’est plus valable : il a expiré ou a déjà servi. Affichez-en un nouveau sur le Mac." = "This code is no longer valid: it has expired or was already used. Show a new one on the Mac.";
+"Trop de codes ont été refusés. Réessayez dans une minute." = "Too many codes were refused. Try again in a minute.";
+"Ce serveur ne sait pas encore appairer par code. Mettez-le à jour." = "This server cannot pair by code yet. Update it.";
+"Le serveur ne peut pas créer d’accès pour cet appareil." = "The server cannot create access for this device.";
+"Le serveur ne peut pas créer d’accès pour cet appareil : %@" = "The server cannot create access for this device: %@";
+"Le code a été accepté, mais l’appareil n’a pas pu rejoindre le serveur. Affichez un nouveau code sur le Mac." = "The code was accepted, but the device could not join the server. Show a new code on the Mac.";

@@ -63,6 +63,7 @@ import { DIGEST_WINDOW_MS, digestOf } from "./digest.ts";
 import type { LogLine } from "./logger.ts";
 import { renderMetrics } from "./prometheus.ts";
 import { scheduleEdit, scheduleInput } from "./schedules.ts";
+import { PairingDesk } from "./pairing.ts";
 import { scoreboardDays, scoreboardOf } from "./scoreboard.ts";
 import { SPACE_REPORT_WINDOW_MS, spaceEdit, spaceInput } from "./spaces.ts";
 import type { BrowserHello, SessionJob, Workstation } from "./workstation.ts";
@@ -149,7 +150,23 @@ export const API_FEATURES = [
   "proposals",
   "idempotency",
   "schedule-payload",
+  "pairing-ticket",
 ] as const;
+
+/** La route publique qui échange un ticket d'appairage contre le jeton d'un appareil. */
+const REDEEM_PATH = "/v1/pair/redeem";
+
+/** La mémoire du projet que le propriétaire joint à un ticket : une adresse http(s) et un jeton sans espace. */
+function memoryInput(raw: unknown): { url: string; token: string } {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    throw new HarnessError(400, "memory : { url, token } attendu");
+  const { url, token } = raw as Record<string, unknown>;
+  if (typeof url !== "string" || !/^https?:\/\/\S{1,500}$/.test(url))
+    throw new HarnessError(400, "memory.url : une adresse http(s)");
+  if (typeof token !== "string" || token.length > 512 || /\s/.test(token))
+    throw new HarnessError(400, "memory.token : un jeton sans espace (512 caractères au plus)");
+  return { url, token };
+}
 
 /** Le refus d'un geste du poste (ou d'un signalement de collègue) à un client restreint à des dépôts. */
 const OWNER_ONLY = "le poste est réservé au propriétaire";
@@ -365,6 +382,7 @@ export function apiRoutes(
   orchestrator: Orchestrator,
   clients: ClientRegistry,
   admin: ConfigAdmin | null = null,
+  pairing: PairingDesk = new PairingDesk(clients),
 ): Route[] {
   const store = orchestrator.store;
   const route = (method: Route["method"], path: string, role: Role, handle: Route["handle"]): Route => ({
@@ -1340,6 +1358,20 @@ export function apiRoutes(
       if (!clients.revoke(call.match[1] as string)) throw new HarnessError(404, `client inconnu : ${call.match[1]}`);
       send(call.res, 200, { revoked: call.match[1] });
     }),
+    // L'appairage par QR code (pairing.ts) : un ticket à usage unique, créé par le propriétaire, échangé SANS jeton
+    // par `POST /v1/pair/redeem` (route publique, traitée avant l'authentification) contre le jeton d'un appareil.
+    route("POST", "/v1/pair/tickets", "admin", async (call) => {
+      const body = await readBody(call.req);
+      if (body.approver !== undefined && typeof body.approver !== "boolean")
+        throw new HarnessError(400, "approver : booléen");
+      const memory = body.memory === undefined || body.memory === null ? null : memoryInput(body.memory);
+      const ticket = pairing.create(call.client, {
+        label: text(body, "label", false),
+        approver: body.approver === true,
+        memory,
+      });
+      send(call.res, 201, ticket);
+    }),
     // Les fournisseurs LLM et les chaînes de modèles : admin seulement. Une clé entre, jamais ne sort.
     route("GET", "/v1/providers", "admin", (call) => send(call.res, 200, providersView())),
     route("PUT", "/v1/providers/{name}", "admin", async (call) => {
@@ -1631,12 +1663,13 @@ export function createHandler(options: HttpOptions): http.RequestListener {
   const { orchestrator } = options;
   const store = orchestrator.store;
   const clients = options.clients ?? new ClientRegistry(null, options.token ?? null);
-  const routes = apiRoutes(orchestrator, clients, options.admin ?? null);
+  const pairing = new PairingDesk(clients);
+  const routes = apiRoutes(orchestrator, clients, options.admin ?? null, pairing);
   const log: LogLine = options.log ?? ((line: string) => console.error(`[omp-harness] ${line}`));
   const stats = orchestrator.observability.http;
   /** L'étiquette `route` d'une requête : le motif de sa route, jamais l'URL brute (cardinalité bornée). */
   const routeLabel = (pathname: string): string => {
-    if (pathname === "/v1/health" || pathname === "/v1/events") return pathname;
+    if (pathname === "/v1/health" || pathname === "/v1/events" || pathname === REDEEM_PATH) return pathname;
     return routes.find((candidate) => candidate.pattern.test(pathname))?.path ?? "inconnue";
   };
 
@@ -1792,6 +1825,15 @@ export function createHandler(options: HttpOptions): http.RequestListener {
             features: API_FEATURES,
             checks: health.checks,
           });
+          return;
+        }
+        // L'échange d'un ticket d'appairage : public (l'appareil n'a pas encore de jeton), le ticket EST le secret.
+        if (req.method === "POST" && url.pathname === REDEEM_PATH) {
+          const redeemed = pairing.redeem(text(await readBody(req), "ticket"));
+          log(
+            `appairage : ${redeemed.client.name} appairé par ticket${redeemed.client.approver ? " (approbateur)" : ""}`,
+          );
+          send(res, 200, redeemed);
           return;
         }
         // Le retour du consentement Atlassian par le navigateur de l'humain : public (il n'a pas de jeton),

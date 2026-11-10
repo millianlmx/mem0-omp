@@ -40,6 +40,14 @@ struct ServerSheet: View {
                             .accessibilityIdentifier("server.providers")
                         }
                     }
+                    // Un iPhone se relie en scannant un QR code à ticket à usage unique : la rangée n'existe que
+                    // si le serveur annonce `pairing-ticket` et que ce jeton peut en créer.
+                    if server.canCreatePairInvite {
+                        Section {
+                            Button(PairingText.open, systemImage: PairingText.codeSymbol) { drafts.pairSheetShown = true }
+                                .accessibilityIdentifier("server.pair")
+                        }
+                    }
                 } else {
                     Section {
                         Text(PipelineServerText.setupExplanation)
@@ -83,6 +91,11 @@ struct ServerSheet: View {
             }
         }
         .frame(minWidth: 520, idealWidth: 560, minHeight: 320)
+        // Les capacités du serveur (`features`) viennent de sa santé, lue une fois.
+        .task { if server.isConfigured, server.health == nil { await server.refreshServices() } }
+        .sheet(isPresented: $drafts.pairSheetShown) {
+            PairDeviceSheet(server: server, memory: { PairMemory.current() })
+        }
         .confirmationDialog(PipelineServerText.forgetConfirm, isPresented: $drafts.forgetAsked) {
             Button(PipelineServerText.forget, role: .destructive) {
                 Task { await server.forget() }

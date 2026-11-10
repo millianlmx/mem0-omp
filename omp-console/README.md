@@ -336,6 +336,28 @@ elle-même.
   `sudo omp-harness-client approver` imprime le jeton approbateur seul : le saisir
   dans le champ du jeton, avec l'adresse. Chaque appel de `approver` invalide le code
   précédent.
+- **Appairer un iPhone par QR code.** Sans coller de code : sur le Mac relié à un
+  serveur qui annonce la capacité `pairing-ticket` (`GET /v1/health`), avec un jeton
+  `admin` qui voit tous les dépôts, la feuille « Serveur » offre « Appairer un
+  iPhone… » (`PairDeviceSheet`, `ConsoleUI/PairDeviceViews.swift`). Elle nomme
+  l'appareil (« iPhone » par défaut), crée un **ticket à usage unique**
+  (`POST /v1/pair/tickets`, 10 minutes, gardé en mémoire par le serveur) et l'affiche
+  en QR code (`ConsoleUI/PairQRCode.swift`, CoreImage, correction M, noir sur blanc
+  dans les deux modes) avec le temps restant ; « Refaire un code » en crée un autre.
+  L'interrupteur « Cet iPhone approuve les envois du poste » n'existe que si l'app
+  Mac a elle-même le jeton approbateur (le droit se délègue d'un approbateur à un
+  autre). La mémoire du projet est jointe au ticket quand ce Mac en lit une sur un
+  serveur (`~/.omp/mem0.json`, `Server/PairMemory.swift`), jamais l'agent local.
+  Le QR code porte `ompconsole://pair?u=<adresse du serveur>&t=<ticket>`
+  (`HarnessPairLink`, `ConsoleClient/HarnessPairLink.swift`) : l'appareil photo de
+  l'iPhone l'ouvre dans l'app, qui demande « Appairer cet appareil avec <adresse> ? »
+  (rien n'est échangé avant ce « Appairer » : un lien ne relie jamais l'appareil à un
+  serveur que l'humain n'a pas vu), puis échange le ticket SANS jeton
+  (`POST /v1/pair/redeem`, `HarnessModel.pair(with:)`) contre le jeton d'un client
+  nommé, révocable seul, et relie l'app comme le collage d'un code `omp1:` (adresse,
+  jeton au trousseau, mémoire reçue). Un ticket périmé, déjà utilisé ou refusé, un
+  serveur injoignable ou trop ancien ont chacun leur phrase. Le Mac ignore un lien
+  `pair` ouvert.
 - **Fournisseurs et modèles** (jeton `admin` seulement) — dans la feuille
   « Serveur », « Fournisseurs et modèles » (`ProvidersView.swift`,
   `ios/OMPConsoleIOS/IOSProvidersScreen.swift`) déclare les fournisseurs LLM du
@@ -2014,6 +2036,7 @@ omp-console/
 ├── Sources/ConsoleUI/             les écrans partagés macOS/iOS (boîte, Poste, historique, palette, services)
 │   ├── HarnessModel.swift         le client du serveur de pipelines du VPS
 │   ├── HarnessPairing.swift       le code d'appairage `omp1:…` et `~/.omp/harness.json`
+│   ├── HarnessPairLink.swift      l'appairage par QR code : le lien `ompconsole://pair`, le ticket, son échange sans jeton
 │   ├── MemoryReader.swift         la lecture directe de la mémoire du serveur (iOS)
 │   ├── MemoryAccess.swift         l'adresse, le jeton et le projet lu de cette mémoire
 │   ├── HarnessWire.swift          le contrat JSON du serveur de pipelines

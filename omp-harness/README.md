@@ -1103,6 +1103,30 @@ Le fichier ne garde que l'empreinte SHA-256 de chaque jeton ; une révocation va
 la requête suivante. Un client borné à des dépôts ne reçoit pas la mémoire dans son
 code (elle couvre tous les projets du serveur).
 
+**L'appairage par QR code** (`pairing.ts`). Le code `omp1:` partage le jeton historique entre
+tous les appareils, qu'on ne peut donc pas révoquer un à un. Un **ticket** le remplace : un
+client connecté le crée (`POST /v1/pair/tickets`), l'app Mac l'affiche en QR code (feuille
+« Serveur » › « Appairer un iPhone ») ou `harness.sh pair-qr [étiquette]` l'imprime
+(`qrencode`, sinon le lien), l'appareil photo de l'iPhone l'ouvre
+(`ompconsole://pair?u=<adresse>&t=<ticket>`), l'app demande confirmation en nommant le serveur
+puis l'échange (`POST /v1/pair/redeem`, **sans jeton** : le ticket est le secret) contre le
+jeton d'un client **nommé** (`<étiquette>-<6 hex>`, admin, tous les dépôts), révocable seul
+(`client revoke <nom>`).
+
+- **Tenu en mémoire, 10 minutes, un seul usage.** Un redémarrage l'invalide ; seule son empreinte
+  SHA-256 sert de clé ; l'échange le consomme AVANT de créer le client. Inconnu, périmé ou déjà
+  échangé : 401. Au plus 10 tickets en attente (409).
+- **Créer** : admin qui voit tous les dépôts, jamais un pilote (403). `approver: true` (l'appareil
+  qui approuve les envois du poste) n'est accordé que si l'appelant est LUI-MÊME approbateur
+  (403 sinon) : le droit se délègue, il ne se crée pas par l'API, et le jeton historique n'en
+  fait pas. Depuis le serveur (`harness.sh pair-qr`), un appareil ordinaire seulement : pour un
+  approbateur, passe par l'app d'un appareil approbateur.
+- **La mémoire du projet** (`memory: {url, token}`, facultative) suit le ticket jusqu'à l'échange,
+  comme dans le code `omp1:` ; elle n'est jamais écrite.
+- **Échec d'échange** : 20 par minute tous appelants confondus, puis 429 ; sans fichier de clients
+  (`clientsFile`), 409.
+- Capacité `pairing-ticket` (`GET /v1/health`).
+
 **L'auteur de chaque geste** est gardé : créateur du run (`createdBy`), réponse aux
 escalades (`answeredBy`), décision acceptée ou renversée (`decidedBy`), et `by` dans
 les événements du journal.
@@ -2424,8 +2448,8 @@ de commit conventionnel, sans ` — omp-runner-…`.
 ## API
 
 `Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health` (version
-du service, `commit` construit ou `null`, `api`, `features`) et le retour du consentement
-Atlassian (`GET /v1/atlassian/callback`). La colonne « Rôle » est le rôle minimal.
+du service, `commit` construit ou `null`, `api`, `features`), `POST /v1/pair/redeem` (l'échange
+d'un ticket d'appairage) et le retour du consentement Atlassian (`GET /v1/atlassian/callback`). La colonne « Rôle » est le rôle minimal.
 
 `features` nomme ce que le serveur sait faire au-delà de l'API 1 d'origine
 (`API_FEATURES`, `http.ts`) : un client teste la capacité avant d'offrir le geste.
@@ -2571,6 +2595,8 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/brief?since=` | viewer | Le brief « pendant votre absence » : `{brief: {since, until, seenAt, headline, delivered[{runId, repo, title, prUrl, at, cost, alone}], waiting[{runId, repo, title, wait, since}], failed[{runId, repo, title, reason, at}], stopped[{runId, repo, title, cause, at}], decided[{runId, repo, title, seq, question, chosen, status}], blocked[{runId, repo, title, cause, text}], proposals, cost}}`. `since` en ms epoch (400 s'il est illisible) ; défaut : le dernier « vu » du client, sinon il y a 24 h. |
 | `POST /v1/brief/seen` | viewer | Le client a vu le brief : `{seenAt}` (maintenant) ; le prochain brief part de cet instant. |
 | `GET /v1/scoreboard?days=` | viewer | Les chiffres des dépôts du client : `{scoreboard: {since, until, merged, mergedAlone, aloneRate, decisions, medianDecisionMs, started, startedAlone, startedAloneRate, cancelled, cancelCauses, repos[{repo, merged, mergedAlone, cancelled, failed, successRate, suggestion}]}}`. `days` : entier de 1 à 90, sans dépasser `events.retentionDays` (défaut 7 ; 400 sinon) ; un taux sans dénominateur vaut `null`. |
+| `POST /v1/pair/tickets` `{label?, approver?, memory?}` | admin (propriétaire) | Un ticket d'appairage (§ « L'appairage par QR code ») : 201 `{ticket, expiresAt, ttlSec: 600, approver}`. 403 pour un client borné à des dépôts, un pilote, ou `approver: true` d'un appelant non approbateur ; 400 pour une étiquette de plus de 40 caractères ou une `memory` mal formée ; 409 si 10 tickets attendent. |
+| `POST /v1/pair/redeem` `{ticket}` | **aucun jeton** | Échange un ticket contre `{client, token, memory}` : le jeton d'un client nommé neuf (montré une seule fois). 401 ticket inconnu, périmé ou déjà utilisé ; 429 trop d'échecs ; 409 sans fichier de clients. |
 | `GET /v1/clients` · `POST /v1/clients` `{name, role?, repos?}` · `DELETE /v1/clients/{name}` | admin | Lister (avec le drapeau `approver`), créer (le jeton n'est rendu qu'à la création ; un champ `approver` → 400 : l'approbateur ne se crée qu'en ligne de commande), révoquer. |
 | `GET /v1/providers` | admin | Les fournisseurs (déclarés par l'API ou par la configuration, `source`), leurs modèles et limites, `hasKey` et `keyHint` (4 derniers caractères) — jamais la clé ; les chaînes de modèles en vigueur (`models`, `modelsSource`), les sortes et protocoles permis. |
 | `PUT /v1/providers/{name}` `{kind, apiKey?, baseUrl?, api?, models?, capacity?, refillPerMinute?}` · `DELETE /v1/providers/{name}` | admin | Déclarer ou modifier un fournisseur (`apiKey` absent : la clé reste ; `""` : retirée), le retirer (409 tant qu'une chaîne le nomme). Événement `providers_changed`. |

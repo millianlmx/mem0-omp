@@ -13,6 +13,9 @@
 #                                                    dernière release du harness, avancée par le job de release)
 #   bash omp-harness/deploy/container/harness.sh add <url>  ajoute un dépôt (te guide pour sa clé de déploiement)
 #   bash omp-harness/deploy/container/harness.sh pair       réaffiche le code d'appairage
+#   bash omp-harness/deploy/container/harness.sh pair-qr [étiquette]
+#                                                    un QR code d'appairage à usage unique (10 min) : l'appareil photo de
+#                                                    l'iPhone l'ouvre dans l'app, qui reçoit SON jeton, révocable seul
 #   bash omp-harness/deploy/container/harness.sh approver   le code approbateur des apps (Mac et iPhone) : le seul
 #                                                    qui approuve les envois du poste (recréé, l'ancien cesse de valoir)
 #   bash omp-harness/deploy/container/harness.sh client add <nom> [viewer|operator|admin] [dépôt,…]
@@ -521,6 +524,46 @@ cmd_pair() {
   echo "Sur ton Mac : dans omp, /pair omp1:… — ou colle-le dans l'app, feuille Serveur (Mac et iPhone)."
 }
 
+# Un ticket d'appairage (pairing.ts) créé par le service avec le jeton historique, puis son lien
+# `ompconsole://pair?u=<adresse>&t=<ticket>` : en QR code dans le terminal si `qrencode` est installé,
+# sinon en lien. Le ticket vaut 10 minutes et un seul échange ; l'appareil reçoit un client nommé, révocable
+# seul (`client revoke <nom>`), pas le jeton partagé du code `omp1:`. La mémoire du projet part avec le ticket
+# (en mémoire du service, jamais écrite) comme avec le code `omp1:`. Un appareil approbateur s'appaire depuis
+# l'app d'un appareil approbateur (feuille Serveur › Appairer un iPhone), pas d'ici.
+cmd_pair_qr() {
+  [ -s "$ROOT/state/token" ] || die "le harness n'a pas encore démarré : $SELF up"
+  command -v curl >/dev/null || die "curl est requis pour créer le ticket"
+  local label="${1:-iPhone}" url port mem0_url mem0_token body reply ticket enc link
+  case "$label" in *[!A-Za-z0-9\ ._-]*) die "étiquette : lettres, chiffres, espace, . _ - (40 caractères au plus)" ;; esac
+  [ "${#label}" -le 40 ] || die "étiquette : 40 caractères au plus"
+  url="$(setting URL "$ROOT/published.env")"
+  [ -n "$url" ] || die "adresse publiée introuvable (published.env) : $SELF up"
+  port="$(setting OMP_HARNESS_PORT "$ROOT/compose.env")"
+  mem0_url="$(setting MEM0_URL "$ROOT/published.env")"
+  mem0_token="$(setting MEM0_HTTP_TOKEN "$SECRETS/mem0.env")"
+  body="{\"label\":\"$label\""
+  [ -z "$mem0_url" ] || body="$body,\"memory\":{\"url\":\"$mem0_url\",\"token\":\"$mem0_token\"}"
+  body="$body}"
+  reply="$(printf 'header = "Authorization: Bearer %s"\n' "$(cat "$ROOT/state/token")" |
+    curl -fsS -m 15 -K - -H 'Content-Type: application/json' -d "$body" "http://127.0.0.1:${port:-8790}/v1/pair/tickets")" ||
+    die "le service n'a pas créé le ticket (est-il démarré ? $SELF check)"
+  ticket="$(printf '%s' "$reply" | sed -n 's/.*"ticket":"\([^"]*\)".*/\1/p')"
+  [ -n "$ticket" ] || die "réponse du service illisible : $reply"
+  enc="${url//:/%3A}"
+  link="ompconsole://pair?u=${enc//\//%2F}&t=$ticket"
+  echo "Appairage d'un appareil « $label » (valable 10 minutes, un seul usage) :"
+  echo
+  if command -v qrencode >/dev/null; then
+    qrencode -t ANSIUTF8 -m 2 "$link"
+    echo
+    echo "Scanne ce code avec l'appareil photo de l'iPhone, puis ouvre le lien proposé."
+  else
+    echo "  $link"
+    echo
+    echo "Pas de qrencode ici (apt install qrencode) : ouvre ce lien sur l'iPhone, ou affiche le QR code depuis l'app Mac (feuille Serveur › Appairer un iPhone)."
+  fi
+}
+
 # Le code approbateur : les quatre lignes du code d'appairage, puis le jeton du client
 # `app-approbateur`, le seul qui approuve, refuse ou règle le poste. Le client est
 # recréé à chaque appel : le code précédent cesse de valoir. omp `/pair` et l'extension
@@ -626,6 +669,7 @@ case "${1:-}" in
   up) shift; cmd_up "$@" ;;
   add) shift; cmd_add "$@" ;;
   pair) cmd_pair ;;
+  pair-qr) shift; cmd_pair_qr "$@" ;;
   approver) cmd_approver ;;
   client) shift; cmd_client "$@" ;;
   reload) cmd_reload ;;
@@ -640,5 +684,5 @@ case "${1:-}" in
   restart) compose restart ;;
   start) cmd_start ;;
   down) compose down ;;
-  *) sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  *) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac
