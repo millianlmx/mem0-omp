@@ -852,7 +852,7 @@ test("os-boucle/AC-10 : le serveur MCP porte les mêmes gestes — motif de `run
   }
 });
 
-test("os-boucle/AC-11 : le budget journalier de l'espace d'un dépôt retient ses runs en file (`space_budget`, montants dits) ; levé, ils partent", async () => {
+test("os-boucle/AC-11 : le budget journalier de l'espace d'un dépôt retient ses runs en file (`space_budget`, sans montant : un client borné lit ce texte) ; levé, ils partent", async () => {
   const world = fakeWorld({ req: [SLEEP] });
   // Le budget de l'espace tel que `SpaceDesk.budgetHold` le rend : atteint, puis relevé.
   let reached: { space: string; spent: number; ceiling: number } | null = { space: "Client A", spent: 5.5, ceiling: 5 };
@@ -866,7 +866,7 @@ test("os-boucle/AC-11 : le budget journalier de l'espace d'un dépôt retient se
     );
     assert.equal(
       waitOf(world.orchestrator, world, run.id).reason,
-      "budget journalier de l'espace « Client A » atteint : 5.50 $ / 5.00 $ — reprise à minuit UTC ou budget relevé",
+      "budget journalier de l'espace « Client A » atteint — reprise à minuit UTC ou budget relevé",
     );
     assert.deepEqual(refusals(world, run.id), ["space_budget"]);
     assert.deepEqual(world.orchestrator.queueWaits().byCause, { space_budget: 1 });
@@ -995,8 +995,7 @@ test("os-boucle/AC-15 : le budget journalier d'un espace atteint entre deux éta
       () => world.store.getRun(run.id)?.state === "queued",
       () => stateOf(world, run.id),
     );
-    const text =
-      "budget journalier de l'espace « Client A » atteint : 30.00 $ / 5.00 $ — reprise à minuit UTC ou budget relevé";
+    const text = "budget journalier de l'espace « Client A » atteint — reprise à minuit UTC ou budget relevé";
     const parked = world.store.getRun(run.id) as RunRow;
     assert.deepEqual(
       [parked.step, parked.reason, parked.attempts, parked.lastFailCause, parked.cancelCause],

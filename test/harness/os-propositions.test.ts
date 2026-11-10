@@ -616,7 +616,12 @@ test("os-propositions/AC-2 : accepter crée le bon objet par le chemin existant 
     assert.equal(store.issueRun("demo", 7)?.runId, issue.id, "l'issue est liée à son run (IssueDesk.fix)");
 
     const pr = runOf(await accept(only(proposals, "pr")));
-    assert.equal(pr.title, "Reprendre la PR #12 : Pagination des exports");
+    assert.equal(pr.title, "Reprendre la PR #12 : la faire aboutir", "le titre de la PR n'entre pas dans celui du run");
+    assert.equal(
+      store.eventsSince(0, pr.id).find((event) => event.type === "run_created")?.payload.lane,
+      "full",
+      "une PR reprise passe par /req et /specs : rien d'elle ne tient lieu de specs",
+    );
     assert.match(pr.request, /^Reprends la PR #12 de ce dépôt : /);
     assert.match(pr.request, /\nbranche : feature\/pagination\n/);
     assert.match(pr.request, /https:\/\/github\.com\/moi\/demo\/pull\/12/);

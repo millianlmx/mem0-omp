@@ -179,9 +179,12 @@ export type QueueWait = {
 
 const NOT_DUE: readonly QueueWait["cause"][] = ["parent", "backoff", "inferring"];
 
-/** Ce que dit un run retenu par le budget journalier de son espace : en file (`QueueWait.text`) comme sur le run garé (`reason`). */
-function spaceBudgetText(hold: { space: string; spent: number; ceiling: number }): string {
-  return `budget journalier de l'espace « ${hold.space} » atteint : ${hold.spent.toFixed(2)} $ / ${hold.ceiling.toFixed(2)} $ — reprise à minuit UTC ou budget relevé`;
+/**
+ * Ce que dit un run retenu par le budget journalier de son espace : en file (`QueueWait.text`) comme sur le run garé
+ * (`reason`). Sans montant : un client borné à un dépôt lit ce texte, et la dépense de l'espace ne le regarde pas.
+ */
+function spaceBudgetText(hold: { space: string }): string {
+  return `budget journalier de l'espace « ${hold.space} » atteint — reprise à minuit UTC ou budget relevé`;
 }
 
 /** Un run tel que l'API le rend : en file, sa raison est ce qui le retient (`waitCause` en dit le code). */

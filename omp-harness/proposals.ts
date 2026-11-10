@@ -690,12 +690,20 @@ export class ProposalDesk {
       case "pr": {
         const { change } = cause;
         const days = Math.floor((Date.now() - Date.parse(change.updatedAt)) / DAY_MS);
-        const title = `${changeRunHead(change.number)} ${oneLine(change.title, TITLE_MAX)}`.slice(0, RUN_TITLE_MAX);
-        const input = { repo: cause.repo, title, request: changeRequest(change, days) };
+        // Le titre de la PR reste hors du titre du run (donc des prompts, des commits et de la mémoire) : il n'est
+        // cité que dans la demande, comme donnée. La voie complète : rien de la PR ne tient lieu de specs.
+        const title = `${changeRunHead(change.number)} la faire aboutir`;
+        const input = { repo: cause.repo, title, request: changeRequest(change, days), lane: "full" as const };
         return { kind: "run", id: this.#hooks.createRun(input, actor).id };
       }
       case "ci": {
-        const input = { repo: cause.repo, title: ciRunTitle(cause.branch, cause.failed), request: ciRequest(cause) };
+        // La voie complète : une ligne d'un journal de CI ne tient jamais lieu de critères d'acceptation.
+        const input = {
+          repo: cause.repo,
+          title: ciRunTitle(cause.branch, cause.failed),
+          request: ciRequest(cause),
+          lane: "full" as const,
+        };
         return { kind: "run", id: this.#hooks.createRun(input, actor).id };
       }
     }
