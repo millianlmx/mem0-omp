@@ -38,6 +38,7 @@ test("worktrees-imbriques/AC-3 : un worktree d'agent imbriqué, sa racine Biome 
   fs.mkdirSync(path.join(dir, "scripts"));
   fs.copyFileSync(path.join(ROOT, "scripts", "lint.sh"), path.join(dir, "scripts", "lint.sh"));
   fs.copyFileSync(path.join(ROOT, "biome.jsonc"), path.join(dir, "biome.jsonc"));
+  fs.cpSync(path.join(ROOT, "scripts", "biome-rules"), path.join(dir, "scripts", "biome-rules"), { recursive: true });
   fs.mkdirSync(path.join(dir, "test"));
   fs.writeFileSync(path.join(dir, "test", "propre.ts"), "export const propre = 1;\n");
   // Le worktree : un second biome.jsonc racine, et du TypeScript hors format dans un dossier lint.

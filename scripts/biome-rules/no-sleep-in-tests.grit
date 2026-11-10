@@ -1,0 +1,20 @@
+// Interdit : attendre un DÉLAI pour synchroniser un test (`await sleep(50)`, `await new Promise((r) => setTimeout(r, 50))`,
+// `await setTimeout(50)` de node:timers/promises).
+// Pourquoi : un délai fixe est soit trop court (test instable sous charge), soit trop long (suite lente) ; la condition
+// attendue a toujours un signal exact (événement, promesse, sondage borné sur l'état observé, `t.mock.timers.tick`).
+language js(typescript);
+
+or {
+  `await $f($args)` as $call where {
+    $f <: or { `sleep`, `delay`, `pause`, `setTimeout` }
+  },
+  `new Promise($cb)` as $call where {
+    $cb <: contains `setTimeout($resolve, $ms)`
+  }
+} where {
+  register_diagnostic(
+    span = $call,
+    message = "Attente d'un délai fixe dans un test : attends l'événement ou l'état observé, pas une durée (anti-slop/no-sleep-in-tests).",
+    severity = "error"
+  )
+}

@@ -49,7 +49,7 @@ pass() { echo "  ✓ $1"; }
 # ou de release, où le temps passe — mesuré le 2026-10-22, la simulation de
 # release mettait 989 s là où le job check en mettait 321 sur le même arbre,
 # sans qu'aucune ligne ne dise pourquoi.
-SECTION_IDS="catalogue noms plugins versions extension types lint rust smoke tests noyau app-swift app-ios"
+SECTION_IDS="catalogue noms plugins versions extension types lint plafond-types rust smoke tests noyau app-swift app-ios"
 TESTS_PART_PATTERN='^socle-app-swift/'
 sections=""
 sections_set=0
@@ -441,6 +441,31 @@ case "$lint_status" in
     fail "lint/format : ${lint_paths:-sortie non nulle sans fichier désigné} (relance : bash scripts/lint.sh)"
     ;;
 esac
+fi
+
+if section_on plafond-types; then
+echo "── Plafond de types"
+
+# Plafond d'erreurs TypeScript par fichier pour une option stricte que tsconfig.json n'active pas
+# (scripts/types-ratchet.ts, baseline scripts/types-ratchet-baseline.json) : les trois programmes de
+# scripts/typecheck.sh sont rejoués avec l'option, un fichier qui dépasse son plafond rougit la section,
+# un fichier qui passe dessous est signalé sans échec. Le script dit lui-même « plafond non vérifié »
+# quand tsc ou les types de l'hôte manquent (la section Types rougit déjà pour un tsc absent) : on
+# recopie alors sa note sans jamais ajouter de ✓. Hors réseau, rien n'est écrit dans l'arbre.
+if ! command -v node >/dev/null 2>&1; then
+  echo "  · node absent, plafond de types non vérifié"
+elif [ ! -f scripts/types-ratchet.ts ]; then
+  fail "plafond de types — scripts/types-ratchet.ts absent"
+else
+  ratchet_out="$(node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/types-ratchet.ts 2>&1)"
+  ratchet_status=$?
+  [ -n "$ratchet_out" ] && printf '%s\n' "$ratchet_out"
+  if [ "$ratchet_status" -ne 0 ]; then
+    ratchet_files="$(printf '%s\n' "$ratchet_out" | sed -n 's/^  ✗ \([^ ]*\.ts\) : .*/\1/p' | tr '\n' ' ')"
+    ratchet_files="${ratchet_files% }"
+    fail "plafond de types : ${ratchet_files:-sortie non nulle sans fichier désigné} (relance : node --experimental-strip-types scripts/types-ratchet.ts)"
+  fi
+fi
 fi
 
 if section_on rust; then

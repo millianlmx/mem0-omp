@@ -516,7 +516,7 @@ public enum PipelineServerText {
     // Les abonnements : connectés dans le navigateur, sans clé.
     public static let loginsSection = L10n.text("Abonnements")
     public static let loginsHint =
-        L10n.text("Connectez un abonnement (Claude Pro ou Max, ChatGPT Plus ou Pro, Gemini…) à la place d’une clé. La connexion se fait dans votre navigateur ; ses identifiants restent sur le serveur, chez les agents.")
+        L10n.text("Connectez un abonnement (Claude Pro ou Max, ChatGPT Plus ou Pro, Gemini…) à la place d’une clé. La connexion se fait dans votre navigateur ; ses identifiants restent sur le serveur, chez les agents. Le serveur travaille sans vous : les conditions de votre fournisseur s’appliquent, et pour un usage continu Anthropic demande une clé plutôt qu’un abonnement.")
     public static let noLoginProvider = L10n.text("Le serveur ne propose aucun abonnement à connecter.")
     public static let loginConnect = L10n.text("Connecter")
     public static let loginReconnect = L10n.text("Reconnecter")

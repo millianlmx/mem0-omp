@@ -221,7 +221,7 @@
 "Composants" = "Components";
 "Conflit avec la branche principale" = "Conflict with the main branch";
 "Connecter" = "Connect";
-"Connectez un abonnement (Claude Pro ou Max, ChatGPT Plus ou Pro, Gemini…) à la place d’une clé. La connexion se fait dans votre navigateur ; ses identifiants restent sur le serveur, chez les agents." = "Connect a subscription (Claude Pro or Max, ChatGPT Plus or Pro, Gemini…) instead of a key. You sign in in your browser; the credentials stay on the server, with the agents.";
+"Connectez un abonnement (Claude Pro ou Max, ChatGPT Plus ou Pro, Gemini…) à la place d’une clé. La connexion se fait dans votre navigateur ; ses identifiants restent sur le serveur, chez les agents. Le serveur travaille sans vous : les conditions de votre fournisseur s’appliquent, et pour un usage continu Anthropic demande une clé plutôt qu’un abonnement." = "Connect a subscription (Claude Pro or Max, ChatGPT Plus or Pro, Gemini…) instead of a key. You sign in in your browser; the credentials stay on the server, with the agents. The server works without you: your provider’s terms apply, and for continuous use Anthropic asks for a key rather than a subscription.";
 "Connectez-vous sur la page qui s’ouvre. Si elle finit sur un code, ou sur une erreur à une adresse « localhost », copiez ce code ou cette adresse entière et collez-le ci-dessous." = "Sign in on the page that opens. If it ends on a code, or on an error at a “localhost” address, copy that code or the whole address and paste it below.";
 "Connecté" = "Connected";
 "Connexion abandonnée : rien n’a été enregistré." = "Sign-in abandoned: nothing was saved.";

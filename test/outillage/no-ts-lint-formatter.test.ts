@@ -53,12 +53,14 @@ function fakeLintDir(body: string): string {
   return dir;
 }
 
-/** Un arbre minimal : scripts/lint.sh et biome.jsonc du dépôt, plus `files`. */
+/** Un arbre minimal : scripts/lint.sh, biome.jsonc et scripts/biome-rules/ du dépôt, plus `files`. */
 function miniTree(files: Record<string, string>): string {
   const dir = tmpdir("lint-arbre-");
   fs.mkdirSync(path.join(dir, "scripts"));
   fs.copyFileSync(path.join(ROOT, "scripts", "lint.sh"), path.join(dir, "scripts", "lint.sh"));
   fs.copyFileSync(path.join(ROOT, "biome.jsonc"), path.join(dir, "biome.jsonc"));
+  // Les règles anti-slop (plugins GritQL) et leur baseline, que biome.jsonc charge.
+  fs.cpSync(path.join(ROOT, "scripts", "biome-rules"), path.join(dir, "scripts", "biome-rules"), { recursive: true });
   for (const [rel, content] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
     fs.writeFileSync(path.join(dir, rel), content);

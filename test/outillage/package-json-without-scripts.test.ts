@@ -215,6 +215,7 @@ test("package-json-without-scripts/AC-9 : check.sh garde les sections de la base
     "extension",
     "types",
     "lint",
+    "plafond-types",
     "rust",
     "smoke",
     "tests",

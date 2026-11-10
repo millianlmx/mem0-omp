@@ -38,6 +38,7 @@ import { budgetUsd, integer, requireRepo, text } from "./input.ts";
 import type { LabeledOutcome } from "./issues.ts";
 import { TERMINAL_STATES } from "./machine.ts";
 import type { NewRunInput } from "./orchestrator.ts";
+import { untrusted } from "./workstation-guards.ts";
 import { APPROVER_ONLY } from "./workstation.ts";
 
 /** Les cibles servies. */
@@ -275,11 +276,14 @@ export class Schedules {
     actor: Actor,
     repos: RepoFilter,
     now = Date.now(),
+    payload = "",
   ): Promise<{ schedule: ScheduleRow; outcome: ScheduleOutcome }> {
     const schedule = this.#current(id, actor, repos);
+    if (payload !== "" && schedule.target.kind !== "run")
+      throw new HarnessError(400, "payload : seule une planification de type run reçoit une charge utile");
     const blocked = this.#blocked(schedule);
     if (blocked) throw new HarnessError(409, blocked.detail);
-    const { outcome, error } = await this.#fire(schedule, null, now, 0, actor.by);
+    const { outcome, error } = await this.#fire(schedule, null, now, 0, actor.by, payload);
     if (error) throw error instanceof HarnessError ? error : new HarnessError(502, message(error));
     return { schedule: this.visible(id, repos), outcome };
   }
@@ -390,14 +394,22 @@ export class Schedules {
   }
 
   /** Lance la cible ; un run, un audit ou une demande au poste est créé avant le premier `await`. */
-  async #launch(target: ScheduleTarget): Promise<Launched> {
+  async #launch(schedule: ScheduleRow, payload: string): Promise<Launched> {
+    const { target } = schedule;
     switch (target.kind) {
       case "run": {
+        // La charge utile d'un déclencheur est une donnée : entre délimiteurs, et la voie complète est
+        // forcée (un texte reçu ne doit pas faire passer la demande pour « déjà cadrée », voie directe).
+        const request =
+          payload === ""
+            ? target.request
+            : `${target.request}\n\n${untrusted(`charge utile reçue par le déclencheur « ${schedule.name} »`, payload)}`;
+        const lane = target.lane ?? (payload === "" ? undefined : "full");
         const input: NewRunInput = {
           repo: target.repo,
           title: target.title,
-          request: target.request,
-          ...(target.lane ? { lane: target.lane } : {}),
+          request,
+          ...(lane ? { lane } : {}),
           ...(target.priority !== undefined ? { priority: target.priority } : {}),
           ...(target.budgetUsd !== undefined ? { budgetUsd: target.budgetUsd } : {}),
         };
@@ -441,10 +453,10 @@ export class Schedules {
     now: number,
     missed: number,
     by: string | null,
+    payload = "",
   ): Promise<{ outcome: ScheduleOutcome; error: unknown }> {
     this.#ctx.store.updateSchedule(schedule.id, { lastRunAt: now });
-    const launching = this.#launch(schedule.target);
-    this.#inflight.set(schedule.id, launching);
+    const launching = this.#launch(schedule, payload);
     let outcome: ScheduleOutcome;
     let error: unknown = null;
     try {

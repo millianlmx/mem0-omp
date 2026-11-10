@@ -1,0 +1,17 @@
+// Interdit : `test.only`, `it.only`, `describe.only`, `suite.only` et l'option `{ only: true }`.
+// Pourquoi : un `only` oublié fait taire tout le reste du fichier tout en laissant la suite verte ; la CI ne verrait
+// plus les tests qu'il exclut.
+language js(typescript);
+
+or {
+  `$f($args)` as $call where {
+    $f <: or { `test.only`, `it.only`, `describe.only`, `suite.only` }
+  },
+  `{ only: true }` as $call
+} where {
+  register_diagnostic(
+    span = $call,
+    message = "`only` interdit : il fait taire le reste de la suite (anti-slop/no-only-tests).",
+    severity = "error"
+  )
+}
