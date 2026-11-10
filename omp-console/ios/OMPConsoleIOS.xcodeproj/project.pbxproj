@@ -15,6 +15,9 @@
 		E1E2E3E4E5E6E7E8E9EAEB30 /* ConsoleCore in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */; };
 		E1E2E3E4E5E6E7E8E9EAEB31 /* ConsoleClient in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB20 /* ConsoleClient */; };
 		E1E2E3E4E5E6E7E8E9EAEB32 /* OMPConsoleWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E1E2E3E4E5E6E7E8E9EAEB33 /* OMPConsoleWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		E1E2E3E4E5E6E7E8E9EAEB60 /* ConsoleCore in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */; };
+		E1E2E3E4E5E6E7E8E9EAEB61 /* ConsoleClient in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB20 /* ConsoleClient */; };
+		E1E2E3E4E5E6E7E8E9EAEB62 /* OMPConsoleShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E1E2E3E4E5E6E7E8E9EAEB63 /* OMPConsoleShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -32,6 +35,13 @@
 			remoteGlobalIDString = E1E2E3E4E5E6E7E8E9EAEB35;
 			remoteInfo = OMPConsoleWidgets;
 		};
+		E1E2E3E4E5E6E7E8E9EAEB64 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E1E2E3E4E5E6E7E8E9EAEB01 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E1E2E3E4E5E6E7E8E9EAEB65;
+			remoteInfo = OMPConsoleShare;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -42,6 +52,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				E1E2E3E4E5E6E7E8E9EAEB32 /* OMPConsoleWidgets.appex in Embed Foundation Extensions */,
+				E1E2E3E4E5E6E7E8E9EAEB62 /* OMPConsoleShare.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -52,6 +63,7 @@
 		E1E2E3E4E5E6E7E8E9EAEB06 /* OMPConsoleIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OMPConsoleIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E1E2E3E4E5E6E7E8E9EAEB07 /* OMPConsoleIOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OMPConsoleIOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E1E2E3E4E5E6E7E8E9EAEB33 /* OMPConsoleWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OMPConsoleWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		E1E2E3E4E5E6E7E8E9EAEB63 /* OMPConsoleShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OMPConsoleShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -80,6 +92,24 @@
 			explicitFolders = (
 			);
 			path = OMPConsoleWidgets;
+			sourceTree = "<group>";
+		};
+		E1E2E3E4E5E6E7E8E9EAEB66 /* OMPConsoleShare */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = OMPConsoleShare;
+			sourceTree = "<group>";
+		};
+		E1E2E3E4E5E6E7E8E9EAEB50 /* OMPConsoleShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = OMPConsoleShared;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -113,6 +143,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E1E2E3E4E5E6E7E8E9EAEB67 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E1E2E3E4E5E6E7E8E9EAEB60 /* ConsoleCore in Frameworks */,
+				E1E2E3E4E5E6E7E8E9EAEB61 /* ConsoleClient in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -122,6 +161,8 @@
 				E1E2E3E4E5E6E7E8E9EAEB04 /* OMPConsoleIOS */,
 				E1E2E3E4E5E6E7E8E9EAEB05 /* OMPConsoleIOSTests */,
 				E1E2E3E4E5E6E7E8E9EAEB37 /* OMPConsoleWidgets */,
+				E1E2E3E4E5E6E7E8E9EAEB66 /* OMPConsoleShare */,
+				E1E2E3E4E5E6E7E8E9EAEB50 /* OMPConsoleShared */,
 				E1E2E3E4E5E6E7E8E9EAEB03 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -132,6 +173,7 @@
 				E1E2E3E4E5E6E7E8E9EAEB06 /* OMPConsoleIOS.app */,
 				E1E2E3E4E5E6E7E8E9EAEB07 /* OMPConsoleIOSTests.xctest */,
 				E1E2E3E4E5E6E7E8E9EAEB33 /* OMPConsoleWidgets.appex */,
+				E1E2E3E4E5E6E7E8E9EAEB63 /* OMPConsoleShare.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -152,9 +194,11 @@
 			);
 			dependencies = (
 				E1E2E3E4E5E6E7E8E9EAEB39 /* PBXTargetDependency */,
+				E1E2E3E4E5E6E7E8E9EAEB6A /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				E1E2E3E4E5E6E7E8E9EAEB04 /* OMPConsoleIOS */,
+				E1E2E3E4E5E6E7E8E9EAEB50 /* OMPConsoleShared */,
 			);
 			name = OMPConsoleIOS;
 			packageProductDependencies = (
@@ -205,6 +249,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				E1E2E3E4E5E6E7E8E9EAEB37 /* OMPConsoleWidgets */,
+				E1E2E3E4E5E6E7E8E9EAEB50 /* OMPConsoleShared */,
 			);
 			name = OMPConsoleWidgets;
 			packageProductDependencies = (
@@ -213,6 +258,30 @@
 			);
 			productName = OMPConsoleWidgets;
 			productReference = E1E2E3E4E5E6E7E8E9EAEB33 /* OMPConsoleWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		E1E2E3E4E5E6E7E8E9EAEB65 /* OMPConsoleShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E1E2E3E4E5E6E7E8E9EAEB6B /* Build configuration list for PBXNativeTarget "OMPConsoleShare" */;
+			buildPhases = (
+				E1E2E3E4E5E6E7E8E9EAEB68 /* Sources */,
+				E1E2E3E4E5E6E7E8E9EAEB67 /* Frameworks */,
+				E1E2E3E4E5E6E7E8E9EAEB69 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				E1E2E3E4E5E6E7E8E9EAEB66 /* OMPConsoleShare */,
+			);
+			name = OMPConsoleShare;
+			packageProductDependencies = (
+				E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */,
+				E1E2E3E4E5E6E7E8E9EAEB20 /* ConsoleClient */,
+			);
+			productName = OMPConsoleShare;
+			productReference = E1E2E3E4E5E6E7E8E9EAEB63 /* OMPConsoleShare.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
@@ -233,6 +302,9 @@
 						TestTargetID = E1E2E3E4E5E6E7E8E9EAEB08;
 					};
 					E1E2E3E4E5E6E7E8E9EAEB35 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					E1E2E3E4E5E6E7E8E9EAEB65 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
@@ -259,6 +331,7 @@
 				E1E2E3E4E5E6E7E8E9EAEB08 /* OMPConsoleIOS */,
 				E1E2E3E4E5E6E7E8E9EAEB09 /* OMPConsoleIOSTests */,
 				E1E2E3E4E5E6E7E8E9EAEB35 /* OMPConsoleWidgets */,
+				E1E2E3E4E5E6E7E8E9EAEB65 /* OMPConsoleShare */,
 			);
 		};
 /* End PBXProject section */
@@ -279,6 +352,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		E1E2E3E4E5E6E7E8E9EAEB3C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB69 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -309,6 +389,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E1E2E3E4E5E6E7E8E9EAEB68 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -321,6 +408,11 @@
 			isa = PBXTargetDependency;
 			target = E1E2E3E4E5E6E7E8E9EAEB35 /* OMPConsoleWidgets */;
 			targetProxy = E1E2E3E4E5E6E7E8E9EAEB34 /* PBXContainerItemProxy */;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB6A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E1E2E3E4E5E6E7E8E9EAEB65 /* OMPConsoleShare */;
+			targetProxy = E1E2E3E4E5E6E7E8E9EAEB64 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -518,6 +610,56 @@
 			};
 			name = Release;
 		};
+		E1E2E3E4E5E6E7E8E9EAEB6C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "OMPConsoleShare-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = OMPConsoleShare.entitlements;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB6D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "OMPConsoleShare-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = OMPConsoleShare.entitlements;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -553,6 +695,15 @@
 			buildConfigurations = (
 				E1E2E3E4E5E6E7E8E9EAEB3D /* Debug */,
 				E1E2E3E4E5E6E7E8E9EAEB3E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB6B /* Build configuration list for PBXNativeTarget "OMPConsoleShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E1E2E3E4E5E6E7E8E9EAEB6C /* Debug */,
+				E1E2E3E4E5E6E7E8E9EAEB6D /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

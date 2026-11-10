@@ -243,13 +243,21 @@ function pbxprojFaults(root: string): string[] {
   const groupPattern =
     /([0-9A-F]{24})\s*\/\*[^*]*\*\/\s*=\s*\{\s*isa = PBXFileSystemSynchronizedRootGroup;[\s\S]*?path = ([A-Za-z0-9_]+);/g;
   for (const match of syncSection.matchAll(groupPattern)) groupIds.set(match[1], match[2]);
-  for (const expected of ["OMPConsoleIOS", "OMPConsoleIOSTests", "OMPConsoleWidgets"]) {
+  // `OMPConsoleShared` : les sources compilées à la fois par l'app et par l'extension de widgets
+  // (l'intention d'une Live Activity s'exécute dans le processus de l'app).
+  for (const expected of [
+    "OMPConsoleIOS",
+    "OMPConsoleIOSTests",
+    "OMPConsoleWidgets",
+    "OMPConsoleShare",
+    "OMPConsoleShared",
+  ]) {
     if (![...groupIds.values()].includes(expected)) faults.push(`groupe synchronisé ${expected} absent`);
   }
 
   const targets = nativeTargets(text);
-  // L'app, ses tests et l'extension de widgets (Live Activities).
-  if (targets.length !== 3) faults.push(`${targets.length} cibles natives (3 attendues)`);
+  // L'app, ses tests, l'extension de widgets (Live Activities) et l'extension de partage.
+  if (targets.length !== 4) faults.push(`${targets.length} cibles natives (4 attendues)`);
   for (const [id, name] of groupIds) {
     const owner = targets.find((t) => t.groups.includes(id));
     if (owner === undefined) faults.push(`groupe synchronisé ${name} rattaché à aucune cible`);
@@ -263,7 +271,7 @@ function pbxprojFaults(root: string): string[] {
   for (const section of ["PBXSourcesBuildPhase"]) {
     const body = text.split(`/* Begin ${section} section */`)[1]?.split(`/* End ${section} section */`)[0] ?? "";
     const phases = body.match(/isa = PBXSourcesBuildPhase;[\s\S]*?runOnlyForDeploymentPostprocessing = 0;/g) ?? [];
-    if (phases.length !== 3) faults.push(`${phases.length} phases ${section} (3 attendues)`);
+    if (phases.length !== 4) faults.push(`${phases.length} phases ${section} (4 attendues)`);
     for (const phase of phases) {
       if (!/files = \(\s*\)/.test(phase)) faults.push(`une phase ${section} liste des fichiers (files non vide)`);
     }
@@ -290,6 +298,10 @@ function pbxprojFaults(root: string): string[] {
     [
       /PRODUCT_BUNDLE_IDENTIFIER = com\.omp\.console\.ios\.tests;/,
       "PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios.tests",
+    ],
+    [
+      /PRODUCT_BUNDLE_IDENTIFIER = com\.omp\.console\.ios\.share;/,
+      "PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios.share",
     ],
     [/GENERATE_INFOPLIST_FILE = YES;/, "GENERATE_INFOPLIST_FILE = YES"],
     [/INFOPLIST_KEY_UILaunchScreen_Generation = YES;/, "INFOPLIST_KEY_UILaunchScreen_Generation = YES"],

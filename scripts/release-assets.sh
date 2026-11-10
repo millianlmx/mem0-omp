@@ -52,8 +52,9 @@
 # App iOS, construite en Release pour un appareil.
 #  · secrets IOS_SIGNING_P12_BASE64, IOS_SIGNING_P12_PASSWORD,
 #    IOS_PROFILE_APP_BASE64 (com.omp.console.ios), IOS_PROFILE_WIDGETS_BASE64
-#    (com.omp.console.ios.widgets, l'extension de widgets embarquée) et
-#    IOS_TEAM_ID : signature MANUELLE passée en réglages de ligne de commande —
+#    (com.omp.console.ios.widgets, l'extension de widgets embarquée),
+#    IOS_PROFILE_SHARE_BASE64 (com.omp.console.ios.share, l'extension de partage
+#    embarquée) et IOS_TEAM_ID : signature MANUELLE passée en réglages de ligne de commande —
 #    aucune équipe n'est écrite dans le pbxproj — puis `xcodebuild archive` et
 #    `-exportArchive`. La méthode d'export vient de IOS_EXPORT_METHOD (variable de
 #    dépôt, pas un secret) : `ad-hoc` (défaut, Xcode : release-testing) ou
@@ -85,7 +86,7 @@ PROFILS_INSTALLES="$SIGNING_DIR/profils-installes.txt"
 
 # Les secrets de chaque app, tous ou aucun.
 SECRETS_MAC="MACOS_DEVELOPER_ID_P12_BASE64 MACOS_DEVELOPER_ID_P12_PASSWORD NOTARY_API_KEY_ID NOTARY_API_ISSUER_ID NOTARY_API_KEY_P8_BASE64"
-SECRETS_IOS="IOS_SIGNING_P12_BASE64 IOS_SIGNING_P12_PASSWORD IOS_PROFILE_APP_BASE64 IOS_PROFILE_WIDGETS_BASE64 IOS_TEAM_ID"
+SECRETS_IOS="IOS_SIGNING_P12_BASE64 IOS_SIGNING_P12_PASSWORD IOS_PROFILE_APP_BASE64 IOS_PROFILE_WIDGETS_BASE64 IOS_PROFILE_SHARE_BASE64 IOS_TEAM_ID"
 
 secrets_de() {
   if [ "$1" = mac ]; then echo "$SECRETS_MAC"; else echo "$SECRETS_IOS"; fi
@@ -464,6 +465,7 @@ DERIVED="$ROOT/omp-console/build/ios-derived"
 PROJECT=omp-console/ios/OMPConsoleIOS.xcodeproj
 BUNDLE_ID_APP=com.omp.console.ios
 BUNDLE_ID_WIDGETS=com.omp.console.ios.widgets
+BUNDLE_ID_SHARE=com.omp.console.ios.share
 
 # installer_profil <secret> <bundle id> : décode le profil, vérifie qu'il vise
 # <équipe>.<bundle id>, l'installe là où Xcode les cherche et imprime son UUID.
@@ -482,7 +484,7 @@ installer_profil() {
     return 1
   fi
   if [ "$appid" != "$IOS_TEAM_ID.$2" ]; then
-    echo "✗ $1 : le profil vise « ${appid:-rien} », attendu « $IOS_TEAM_ID.$2 » (un profil par cible : l'app et l'extension de widgets)" >&2
+    echo "✗ $1 : le profil vise « ${appid:-rien} », attendu « $IOS_TEAM_ID.$2 » (un profil par cible : l'app, l'extension de widgets et l'extension de partage)" >&2
     return 1
   fi
   for dossier in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
@@ -512,7 +514,8 @@ if [ "$MODE" = signe ]; then
   ID_NOM="${ligne#* }"
   UUID_APP="$(installer_profil IOS_PROFILE_APP_BASE64 "$BUNDLE_ID_APP")" || exit 1
   UUID_WIDGETS="$(installer_profil IOS_PROFILE_WIDGETS_BASE64 "$BUNDLE_ID_WIDGETS")" || exit 1
-  echo "  ✓ profils installés (app $UUID_APP, widgets $UUID_WIDGETS)"
+  UUID_SHARE="$(installer_profil IOS_PROFILE_SHARE_BASE64 "$BUNDLE_ID_SHARE")" || exit 1
+  echo "  ✓ profils installés (app $UUID_APP, widgets $UUID_WIDGETS, partage $UUID_SHARE)"
 
   ARCHIVE="$ROOT/omp-console/build/OMPConsoleIOS.xcarchive"
   EXPORT="$ROOT/omp-console/build/ios-export"
@@ -534,6 +537,7 @@ if [ "$MODE" = signe ]; then
     "CODE_SIGN_IDENTITY=$ID_NOM" \
     "OMP_PROFILE_OMPConsoleIOS=$UUID_APP" \
     "OMP_PROFILE_OMPConsoleWidgets=$UUID_WIDGETS" \
+    "OMP_PROFILE_OMPConsoleShare=$UUID_SHARE" \
     'PROVISIONING_PROFILE_SPECIFIER=$(OMP_PROFILE_$(TARGET_NAME))'; then
     echo "✗ archive signée de l'app iOS échouée (xcodebuild archive) : certificat, profils et IOS_TEAM_ID doivent être de la même équipe, et les profils couvrir les capacités des entitlements (groupe d'apps, notifications)" >&2
     exit 1
@@ -558,6 +562,8 @@ if [ "$MODE" = signe ]; then
 		<string>$UUID_APP</string>
 		<key>$BUNDLE_ID_WIDGETS</key>
 		<string>$UUID_WIDGETS</string>
+		<key>$BUNDLE_ID_SHARE</key>
+		<string>$UUID_SHARE</string>
 	</dict>
 	<key>thinning</key>
 	<string>&lt;none&gt;</string>

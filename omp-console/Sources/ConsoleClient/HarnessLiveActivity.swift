@@ -4,6 +4,11 @@
 // qui la pousse par APNs (`config.apns` du serveur), avec le jeton push que l'app lui
 // enregistre (`HarnessModel.registerActivity`).
 //
+// Elle démarre SEULE : le serveur la pousse (push-to-start, `registerActivityStart`) quand
+// une feature se met au travail ou attend l'humain ; à défaut, l'app en démarre une quand
+// elle est au premier plan — une seule à la fois, la plus urgente (`HarnessActivityStart`).
+// Elle porte un lien vers le fil et, pour une revue qui attend, le bouton « Valider ».
+//
 // `HarnessActivityState` est la forme EXACTE de `content-state` que le serveur envoie
 // (`ActivityContent` de `omp-harness/push.ts`) : un champ de plus ou de moins d'un
 // côté, et iOS ignore la mise à jour.
@@ -58,6 +63,26 @@ public struct HarnessActivityState: Codable, Hashable, Sendable {
         guard let phase else { return false }
         return [.escalated, .awaitingHuman].contains(phase)
     }
+
+    /// Une revue attend la validation : l'activité offre « Valider » (comme
+    /// `HarnessRun.awaitsVerdict` : en attente de l'humain, hors specs).
+    public var awaitsReview: Bool { phase == .awaitingHuman && step != "specs" }
+}
+
+/// Le choix de la Live Activity que l'app démarre seule, à défaut de push-to-start.
+public enum HarnessActivityStart {
+    /// La feature dont l'activité démarre, ou `nil` : rien si une activité tourne déjà
+    /// (`running` : une seule à la fois) ou si rien ne travaille ni n'attend. La plus
+    /// urgente : celle qui attend l'humain depuis le plus longtemps ; sinon celle qui
+    /// travaille et a bougé le plus récemment. `declined` : les features dont l'humain a
+    /// arrêté ou écarté l'activité, jamais redémarrées d'office.
+    public static func candidate(inbox: HarnessInbox?, running: Set<String>, declined: Set<String> = []) -> HarnessRun? {
+        guard let inbox, running.isEmpty else { return nil }
+        let runs = inbox.runs.filter { !declined.contains($0.id) }
+        let waiting = runs.filter { $0.phase == .escalated || $0.phase == .awaitingHuman }
+        if let longest = waiting.min(by: { $0.updatedAt < $1.updatedAt }) { return longest }
+        return runs.filter { $0.phase == .running || $0.phase == .merging }.max { $0.updatedAt < $1.updatedAt }
+    }
 }
 
 extension Data {
@@ -80,6 +105,25 @@ public struct OMPRunActivityAttributes: ActivityAttributes {
         self.runId = runId
         self.title = title
         self.repo = repo
+    }
+}
+
+extension HarnessRemote {
+    /// Après un geste fait depuis une Live Activity, app en arrière-plan (son flux est
+    /// coupé) : l'activité de la feature reprend l'état de la boîte que `model` vient de
+    /// relire, et se clôt si la feature est terminée.
+    @MainActor
+    public static func refreshActivity(runId: String, from model: HarnessModel) async {
+        guard let inbox = model.inbox, let run = inbox.run(runId) else { return }
+        for activity in Activity<OMPRunActivityAttributes>.activities where activity.attributes.runId == runId {
+            let state = HarnessActivityState(run: run, inbox: inbox, tool: nil)
+            let content = ActivityContent(state: state, staleDate: nil)
+            if state.isFinal {
+                await activity.end(content, dismissalPolicy: .default)
+            } else {
+                await activity.update(content)
+            }
+        }
     }
 }
 #endif

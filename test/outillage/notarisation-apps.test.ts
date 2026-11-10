@@ -47,12 +47,14 @@ function profil(uuid: string, bundleId: string): string {
 }
 const UUID_APP = "11111111-2222-3333-4444-555555555555";
 const UUID_WIDGETS = "66666666-7777-8888-9999-AAAAAAAAAAAA";
+const UUID_SHARE = "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF";
 
 const SECRETS_IOS = {
   IOS_SIGNING_P12_BASE64: b64("p12-distribution-secret"),
   IOS_SIGNING_P12_PASSWORD: "mdp-p12-ios-secret",
   IOS_PROFILE_APP_BASE64: b64(profil(UUID_APP, "com.omp.console.ios")),
   IOS_PROFILE_WIDGETS_BASE64: b64(profil(UUID_WIDGETS, "com.omp.console.ios.widgets")),
+  IOS_PROFILE_SHARE_BASE64: b64(profil(UUID_SHARE, "com.omp.console.ios.share")),
   IOS_TEAM_ID: EQUIPE,
 };
 
@@ -348,6 +350,7 @@ test("notarisation-apps/AC-5 : avec les secrets iOS, profils installés, archive
     `CODE_SIGN_IDENTITY=Apple Distribution: Test (${EQUIPE})`,
     `OMP_PROFILE_OMPConsoleIOS=${UUID_APP}`,
     `OMP_PROFILE_OMPConsoleWidgets=${UUID_WIDGETS}`,
+    `OMP_PROFILE_OMPConsoleShare=${UUID_SHARE}`,
     "PROVISIONING_PROFILE_SPECIFIER=$(OMP_PROFILE_$(TARGET_NAME))",
   ])
     assert.ok(archive.includes(attendu), `${attendu} absent de : ${archive}`);
@@ -359,10 +362,11 @@ test("notarisation-apps/AC-5 : avec les secrets iOS, profils installés, archive
     "aucune équipe en dur dans le pbxproj",
   );
 
-  // Les deux profils étaient installés pendant l'archive, et sont retirés après.
+  // Les trois profils étaient installés pendant l'archive, et sont retirés après.
   assert.deepEqual(fs.readFileSync(path.join(box.dir, "profils-vus.txt"), "utf8").split("\n").filter(Boolean).sort(), [
     `${UUID_APP}.mobileprovision`,
     `${UUID_WIDGETS}.mobileprovision`,
+    `${UUID_SHARE}.mobileprovision`,
   ]);
   assert.deepEqual(fs.readdirSync(path.join(box.home, "Library", "MobileDevice", "Provisioning Profiles")), []);
   assert.equal(fs.existsSync(box.signing), false);
@@ -384,6 +388,7 @@ test("notarisation-apps/AC-5 : avec les secrets iOS, profils installés, archive
   assert.deepEqual(options.provisioningProfiles, {
     "com.omp.console.ios": UUID_APP,
     "com.omp.console.ios.widgets": UUID_WIDGETS,
+    "com.omp.console.ios.share": UUID_SHARE,
   });
 
   const ipa = path.join(box.out, "OMP-Console-iOS.ipa");

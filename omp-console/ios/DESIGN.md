@@ -373,12 +373,13 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
   y garde ses chiffres à chasse fixe. `[garde: ios-finitions-composants/AC-6]`
 - « Suivre sur l'écran verrouillé » démarre la Live Activity de la feature
   (extension `OMPConsoleWidgets`, troisième cible du projet) : écran verrouillé et
-  Dynamic Island, symbole et teinte doublés par le texte de l'état.
-  `[garde: coque-ios/AC-1]`
+  Dynamic Island, symbole et teinte doublés par le texte de l'état. Elle démarre aussi
+  seule (voir « Télécommande hors de l'app »). `[garde: coque-ios/AC-1]`
 - Le widget d'écran d'accueil « Boîte du serveur » (même extension) reprend le badge
   d'À traiter en grand chiffre à chasse fixe, puis les features vivantes, celles qui
   attendent l'humain d'abord, en orange ; sa date de lecture se lit en bas. Un
-  toucher ouvre À traiter. `[garde: coque-ios/AC-1]`
+  toucher ouvre le tri de ce qui attend (`ompconsole://decisions`), ou l'accueil quand
+  rien n'attend ; une feature des grands formats ouvre son fil. `[garde: coque-ios/AC-1]`
 
 ## Mémoire (feature `ios-memoire`)
 
@@ -520,3 +521,44 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
 - Les deux écrans d'erreur de la Mémoire s'obtiennent sans serveur :
   `-memoire.recipe injoignable` (liste) et `-memoire.recipe service-ancien` (graphe).
   `[test: memoryErrorsSayWhatHappenedThenWhatToDo]`
+
+## Télécommande hors de l'app (OS agentique)
+
+Ce qui se fait sans ouvrir l'app. Chaque geste est un vrai geste du serveur ; écrire
+exige l'appareil déverrouillé ; un échec se dit (notification « Geste non abouti »,
+dialogue de Siri, ligne rouge de la feuille de partage), jamais en silence.
+
+- **Notification d'une question unique recommandée** (catégorie `omp.answer`) :
+  « Prendre la recommandation », « Répondre… » (saisie, bouton « Répondre ») et
+  « Ouvrir ». La toucher ouvre le fil de sa feature. Les libellés sont ceux de
+  `NotificationText` ; le routage vit dans `ConsoleClient/HarnessNotifications.swift`.
+  `[test: answerNotificationOffersItsGestures]`
+- **Live Activity démarrée seule** : le jeton push-to-start part au serveur dès le
+  lancement ; une activité démarrée par le serveur est adoptée ; à défaut, l'app au
+  premier plan démarre celle de la feature la plus urgente — une seule à la fois,
+  jamais une activité que vous avez arrêtée ou écartée
+  (`IOSLiveActivityCenter`, `HarnessActivityStart`). Un toucher ouvre le fil ; une
+  revue qui attend porte « Ouvrir » et « Valider », deux capsules de 44 pt, le vert
+  réservé à « Valider ». `[test: theMostUrgentActivityStartsAlone]`
+- **Siri, Raccourcis, bouton Action** : « Demander à l'OS », « Tout suspendre »
+  (confirmé), « Reprendre », « Décisions en attente ». Une phrase par réponse, sans
+  point final, au vouvoiement (`IOSSiriText`) ; la décision d'agir ou non est une
+  table pure (`IOSSiriRemote.swift`). `[test: askSubmitsTheRequest]`
+  `[test: pauseTable]` `[test: decisionsPhrase]`
+- **Extension de partage « Demander à l'OS »** (`OMPConsoleShare`, quatrième cible) :
+  une feuille native — le contenu partagé (titre, adresse), un champ de consigne
+  facultatif, « Annuler » et « Envoyer » dans la barre. Sans consigne, la demande est
+  « Traiter cette page : <titre> » ou le texte partagé. Les mots viennent de
+  `OSRemoteText`. `[test: aSharedPageBecomesARequest]` `[garde: coque-ios/AC-1]`
+- **Liens** : `ompconsole://threads/<id>`, `ompconsole://decisions`,
+  `ompconsole://now`, en plus des sections (`HarnessWidgetLink.destination(of:)`).
+  Dans la coque à sections, un fil est la page de sa feature, le tri est « À traiter »
+  à ce qui attend, « Maintenant » est l'accueil.
+  `[test: linksOpenThreadsDecisionsAndNow]`
+- `OMPConsoleShared` porte les sources compilées à la fois par l'app et par
+  l'extension de widgets : une `LiveActivityIntent` s'exécute dans le processus de
+  l'app, et sa vue vit dans l'extension. `[garde: coque-ios/AC-1]`
+
+Il n'y a pas de contrôle « Tout suspendre / Reprendre » dans le Centre de contrôle :
+une bascule y exigerait un intent de plus, sans la confirmation que « Tout suspendre »
+demande.

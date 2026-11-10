@@ -7,6 +7,12 @@
 // trousseau du même groupe. Le widget relit ainsi la boîte LUI-MÊME à chaque
 // rafraîchissement (`HarnessInboxReader`), app fermée ; sans réseau, il montre le
 // dernier instantané, daté.
+//
+// Les mêmes identifiants partagés servent ce qui se fait HORS de l'app : l'extension de
+// partage « Demander à l'OS » (`HarnessShareDraft`) et le bouton « Valider » d'une Live
+// Activity (`HarnessRemote`) passent par un `HarnessModel` relié par le groupe d'apps
+// (`HarnessModel.shared`). Les liens `ompconsole://` de ces surfaces sont décrits ici
+// (`HarnessWidgetLink`).
 
 import ConsoleCore
 import Foundation
@@ -103,14 +109,57 @@ private extension HarnessRun {
     var needsHumanInWidget: Bool { phase == .escalated || phase == .awaitingHuman }
 }
 
-/// Le lien qui ouvre l'app sur une section (`ompconsole://inbox`), depuis le widget.
+/// Les liens `ompconsole://` qui ouvrent l'app à un endroit, depuis le widget, une Live
+/// Activity ou un raccourci : une section (`ompconsole://inbox`), le fil d'une feature
+/// (`ompconsole://threads/<id>`, et `runs/<id>`), le tri des décisions
+/// (`ompconsole://decisions`), « Maintenant » (`ompconsole://now`), une page de Système
+/// (`ompconsole://system/<page>`).
 public enum HarnessWidgetLink {
     public static let scheme = "ompconsole"
+    static let threadsHost = "threads"
+    static let decisionsHost = "decisions"
+    static let nowHost = "now"
 
-    public static func url(_ section: ConsoleSection) -> URL {
+    /// Où mène un lien.
+    public enum Destination: Equatable, Sendable {
+        case section(ConsoleSection)
+        /// Le fil d'une feature.
+        case thread(String)
+        /// Ce qui attend l'humain, à trier.
+        case decisions
+        /// L'accueil : le brief et ce qui travaille.
+        case now
+        case system(SystemPage)
+
+        /// La destination dans la coque à sections : un fil est la page de sa feature, le
+        /// tri est « À traiter » à ce qui attend, « Maintenant » est l'accueil.
+        public var command: HarnessPaletteCommand {
+            switch self {
+            case let .section(section): .section(section)
+            case let .thread(id): .run(id)
+            case .decisions: .inbox(.toDecide)
+            case .now: .section(.inbox)
+            case let .system(page): .system(page)
+            }
+        }
+    }
+
+    public static func url(_ section: ConsoleSection) -> URL { url(host: section.rawValue) }
+
+    /// `ompconsole://threads/<id>` : le fil d'une feature.
+    public static func url(thread runId: String) -> URL { url(host: threadsHost, item: runId) }
+
+    /// `ompconsole://decisions` : le tri de ce qui attend l'humain.
+    public static let decisions = url(host: decisionsHost)
+
+    /// `ompconsole://now` : « Maintenant ».
+    public static let now = url(host: nowHost)
+
+    private static func url(host: String, item: String? = nil) -> URL {
         var components = URLComponents()
         components.scheme = scheme
-        components.host = section.rawValue
+        components.host = host
+        if let item { components.path = "/" + item }
         return components.url ?? URL(fileURLWithPath: "/")
     }
 
@@ -118,6 +167,23 @@ public enum HarnessWidgetLink {
     public static func section(of url: URL) -> ConsoleSection? {
         guard url.scheme == scheme, let host = url.host else { return nil }
         return ConsoleSection(rawValue: host)
+    }
+
+    /// Où mène un lien `ompconsole://`, ou `nil` pour tout autre lien. Un fil sans
+    /// identifiant est la liste des features ; une page de Système inconnue, le hub.
+    public static func destination(of url: URL) -> Destination? {
+        guard url.scheme == scheme, let host = url.host else { return nil }
+        let item = url.pathComponents.dropFirst().first
+        switch host {
+        case threadsHost: return item.map(Destination.thread) ?? .section(.runs)
+        case decisionsHost: return .decisions
+        case nowHost: return .now
+        default: break
+        }
+        guard let section = ConsoleSection(rawValue: host) else { return nil }
+        if section == .runs, let item { return .thread(item) }
+        if section == .system, let page = item.flatMap(SystemPage.init(rawValue:)) { return .system(page) }
+        return .section(section)
     }
 }
 
@@ -168,6 +234,120 @@ public struct HarnessWidgetStore: Sendable {
     }
 
     public func address() -> String? { defaults?.string(forKey: Self.addressKey) }
+
+    /// Le serveur que l'app a relié, tel qu'elle l'a partagé : son adresse et son jeton ;
+    /// `nil` tant que l'app n'en a relié aucun (ou appareil jamais déverrouillé).
+    public func credentials() async -> (address: String, token: String)? {
+        guard let address = address(), let token = try? await tokens.token(for: Self.tokenAccount), !token.isEmpty else { return nil }
+        return (address, token)
+    }
+}
+
+extension HarnessModel {
+    /// Le modèle d'une EXTENSION (partage, bouton d'une Live Activity) : relié au serveur
+    /// de l'app par le groupe d'apps, boîte lue, rien d'enregistré ni de retenu. `nil` : le
+    /// groupe n'est pas déclaré, ou l'app n'a relié aucun serveur.
+    public static func shared(
+        _ store: HarnessWidgetStore? = .fromBundle(), transport: any HarnessTransport = URLSessionHarnessTransport()
+    ) async -> HarnessModel? {
+        guard let credentials = await store?.credentials() else { return nil }
+        return await linked(address: credentials.address, token: credentials.token, transport: transport)
+    }
+
+    /// Un modèle relié à cette adresse et ce jeton, sans rien enregistrer ; `nil` pour une
+    /// adresse illisible.
+    static func linked(address: String, token: String, transport: any HarnessTransport) async -> HarnessModel? {
+        guard let normalized = normalizedAddress(address) else { return nil }
+        let model = HarnessModel(
+            transport: transport, preferences: InMemoryClientPreferences(), tokens: InMemoryTokenStore(),
+            fallback: { (normalized, token) }
+        )
+        await model.load()
+        return model.isConfigured ? model : nil
+    }
+}
+
+/// Les gestes faits hors de l'app, sur un modèle relié par le groupe d'apps.
+public enum HarnessRemote {
+    /// La source d'une Demande dictée ou tapée hors de l'app (Siri, Raccourcis, bouton
+    /// Action), et celle d'un partage (`INTAKE_SOURCES` d'omp-harness/intake.ts).
+    public static let voiceSource = "voice"
+    public static let shareSource = "ios"
+
+    /// Valide la revue d'une feature depuis sa Live Activity, à la révision que le serveur
+    /// vient de rendre : `false` si elle n'attend plus de validation (déjà tranchée, specs
+    /// à relire, feature repartie) ou si le serveur refuse — rien n'est alors tranché.
+    @MainActor
+    public static func validateReview(runId: String, on model: HarnessModel) async -> Bool {
+        guard let run = model.inbox?.awaiting.first(where: { $0.id == runId }), run.awaitsVerdict else { return false }
+        return await model.validate(runId: runId, approve: true, reason: "", rev: run.rev)
+    }
+}
+
+extension HarnessIntakeFailure {
+    /// La phrase d'une Demande qui n'est pas partie, pour ce qui la pose hors de l'app
+    /// (Siri, l'extension de partage) : la cause, puis le remède.
+    public var message: String {
+        switch self {
+        case .unsupported: IntakeText.unsupported
+        case .server(.approverOnly): IntakeText.approverOnly
+        case .server(let failure): failure.message
+        }
+    }
+}
+
+/// Ce que l'extension de partage reçoit (une page, un texte, ou les deux) et la Demande
+/// qu'elle en fait : la consigne saisie, sinon une demande par défaut, avec la page en
+/// contexte (`context {url, title, selection}`).
+public struct HarnessShareDraft: Equatable, Sendable {
+    /// La longueur que le serveur accepte pour le texte d'une demande.
+    public static let maxTextLength = 4000
+
+    /// L'adresse de la page partagée.
+    public var url: String?
+    /// Son titre, quand l'app d'origine le donne.
+    public var title: String?
+    /// Le texte partagé (une sélection, une note).
+    public var text: String?
+
+    /// Champs rognés ; une adresse qui n'est pas une page web (un fichier) est écartée, et
+    /// un texte qui ne fait que répéter le titre aussi.
+    public init(url: String? = nil, title: String? = nil, text: String? = nil) {
+        func kept(_ value: String?) -> String? {
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        let page = kept(url)
+        let scheme = page.flatMap { URL(string: $0)?.scheme?.lowercased() }
+        self.url = scheme == "http" || scheme == "https" ? page : nil
+        self.title = kept(title)
+        self.text = kept(text) == self.title ? nil : kept(text)
+    }
+
+    /// Rien n'a été partagé : il n'y a pas de demande à faire.
+    public var isEmpty: Bool { url == nil && text == nil }
+
+    /// Ce que l'extension montre du contenu partagé : le titre, sinon le texte, sinon l'adresse.
+    public var headline: String { title ?? text ?? url ?? "" }
+
+    /// L'adresse, montrée sous le titre quand elle n'est pas déjà la ligne principale.
+    public var detail: String? { headline == url ? nil : url }
+
+    /// Le contexte de la demande : la page et, quand elle accompagne une page ou une
+    /// consigne, la sélection. `nil` s'il ne reste rien à joindre.
+    public func context(instruction: String) -> HarnessIntakeContext? {
+        let asked = !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return HarnessIntakeContext(url: url, title: title, selection: url != nil || asked ? text : nil).sendable
+    }
+
+    /// Le texte de la demande : la consigne saisie ; sinon, pour une page, `pageRequest`
+    /// appliqué à son titre (ou à son adresse) ; sinon le texte partagé lui-même. Borné à
+    /// ce que le serveur accepte ; `nil` : rien à demander.
+    public func request(instruction: String, pageRequest: (String) -> String) -> String? {
+        let asked = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let request = !asked.isEmpty ? asked : (url.map { pageRequest(title ?? $0) } ?? text)
+        return request.map { String($0.prefix(Self.maxTextLength)) }
+    }
 }
 
 /// La lecture de la boîte hors du modèle de l'app : celle du widget, qui n'a ni flux ni état.

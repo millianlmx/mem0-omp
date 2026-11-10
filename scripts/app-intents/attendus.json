@@ -9,6 +9,23 @@
       "Statut de ${applicationName}",
       "Connexion de ${applicationName}",
       "Vérifier la connexion de ${applicationName}"
-    ]
+    ],
+    "IOSAskIntent": [
+      "Demander à ${applicationName}",
+      "Nouvelle demande dans ${applicationName}"
+    ],
+    "IOSPendingDecisionsIntent": [
+      "Décisions en attente dans ${applicationName}",
+      "Décisions de ${applicationName}"
+    ],
+    "IOSSuspendAllIntent": [
+      "Tout suspendre dans ${applicationName}",
+      "Suspendre ${applicationName}"
+    ],
+    "IOSResumeAllIntent": [
+      "Reprendre le travail dans ${applicationName}",
+      "Reprendre ${applicationName}"
+    ],
+    "OMPRunValidateIntent": []
   }
 }

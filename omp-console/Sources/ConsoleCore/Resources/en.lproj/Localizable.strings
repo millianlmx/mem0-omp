@@ -1572,3 +1572,31 @@
 "Brut" = "Raw";
 "Specs complètes" = "Full specs";
 "Rien à comprendre ici" = "Nothing to understand here";
+
+/* OS — Télécommande iOS */
+"Prendre la recommandation" = "Take the Recommendation";
+"Répondre…" = "Answer…";
+"Dites ce que vous voulez demander" = "Say what you want to ask";
+"Demande transmise à l’OS" = "Request sent to the OS";
+"Suspendre tous les agents ?" = "Suspend all agents?";
+"Tout est suspendu" = "Everything is suspended";
+"Le travail reprend" = "Work is resuming";
+"Tout est déjà suspendu" = "Everything is already suspended";
+"Rien n’est suspendu" = "Nothing is suspended";
+"Ce serveur ne propose pas la pause" = "This server doesn’t offer the pause";
+"1 décision vous attend : %@" = "1 decision is waiting for you: %@";
+"%lld décisions vous attendent : %@" = "%lld decisions are waiting for you: %@";
+"et 1 autre" = "and 1 more";
+"et %lld autres" = "and %lld more";
+"une question sur « %@ »" = "a question about “%@”";
+"%lld questions sur « %@ »" = "%lld questions about “%@”";
+"les specs de « %@ »" = "the specs of “%@”";
+"la revue de « %@ »" = "the review of “%@”";
+"un envoi du poste" = "a workstation message";
+"une demande à confirmer" = "a request to confirm";
+"un audit à trier" = "an audit to sort";
+"un commentaire Jira" = "a Jira comment";
+"Demander à l’OS" = "Ask the OS";
+"Que faut-il en faire ?" = "What should be done with it?";
+"Rien à demander avec ce contenu" = "Nothing to ask with this content";
+"Traiter cette page : %@" = "Handle this page: %@";
