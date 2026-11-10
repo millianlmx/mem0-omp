@@ -143,33 +143,6 @@ extension OSProofPane {
     }
 }
 
-extension OSDecision {
-    /// La sorte de décision, en tête de sa carte.
-    public var kind: String {
-        switch self {
-        case .questions: OSText.kindQuestion
-        case .specs: OSText.kindSpecs
-        case .verdict: OSText.kindVerdict
-        case .approval: OSText.kindSend
-        case let .intake(intake): intake.isClarifying ? OSText.kindClarify : OSText.kindPlan
-        case .audit: OSText.kindProposals
-        case .jira: OSText.kindJira
-        }
-    }
-
-    public var symbol: String {
-        switch self {
-        case .questions: "questionmark.bubble.fill"
-        case .specs: "doc.text.fill"
-        case .verdict: "checkmark.seal.fill"
-        case .approval: "paperplane.fill"
-        case .intake: "sparkles"
-        case .audit: "list.bullet.rectangle"
-        case .jira: "text.bubble.fill"
-        }
-    }
-}
-
 extension Double {
     /// Un instant du serveur (millisecondes), relatif à maintenant : « il y a 4 minutes », « hier ».
     var osRelative: String {

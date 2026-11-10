@@ -234,7 +234,7 @@ struct OSRootView: View {
             } else if let thread {
                 OSThreadView(
                     server: server, workstation: workstation, intakes: intakes, pulse: workspace.pulse, workspace: workspace,
-                    thread: thread, browsers: browserNames // drafts: drafts
+                    thread: thread, browsers: browserNames, drafts: drafts
                 )
                 .id(thread.id)
             } else {
