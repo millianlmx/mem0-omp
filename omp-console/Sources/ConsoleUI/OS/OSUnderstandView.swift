@@ -58,7 +58,7 @@ public struct OSUnderstandView: View {
                         .font(.headline)
                         .lineLimit(2)
                     HStack {
-                        OSStepDots(run: run)
+                        OSJourney(run: run)
                         Text(run.osState).font(.caption).foregroundStyle(.secondary)
                     }
                 }

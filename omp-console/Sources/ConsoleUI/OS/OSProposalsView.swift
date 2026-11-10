@@ -77,10 +77,12 @@ public struct OSProposalsView: View {
                 Text(OSWatchText.noProposal).foregroundStyle(.secondary)
             }
             ForEach(groups) { group in
-                Section(OSWatchText.proposalSource(group.source) + " · \(group.items.count)") {
+                Section {
                     ForEach(group.items) { proposal in
                         row(proposal)
                     }
+                } header: {
+                    Label(OSWatchText.proposalSource(group.source) + " · \(group.items.count)", systemImage: Self.symbol(HarnessProposalSource(rawValue: group.source)))
                 }
             }
         }
@@ -108,9 +110,10 @@ public struct OSProposalsView: View {
                     }
                     if !proposal.detail.isEmpty {
                         Text(proposal.detail)
-                            .font(.callout)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
-                            .lineLimit(2)
+                            .lineLimit(1)
+                            .help(proposal.detail)
                     }
                 }
             }
@@ -172,9 +175,12 @@ public struct OSProposalsView: View {
         Button(OSWatchText.proposalAction(proposal.action)) { accept(proposal) }
             .buttonStyle(.borderedProminent)
             .disabled(busy || !OSProposalGroups.canAccept(proposal, canAct: server.canAct, isAdmin: server.isAdmin, approver: server.client?.approver ?? false))
-        Button(OSText.dismiss) {
+        Button {
             Task { await proposals.dismiss(proposal) }
+        } label: {
+            Label(OSText.dismiss, systemImage: "xmark").labelStyle(.iconOnly)
         }
+        .help(OSText.dismiss)
         .disabled(busy || !server.canAct)
     }
 

@@ -50,6 +50,8 @@ public struct OSThreadView: View {
     @State private var stopping: HarnessRun?
     /// Un geste de la page a été refusé : sa raison s'affiche sous l'en-tête.
     @State private var failure: HarnessFailure?
+    /// « Où et sur quoi » : replié, la page ne montre que le chemin ; ouvert, la machine, le dépôt et la branche.
+    @State private var placeShown = false
     @FocusState private var composing: Bool
 
     private var inbox: HarnessInbox? { server.inbox }
@@ -118,31 +120,49 @@ public struct OSThreadView: View {
     // MARK: En-tête et origine
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 OSPhaseMark(phase: thread.phase, size: 18)
                 Text(thread.title)
                     .font(.title2.weight(.bold))
                     .osSelectable()
             }
-            OSLine(spacing: 8, gestures: false) {
+            // Où en est la feature : cinq points reliés, l'étape en cours nommée.
+            if let run = thread.focusRun {
+                OSJourney(run: run, tint: thread.phase.color, large: true)
+            }
+            OSLine(spacing: 10, gestures: false) {
                 OSTag(text: thread.origin.label, symbol: thread.origin.symbol)
-                OSTag(text: thread.phase.label, tint: thread.phase.color)
+                if thread.focusRun == nil {
+                    OSTag(text: thread.phase.label, tint: thread.phase.color)
+                }
                 if thread.cost > 0 {
-                    OSTag(text: OSDecideText.total(thread.cost), symbol: "dollarsign.circle")
+                    Label(MonitoringText.cost(thread.cost), systemImage: "dollarsign.circle")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(OSDecideText.total(thread.cost))
                 }
                 Text(thread.createdAt.osRelative)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                // OÙ et SUR QUOI : la machine, le dépôt, la branche, l'étape, le modèle ; ou le navigateur.
+                Button {
+                    placeShown.toggle()
+                } label: {
+                    Image(systemName: placeShown ? "info.circle.fill" : "info.circle")
+                }
+                .osBorderless()
+                .help(OSText.places)
+                .accessibilityLabel(OSText.places)
             }
-            // OÙ et SUR QUOI : la machine, le dépôt, la branche, l'étape, le modèle ; ou le navigateur.
-            if let run = thread.focusRun {
-                OSPlace(subject: .run(run))
-            } else if let request = thread.request {
-                OSPlace(subject: .request(request, browser: request.browserId.flatMap { browsers[$0] }))
+            if placeShown {
+                if let run = thread.focusRun {
+                    OSPlace(subject: .run(run))
+                } else if let request = thread.request {
+                    OSPlace(subject: .request(request, browser: request.browserId.flatMap { browsers[$0] }))
+                }
             }
             OSAutonomyPicker(server: server, runs: thread.liveRuns) { failure = server.failure }
-                .padding(.top, 2)
         }
     }
 
@@ -290,7 +310,8 @@ public struct OSThreadView: View {
                         Text(run.repo + " · " + run.osState)
                             .font(.headline)
                         Spacer()
-                        OSStepDots(run: run)
+                        // Le chemin est déjà en tête de la page : seul un fil à plusieurs features le répète ici.
+                        if thread.liveRuns.count > 1 { OSJourney(run: run) }
                     }
                     if let activity = pulse.current(.run(run.id), now: context.date) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {

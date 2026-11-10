@@ -229,52 +229,70 @@ public struct OSDecisionCard: View {
         return OSText.take(option)
     }
 
+    /// Une option en carte : la choisie prend la teinte de l'accent et montre sa conséquence ; la
+    /// recommandée porte une étoile verte. Les autres gardent leur conséquence en infobulle.
     private func choiceRow(item: HarnessEscalation, choice: HarnessChoice) -> some View {
         let selected = (choices[item.id] ?? item.recommended) == choice.option
         return Button {
             choices[item.id] = choice.option
         } label: {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : .secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(choice.option).fontWeight(choice.isPreferred ? .semibold : .regular)
-                        if choice.isPreferred { OSTag(text: OSText.recommended, tint: .green) }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(selected ? Color.accentColor : .secondary)
+                    Text(choice.option).fontWeight(selected || choice.isPreferred ? .semibold : .regular)
+                    if choice.isPreferred {
+                        Image(systemName: "star.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                            .help(OSText.recommended)
+                            .accessibilityLabel(OSText.recommended)
                     }
-                    if let impact = choice.impact, !impact.isEmpty {
-                        Text(impact).font(.caption).foregroundStyle(.secondary).lineLimit(large ? 3 : 2)
-                    }
+                    Spacer(minLength: 0)
+                }
+                if selected, let impact = choice.impact, !impact.isEmpty {
+                    Text(impact)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(large ? 3 : 2)
+                        .padding(.leading, 26)
                 }
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .frame(maxWidth: .infinity, minHeight: ConsolePlatform.minimumTarget, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(selected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04)))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(selected ? Color.accentColor.opacity(0.6) : Color.clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(selected ? "" : choice.impact ?? "")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    /// « « Garder le cache » dans 12 min sauf avis contraire » : le délai vit, et « Attendre ma
-    /// réponse » passe la feature en « tout me demander » (plus rien ne s'applique seul).
+    /// L'échéance : un anneau qui se vide et le temps qu'il reste. « Attendre ma réponse » passe la
+    /// feature en « tout me demander » (plus rien ne s'applique seul) ; la phrase entière est en infobulle.
     @ViewBuilder
     private func deadline(_ item: HarnessEscalation, run: HarnessRun?, gestures: OSRunGestures) -> some View {
         if item.autoDate != nil {
             TimelineView(.periodic(from: .now, by: 1)) { timeline in
                 if let deadline = OSDeadline.of(item, now: timeline.date) {
-                    OSLine(spacing: 8, gestures: false) {
-                        Label(deadline.text, systemImage: "timer")
-                            .monospacedDigit()
-                            .foregroundStyle(.orange)
+                    let sentence = OSDecideText.deadline(option: deadline.option, seconds: deadline.seconds)
+                    OSLine(spacing: 10, gestures: false) {
+                        OSCountdown(seconds: deadline.seconds, tint: .orange)
+                            .help(sentence)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(sentence)
                         if gestures.autonomy, let run {
                             Button {
                                 perform(settles: false) { await server.setAutonomy(runId: run.id, level: .ask) }
                             } label: {
-                                Text(OSDecideText.waitForMe).underline().foregroundStyle(Color.accentColor)
+                                Label(OSDecideText.waitForMe, systemImage: "hand.raised.fill").labelStyle(.iconOnly)
                             }
                             .osBorderless()
+                            .help(OSDecideText.waitForMe)
                         }
                     }
-                    .font(.caption)
                 }
             }
         }
