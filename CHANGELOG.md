@@ -1,5 +1,13 @@
 # Journal des versions
 
+## omp-mem0-memory 4.4.0 — 2026-11-10
+
+- feat(harness): multi-client — l'espace devient la frontière d'un client (#449) (c5a6618)
+
+## omp-harness 1.39.0 — 2026-11-10
+
+- feat(harness): multi-client — l'espace devient la frontière d'un client (#449) (c5a6618)
+
 ## omp-harness 1.38.0 — 2026-11-10
 
 - feat(harness,console): appairage d'un iPhone par QR code — ticket à usage unique, jeton propre à l'appareil (#447) (9386fc1)
