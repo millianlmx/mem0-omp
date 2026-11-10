@@ -21,7 +21,6 @@ public enum OSText {
     public static let reply = L10n.text("Consigne à l’agent…")
     public static let followUp = L10n.text("Demander une suite…")
     public static let classic = L10n.text("Interface classique")
-    public static let toggle = L10n.text("Nouvelle interface (prototype)")
     public static let understand = L10n.text("Comprendre")
     public static let now = L10n.text("Maintenant")
 

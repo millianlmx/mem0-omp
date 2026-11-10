@@ -1,7 +1,11 @@
 // L'« OS agentique » : le RADAR, toujours en haut, partagé par le Mac et l'iPhone/iPad.
 // Chaque agent est un symbole d'état et une ligne : ce qu'il fait maintenant (le pouls).
-// Les features au travail, le poste, la vigie, l'OS lui-même ; à droite le coût du
-// jour et « Tout suspendre ». Un clic sur un agent ouvre son fil.
+// Les features au travail, le poste, la vigie, les sessions omp locales, l'OS lui-même ;
+// à droite le coût du jour (et le reste du budget de l'espace retenu) et « Tout
+// suspendre » : la pause du serveur, après l'étape en cours ou tout de suite. En pause,
+// la barre devient le bandeau orange : « En pause », qui et pourquoi, et « Reprendre »
+// (sa hauteur ne change pas : rien ne bouge dessous). Un serveur sans pause garde les
+// arrêts du poste et des fils. Un clic sur un agent ouvre son fil.
 
 import ConsoleClient
 import ConsoleCore
@@ -13,6 +17,9 @@ public struct OSRadar: View {
     @ObservedObject var vigie: HarnessVigie
     @ObservedObject var pulse: OSPulse
     @ObservedObject var workspace: OSWorkspace
+    @ObservedObject var pause: HarnessPauseModel
+    @ObservedObject var localSessions: HarnessLocalSessionsModel
+    @ObservedObject var spaces: HarnessSpacesModel
     let threads: [OSThread]
 
     public init(
@@ -24,11 +31,20 @@ public struct OSRadar: View {
         self.vigie = vigie
         self.pulse = pulse
         self.workspace = workspace
+        _pause = ObservedObject(wrappedValue: server.pause)
+        _localSessions = ObservedObject(wrappedValue: server.localSessions)
+        _spaces = ObservedObject(wrappedValue: server.spaces)
         self.threads = threads
     }
 
-    @State private var confirmStopPoste = false
-    @State private var confirmStopRuns = false
+    /// Le geste qui attend sa confirmation.
+    private enum Ask: Identifiable {
+        case pauseAfterStep, pauseNow, stopPoste, stopRuns
+
+        var id: Self { self }
+    }
+
+    @State private var ask: Ask?
 
     private var liveRuns: [HarnessRun] {
         (server.inbox?.runs ?? []).filter { run in
@@ -38,53 +54,111 @@ public struct OSRadar: View {
     }
 
     public var body: some View {
+        // La hauteur ne change jamais : en pause, la barre elle-même devient le bandeau orange.
         TimelineView(.periodic(from: .now, by: 5)) { context in
             HStack(spacing: 10) {
+                if pause.isPaused { pausedLabel }
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(liveRuns) { run in
-                            agent(
-                                phase: OSThreads.phase(of: run, inbox: server.inbox),
-                                name: OSThreads.clean(run.title).title,
-                                line: run.repo + " · " + (pulse.current(.run(run.id), now: context.date)?.line ?? run.osState)
-                            ) {
-                                if let thread = threads.first(where: { $0.runs.contains { $0.id == run.id } }) { workspace.open(thread.id) }
-                            }
-                        }
-                        poste(now: context.date)
-                        vigieChip
-                        if let system = pulse.current(.system, now: context.date) {
-                            agent(phase: .working, name: OSText.os, line: system.line, action: nil)
-                        }
-                    }
-                    .padding(.vertical, 6)
+                    agents(now: context.date)
+                        .padding(.vertical, 6)
                 }
                 Spacer(minLength: 0)
-                if let cost = todayCost {
-                    Text(OSText.today(cost))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-                Circle()
-                    .fill(pulse.isLive ? Color.green : Color.secondary.opacity(0.4))
-                    .frame(width: 7, height: 7)
-                    .help(pulse.isLive ? OSText.live : OSText.reconnecting)
-                suspendMenu
+                gauges
+                if pause.isPaused { resumeButton } else { suspendMenu }
             }
             .padding(.horizontal, 12)
         }
         .frame(height: 46)
+        .background(pause.isPaused ? Color.orange.opacity(0.16) : Color.clear)
         .background(.bar)
+        .background {
+            // ⌘⇧P : suspendre (après confirmation) ou reprendre.
+            Button("") { workspace.pauseRequested = true }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+                .hidden()
+        }
+        .confirmationDialog(askTitle, isPresented: asking, titleVisibility: .visible, presenting: ask) { ask in
+            Button(askTitle(ask), role: .destructive) { confirm(ask) }
+        }
+        .onChange(of: workspace.pauseRequested) { _, requested in
+            guard requested else { return }
+            workspace.pauseRequested = false
+            togglePause()
+        }
+        .task(id: server.address) {
+            await pause.refresh()
+            await localSessions.refresh()
+        }
+        // Les chiffres de l'espace retenu (coût du jour, reste du budget) se relisent quand il change.
+        .task(id: spaceKey) {
+            await spaces.refresh()
+        }
+    }
+
+    /// Ce qui fait relire les espaces : le serveur relié et l'espace retenu.
+    private var spaceKey: String {
+        (server.address ?? "") + "|" + (workspace.spaceId ?? "")
+    }
+
+    /// Une pastille par agent : les features vivantes, le poste, la vigie, les sessions locales, l'OS.
+    private func agents(now: Date) -> some View {
+        HStack(spacing: 8) {
+            ForEach(liveRuns) { run in
+                agent(
+                    phase: OSThreads.phase(of: run, inbox: server.inbox),
+                    name: OSThreads.clean(run.title).title,
+                    line: run.repo + " · " + (pulse.current(.run(run.id), now: now)?.line ?? run.osState)
+                ) {
+                    workspace.open(runId: run.id, in: threads)
+                }
+            }
+            poste(now: now)
+            vigieChip
+            localChip(now: now)
+            if let system = pulse.current(.system, now: now) {
+                agent(phase: .working, name: OSText.os, line: system.line, action: nil)
+            }
+        }
+    }
+
+    /// À droite : le refus d'un geste de pause, le coût du jour, le témoin du direct.
+    @ViewBuilder
+    private var gauges: some View {
+        if let failure = pause.failure {
+            Text(failure.message)
+                .font(.caption)
+                .foregroundStyle(.red)
+                .lineLimit(1)
+        }
+        if let cost = costLine {
+            Text(cost)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .layoutPriority(1)
+        }
+        Circle()
+            .fill(pulse.isLive ? Color.green : Color.secondary.opacity(0.4))
+            .frame(width: 7, height: 7)
+            .help(pulse.isLive ? OSText.live : OSText.reconnecting)
     }
 
     // MARK: Agents
 
-    private func agent(phase: OSPhase, name: String, line: String, action: (() -> Void)?) -> some View {
+    private func agent(phase: OSPhase, name: String, line: String, symbol: String? = nil, action: (() -> Void)?) -> some View {
         Button {
             action?()
         } label: {
             HStack(spacing: 6) {
-                OSPhaseMark(phase: phase, size: 13)
+                if let symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(phase.color)
+                        .frame(width: 19, height: 19)
+                        .accessibilityLabel(phase.label)
+                } else {
+                    OSPhaseMark(phase: phase, size: 13)
+                }
                 VStack(alignment: .leading, spacing: 0) {
                     Text(name)
                         .font(.caption.weight(.semibold))
@@ -129,34 +203,168 @@ public struct OSRadar: View {
         }
     }
 
-    // MARK: Coût et frein
-
-    private var todayCost: Double? {
-        guard let days = server.stats?.usage?.byDay else { return nil }
-        let today = Date().formatted(.iso8601.year().month().day())
-        return days.first { $0.day == today }?.cost ?? 0
+    /// Les sessions omp ouvertes sur les machines de l'humain : leur nombre, et ce que fait
+    /// la plus récemment active. Rien sans session ouverte, ni sur un serveur qui n'en sert pas.
+    @ViewBuilder
+    private func localChip(now: Date) -> some View {
+        let live = localSessions.live
+        if localSessions.isServed, let first = live.first {
+            let intent = pulse.current(.localSession(first.id), now: now)?.line ?? first.intent ?? OSThreads.clean(first.title).title
+            let lead = live.count > 1 ? OSWatchText.activeSessions(live.count) : first.host
+            agent(
+                phase: live.contains { $0.phase == .working } ? .working : .queued,
+                name: OSWatchText.localSessions,
+                line: lead + " · ↳ " + intent,
+                symbol: "laptopcomputer"
+            ) {
+                if let thread = threads.first(where: { $0.localSession?.id == first.id }) { workspace.open(thread.id) }
+            }
+        }
     }
 
-    private var suspendMenu: some View {
-        Menu {
-            Button(OSText.stopPoste, systemImage: "hand.raised.fill") { confirmStopPoste = true }
-                .disabled(workstation.availability != .available || workstation.status?.stopped != nil)
-            Button(OSText.stopThreads(liveRuns.count), systemImage: "stop.fill") { confirmStopRuns = true }
-                .disabled(liveRuns.isEmpty || !server.canAct)
-        } label: {
-            Label(OSText.suspend, systemImage: "pause.circle.fill")
+    // MARK: Coût
+
+    /// Le coût du jour : celui de l'espace retenu, avec ce qu'il reste de son budget, sinon
+    /// celui du serveur entier.
+    private var costLine: String? {
+        if let space = spaces.spaces.first(where: { $0.id == workspace.spaceId }) {
+            let cost = OSText.today(space.stats.costToday)
+            return space.stats.budgetLeftToday.map { cost + " · " + OSWatchText.budgetLeft($0) } ?? cost
         }
-        .menuStyle(.button)
-        .tint(.red)
-        .fixedSize()
-        .confirmationDialog(OSText.stopPoste, isPresented: $confirmStopPoste) {
-            Button(OSText.stopPoste, role: .destructive) { Task { await workstation.stop() } }
-        }
-        .confirmationDialog(OSText.stopThreads(liveRuns.count), isPresented: $confirmStopRuns) {
-            Button(OSText.stopThreads(liveRuns.count), role: .destructive) {
-                let ids = liveRuns.map(\.id)
-                Task { for id in ids { await server.cancel(runId: id) } }
+        guard let days = server.stats?.usage?.byDay else { return nil }
+        let today = Date().formatted(.iso8601.year().month().day())
+        return OSText.today(days.first { $0.day == today }?.cost ?? 0)
+    }
+
+    // MARK: Pause
+
+    /// « En pause », et dessous qui, depuis quand, pourquoi : en tête de la barre, en orange.
+    private var pausedLabel: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "pause.circle.fill")
+                .font(.system(size: 17, weight: .semibold))
+            VStack(alignment: .leading, spacing: 0) {
+                Text(OSWatchText.pausedTitle)
+                    .font(.caption.weight(.bold))
+                if !pauseDetail.isEmpty {
+                    Text(pauseDetail)
+                        .font(.caption2)
+                        .lineLimit(1)
+                }
             }
+        }
+        .foregroundStyle(.orange)
+        .frame(maxWidth: 300, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: false)
+        .help(pauseDetail)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// « Reprendre » : relance le tour.
+    private var resumeButton: some View {
+        Button {
+            Task { await pause.setPause(paused: false) }
+        } label: {
+            Label(OSWatchText.resume, systemImage: "play.circle.fill")
+        }
+        .tint(.orange)
+        .disabled(!server.canAct || pause.isSaving)
+    }
+
+    private var pauseDetail: String {
+        guard let state = pause.pause else { return "" }
+        let parts = [
+            state.by.map(OSWatchText.pausedBy),
+            state.at.map(\.osRelative),
+            state.now ? OSWatchText.interrupted : nil,
+            state.reason,
+        ]
+        return parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    /// « Tout suspendre » : la pause du serveur quand il la sert, sinon l'arrêt du poste et
+    /// des fils en cours. Rien tant que l'état de la pause n'est pas lu, ni en pause (le
+    /// bandeau porte « Reprendre »).
+    @ViewBuilder
+    private var suspendMenu: some View {
+        let posteStop = Button(OSText.stopPoste, systemImage: "hand.raised.fill") { ask = .stopPoste }
+            .disabled(workstation.availability != .available || workstation.status?.stopped != nil)
+        switch pause.availability {
+        case .available where !pause.isPaused:
+            Menu {
+                Button(OSWatchText.pauseAfterStep, systemImage: "pause.fill") { ask = .pauseAfterStep }
+                Button(OSWatchText.pauseNow, systemImage: "stop.fill") { ask = .pauseNow }
+                Divider()
+                posteStop
+            } label: {
+                Label(OSText.suspend, systemImage: "pause.circle.fill")
+            }
+            .menuStyle(.button)
+            .tint(.red)
+            .fixedSize()
+            .disabled(!server.canAct || pause.isSaving)
+        case .absent:
+            Menu {
+                posteStop
+                Button(OSText.stopThreads(liveRuns.count), systemImage: "stop.fill") { ask = .stopRuns }
+                    .disabled(liveRuns.isEmpty || !server.canAct)
+            } label: {
+                Label(OSText.suspend, systemImage: "pause.circle.fill")
+            }
+            .menuStyle(.button)
+            .tint(.red)
+            .fixedSize()
+        default:
+            EmptyView()
+        }
+    }
+
+    private var asking: Binding<Bool> {
+        Binding(get: { ask != nil }, set: { shown in if !shown { ask = nil } })
+    }
+
+    private var askTitle: String {
+        switch ask {
+        case .pauseAfterStep: OSWatchText.confirmAfterStep
+        case .pauseNow: OSWatchText.confirmNow
+        case .stopPoste: OSText.stopPoste
+        case .stopRuns: OSText.stopThreads(liveRuns.count)
+        case nil: ""
+        }
+    }
+
+    /// Le bouton qui confirme.
+    private func askTitle(_ ask: Ask) -> String {
+        switch ask {
+        case .pauseAfterStep: OSText.suspend
+        case .pauseNow: OSWatchText.interrupt
+        case .stopPoste: OSText.stopPoste
+        case .stopRuns: OSText.stopThreads(liveRuns.count)
+        }
+    }
+
+    private func confirm(_ ask: Ask) {
+        switch ask {
+        case .pauseAfterStep:
+            Task { await pause.setPause(paused: true) }
+        case .pauseNow:
+            Task { await pause.setPause(paused: true, now: true) }
+        case .stopPoste:
+            Task { await workstation.stop() }
+        case .stopRuns:
+            let ids = liveRuns.map(\.id)
+            Task { for id in ids { await server.cancel(runId: id) } }
+        }
+    }
+
+    /// ⌘⇧P : reprend si tout est suspendu, sinon demande la confirmation de la pause douce.
+    /// Sans effet sur un serveur sans pause, ou pour un jeton qui ne peut pas agir.
+    private func togglePause() {
+        guard pause.availability == .available, server.canAct else { return }
+        if pause.isPaused {
+            Task { await pause.setPause(paused: false) }
+        } else {
+            ask = .pauseAfterStep
         }
     }
 }

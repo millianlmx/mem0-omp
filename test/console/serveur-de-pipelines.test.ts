@@ -178,6 +178,42 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
     assert.ok(model.includes(client), `le client n'appelle plus ${client}`);
     assert.ok(served(method, sample), `le serveur ne sert pas ${method} ${sample}`);
   }
+  // Les routes de l'OS agentique : les gestes d'une feature vivent dans HarnessModel.swift, les
+  // autres dans le fichier de leur modèle (pause, consignes, paliers, espaces, brief, chiffres,
+  // propositions, sessions locales, activités démarrées par le serveur).
+  const osCalls: [string, string, string, string][] = [
+    ["HarnessModel.swift", 'path: "/amend"', "POST", "/v1/runs/r1/amend"],
+    ["HarnessModel.swift", 'path: "/modules"', "POST", "/v1/runs/r1/modules"],
+    ["HarnessModel.swift", 'path: "/autonomy"', "POST", "/v1/runs/r1/autonomy"],
+    ["HarnessModel.swift", '/template")', "GET", "/v1/runs/r1/template"],
+    ["HarnessModel.swift", 'path: "/v1/push/activities/start"', "POST", "/v1/push/activities/start"],
+    ["HarnessModel.swift", 'path: "/v1/push/activities/start/\\(id)"', "DELETE", "/v1/push/activities/start/ab12"],
+    ["HarnessLoop.swift", 'readBound("/v1/pause")', "GET", "/v1/pause"],
+    ["HarnessLoop.swift", '"POST", "/v1/pause"', "POST", "/v1/pause"],
+    ["HarnessStandingRules.swift", 'readBound("/v1/rules")', "GET", "/v1/rules"],
+    ["HarnessStandingRules.swift", '"POST", "/v1/rules"', "POST", "/v1/rules"],
+    ["HarnessStandingRules.swift", '"PUT", "/v1/rules/\\(', "PUT", "/v1/rules/c1"],
+    ["HarnessStandingRules.swift", '"DELETE", "/v1/rules/\\(', "DELETE", "/v1/rules/c1"],
+    ["HarnessAutonomy.swift", '"POST", "/v1/autonomy/rules"', "POST", "/v1/autonomy/rules"],
+    ["HarnessSpaces.swift", 'readBound("/v1/spaces")', "GET", "/v1/spaces"],
+    ["HarnessSpaces.swift", '"POST", "/v1/spaces"', "POST", "/v1/spaces"],
+    ["HarnessSpaces.swift", 'gesture(space, "PUT"', "PUT", "/v1/spaces/e1"],
+    ["HarnessSpaces.swift", 'gesture(space, "DELETE"', "DELETE", "/v1/spaces/e1"],
+    ["HarnessSpaces.swift", '(space.id))/report"', "GET", "/v1/spaces/e1/report"],
+    ["HarnessBrief.swift", '?? "/v1/brief"', "GET", "/v1/brief"],
+    ["HarnessBrief.swift", '"POST", "/v1/brief/seen"', "POST", "/v1/brief/seen"],
+    ["HarnessBrief.swift", 'readBound("/v1/scoreboard?days=', "GET", "/v1/scoreboard"],
+    ["HarnessProposals.swift", 'readBound("/v1/proposals")', "GET", "/v1/proposals"],
+    ["HarnessProposals.swift", '(proposal.id))/accept"', "POST", "/v1/proposals/issue.0123456789abcdef/accept"],
+    ["HarnessProposals.swift", '(proposal.id))/dismiss"', "POST", "/v1/proposals/issue.0123456789abcdef/dismiss"],
+    ["HarnessLocalSessions.swift", 'readBound("/v1/local-sessions")', "GET", "/v1/local-sessions"],
+    ["HarnessLocalSessions.swift", '(session.id))/handoff"', "POST", "/v1/local-sessions/s1/handoff"],
+    ["HarnessLocalSessions.swift", '"DELETE", "/v1/local-sessions/\\(', "DELETE", "/v1/local-sessions/s1"],
+  ];
+  for (const [file, client, method, sample] of osCalls) {
+    assert.ok(fs.readFileSync(path.join(CLIENT, file), "utf8").includes(client), `${file} n'appelle plus ${client}`);
+    assert.ok(served(method, sample), `le serveur ne sert pas ${method} ${sample}`);
+  }
   // Le flux d'événements est servi hors de la table (SSE).
   assert.ok(model.includes("/v1/events?after="), "le client ne suit plus /v1/events");
   assert.match(read("omp-harness", "http.ts"), /url\.pathname === "\/v1\/events"/);

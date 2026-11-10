@@ -106,6 +106,9 @@ fi
 defaults delete "$BUNDLE_ID" >/dev/null 2>&1
 defaults write "$BUNDLE_ID" "NSWindow Frame main-AppWindow-1" "80 60 1500 960 0 0 1728 1084 "
 defaults write "$BUNDLE_ID" setup.recipe succes
+# L'onglet « Preuves » est celui de la page d'une feature de l'interface CLASSIQUE : la
+# nouvelle interface est le défaut de l'app, la préférence `ui.os` la coupe ici.
+defaults write "$BUNDLE_ID" ui.os -bool false
 
 echo "  · ouverture de la feature $run_id"
 open -n -a "$APP" --env "CFFIXED_USER_HOME=$WORK/home" --env "OMP_CONSOLE_SUPPORT_ROOT=$WORK/support" \

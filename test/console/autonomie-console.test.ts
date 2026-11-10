@@ -1,9 +1,10 @@
 // Feature autonomie-console : les apps Mac et iOS lisent l'autonomie par paliers du
 // serveur — le type de travail et les labels d'un lancement, la validation prise seule
-// sur la carte d'À traiter (porte franchie, règle, preuves) et la page Système ›
-// Autonomie, en lecture seule. Le contrat est vérifié des DEUX côtés : chaque champ que
-// le client Swift décode existe dans le JSON réel du serveur, chaque route qu'il appelle
-// est servie au rôle du contrat, et chaque écran est câblé dans les deux apps.
+// sur la carte d'À traiter (porte franchie, règle, preuves), la page Système › Autonomie
+// (lecture pour tous) et la seule écriture — une règle de palier, réservée à l'admin, depuis
+// le Savoir. Le contrat est vérifié des DEUX côtés : chaque champ que le client Swift
+// décode existe dans le JSON réel du serveur, chaque route qu'il appelle est servie au
+// rôle du contrat, et chaque écran est câblé dans les deux apps.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -183,16 +184,34 @@ test("autonomie-console/AC-2 : la carte d'une décision prise seule montre la po
   for (const part of ["proof.gateLine", "proof.ruleLine", "proof.proofLines"]) assert.ok(view.includes(part), part);
 });
 
-test("autonomie-console/AC-3 : la page Système › Autonomie lit GET /v1/autonomy en lecture seule dans les deux apps, et quitte le hub sur un serveur qui ne la sert pas", async () => {
-  // La route : servie aux lecteurs, appelée par le client ; aucune écriture.
+test("autonomie-console/AC-3 : tout lecteur lit GET /v1/autonomy dans les deux apps ; la seule écriture est une règle de palier, servie aux seuls admins et offerte à eux seuls ; la page quitte le hub sur un serveur qui ne la sert pas", async () => {
+  // La lecture : servie aux lecteurs, appelée par le client.
   const routes = apiRoutes({ store: {} } as never, new ClientRegistry(null, TOKEN));
   const served = routes.find((route) => route.method === "GET" && route.pattern.test("/v1/autonomy"));
   assert.equal(served?.role, "viewer");
   assert.ok(API_FEATURES.includes("autonomy"));
   const model = client("HarnessAutonomy.swift");
   assert.match(model, /readIfServed\("\/v1\/autonomy"\) else \{\s*availability = \.absent/);
-  for (const file of fs.readdirSync(path.join(CONSOLE, "Sources", "ConsoleClient")))
-    assert.doesNotMatch(client(file), /"(POST|PUT|DELETE)", "\/v1\/autonomy/, `${file} écrit une règle`);
+  // L'écriture : une seule route, celle d'une règle de palier, que le serveur réserve à l'admin ;
+  // seul le modèle de l'autonomie l'appelle.
+  const written = routes.find((route) => route.method === "POST" && route.pattern.test("/v1/autonomy/rules"));
+  assert.equal(written?.role, "admin", "POST /v1/autonomy/rules est réservée à l'admin");
+  assert.ok(API_FEATURES.includes("os-autonomy"));
+  for (const file of fs.readdirSync(path.join(CONSOLE, "Sources", "ConsoleClient"))) {
+    const writes = [...client(file).matchAll(/"(POST|PUT|DELETE)",\s*"(\/v1\/autonomy[^"]*)"/g)].map(
+      ([, method, route]) => `${method} ${route}`,
+    );
+    assert.deepEqual(
+      writes,
+      file === "HarnessAutonomy.swift" ? ["POST /v1/autonomy/rules"] : [],
+      `${file} : écritures de l'autonomie`,
+    );
+  }
+  // Le geste « Appliquer » d'une proposition de palier (Savoir) n'existe que pour un admin.
+  assert.match(
+    read("Sources", "ConsoleUI", "OS", "OSKnowledgeView.swift"),
+    /if server\.isAdmin, let change = OSTiers\.change\(of: proposal\) \{\s*Button\(OSWatchText\.apply\) \{\s*Task \{ await autonomy\.setRule\(/,
+  );
 
   // Le JSON réel : une règle complète, une validation prise seule et une proposition de palier.
   const { world, call, close } = await serve((config) => {

@@ -1,7 +1,9 @@
-// Racine de la fenêtre : `NavigationSplitView` coordonne la sélection de la
-// `List` de la colonne latérale avec le panneau de détail (D4) — c'est le
-// composant système qui porte déjà le bouton de bascule de la barre latérale et
-// qui y pose le verre (Liquid Glass, aucun fond maison).
+// Racine de la fenêtre. Par défaut elle rend l'« OS agentique » (`OSRootView` : le Radar,
+// les fils, « Maintenant ») ; Présentation ▸ « Interface classique » (⌘⇧O, préférence
+// `ui.os`) rend la coque CLASSIQUE décrite ici : `NavigationSplitView` coordonne la
+// sélection de la `List` de la colonne latérale avec le panneau de détail (D4) — c'est
+// le composant système qui porte déjà le bouton de bascule de la barre latérale et qui
+// y pose le verre (Liquid Glass, aucun fond maison).
 //
 // Organisation : barre latérale en trois temps — le travail (« À traiter », Features,
 // Poste), les « Outils » (Mémoire, Terminal, Fichiers), puis Système seul en bas.
@@ -133,28 +135,50 @@ struct ConsoleRootView: View {
         switch section {
         case .runs:
             if let item {
-                ConsoleNavigation.openRun(item, drafts: drafts, select: model.select)
+                ConsoleNavigation.openRun(item, drafts: drafts, select: go)
             } else {
-                model.select(.runs)
+                go(.runs)
             }
         case .system:
             if let item, let page = SystemPage(rawValue: item) {
-                ConsoleNavigation.open(page, drafts: drafts, select: model.select)
+                ConsoleNavigation.open(page, drafts: drafts, select: go)
             } else {
-                model.select(.system)
+                go(.system)
             }
         default:
+            go(section)
+        }
+    }
+
+    /// Va à une section. Dans l'« OS agentique », ce qui attend l'humain (« À traiter »,
+    /// Poste) ouvre le tri et une feature ouvre son fil (`drafts.openedRun`) ; une section
+    /// sans équivalent ramène l'interface classique.
+    private func go(_ section: ConsoleSection) {
+        guard osMode else {
+            model.select(section)
+            return
+        }
+        switch section {
+        case .inbox, .workstation:
+            osTriage = true
+        case .runs:
+            model.select(section)
+        default:
+            osMode = false
             model.select(section)
         }
     }
 
-    /// Le prototype « OS agentique » (branche proto/os-fils) remplace la coque quand il est choisi.
-    @AppStorage("ui.os") private var osMode = false
+    /// L'« OS agentique » est l'interface par défaut ; Présentation ▸ « Interface classique »
+    /// (⌘⇧O) rend la coque à barre latérale.
+    @AppStorage("ui.os") private var osMode = true
+    /// Un lien ou une notification demande ce qui attend l'humain : l'« OS agentique » ouvre le tri.
+    @State private var osTriage = false
 
     var body: some View {
         Group {
             if osMode {
-                OSRootView(server: server, drafts: drafts) { model.select($0) }
+                OSRootView(server: server, drafts: drafts, triageRequested: $osTriage) { model.select($0) }
             } else {
                 classic
             }
@@ -184,7 +208,7 @@ struct ConsoleRootView: View {
         }
         // Le jeton approbateur ou non : les actions d'un envoi du poste agissent ou ouvrent l'app.
         .onReceive(server.$client) { _ in notifications.refreshCategories() }
-        .consoleNotificationRoutes(notifications, server: server, drafts: drafts) { model.select($0) }
+        .consoleNotificationRoutes(notifications, server: server, drafts: drafts) { go($0) }
         .onOpenURL { open($0) }
         .consoleShell(ConsoleShell(
             markdown: { AnyView(MarkdownBlocksView(blocks: $0)) },

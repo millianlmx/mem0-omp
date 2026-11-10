@@ -1,13 +1,15 @@
 // Point d'entrée de la coque. Le fichier NE s'appelle PAS main.swift : `@main`
 // y est refusé (D5).
 //
-// UNE scène : la fenêtre principale à barre latérale. « À traiter », Features, Poste et
-// Système sont servis par le serveur de pipelines du VPS (omp-harness) ; Mémoire,
-// Terminal et Fichiers sont locaux. L'app reste utilisable en plein écran : aucune
-// fenêtre annexe.
+// UNE scène : la fenêtre principale. Par défaut elle montre l'« OS agentique » (le Radar,
+// les fils, « Maintenant » : `OSRootView`) ; l'interface classique à barre latérale reste
+// à un geste. « À traiter », Features, Poste et Système sont servis par le serveur de
+// pipelines du VPS (omp-harness) ; Mémoire, Terminal et Fichiers sont locaux. L'app reste
+// utilisable en plein écran : aucune fenêtre annexe.
 //
-// Barre des menus : Présentation ▸ les sept sections (⌘1…⌘7) et « Actualiser » (⌘R) ;
-// Fichier ▸ « Nouvelle feature… » (⌘N), « Commandes… » (⌘K) et « Rechercher… » (⌘F).
+// Barre des menus : Présentation ▸ « Interface classique » (⌘⇧O), les sept sections de
+// l'interface classique (⌘1…⌘7) et « Actualiser » (⌘R) ; Fichier ▸ « Nouvelle
+// feature… » (⌘N), « Commandes… » (⌘K) et « Rechercher… » (⌘F).
 //
 // Les modèles vivent sur la structure `App` (`@StateObject`), donc à l'échelle de
 // l'app : fermer la fenêtre ne laisse pas de shell orphelin, et les accroches de
@@ -116,30 +118,33 @@ struct OMPConsoleApp: App {
     }
 }
 
-/// Présentation ▸ « Nouvelle interface (prototype) » (⌘⇧O) : bascule vers le prototype
-/// « OS agentique » (branche proto/os-fils), et retour.
+/// Présentation ▸ « Interface classique » (⌘⇧O) : coché, la fenêtre montre l'interface à
+/// barre latérale ; décoché (le défaut), l'« OS agentique ». Préférence `ui.os`.
 struct OSCommands: Commands {
-    @AppStorage("ui.os") private var osMode = false
+    @AppStorage("ui.os") private var osMode = true
 
     var body: some Commands {
         CommandGroup(before: .sidebar) {
-            Toggle(OSText.toggle, isOn: $osMode)
+            Toggle(OSText.classic, isOn: Binding(get: { !osMode }, set: { osMode = !$0 }))
                 .keyboardShortcut("o", modifiers: [.command, .shift])
             Divider()
         }
     }
 }
 
-/// Menu Présentation ▸ les sections, dans l'ordre de la barre latérale : ⌘1…⌘9 au plus
-/// (sept aujourd'hui). Ramène la fenêtre principale, puis y sélectionne la section.
+/// Menu Présentation ▸ les sections de l'interface classique, dans l'ordre de sa barre
+/// latérale : ⌘1…⌘9 au plus (sept aujourd'hui). Ramène la fenêtre principale, revient à
+/// l'interface classique, puis y sélectionne la section.
 struct SectionCommands: Commands {
     let console: ConsoleModel
+    @AppStorage("ui.os") private var osMode = true
 
     var body: some Commands {
         CommandGroup(before: .sidebar) {
             ForEach(Array(ConsoleSection.allCases.enumerated()), id: \.element) { index, section in
                 Button(section.title) {
                     MainWindow.reveal()
+                    osMode = false
                     console.select(section)
                 }
                 .keyboardShortcut(Self.key(at: index).map { KeyboardShortcut(KeyEquivalent($0), modifiers: .command) })
