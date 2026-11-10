@@ -6,8 +6,13 @@
 // Les jetons vivent dans `atlassian.tokenFile` (JSON, 0600, écrit par tmp + rename) : jamais en
 // base, jamais au journal, jamais rendus par une route. Le consentement en attente (state,
 // verifier) vit en mémoire seulement, un seul à la fois, dix minutes.
+//
+// Une connexion par espace (multi-client), plus la connexion par défaut : chacune a son `AtlassianAuth`,
+// son fichier de jetons (`spaceTokenFile` : à côté de `atlassian.tokenFile`), son consentement en attente
+// et son `state`, qui porte l'espace (`spaceOfState`).
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import type { AtlassianConfig } from "../config.ts";
 import { LOOPBACK_REDIRECT, isLoopbackUrl, isRecord } from "../config.ts";
 import type { FetchResponse } from "../oracle.ts";
@@ -88,6 +93,23 @@ export class AtlassianNotConnected extends Error {}
 
 export function redirectUriOf(config: AtlassianConfig): string {
   return config.redirectUri ?? LOOPBACK_REDIRECT;
+}
+
+/** Le fichier de jetons de la connexion d'un espace : `atlassian-<espaceId>.json`, à côté de `atlassian.tokenFile`. */
+export function spaceTokenFile(config: AtlassianConfig, space: string): string {
+  return path.join(path.dirname(config.tokenFile), `atlassian-${space}.json`);
+}
+
+/**
+ * L'espace que porte le `state` d'un consentement (`<espaceId>.<aléa>`), `null` pour la connexion par
+ * défaut (l'aléa seul, en base64url : sans point). Le préfixe n'est qu'un aiguillage : le `state` ENTIER
+ * est ensuite comparé au consentement en attente de la connexion de cet espace, que seul le serveur
+ * connaît — changer le préfixe ne branche donc jamais l'espace d'un autre.
+ */
+export function spaceOfState(state: unknown): string | null {
+  if (typeof state !== "string") return null;
+  const cut = state.lastIndexOf(".");
+  return cut <= 0 ? null : state.slice(0, cut);
 }
 
 /** Une boucle locale : le navigateur de l'humain ne joindra pas le serveur, il recolle l'adresse dans l'app. */
@@ -296,9 +318,20 @@ function tokensOf(raw: unknown): AtlassianTokens | null {
   };
 }
 
+/** Les jetons rangés dans ce fichier ; `null` s'il est absent ou illisible. */
+export function storedTokens(file: string): AtlassianTokens | null {
+  try {
+    return tokensOf(JSON.parse(fs.readFileSync(file, "utf8")));
+  } catch {
+    return null;
+  }
+}
+
 export type AtlassianAuthDeps = {
   fetch: AtlassianFetch;
   config: () => AtlassianConfig;
+  /** L'espace de cette connexion (son `state` le porte) ; absent : la connexion par défaut. */
+  space?: string | null;
   now?: () => number;
   /** Atlassian a refusé le refresh token (révoqué, expiré) : les jetons sont oubliés. */
   onRevoked: (reason: string) => void;
@@ -309,6 +342,7 @@ export class AtlassianAuth {
   readonly #fetch: AtlassianFetch;
   readonly #config: () => AtlassianConfig;
   readonly #now: () => number;
+  readonly #space: string | null;
   readonly #onRevoked: (reason: string) => void;
   /** Le fichier lu, et la marque (chemin, date, taille) qui dit s'il faut le relire. */
   #cache: { stamp: string; tokens: AtlassianTokens | null } | null = null;
@@ -323,6 +357,7 @@ export class AtlassianAuth {
     this.#fetch = deps.fetch;
     this.#config = deps.config;
     this.#now = deps.now ?? Date.now;
+    this.#space = deps.space ?? null;
     this.#onRevoked = deps.onRevoked;
   }
 
@@ -336,12 +371,7 @@ export class AtlassianAuth {
     }
     const stamp = `${file}:${stat.mtimeMs}:${stat.size}`;
     if (this.#cache?.stamp === stamp) return this.#cache.tokens;
-    let tokens: AtlassianTokens | null = null;
-    try {
-      tokens = tokensOf(JSON.parse(fs.readFileSync(file, "utf8")));
-    } catch {
-      tokens = null;
-    }
+    const tokens = storedTokens(file);
     this.#cache = { stamp, tokens };
     return tokens;
   }
@@ -382,7 +412,8 @@ export class AtlassianAuth {
     else clientId = await registerClient(this.#fetch, server, redirectUri);
     this.#client = { clientId, redirectUri };
     const { verifier, challenge } = pkce();
-    const state = randomBytes(32).toString("base64url");
+    const nonce = randomBytes(32).toString("base64url");
+    const state = this.#space === null ? nonce : `${this.#space}.${nonce}`;
     this.#pending = {
       state,
       verifier,

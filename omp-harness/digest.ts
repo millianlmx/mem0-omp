@@ -9,7 +9,7 @@ import type { HarnessConfig } from "./config.ts";
 import type { DecisionRow, EventRow, RepoFilter, RunRow, Store } from "./db.ts";
 import { sumUsage } from "./db.ts";
 import type { LogLine } from "./logger.ts";
-import type { Notifier } from "./notify.ts";
+import type { Notification, Notifier } from "./notify.ts";
 import type { BackupStatus, MemoryStatus } from "./observability.ts";
 import { vigieDigestLines } from "./vigie/desk.ts";
 
@@ -239,7 +239,9 @@ export class DigestSender {
   /**
    * Le rapport s'il est dû à `now` (heure passée, pas encore envoyé depuis), posté et noté
    * comme envoyé ; `null` sinon. Noté AVANT le POST : un envoi perdu n'est pas rejoué, il
-   * finit en `notify_failed` comme toute notification.
+   * finit en `notify_failed` comme toute notification. Le rapport de tout le serveur part aux
+   * cibles sans `spaces` ; une cible bornée à des espaces reçoit celui de LEURS dépôts sur la
+   * même fenêtre, sans la santé ni le commit du service.
    */
   check(now = this.#now()): Digest | null {
     const { digestHour } = this.#config.notify;
@@ -251,23 +253,25 @@ export class DigestSender {
     if (now < due) return null;
     const last = this.#store.getSetting<number>(DIGEST_SENT_KEY);
     if (typeof last === "number" && last >= due) return null;
-    const digest = digestOf(
-      this.#store,
-      typeof last === "number" ? last : now - DIGEST_WINDOW_MS,
-      now,
-      null,
-      HARNESS_COMMIT,
-      this.#health(),
-    );
+    const since = typeof last === "number" ? last : now - DIGEST_WINDOW_MS;
+    const digest = digestOf(this.#store, since, now, null, HARNESS_COMMIT, this.#health());
     this.#store.setSetting(DIGEST_SENT_KEY, now, null);
-    this.#notifier.post({
+    const morning = (body: string): Notification => ({
       title: "Rapport du matin",
-      body: digest.text,
+      body,
       priority: 3,
       tags: ["sunrise"],
       click: null,
       markdown: true,
     });
+    // Sans dépôt d'origine, ce rapport n'atteint que les cibles sans `spaces`.
+    this.#notifier.post(morning(digest.text));
+    for (const target of this.#notifier.targets()) {
+      const scope = this.#notifier.scopeOf(target);
+      if (scope === null) continue;
+      const own = digestParts(this.#store, since, now, scope).parts.join("\n\n");
+      this.#notifier.post(morning(own), undefined, [target]);
+    }
     return digest;
   }
 

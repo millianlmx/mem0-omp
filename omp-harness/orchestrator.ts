@@ -32,10 +32,10 @@ import { createFromPlan } from "./intake-create.ts";
 import { Intaker } from "./intake.ts";
 import { AuditPilot, raisesAutonomy } from "./pilot.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
-import { retryBackoff } from "./config.ts";
+import { configWarnings, retryBackoff } from "./config.ts";
 import type { Actor, HarnessDeps } from "./context.ts";
 import { HarnessContext, SERVICE } from "./context.ts";
-import type { DecisionRow, RepoFilter, RunAutonomy, RunRow } from "./db.ts";
+import type { DecisionRow, RepoFilter, RunAutonomy, RunRow, ScheduleTarget, Space } from "./db.ts";
 import { detectIrreversible } from "./decisions.ts";
 import { DigestSender } from "./digest.ts";
 import { HarnessError } from "./errors.ts";
@@ -57,6 +57,8 @@ import {
   ACTIVE_STATES,
   acceptsSpecs,
   crashed,
+  failureOf,
+  humanWaitFacts,
   PAUSE_REASON,
   heldForDailyBudget,
   heldForPause,
@@ -64,7 +66,7 @@ import {
   pausedForBudget,
   recovered,
 } from "./machine.ts";
-import type { FailCause, StepOutcome } from "./machine.ts";
+import type { FailCause, HumanWaitView, RunFailure, StepOutcome } from "./machine.ts";
 import { Merger } from "./merger.ts";
 import { briefOfReq } from "./oracle.ts";
 import type { LostWrites } from "./oracle.ts";
@@ -80,9 +82,18 @@ import { Schedules } from "./schedules.ts";
 import { projectScope } from "./scope.ts";
 import type { Slot } from "./scheduler.ts";
 import type { LiveRun } from "./steps.ts";
-import { SPECS_BASELINE, StepExecutor, challengeUnit, directSpecs, liveRun } from "./steps.ts";
+import {
+  REVIEW_EVIDENCE,
+  SPECS_BASELINE,
+  StepExecutor,
+  challengeUnit,
+  directSpecs,
+  liveRun,
+  specsGateFacts,
+} from "./steps.ts";
 import { Splitter, waitReason } from "./split.ts";
 import { StandingRules } from "./standing-rules.ts";
+import { mergeFacts, readMergeEvidence } from "./verdict.ts";
 import { Workstation } from "./workstation.ts";
 import { IssueDesk } from "./issues.ts";
 import { SignalDesk } from "./corporate/signals.ts";
@@ -90,9 +101,10 @@ import { WorkstationAgent } from "./workstation-agent.ts";
 import { VigieDesk } from "./vigie/desk.ts";
 import { BrowserDesk } from "./browser/desk.ts";
 import { VpsBrowser } from "./browser/vps.ts";
-import { AtlassianDesk } from "./atlassian/desk.ts";
+import { AtlassianDesk, spaceAtlassian } from "./atlassian/desk.ts";
 import type { AtlassianFetch } from "./atlassian/desk.ts";
-import { SpaceDesk } from "./spaces.ts";
+import { NO_SPACE_HOLDS, SpaceDesk } from "./spaces.ts";
+import type { SpaceHold, SpaceHolds } from "./spaces.ts";
 import { LocalSessionDesk } from "./local-sessions.ts";
 import { ProposalDesk } from "./proposals.ts";
 
@@ -154,9 +166,25 @@ type Candidate = { run: RunRow; resumed: boolean; group: string };
 export type QueueBlocker = { runId: string; title: string; state: RunState; modules: string[] };
 
 /**
+ * Les chiffres de ce qui retient un run en file, selon sa cause : `daily_budget` — la dépense du jour
+ * UTC, le plafond et l'instant où il se rouvre ; `space_budget` — le nom de l'espace (sans montant : un
+ * client borné le lit) ; `repo_cap` — les runs en cours du dépôt et son `maxParallel` ; `memory` — la
+ * mémoire disponible et requise ; `slots` — les slots runner tenus et leur nombre ; `backoff` — l'étape
+ * à relancer et la cause de son dernier échec.
+ */
+export type QueueFacts =
+  | { spent: number; ceiling: number; resetsAt: number }
+  | { space: string }
+  | { running: number; maxParallel: number }
+  | { availableMiB: number; requiredMiB: number }
+  | { used: number; slots: number }
+  | { step: StepKind | null; cause: FailCause | null };
+
+/**
  * Ce qui retient un run `queued` : la cause et son texte, recalculés à chaque tour (les chiffres
  * restent à jour). `blockedBy` : les runs qui le retiennent (`modules`, `parent`) ; `until` :
- * l'instant avant lequel il ne repart pas (`backoff`). Les causes d'un run DÛ sont les codes de
+ * l'instant avant lequel il ne repart pas (`backoff`) ; `facts` : les chiffres de la cause, pour que
+ * les apps écrivent leur phrase sans lire `text`. Les causes d'un run DÛ sont les codes de
  * `admission_refused` ; `parent`, `backoff` et `inferring` (`NOT_DUE`) retiennent un run qui
  * n'est pas encore candidat — l'API les dit, sans refus journalisé ni place dans la file de `/v1/status`.
  */
@@ -176,6 +204,7 @@ export type QueueWait = {
   text: string;
   blockedBy?: QueueBlocker[];
   until?: number;
+  facts?: QueueFacts;
 };
 
 const NOT_DUE: readonly QueueWait["cause"][] = ["parent", "backoff", "inferring"];
@@ -188,8 +217,19 @@ function spaceBudgetText(hold: { space: string }): string {
   return `budget journalier de l'espace « ${hold.space} » atteint — reprise à minuit UTC ou budget relevé`;
 }
 
-/** Un run tel que l'API le rend : en file, sa raison est ce qui le retient (`waitCause` en dit le code). */
-export type RunWithWait = RunRow & { waitCause?: QueueWait["cause"]; blockedBy?: QueueBlocker[]; waitUntil?: number };
+/**
+ * Un run tel que l'API le rend. En file et retenu : sa raison est ce qui le retient, `waitCause` en dit
+ * le code, `waitFacts` les chiffres. Chez l'humain (`awaiting_human`, `escalated`) : `humanWait`, la sorte
+ * d'attente et ses faits à code. En échec : `failure`, l'étape et la cause.
+ */
+export type RunWithWait = RunRow & {
+  waitCause?: QueueWait["cause"];
+  blockedBy?: QueueBlocker[];
+  waitUntil?: number;
+  waitFacts?: QueueFacts;
+  humanWait?: HumanWaitView;
+  failure?: RunFailure;
+};
 
 /**
  * La pause globale (« Tout suspendre ») : qui l'a posée ou levée, quand, et pourquoi. `now` : elle a
@@ -204,7 +244,17 @@ export type PauseState = {
   now: boolean;
 };
 
+/** Un espace en pause, tel que `GET /v1/pause` le rend : son identifiant, son nom et sa pause. */
+export type SpacePause = PauseState & { id: string; name: string };
+
+/** La pause telle que l'API la rend : la pause globale, et les espaces EN PAUSE que voit le lecteur. */
+export type PauseView = PauseState & { spaces: SpacePause[] };
+
 const PAUSE_KEY = "pause";
+/** La clé de réglage de la pause d'un espace : `pause:<espaceId>`. */
+function spacePauseKey(spaceId: string): string {
+  return `${PAUSE_KEY}:${spaceId}`;
+}
 /** Qui a suspendu, quand la pause vient du service lui-même (aucun client). */
 const PAUSE_SERVICE = "le service";
 
@@ -231,6 +281,12 @@ export class Orchestrator {
   readonly #inferring = new Set<string>();
   /** La pause globale, relue des réglages au démarrage : rien n'est admis ni lancé tant qu'elle tient. */
   #pause: PauseState;
+  /**
+   * Les espaces en pause (leur identifiant), relus des réglages au démarrage : leurs runs ne sont plus
+   * admis, leurs runs vivants retournent en file, le serveur ne décide plus rien seul pour eux — les
+   * autres espaces continuent. Vide sans espace en pause : aucune lecture de plus.
+   */
+  readonly #spacePauses = new Map<string, PauseState>();
   /** Les runs vivants qu'une pause immédiate (`now`) interrompt : ils retournent en file, sans échec compté. */
   readonly #pauseStops = new Set<string>();
   /** L'arrêt immédiat en cours (runs, audits, Demandes, pilote) : rien ne repart avant qu'il ait fini. */
@@ -291,7 +347,23 @@ export class Orchestrator {
     this.#ctx = new HarnessContext(deps);
     this.#pause = pauseOf(this.#ctx.store.getSetting<unknown>(PAUSE_KEY));
     this.#tickMs = deps.tickMs ?? 1000;
-    this.spaces = new SpaceDesk(this.#ctx);
+    // L'étanchéité d'un espace lit autour de lui sa connexion Atlassian et les réglages de la vigie ; son
+    // retrait lit sa pause et la connexion Atlassian par défaut, puis oublie ce qui n'était qu'à lui.
+    this.spaces = new SpaceDesk(this.#ctx, {
+      atlassian: (spaceId) => spaceAtlassian(this.#ctx.config, spaceId),
+      vigie: () => this.vigie.settings(),
+      paused: (spaceId) => this.#spacePauses.has(spaceId),
+      defaultAtlassian: () => this.atlassian.enabled() && this.atlassian.connected(),
+      removed: (spaceId) => {
+        this.#spacePauses.delete(spaceId);
+        this.#ctx.store.deleteSetting(spacePauseKey(spaceId));
+        this.atlassian.forgetSpace(spaceId);
+      },
+    });
+    for (const space of this.#ctx.store.listSpaces()) {
+      const pause = pauseOf(this.#ctx.store.getSetting<unknown>(spacePauseKey(space.id)));
+      if (pause.paused) this.#spacePauses.set(space.id, pause);
+    }
     this.standing = new StandingRules(this.#ctx);
     this.metrics = new Metrics({
       store: this.#ctx.store,
@@ -369,7 +441,8 @@ export class Orchestrator {
       runAutomation: (automationId, actor) => this.workstation.runAutomation(automationId, actor),
     });
     this.intake = new Intaker(this.#ctx, {
-      create: (plan, client, actor, autonomy) => createFromPlan(this, client, actor, plan, autonomy),
+      create: (plan, client, actor, autonomy, spaceId) => createFromPlan(this, client, actor, plan, autonomy, spaceId),
+      spaces: this.spaces,
       state: (scope) =>
         factoryStatePrompt(
           factoryState(this.store, scope === "*" ? null : scope, Date.now(), (run) => this.#heldBy(run)),
@@ -428,6 +501,12 @@ export class Orchestrator {
     // Les fournisseurs et chaînes déclarés par l'API passent avant la reprise des runs.
     this.#ctx.providers.apply();
     await this.#prepareRepos(this.#ctx.config.repos);
+    // Les portées mémoire en double ou réservées : dites au journal, jamais un refus de démarrer (config.ts).
+    for (const warning of configWarnings(this.#ctx.config))
+      this.#ctx.log(`configuration : ${warning.text}`, { level: "warn" });
+    // Une cible de notification bornée à un espace qui n'existe pas : dite au journal, jamais un refus de démarrer.
+    for (const warning of this.#ctx.notifier.spaceWarnings())
+      this.#ctx.log(`configuration : ${warning}`, { level: "warn" });
     await this.recover();
     this.#started = true;
     this.#lastTickAt = Date.now();
@@ -623,11 +702,14 @@ export class Orchestrator {
     // (un merge déjà enfilé finit), aucune escalade n'est tranchée à l'échéance, aucune attente n'est validée
     // par l'autonomie. Un run `merging`, une échéance passée, une attente retenue (`hold`) restent tels
     // quels : le premier tour après la reprise les reprend. La pause est relue avant chacun des trois : une
-    // pause posée pendant que le tour attend (`await`) vaut pour la suite du tour.
-    if (this.#pauseHold() === null) for (const run of store.listRuns({ state: ["merging"] })) this.#merger.enqueue(run);
+    // pause posée pendant que le tour attend (`await`) vaut pour la suite du tour. La pause d'un ESPACE
+    // retient de même les trois pour ses seuls dépôts (`#spaceHeld`) : les autres espaces continuent.
+    if (this.#pauseHold() === null)
+      for (const run of store.listRuns({ state: ["merging"] }))
+        if (!this.#spaceHeld(run.repo)) this.#merger.enqueue(run);
     // Une escalade ouverte depuis trop longtemps est tranchée sur la recommandation de l'agent.
     try {
-      if (this.#pauseHold() === null) await this.#human.autoDecideExpired(Date.now());
+      if (this.#pauseHold() === null) await this.#human.autoDecideExpired(Date.now(), this.#spaceHeld);
     } catch (err) {
       this.#ctx.log(`auto-décision des escalades échues : ${err instanceof Error ? err.message : String(err)}`, {
         level: "error",
@@ -635,22 +717,25 @@ export class Orchestrator {
       });
     }
     try {
-      if (this.#pauseHold() === null) await this.#autonomy.tick();
+      if (this.#pauseHold() === null) await this.#autonomy.tick(this.#spaceHeld);
     } catch (err) {
       this.#ctx.log(`autonomie : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
     }
     // En pause (« Tout suspendre »), rien de neuf ne part : ni planification, ni audit, ni Demande, ni
     // pilote, ni job du poste, ni rêve — ce qui tourne finit, et la vigie ne fait que suivre ses incidents.
     const hold = this.#pauseHold();
+    // La pause ou le budget du jour d'un ESPACE retient de même tout ce qui est à lui (`#spaceHolds`) —
+    // ses planifications, audits, Demandes, rêves et jobs du poste ; les autres espaces et le hors-espace continuent.
+    const holds = this.#spaceHolds(Date.now());
     // Les planifications dues d'abord : un run ou un audit qu'elles créent part dès ce tour.
     try {
-      if (hold === null) void this.schedules.tick(Date.now());
+      if (hold === null) void this.schedules.tick(Date.now(), (target) => this.#scheduleHold(target, holds));
     } catch (err) {
       this.#ctx.log(`planifications : ${err instanceof Error ? err.message : String(err)}`);
     }
-    if (hold === null) this.audits.tick();
+    if (hold === null) this.audits.tick(holds);
     try {
-      if (hold === null) this.intake.tick();
+      if (hold === null) this.intake.tick(holds);
     } catch (err) {
       this.#ctx.log(`demandes : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
     }
@@ -660,13 +745,13 @@ export class Orchestrator {
       this.#ctx.log(`pilote des audits : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
     }
     try {
-      this.workstationAgent.tick(Date.now(), hold);
+      this.workstationAgent.tick(Date.now(), hold, (space) => holds.ofSpace(space)?.text ?? null);
     } catch (err) {
       this.#ctx.log(`poste de travail : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
     }
     this.#admit();
     // Après les runs : un dépôt ne rêve que sur un slot que nul run n'attend.
-    if (hold === null) this.dreams.tick();
+    if (hold === null) this.dreams.tick(Date.now(), holds);
     this.#watch();
     this.metrics.maybeSample();
     this.#ctx.observability.tick();
@@ -705,6 +790,7 @@ export class Orchestrator {
         cause: "backoff",
         text: run.reason ?? `relance différée : reprise à ${new Date(run.notBefore).toISOString()}`,
         until: run.notBefore,
+        facts: { step: run.step, cause: run.lastFailCause },
       };
     if (this.#inferring.has(run.id))
       return {
@@ -761,11 +847,17 @@ export class Orchestrator {
         }
         continue;
       }
+      // L'espace du dépôt est en pause : aucun de ses runs ne part, ceux des autres espaces continuent.
+      const paused = this.#spaceHold(name);
+      if (paused !== null) {
+        for (const run of runs) held.set(run.id, { cause: "paused", text: paused });
+        continue;
+      }
       // Le budget journalier de l'espace du dépôt atteint : aucun de ses runs ne part avant minuit UTC.
       const space = this.spaces.budgetHold(name, now);
       if (space) {
         const text = spaceBudgetText(space);
-        for (const run of runs) held.set(run.id, { cause: "space_budget", text });
+        for (const run of runs) held.set(run.id, { cause: "space_budget", text, facts: { space: space.space } });
         continue;
       }
       // Un run qui a déjà un worktree a déjà été admis par le planificateur : il repasse devant.
@@ -802,6 +894,7 @@ export class Orchestrator {
           held.set(run.id, {
             cause: "repo_cap",
             text: `plafond du dépôt ${name} atteint : ${running} run(s) en cours, maxParallel ${repo.maxParallel}`,
+            ...(repo.maxParallel !== null ? { facts: { running, maxParallel: repo.maxParallel } } : {}),
           });
           continue;
         }
@@ -834,7 +927,8 @@ export class Orchestrator {
     const daily = candidates.length > 0 ? this.#ctx.monitor.dailyBudgetDue() : null;
     if (daily) {
       const text = `plafond journalier atteint : ${daily.spent.toFixed(2)} $ / ${daily.ceiling.toFixed(2)} $ — reprise à ${new Date(daily.resetsAt).toISOString()}`;
-      for (const candidate of candidates) waits.set(candidate.run.id, { cause: "daily_budget", text });
+      const facts = { spent: daily.spent, ceiling: daily.ceiling, resetsAt: daily.resetsAt };
+      for (const candidate of candidates) waits.set(candidate.run.id, { cause: "daily_budget", text, facts });
       this.#settleWaits(waits);
       return;
     }
@@ -844,8 +938,12 @@ export class Orchestrator {
       const slot = this.#ctx.scheduler.tryAcquire("runner", next.run.id);
       if ("refused" in slot) {
         // Le premier de la file est refusé : ceux qui le suivent attendent la même chose.
+        const facts =
+          slot.refused === "slots"
+            ? { used: slot.used, slots: slot.slots }
+            : { availableMiB: slot.availableMiB, requiredMiB: slot.requiredMiB };
         for (const run of [next.run, ...candidates.map((c) => c.run)]) {
-          waits.set(run.id, { cause: slot.refused, text: slot.detail });
+          waits.set(run.id, { cause: slot.refused, text: slot.detail, facts });
         }
         break;
       }
@@ -874,17 +972,54 @@ export class Orchestrator {
     for (const [id, wait] of waits) this.#waits.set(id, wait);
   }
 
-  /** Un run tel que l'API le rend : en file et retenu, sa raison dit ce qui le retient, par qui et jusqu'à quand. */
+  /**
+   * Un run tel que l'API le rend. En file et retenu : sa raison dit ce qui le retient, par qui, jusqu'à
+   * quand et avec quels chiffres. Chez l'humain : pourquoi (`humanWait`). En échec : où et pourquoi (`failure`).
+   */
   withWait(run: RunRow): RunWithWait {
     const wait = run.state === "queued" ? this.#waits.get(run.id) : undefined;
-    if (!wait) return run;
-    return {
-      ...run,
-      reason: wait.text,
-      waitCause: wait.cause,
-      ...(wait.blockedBy ? { blockedBy: wait.blockedBy } : {}),
-      ...(wait.until !== undefined ? { waitUntil: wait.until } : {}),
-    };
+    if (wait)
+      return {
+        ...run,
+        reason: wait.text,
+        waitCause: wait.cause,
+        ...(wait.blockedBy ? { blockedBy: wait.blockedBy } : {}),
+        ...(wait.until !== undefined ? { waitUntil: wait.until } : {}),
+        ...(wait.facts ? { waitFacts: wait.facts } : {}),
+      };
+    const humanWait = this.humanWait(run);
+    if (humanWait !== null) return { ...run, humanWait };
+    const failure = failureOf(run);
+    return failure === null ? run : { ...run, failure };
+  }
+
+  /**
+   * Pourquoi ce run attend l'humain, en données (`humanWaitFacts`) ; `null` hors attente humaine. Rien
+   * n'est recalculé de coûteux : une attente ne relit que ce qu'elle a déjà en base — ses specs et ses
+   * désaccords (specs), l'évidence de sa dernière revue (verdict), son coût et son budget (budget), ses
+   * escalades ouvertes (questions). Un run qui n'attend pas ne lit rien.
+   */
+  humanWait(run: RunRow): HumanWaitView | null {
+    const { store, monitor, config } = this.#ctx;
+    return humanWaitFacts(run, {
+      gate: () => specsGateFacts(store, run),
+      merge: () => {
+        const evidence = readMergeEvidence(store.getArtifact(run.id, REVIEW_EVIDENCE));
+        if (evidence === null || run.verdict === null) return null;
+        try {
+          return mergeFacts(run.verdict, evidence);
+        } catch {
+          // Un verdict d'avant un champ que la règle lit : ses motifs ne se recalculent plus.
+          return null;
+        }
+      },
+      budget: () => {
+        const { cost, threshold } = monitor.budget(run.id);
+        return { spent: cost, budget: threshold };
+      },
+      openQuestions: () => store.listEscalations({ runId: run.id, status: "open" }).length,
+      fixCap: config.review.fixCap,
+    });
   }
 
   /** Les runs DUS retenus en file, par cause, et la cause dominante (la plus fréquente) : la file de `/v1/status`. */
@@ -952,11 +1087,13 @@ export class Orchestrator {
       while (!live.abort.signal.aborted) {
         run = store.getRun(live.runId) as RunRow;
         if (run.state !== "running" || run.step === null) break;
-        // La pause globale : comme au plafond journalier, la feature rend son slot avant l'étape et retourne en file.
-        if (this.#pause.paused) {
+        // La pause (globale, ou celle de l'espace du dépôt) : comme au plafond journalier, la feature rend
+        // son slot avant l'étape et retourne en file.
+        const pauser = this.#pauser(run.repo);
+        if (pauser !== null) {
           this.#ctx.transition(
             run,
-            heldForPause({ step: run.step, fixes: run.fixes, attempts: run.attempts }, this.#pause.by ?? PAUSE_SERVICE),
+            heldForPause({ step: run.step, fixes: run.fixes, attempts: run.attempts }, pauser),
             ["running"],
           );
           break;
@@ -1427,6 +1564,89 @@ export class Orchestrator {
     return `${PAUSE_REASON} ${by ?? PAUSE_SERVICE}${reason === null ? "" : ` — ${reason}`}`;
   }
 
+  /** La pause de l'espace d'un dépôt, si cet espace est en pause ; sans aucun espace en pause, aucune lecture. */
+  #spacePause(repo: string): { space: Space; pause: PauseState } | null {
+    if (this.#spacePauses.size === 0) return null;
+    const space = this.spaces.spaceOf(repo);
+    const pause = space === null ? undefined : this.#spacePauses.get(space.id);
+    return space !== null && pause !== undefined ? { space, pause } : null;
+  }
+
+  /** L'espace de ce dépôt est-il en pause ? Ce que lisent les merges, les échéances et l'autonomie d'un tour. */
+  readonly #spaceHeld = (repo: string): boolean => this.#spacePause(repo) !== null;
+
+  /** La phrase de la pause d'un espace : ce qui retient ses runs en file, ses Demandes, ses jobs. */
+  #spacePauseText(space: Space, pause: PauseState): string {
+    return `${PAUSE_REASON} ${pause.by ?? PAUSE_SERVICE} (espace « ${space.name} »)${pause.reason === null ? "" : ` — ${pause.reason}`}`;
+  }
+
+  /** Ce qui retient en file les runs d'un dépôt dont l'espace est en pause, ou `null`. */
+  #spaceHold(repo: string): string | null {
+    const held = this.#spacePause(repo);
+    return held === null ? null : this.#spacePauseText(held.space, held.pause);
+  }
+
+  /**
+   * Ce qui retient, pour ce tour, TOUT ce qui appartient à un espace — planifications, audits, Demandes,
+   * rêves, jobs du poste — comme l'admission retient ses runs : sa pause d'abord, sinon son budget du
+   * jour atteint (compté une fois par espace et par tour). Par le dépôt (`ofRepo`) ou par l'espace
+   * (`ofSpace` : une Demande, un navigateur du poste, une connexion Atlassian). Hors de tout espace :
+   * jamais rien ; sur un serveur sans espace : aucune lecture de plus.
+   */
+  #spaceHolds(now: number): SpaceHolds {
+    const spaces = this.store.listSpaces();
+    if (spaces.length === 0) return NO_SPACE_HOLDS;
+    const known = new Map<string, SpaceHold | null>();
+    const of = (space: Space | undefined): SpaceHold | null => {
+      if (space === undefined) return null;
+      let hold = known.get(space.id);
+      if (hold === undefined) {
+        const pause = this.#spacePauses.get(space.id);
+        const budget = pause === undefined ? this.spaces.budgetHoldOf(space, now) : null;
+        hold =
+          pause !== undefined
+            ? { cause: "paused", text: this.#spacePauseText(space, pause) }
+            : budget !== null
+              ? { cause: "space_budget", text: spaceBudgetText(budget) }
+              : null;
+        known.set(space.id, hold);
+      }
+      return hold;
+    };
+    return {
+      ofRepo: (repo) => of(spaces.find((space) => space.repos.includes(repo))),
+      ofSpace: (id) => (id === null ? null : of(spaces.find((space) => space.id === id))),
+    };
+  }
+
+  /** L'espace où une planification agit : celui du dépôt de sa cible ; pour une automatisation du poste, celui de son navigateur. */
+  #scheduleHold(target: ScheduleTarget, holds: SpaceHolds): SpaceHold | null {
+    if (target.kind !== "automation") return holds.ofRepo(target.repo);
+    const automation = this.store.getWorkstationAutomation(target.automationId);
+    if (automation === null) return null;
+    const browser = automation.browserId ?? this.workstation.defaultBrowserId();
+    return holds.ofSpace(this.workstation.spaceOfBrowser(browser));
+  }
+
+  /** Qui a suspendu ce qui tourne sur ce dépôt : l'auteur de la pause globale, sinon de celle de son espace ; `null` hors pause. */
+  #pauser(repo: string): string | null {
+    if (this.#pause.paused) return this.#pause.by ?? PAUSE_SERVICE;
+    const held = this.#spacePause(repo);
+    return held === null ? null : `${held.pause.by ?? PAUSE_SERVICE} (espace « ${held.space.name} »)`;
+  }
+
+  /** `GET /v1/pause` : la pause globale, et les espaces en pause dont le lecteur voit un dépôt. */
+  pauseView(repos: RepoFilter = null): PauseView {
+    const spaces: SpacePause[] = [];
+    if (this.#spacePauses.size > 0)
+      for (const space of this.store.listSpaces()) {
+        const pause = this.#spacePauses.get(space.id);
+        if (pause !== undefined && (repos === null || space.repos.some((repo) => repos.includes(repo))))
+          spaces.push({ id: space.id, name: space.name, ...pause });
+      }
+    return { ...this.#pause, spaces };
+  }
+
   /**
    * « Tout suspendre », ou reprendre. En pause, plus aucun run n'est admis, chaque run vivant retourne
    * en file avant sa prochaine étape (rien n'est annulé), et ni audit, ni rêve, ni planification, ni
@@ -1435,12 +1655,31 @@ export class Orchestrator {
    * peut le recevoir ensuite. Le réglage est écrit (`settings`, clé `pause`) : il survit à un redémarrage.
    * Réservé au propriétaire : un client borné à des dépôts ou un pilote est refusé (403). Redire l'état
    * courant ne change rien.
+   *
+   * `spaceRef` (identifiant ou nom) : la pause d'UN espace, par le même chemin (réglage `pause:<espaceId>`,
+   * événement `pause` avec `space`). Ses runs ne sont plus admis, ses runs vivants retournent en file
+   * (tout de suite avec `now`), ses merges non engagés, son autonomie et ses échéances attendent ; les
+   * autres espaces continuent. Espace inconnu : 404, après le refus du non-propriétaire.
    */
-  setPause(paused: boolean, reason: string, actor: Actor = SERVICE, repos: RepoFilter = null, now = false): PauseState {
-    if (repos !== null) throw new HarnessError(403, "la pause de tout le serveur est réservée au propriétaire");
+  setPause(
+    paused: boolean,
+    reason: string,
+    actor: Actor = SERVICE,
+    repos: RepoFilter = null,
+    now = false,
+    spaceRef: string | null = null,
+  ): PauseState {
+    if (repos !== null)
+      throw new HarnessError(
+        403,
+        spaceRef === null
+          ? "la pause de tout le serveur est réservée au propriétaire"
+          : "la pause d'un espace est réservée au propriétaire",
+      );
     if (actor.pilot)
       throw new HarnessError(403, "geste réservé à l'humain — un pilote ne suspend ni ne relance l'usine");
-    const current = this.#pause;
+    const space = spaceRef === null ? null : this.spaces.resolve(spaceRef, null);
+    const current = space === null ? this.#pause : (this.#spacePauses.get(space.id) ?? pauseOf(null));
     const hardened = paused && current.paused && now && !current.now;
     if (paused === current.paused && !hardened) return current;
     // Une pause durcie (`now` après coup) garde son instant, et sa raison si aucune autre n'est donnée.
@@ -1453,24 +1692,34 @@ export class Orchestrator {
     };
     const { store } = this.#ctx;
     store.transaction(() => {
-      store.setSetting(PAUSE_KEY, next, actor.by);
-      this.#ctx.event("pause", null, { paused, by: actor.by, reason: next.reason, now: next.now }, null);
+      store.setSetting(space === null ? PAUSE_KEY : spacePauseKey(space.id), next, actor.by);
+      this.#ctx.event(
+        "pause",
+        null,
+        { paused, by: actor.by, reason: next.reason, now: next.now, ...(space === null ? {} : { space: space.id }) },
+        null,
+      );
     });
-    this.#pause = next;
+    if (space === null) this.#pause = next;
+    else if (paused) this.#spacePauses.set(space.id, next);
+    else this.#spacePauses.delete(space.id);
+    const scope = space === null ? "pause globale" : `pause de l'espace « ${space.name} »`;
     this.#ctx.log(
       paused
-        ? `pause globale ${next.now ? "immédiate " : ""}posée${actor.by ? ` par ${actor.by}` : ""}${next.reason === null ? "" : ` : ${next.reason}`}`
-        : `pause globale levée${actor.by ? ` par ${actor.by}` : ""}`,
+        ? `${scope} ${next.now ? "immédiate " : ""}posée${actor.by ? ` par ${actor.by}` : ""}${next.reason === null ? "" : ` : ${next.reason}`}`
+        : `${scope} levée${actor.by ? ` par ${actor.by}` : ""}`,
     );
-    if (next.now) {
+    const failed = (err: unknown): void =>
+      this.#ctx.log(`pause immédiate : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err });
+    if (next.now && space !== null) {
+      // L'arrêt immédiat d'un espace ne touche que ses runs : rien d'autre n'attend qu'il ait fini.
+      void this.#suspendNow(space.repos)
+        .catch(failed)
+        .finally(() => this.#kick());
+    } else if (next.now) {
       const suspending = (this.#suspending ?? Promise.resolve())
         .then(() => this.#suspendNow())
-        .catch((err: unknown) =>
-          this.#ctx.log(`pause immédiate : ${err instanceof Error ? err.message : String(err)}`, {
-            level: "error",
-            err,
-          }),
-        )
+        .catch(failed)
         .finally(() => {
           if (this.#suspending === suspending) this.#suspending = null;
           this.#kick();
@@ -1487,11 +1736,15 @@ export class Orchestrator {
    * audits et les Demandes en cours sont arrêtés et repartent de zéro à la reprise, par le chemin d'un
    * redémarrage (ils n'ont encore rien écrit) ; le pilote rend la main sans rien inscrire. Les rêves et
    * les jobs du poste finissent : rien ne sait les reprendre (le poste a son propre arrêt d'urgence).
+   * `repos` : l'arrêt immédiat d'un ESPACE — seuls les runs vivants de ses dépôts sont interrompus.
    */
-  async #suspendNow(): Promise<void> {
-    const runs = [...this.#live.keys()];
+  async #suspendNow(repos: readonly string[] | null = null): Promise<void> {
+    const runs = [...this.#live.keys()].filter(
+      (id) => repos === null || repos.includes(this.store.getRun(id)?.repo ?? ""),
+    );
     for (const id of runs) this.#pauseStops.add(id);
     await Promise.allSettled(runs.map((id) => this.#halt(id)));
+    if (repos !== null) return;
     await this.audits.stop();
     await this.audits.recover();
     await this.intake.stop();
@@ -1509,11 +1762,14 @@ export class Orchestrator {
     const run = store.getRun(runId);
     if (run?.state !== "running" || run.step === null) return;
     const cursor = { step: run.step, fixes: run.fixes, attempts: run.attempts };
+    const held = this.#pause.paused ? null : this.#spacePause(run.repo);
+    const whose = held === null ? "du serveur" : `de l'espace « ${held.space.name} »`;
+    const who = this.#pauser(run.repo) ?? this.#pause.by ?? PAUSE_SERVICE;
     store.transaction(() => {
-      if (this.#ctx.transition(run, heldForPause(cursor, this.#pause.by ?? PAUSE_SERVICE), ["running"]))
+      if (this.#ctx.transition(run, heldForPause(cursor, who), ["running"]))
         store.addInstructions(
           runId,
-          `Étape /${cursor.step} interrompue par la pause du serveur à ${new Date().toISOString()} ; le worktree garde le travail en cours : repars de \`git diff ${run.baseSha ?? "main"}\` — ne refais pas ce qui est fait.`,
+          `Étape /${cursor.step} interrompue par la pause ${whose} à ${new Date().toISOString()} ; le worktree garde le travail en cours : repars de \`git diff ${run.baseSha ?? "main"}\` — ne refais pas ce qui est fait.`,
         );
     });
   }
@@ -1553,7 +1809,7 @@ export class Orchestrator {
   inboxView(repos: RepoFilter = null): Record<string, unknown> {
     const inbox = inboxOf(this.store, repos, this.config.review.escalationTimeoutSec);
     const runs = (inbox.runs as RunRow[]).map((run) => this.withBriefing(this.withWait(run)));
-    const awaiting = (inbox.awaiting as RunRow[]).map((run) => this.withBriefing(run));
+    const awaiting = (inbox.awaiting as RunRow[]).map((run) => this.withBriefing(this.withWait(run)));
     const batches = (inbox.batches as { run: RunRow | null; items: unknown[] }[]).map((batch) => ({
       ...batch,
       run: batch.run === null ? null : this.withBriefing(this.withWait(batch.run)),
@@ -1568,17 +1824,31 @@ export class Orchestrator {
     };
   }
 
-  /** Ce qui retient ce run en file (cause et texte), ou `null` : ce que lisent le brief et l'état de l'usine. */
+  /** Ce qui retient ce run en file (cause, texte, runs, échéance, chiffres), ou `null` : ce que lisent le brief et l'état de l'usine. */
   #heldBy(run: RunRow): HeldBy | null {
     const wait = run.state === "queued" ? this.#waits.get(run.id) : undefined;
-    return wait ? { cause: wait.cause, text: wait.text } : null;
+    if (!wait) return null;
+    return {
+      cause: wait.cause,
+      text: wait.text,
+      ...(wait.blockedBy ? { blockedBy: wait.blockedBy } : {}),
+      ...(wait.until !== undefined ? { until: wait.until } : {}),
+      ...(wait.facts ? { facts: wait.facts } : {}),
+    };
   }
 
   /**
    * Le brief « pendant votre absence » de `client` sur les dépôts qu'il voit : depuis `since`, sinon
-   * depuis la dernière fois qu'il l'a vu (`POST /v1/brief/seen`), sinon sur 24 heures.
+   * depuis la dernière fois qu'il l'a vu (`POST /v1/brief/seen`), sinon sur 24 heures. `owner` : le
+   * client voit tous les dépôts — sa lecture bornée à un espace (`?space=`) compte aussi ses propositions.
    */
-  briefView(client: string, since: number | null, repos: RepoFilter = null, now = Date.now()): Brief {
+  briefView(
+    client: string,
+    since: number | null,
+    repos: RepoFilter = null,
+    now = Date.now(),
+    owner = repos === null,
+  ): Brief {
     const seenAt = this.store.getSetting<number>(briefSeenKey(client));
     return briefOf(this.store, {
       since: since ?? seenAt ?? now - BRIEF_WINDOW_MS,
@@ -1586,7 +1856,8 @@ export class Orchestrator {
       seenAt,
       repos,
       heldBy: (run) => this.#heldBy(run),
-      proposals: this.proposals.count(repos),
+      humanWait: (run) => this.humanWait(run),
+      proposals: this.proposals.count(repos, owner),
     });
   }
 
@@ -1708,6 +1979,14 @@ export class Orchestrator {
       },
       // La pause globale (« Tout suspendre ») : rien n'est admis tant qu'elle tient (`GET /v1/pause` dit par qui).
       paused: this.#pause.paused,
+      // Ce qui, dans la configuration, mêle la mémoire de plusieurs dépôts (config.ts `configWarnings`) ;
+      // un lecteur borné ne lit que les avertissements qui ne nomment que ses dépôts.
+      warnings: configWarnings(this.#ctx.config)
+        .filter((warning) => repos === null || warning.repos.every((repo) => repos.includes(repo)))
+        .map((warning) => warning.text)
+        // Les cibles de notification bornées à un espace inconnu, et les espaces dont la connexion Atlassian
+        // partage son site avec une autre (isolation `shared_atlassian_site`) : au seul lecteur qui voit tout.
+        .concat(repos === null ? [...this.#ctx.notifier.spaceWarnings(), ...this.spaces.sharedSiteWarnings()] : []),
       // La file : combien de runs dus sont retenus, par cause, et ce qui retient le plus.
       queue: this.queueWaits(repos),
       repos: this.#ctx.config.repos

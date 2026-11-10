@@ -15,6 +15,16 @@
 // Les attentes (long-poll de l'extension, attente d'un résultat) sont en mémoire : une
 // promesse par appelant, réveillée par le changement attendu, l'échéance, la déconnexion
 // du client ou l'arrêt du service. Rien ne bloque les autres requêtes.
+//
+// Le poste d'un espace (multi-client) : un navigateur peut appartenir à un ESPACE — un client
+// (`workstation_browsers.space_id`, `assignBrowser`). Tout ce qui en vient GARDE l'espace que le
+// navigateur avait à l'écriture (`space_id` de l'observation, du meeting, de l'action ; la capture
+// suit son action) : le réattribuer ne déplace aucune ligne ; les lectures se bornent à
+// un espace ; une demande posée dans un espace ne s'exécute que dans un de SES navigateurs, jamais
+// le navigateur par défaut d'ailleurs ; la garde d'envoi lit les identités de l'espace du
+// navigateur, le dossier d'envoi est celui de l'espace, et le mirroir de session ne copie pas d'un
+// espace vers un autre. Un navigateur sans espace — et un serveur sans espace — se comportent
+// exactement comme avant.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Client } from "./auth.ts";
@@ -90,6 +100,8 @@ export type BrowserView = {
   firstSeenAt: number;
   extensionVersion: string | null;
   isDefault: boolean;
+  /** L'espace (son id) auquel le navigateur est rattaché : tout ce qui en vient en hérite ; `null` : hors espace. */
+  space: string | null;
   /** Les comptes du navigateur `vps` seulement : leur état, jamais un cookie ni un jeton. */
   accounts?: AccountView[];
   /** Le navigateur `vps` seulement : le dernier envoi du mirroir accepté depuis le démarrage, `null` sinon. */
@@ -220,9 +232,17 @@ export function isKeyCombo(raw: unknown): boolean {
   return /^[a-z0-9]$/i.test(base) && parts.some((part) => part !== "Shift");
 }
 
-/** Le dossier d'envoi : les seuls fichiers qu'`upload` joint, dans le répertoire de travail de l'agent 24/24. */
-export function uploadDir(config: Pick<HarnessConfig, "worktreesDir">): string {
-  return path.join(config.worktreesDir, "workstation", "_poste", "envois");
+/**
+ * Le répertoire de travail des jobs du poste : `_poste` hors espace, `_poste-<espace>` pour un espace —
+ * le job d'un client n'y trouve jamais ce que celui d'un autre y a écrit.
+ */
+export function posteDir(config: Pick<HarnessConfig, "worktreesDir">, space: string | null = null): string {
+  return path.join(config.worktreesDir, "workstation", space === null ? "_poste" : `_poste-${space}`);
+}
+
+/** Le dossier d'envoi : les seuls fichiers qu'`upload` joint, dans le répertoire de travail des jobs du poste (celui de l'espace du navigateur). */
+export function uploadDir(config: Pick<HarnessConfig, "worktreesDir">, space: string | null = null): string {
+  return path.join(posteDir(config, space), "envois");
 }
 /** Un fichier joint par `upload` pèse au plus 10 Mio. */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -264,6 +284,8 @@ const SETTINGS_KEY = "workstation";
 const ACCOUNTS_KEY = "workstation.vps.accounts";
 /** Le temps observé CUMULÉ (il survit à la rétention des observations) et la première observation. */
 const OBSERVED_KEY = "workstation.observed";
+/** La portée (espace du navigateur `vps`, espace de la source du mirroir) sous laquelle la session du `vps` a été remplie. */
+const VPS_JAR_KEY = "workstation.vps.jar";
 
 /** Une consigne de demande : 4000 caractères au plus. */
 export const MAX_INSTRUCTION = 4000;
@@ -276,6 +298,21 @@ const MAX_ALLOWED_HOSTS = 200;
 const HOST_NAME =
   /^(\*\.)?(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
 export const REQUEST_CANCELLED = "demande annulée";
+/** Une demande, une action ou une automatisation visent un espace qui n'a aucun navigateur rattaché. */
+export const NO_SPACE_BROWSER =
+  "cet espace n'a pas de navigateur : rattachez-en un (PUT /v1/workstation/browsers/{id} {space})";
+/** Une demande dont le navigateur a quitté l'espace depuis qu'elle a été posée : elle ne s'exécute pas ailleurs. */
+export const REQUEST_OUT_OF_SPACE =
+  "le navigateur de la demande n'est plus dans son espace : elle ne s'exécute pas ailleurs";
+/** Une action déposée dans un espace que son navigateur a quitté depuis (réattribué, espace retiré). */
+export const ACTION_OUT_OF_SPACE =
+  "le navigateur de l'action n'est plus dans l'espace où elle a été déposée : elle ne s'exécute pas ailleurs";
+/** Une automatisation dont le navigateur est aujourd'hui hors de l'espace où elle a été créée. */
+export const AUTOMATION_OUT_OF_SPACE =
+  "le navigateur de l'automatisation n'est plus dans l'espace où elle a été créée : elle ne se lance pas ailleurs";
+/** Un meeting ouvert dans un espace que son navigateur a quitté depuis : rien ne s'y ajoute. */
+export const MEETING_OUT_OF_SPACE =
+  "le navigateur n'est plus dans l'espace où ce meeting a été ouvert : rien ne s'y ajoute";
 /** Le refus d'un geste d'approbateur (approuver, refuser, régler le poste) à tout autre client. */
 export const APPROVER_ONLY =
   "seul l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut approuver, refuser ou régler le poste";
@@ -1076,8 +1113,10 @@ export class Workstation {
   readonly #queueWaiters = new Set<Waiter>();
   readonly #actionWaiters = new Map<number, Set<Waiter>>();
   #purgedAt = 0;
-  /** Une synthèse du profil demandée depuis une app (`POST …/profile/rebuild`) : l'agent la lance au prochain tour, puis l'efface. */
+  /** Une synthèse du profil (hors espace) demandée depuis une app (`POST …/profile/rebuild`) : l'agent la lance au prochain tour, puis l'efface. */
   profileRequested = false;
+  /** Les espaces dont une app a demandé la synthèse du profil (`POST …/profile/rebuild?space=`) : chacun effacé quand la sienne part. */
+  readonly spaceProfilesRequested = new Set<string>();
   #closed = false;
   /** Ceux que l'annulation d'une action en cours (arrêt d'urgence, `cancel`) prévient : l'exécuteur du VPS. */
   readonly #halted = new Set<(seqs: number[] | null) => void>();
@@ -1131,7 +1170,18 @@ export class Workstation {
     const patch = parseSettings(body);
     const { store } = this.#ctx;
     if (typeof patch.defaultBrowser === "string") this.#known(patch.defaultBrowser);
-    if (typeof patch.mirrorBrowser === "string") this.#known(patch.mirrorBrowser);
+    if (typeof patch.mirrorBrowser === "string") {
+      this.#known(patch.mirrorBrowser);
+      // Le mirroir copie une session entière : jamais d'un espace vers le navigateur d'un autre.
+      if (
+        store.getWorkstationBrowser(VPS_BROWSER) &&
+        this.spaceOfBrowser(patch.mirrorBrowser) !== this.spaceOfBrowser(VPS_BROWSER)
+      )
+        throw new HarnessError(
+          409,
+          "mirrorBrowser : ce navigateur et le navigateur vps ne sont pas dans le même espace — la session d'un client ne se copie pas chez un autre",
+        );
+    }
     store.transaction(() => {
       const stored = { ...(store.getSetting<Record<string, unknown>>(SETTINGS_KEY) ?? {}), ...patch };
       if (stored.thresholdHours === null) delete stored.thresholdHours;
@@ -1149,12 +1199,25 @@ export class Workstation {
     return this.status();
   }
 
-  observed(): { ms: number; since: number | null } {
-    const stored = this.#ctx.store.getSetting<{ ms?: unknown; since?: unknown }>(OBSERVED_KEY);
-    return {
-      ms: typeof stored?.ms === "number" ? stored.ms : 0,
-      since: typeof stored?.since === "number" ? stored.since : null,
+  /**
+   * Le temps observé cumulé et la première observation : de tout le poste (sans portée — c'est lui qui
+   * fait passer l'autonomie `auto` à `act`), des navigateurs d'un espace, ou (`null`) de ceux hors
+   * espace — le total moins ce que les espaces ont compté (ceux retirés depuis compris).
+   */
+  observed(space?: string | null): { ms: number; since: number | null } {
+    const { store } = this.#ctx;
+    const read = (key: string): { ms: number; since: number | null } => {
+      const stored = store.getSetting<{ ms?: unknown; since?: unknown }>(key);
+      return {
+        ms: typeof stored?.ms === "number" ? stored.ms : 0,
+        since: typeof stored?.since === "number" ? stored.since : null,
+      };
     };
+    if (typeof space === "string") return read(`${OBSERVED_KEY}:${space}`);
+    const total = read(OBSERVED_KEY);
+    if (space === undefined) return total;
+    const inSpaces = store.workstationObservedInSpaces(`${OBSERVED_KEY}:`);
+    return { ms: Math.max(0, total.ms - inSpaces), since: total.since };
   }
 
   effective(settings: WorkstationSettings = this.settings()): EffectiveAutonomy {
@@ -1180,6 +1243,174 @@ export class Workstation {
     if (!this.#ctx.store.getWorkstationBrowser(browserId))
       throw new HarnessError(404, `navigateur inconnu : ${browserId}`);
     return browserId;
+  }
+
+  /** L'espace (son id) d'un navigateur AUJOURD'HUI : ce qu'il écrit désormais le garde ; `null` hors espace, ou sans navigateur. */
+  spaceOfBrowser(browserId: string | null): string | null {
+    return browserId === null ? null : (this.#ctx.store.getWorkstationBrowser(browserId)?.spaceId ?? null);
+  }
+
+  /** Le navigateur d'un espace où agir : un des siens en ligne, sinon le premier vu ; `null` s'il n'en a aucun. */
+  browserOfSpace(space: string, now = Date.now()): string | null {
+    const browsers = this.#ctx.store.workstationBrowsersOf(space);
+    return (browsers.find((browser) => this.online(now, browser.id)) ?? browsers[0])?.id ?? null;
+  }
+
+  /**
+   * Le navigateur qui agit DANS un espace : celui qu'on désigne s'il lui appartient, sinon l'un des
+   * siens ; 409 si le navigateur désigné est ailleurs ou si l'espace n'en a aucun — jamais le
+   * navigateur par défaut, jamais celui d'un autre espace.
+   */
+  browserIn(space: string, browserId: string | null): string {
+    if (browserId !== null) {
+      if (this.spaceOfBrowser(this.#known(browserId)) !== space)
+        throw new HarnessError(409, `le navigateur ${browserId} n'appartient pas à cet espace`);
+      return browserId;
+    }
+    const own = this.browserOfSpace(space);
+    if (own === null) throw new HarnessError(409, NO_SPACE_BROWSER);
+    return own;
+  }
+
+  /**
+   * Sans espace désigné (ni `?space=`), on n'agit que dans un navigateur HORS de tout espace : celui
+   * qu'on nomme, sinon le navigateur par défaut. 409 s'il appartient à un espace — sans dire pour quel
+   * client on agit, on n'agit dans le navigateur d'aucun.
+   */
+  outsideSpaces(browserId: string | null): void {
+    const space = this.spaceOfBrowser(browserId ?? this.defaultBrowserId());
+    if (space === null) return;
+    const name = this.#ctx.store.getSpace(space)?.name ?? space;
+    throw new HarnessError(
+      409,
+      `${browserId === null ? "le navigateur par défaut" : `le navigateur ${browserId}`} appartient à l'espace « ${name} » : désignez cet espace (\`?space=\`) pour y agir — sans espace, on n'agit que dans un navigateur hors espace`,
+    );
+  }
+
+  /** Un espace désigné dans un corps (`space`) : absent ou `null` → hors espace ; sinon un espace connu (404). */
+  #spaceRef(value: unknown): string | null {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== "string" || value.trim() === "") bad("space : identifiant d'espace attendu, ou null");
+    if (!this.#ctx.store.getSpace(value)) throw new HarnessError(404, `espace inconnu : ${value}`);
+    return value;
+  }
+
+  /**
+   * Rattache un navigateur à un espace (`space` : son id), ou le détache (`null`). Rien de ce qu'il a
+   * déjà écrit ne le suit : ses observations, meetings et actions gardent l'espace où ils ont été
+   * écrits — l'ancien espace les lit toujours, le nouveau jamais. Une demande posée pour lui dans son
+   * ancien espace échoue au lieu de partir ailleurs (`WorkstationAgent`), et TOUTES ses actions pas
+   * encore parties — en file ou en attente d'approbation ; d'une demande, du service, d'un plan, d'une
+   * session — sont closes ici : rien de ce qu'un client a demandé ne s'exécute dans le navigateur
+   * devenu celui d'un autre. Le navigateur `vps` ne loue plus rien tant que sa session n'est pas
+   * purgée (`vpsPurgeDue`). 404 si le navigateur ou l'espace est inconnu.
+   */
+  assignBrowser(browserId: string, space: unknown, actor: Actor): BrowserView {
+    this.#known(browserId);
+    if (space === undefined) bad("space : identifiant d'espace attendu, ou null (hors espace)");
+    const target = this.#spaceRef(space);
+    const { store } = this.#ctx;
+    store.transaction(() => {
+      const browser = store.setWorkstationBrowserSpace(browserId, target);
+      this.#ctx.event(
+        "workstation_browser",
+        null,
+        { id: browserId, label: browser?.label ?? null, space: target },
+        null,
+      );
+    });
+    this.#ctx.log(
+      `poste : navigateur ${browserId} ${target === null ? "détaché de tout espace" : `rattaché à l'espace ${target}`} par ${actor.by ?? "un client"}`,
+    );
+    this.#closeStrayActions();
+    // Le navigateur `vps` en attente d'une action relit sa portée tout de suite : sa purge passe d'abord.
+    this.#wakeQueue();
+    return this.browsers().find((browser) => browser.id === browserId) as BrowserView;
+  }
+
+  /** Le motif d'une action dont le navigateur n'est plus dans l'espace où elle a été déposée ; `null` s'il y est. */
+  #strayError(action: WorkstationAction, space = this.spaceOfBrowser(action.browserId)): string | null {
+    if ((action.space ?? null) === space) return null;
+    return action.requestId === null ? ACTION_OUT_OF_SPACE : REQUEST_OUT_OF_SPACE;
+  }
+
+  /**
+   * Clôt (`failed`, le motif dit) toute action pas encore partie — en file ou en attente d'approbation —
+   * dont le navigateur n'est plus dans l'espace où elle a été déposée : navigateur réattribué, espace
+   * retiré. Sans espace, il n'y a rien à clore. Rend leur nombre.
+   */
+  #closeStrayActions(): number {
+    const pending: readonly ActionState[] = ["queued", "awaiting_approval"];
+    let closed = 0;
+    for (const action of this.#ctx.store.listWorkstationActions({ states: pending, limit: 10_000 })) {
+      const error = this.#strayError(action);
+      if (error !== null && this.#transition(action.seq, pending, { state: "failed", approved: false, error }))
+        closed++;
+    }
+    return closed;
+  }
+
+  /**
+   * La source du mirroir de session vers le navigateur `vps`, si la copie est permise : le navigateur
+   * réglé (`mirrorBrowser`) ET le navigateur `vps` sont dans le même espace (ou tous deux hors espace).
+   * Sinon `null` : la copie est suspendue, la session d'un client ne passe pas chez un autre.
+   */
+  mirrorSource(): string | null {
+    const source = this.settings().mirrorBrowser;
+    return source !== null && this.spaceOfBrowser(source) === this.spaceOfBrowser(VPS_BROWSER) ? source : null;
+  }
+
+  /** La portée sous laquelle la session du navigateur `vps` (cookies miroités, connexions) a été remplie. */
+  #vpsJar(): { vps: string | null; source: string | null } {
+    const stored = this.#ctx.store.getSetting<{ vps?: unknown; source?: unknown }>(VPS_JAR_KEY);
+    return {
+      vps: typeof stored?.vps === "string" ? stored.vps : null,
+      source: typeof stored?.source === "string" ? stored.source : null,
+    };
+  }
+
+  /**
+   * La session du navigateur `vps` vient d'une AUTRE portée que celle d'aujourd'hui : son espace, ou
+   * celui de la source du mirroir, a changé depuis qu'elle a été remplie (navigateur réattribué, espace
+   * retiré). Tant que c'est vrai — et la marque est en base, elle survit à un redémarrage — il ne loue
+   * aucune action et n'accepte aucun cookie : l'exécuteur la purge d'abord (`VpsBrowser`), puis le dit
+   * par `vpsPurged`. Sans espace, jamais.
+   */
+  vpsPurgeDue(): boolean {
+    const jar = this.#vpsJar();
+    const source = this.settings().mirrorBrowser;
+    return (
+      jar.vps !== this.spaceOfBrowser(VPS_BROWSER) || (source !== null && jar.source !== this.spaceOfBrowser(source))
+    );
+  }
+
+  /** La session du navigateur `vps` vient d'être purgée : elle repart vide dans la portée d'aujourd'hui, ses comptes déconnectés. */
+  vpsPurged(): void {
+    const { store } = this.#ctx;
+    const source = this.settings().mirrorBrowser;
+    store.transaction(() => {
+      store.setSetting(
+        VPS_JAR_KEY,
+        {
+          vps: this.spaceOfBrowser(VPS_BROWSER),
+          source: source === null ? this.#vpsJar().source : this.spaceOfBrowser(source),
+        },
+        null,
+      );
+      for (const domain of ACCOUNT_DOMAINS) this.setVpsAccount(domain, "disconnected");
+    });
+    this.#mirroredAt = null;
+    this.#ctx.log("poste : session du navigateur vps purgée — sa portée (son espace ou celui de sa source) a changé");
+  }
+
+  /**
+   * Les identités de l'utilisateur dans une portée : celles de l'espace (`spaces.identities`, même
+   * vides : rien n'y est alors « à soi ») ; hors espace (`null`), la liste du poste. La garde d'envoi
+   * d'un navigateur lit celles de SON espace.
+   */
+  identitiesIn(space: string | null): string[] {
+    if (space === null) return this.settings().selfIdentities;
+    return this.#ctx.store.getSpace(space)?.identities ?? [];
   }
 
   /** Le navigateur d'un appel : le sien, sinon (extension ancienne) le navigateur par défaut. */
@@ -1264,6 +1495,7 @@ export class Workstation {
       firstSeenAt: row.firstSeenAt,
       extensionVersion: row.version,
       isDefault: row.id === fallback,
+      space: row.spaceId,
       ...(row.id === VPS_BROWSER ? { accounts: this.vpsAccounts(), mirroredAt: this.#mirroredAt } : {}),
     }));
   }
@@ -1279,34 +1511,45 @@ export class Workstation {
     return last ? last.at + this.#ctx.config.workstation.shiftEveryMin * 60_000 : now;
   }
 
-  status(now = Date.now()): WorkstationStatus {
+  /**
+   * Le statut du poste ; avec `space` (`?space=`), ce qui se compte par navigateur — navigateurs,
+   * présence, temps observé, identités, approbations en attente, profil — est celui de l'espace ;
+   * l'autonomie, la pause, les services et la navigation gardée restent ceux du poste.
+   */
+  status(now = Date.now(), space?: string): WorkstationStatus {
     const { store } = this.#ctx;
     const settings = this.settings();
-    const observedSeconds = Math.floor(this.observed().ms / 1000);
-    const effective = effectiveAutonomy(settings.autonomy, observedSeconds, settings.thresholdHours);
+    const effective = effectiveAutonomy(
+      settings.autonomy,
+      Math.floor(this.observed().ms / 1000),
+      settings.thresholdHours,
+    );
+    const observedSeconds = Math.floor(this.observed(space).ms / 1000);
     const last = store.lastWorkstationShift();
-    const browsers = this.browsers(now);
+    const browsers = this.browsers(now).filter((browser) => space === undefined || browser.space === space);
     const latest = browsers
       .filter((browser) => browser.id !== VPS_BROWSER)
       .reduce<BrowserView | null>(
         (best, browser) => (best === null || browser.lastSeenAt > best.lastSeenAt ? browser : best),
         null,
       );
-    const seen = [...this.#presence.values()].reduce<number | null>(
-      (max, presence) => (max === null || presence.lastSeenAt > max ? presence.lastSeenAt : max),
-      null,
-    );
+    const seen = [...this.#presence]
+      .filter(([id]) => space === undefined || browsers.some((browser) => browser.id === id))
+      .reduce<number | null>(
+        (max, [, presence]) => (max === null || presence.lastSeenAt > max ? presence.lastSeenAt : max),
+        null,
+      );
     return {
-      online: this.online(now),
+      online: space === undefined ? this.online(now) : browsers.some((browser) => browser.online),
       lastSeenAt: seen,
       extensionVersion: latest?.extensionVersion ?? null,
       observedSeconds,
       thresholdHours: settings.thresholdHours,
       autonomy: { setting: settings.autonomy, effective },
       paused: settings.paused,
-      selfIdentities: settings.selfIdentities,
-      pending: store.countWorkstationActions("awaiting_approval"),
-      profileUpdatedAt: store.latestWorkstationProfile()?.updatedAt ?? null,
+      selfIdentities: space === undefined ? settings.selfIdentities : (store.getSpace(space)?.identities ?? []),
+      pending: store.countWorkstationActions("awaiting_approval", space),
+      profileUpdatedAt: store.latestWorkstationProfile(space ?? null)?.updatedAt ?? null,
       lastShift: last ? { at: last.at, outcome: last.outcome, actions: last.actions } : null,
       nextShiftAt: this.nextShiftAt(settings, effective, last, now),
       stopped: settings.stopped,
@@ -1329,33 +1572,42 @@ export class Workstation {
     const { store } = this.#ctx;
     return store.transaction(() => {
       const stored = store.addWorkstationObservations(tz, events, browserId);
-      const observed = this.observed();
       const visited = events.reduce((sum, event) => sum + (event.kind === "visit" ? event.durationMs : 0), 0);
       const first = events.reduce<number | null>(
         (min, event) => (min === null || event.at < min ? event.at : min),
         null,
       );
-      store.setSetting(
-        OBSERVED_KEY,
-        {
-          ms: observed.ms + visited,
-          since: observed.since === null ? first : Math.min(observed.since, first ?? observed.since),
-        },
-        null,
-      );
+      // Le cumul du poste, et — pour un navigateur d'un espace — celui de l'espace, compté à part : le
+      // profil de l'espace et celui du reste du poste y lisent chacun leur temps.
+      const space = this.spaceOfBrowser(browserId);
+      for (const [key, observed] of [
+        [OBSERVED_KEY, this.observed()] as const,
+        ...(space === null ? [] : [[`${OBSERVED_KEY}:${space}`, this.observed(space)] as const]),
+      ])
+        store.setSetting(
+          key,
+          {
+            ms: observed.ms + visited,
+            since: observed.since === null ? first : Math.min(observed.since, first ?? observed.since),
+          },
+          null,
+        );
       return stored;
     });
   }
 
+  /** Les observations récentes ; `space` : celles écrites dans cet espace seulement. */
   listObservations(filter: {
     since?: number;
     limit?: number;
+    space?: string;
   }): (Observation & { id: number; browserId: string | null })[] {
     return this.#ctx.store.listWorkstationObservations(filter).map(({ tz: _tz, ...observation }) => observation);
   }
 
-  stats(): ProfileStats {
-    return profileStats(this.#ctx.store.allWorkstationObservations(), this.observed());
+  /** Les statistiques du profil d'une portée : un espace (ses navigateurs), ou `null` — les navigateurs hors espace. */
+  stats(space: string | null = null): ProfileStats {
+    return profileStats(this.#ctx.store.allWorkstationObservations(space), this.observed(space));
   }
 
   // -- la file des actions --------------------------------------------------------------
@@ -1428,6 +1680,9 @@ export class Workstation {
     const request = requestId === null ? null : store.getWorkstationRequest(requestId);
     const browserId =
       input.browserId !== undefined ? this.#known(input.browserId) : (request?.browserId ?? this.defaultBrowserId());
+    // L'action d'une demande ne part que dans un navigateur de l'espace de la demande (hors espace : un navigateur hors espace).
+    const space = this.spaceOfBrowser(browserId);
+    if (request && (request.space ?? null) !== space) throw new HarnessError(409, REQUEST_OUT_OF_SPACE);
     let state: ActionState = "done";
     let approval: Approval | null = null;
     if (input.kind !== "decision") {
@@ -1437,7 +1692,7 @@ export class Workstation {
       if (requestId === null && origin === "agent" && effective === "observe")
         throw new HarnessError(409, "l'autonomie du poste est en observation : l'agent n'agit pas");
       // Le fichier d'un `upload` existe dans le dossier d'envoi, sous la borne : sinon rien n'est déposé.
-      if (input.kind === "upload") this.#uploadPath(String(input.params.file));
+      if (input.kind === "upload") this.#uploadPath(String(input.params.file), space);
       const reasons = this.#guards(input, origin, browserId);
       const proposes = requestId === null && origin === "agent" && effective === "propose";
       state = proposes || reasons.length > 0 ? "awaiting_approval" : "queued";
@@ -1489,8 +1744,9 @@ export class Workstation {
   #retain(
     seq: number,
     held: Pick<Approval, "summary" | "recipients" | "preview" | "fingerprint">,
+    space: string | null,
   ): WorkstationAction | null {
-    const self = isSelfOnly(held.recipients, this.settings().selfIdentities);
+    const self = isSelfOnly(held.recipients, this.identitiesIn(space));
     const approval: Approval = {
       ...held,
       decidedBy: self ? "soi" : null,
@@ -1525,19 +1781,22 @@ export class Workstation {
     const listed = hostListed(host, allowedHosts);
     if (allowedHosts.length > 0 && !listed) reasons.push(`${host} hors de la liste des hôtes permis`);
     if (origin !== "agent" || !exfiltrationGuard) return reasons;
-    if (!listed && !this.#ctx.store.workstationHostSeen(host)) reasons.push(`${host} jamais vu dans l'observation`);
+    // « Déjà vu » se juge dans l'espace du navigateur : ce qu'un client a visité n'ouvre rien chez un autre.
+    if (!listed && !this.#ctx.store.workstationHostSeen(host, this.spaceOfBrowser(browserId)))
+      reasons.push(`${host} jamais vu dans l'observation`);
     const param = opaqueQueryParam(url);
     if (param !== null) reasons.push(`l'adresse porte une valeur longue ou opaque (${param})`);
     return reasons;
   }
 
   /**
-   * Le chemin d'un fichier du dossier d'envoi (`uploadDir`) : un fichier ordinaire (ni lien
-   * symbolique, ni dossier), de `MAX_UPLOAD_BYTES` au plus ; 400 sinon. Le nom a déjà été
-   * validé (`isUploadName`) : il ne sort jamais du dossier.
+   * Le chemin d'un fichier du dossier d'envoi (`uploadDir`) de l'espace `space` (celui du navigateur
+   * de l'action ; `null` : hors espace) : un fichier ordinaire (ni lien symbolique, ni dossier), de
+   * `MAX_UPLOAD_BYTES` au plus ; 400 sinon. Le nom a déjà été validé (`isUploadName`) : il ne sort
+   * jamais du dossier.
    */
-  #uploadPath(name: string): string {
-    const file = path.join(uploadDir(this.#ctx.config), name);
+  #uploadPath(name: string, space: string | null): string {
+    const file = path.join(uploadDir(this.#ctx.config, space), name);
     let stat: fs.Stats;
     try {
       stat = fs.lstatSync(file);
@@ -1561,7 +1820,7 @@ export class Workstation {
     if (action.state !== "running")
       throw new HarnessError(409, `l'action #${seq} n'est pas en cours (état ${action.state})`);
     const name = String(action.params.file);
-    const bytes = fs.readFileSync(this.#uploadPath(name));
+    const bytes = fs.readFileSync(this.#uploadPath(name, action.space ?? null));
     if (bytes.length > MAX_UPLOAD_BYTES)
       throw new HarnessError(400, `params.file : « ${name} » dépasse ${MAX_UPLOAD_BYTES} octets`);
     const extension = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase() ?? "";
@@ -1579,13 +1838,21 @@ export class Workstation {
     if (raw !== undefined && presence) presence.agentTabs = parseAgentTabs(raw);
   }
 
-  getAction(seq: number): WorkstationAction {
+  /** Une action ; avec `space` (`?space=`), celle d'un autre espace — ou d'aucun — est inconnue (404). */
+  getAction(seq: number, space?: string): WorkstationAction {
     const action = this.#ctx.store.getWorkstationAction(seq);
-    if (!action) throw new HarnessError(404, `action inconnue : ${seq}`);
+    if (!action || (space !== undefined && action.space !== space))
+      throw new HarnessError(404, `action inconnue : ${seq}`);
     return action;
   }
 
-  listActions(filter: { states?: readonly ActionState[]; limit?: number; before?: number }): WorkstationAction[] {
+  /** Le journal ; `space` : les actions déposées dans cet espace seulement. */
+  listActions(filter: {
+    states?: readonly ActionState[];
+    limit?: number;
+    before?: number;
+    space?: string;
+  }): WorkstationAction[] {
     return this.#ctx.store.listWorkstationActions(filter);
   }
 
@@ -1595,10 +1862,19 @@ export class Workstation {
    */
   #lease(browserId: string): WorkstationAction | null {
     if (this.settings().paused) return null;
+    // La session du `vps` vient d'une autre portée : rien ne part avant sa purge.
+    if (browserId === VPS_BROWSER && this.vpsPurgeDue()) return null;
     const isDefault = browserId === this.defaultBrowserId();
+    const space = this.spaceOfBrowser(browserId);
     for (;;) {
       const oldest = this.#ctx.store.oldestQueuedWorkstationAction(browserId, isDefault);
       if (!oldest) return null;
+      // Déposée dans un autre espace que celui du navigateur aujourd'hui : close, jamais louée.
+      const stray = this.#strayError(oldest, space);
+      if (stray !== null) {
+        this.#transition(oldest.seq, ["queued"], { state: "failed", approved: false, error: stray });
+        continue;
+      }
       const leased = this.#transition(oldest.seq, ["queued"], { state: "running", leasedAt: Date.now() });
       if (leased) return leased;
     }
@@ -1624,6 +1900,8 @@ export class Workstation {
       const deadline = Date.now() + Math.max(0, Math.min(waitSec, MAX_WAIT_SEC)) * 1000;
       for (;;) {
         if (signal.aborted || this.#closed) return null;
+        // La session du `vps` est à purger : son exécuteur reprend la main tout de suite.
+        if (browserId === VPS_BROWSER && this.vpsPurgeDue()) return null;
         const leased = this.#lease(browserId);
         if (leased) return leased;
         const remaining = deadline - Date.now();
@@ -1641,8 +1919,9 @@ export class Workstation {
     seq: number,
     waitSec: number,
     signal: AbortSignal,
+    space?: string,
   ): Promise<{ action: WorkstationAction; image?: string }> {
-    let action = this.getAction(seq);
+    let action = this.getAction(seq, space);
     const deadline = Date.now() + Math.max(0, Math.min(waitSec, MAX_WAIT_SEC)) * 1000;
     while ((action.state === "queued" || action.state === "running") && !signal.aborted && !this.#closed) {
       const remaining = deadline - Date.now();
@@ -1667,7 +1946,8 @@ export class Workstation {
    */
   submitResult(seq: number, body: Record<string, unknown>, hello: BrowserHello = NO_HELLO): WorkstationAction {
     const input = parseResult(body);
-    this.#reportAgentTabs(this.touch(hello), body.agentTabs);
+    const browserId = this.touch(hello);
+    this.#reportAgentTabs(browserId, body.agentTabs);
     const action = this.getAction(seq);
     if (action.state !== "running")
       throw new HarnessError(409, `l'action #${seq} n'est pas en cours (état ${action.state})`);
@@ -1687,16 +1967,20 @@ export class Workstation {
       });
     } else if (input.outcome === "failed") {
       updated = this.#transition(seq, ["running"], { state: "failed", error: input.error, leasedAt: null });
-    } else if (this.#closedRequestError(action) !== null) {
-      updated = this.#transition(seq, ["running"], {
-        state: "failed",
-        error: this.#closedRequestError(action),
-        approved: false,
-        approval: { ...input.approval, decidedBy: null, decidedAt: null, reason: null },
-        leasedAt: null,
-      });
     } else {
-      updated = this.#retain(seq, input.approval);
+      // Personne n'attend plus l'issue (demande close), ou le navigateur a quitté l'espace de l'action
+      // pendant qu'elle tournait : close, jamais approuvable.
+      const closed = this.#closedRequestError(action) ?? this.#strayError(action);
+      updated =
+        closed === null
+          ? this.#retain(seq, input.approval, action.space ?? null)
+          : this.#transition(seq, ["running"], {
+              state: "failed",
+              error: closed,
+              approved: false,
+              approval: { ...input.approval, decidedBy: null, decidedAt: null, reason: null },
+              leasedAt: null,
+            });
     }
     if (!updated) throw new HarnessError(409, `l'action #${seq} a changé d'état`);
     return updated;
@@ -1795,9 +2079,9 @@ export class Workstation {
     return { status: this.status(), cancelled };
   }
 
-  /** La capture gardée d'une action ; 404 si elle n'en a pas (ou plus : rétention). */
-  capture(seq: number): WorkstationCapture {
-    this.getAction(seq);
+  /** La capture gardée d'une action (de l'espace `space`, s'il est donné) ; 404 si elle n'en a pas (ou plus : rétention). */
+  capture(seq: number, space?: string): WorkstationCapture {
+    this.getAction(seq, space);
     const capture = this.#ctx.store.getWorkstationCapture(seq);
     if (!capture) throw new HarnessError(404, `aucune capture gardée pour l'action #${seq}`);
     return capture;
@@ -1854,6 +2138,8 @@ export class Workstation {
       });
     for (const action of store.staleWorkstationActions(["queued"], stale))
       this.#transition(action.seq, ["queued"], { state: "expired", approved: false, error: QUEUE_EXPIRED });
+    // Un navigateur sorti de l'espace de ses actions sans passer par `assignBrowser` (espace retiré) : closes aussi.
+    this.#closeStrayActions();
     for (const meeting of store.orphanWorkstationMeetings(now - ORPHAN_MEETING_MS))
       store.transaction(() => {
         const ended = store.updateWorkstationMeetingIf(meeting.id, ["live"], { state: "ended", endedAt: now });
@@ -1950,7 +2236,9 @@ export class Workstation {
     if (this.settings().paused) throw new HarnessError(409, "le poste est en pause");
     if (meeting.state !== "live") throw new HarnessError(409, `le meeting n'est plus en cours (état ${meeting.state})`);
     const segments = parseSegments(body);
-    this.touch(hello);
+    // Ouvert dans un espace que le navigateur a quitté depuis : ce qu'il entend ailleurs ne s'y ajoute pas.
+    if (this.spaceOfBrowser(this.touch(hello)) !== (meeting.space ?? null))
+      throw new HarnessError(409, MEETING_OUT_OF_SPACE);
     return this.#ctx.store.addWorkstationSegments(id, segments);
   }
 
@@ -1968,12 +2256,15 @@ export class Workstation {
     return ended;
   }
 
-  listMeetings(limit: number): Meeting[] {
-    return this.#ctx.store.listWorkstationMeetings({ limit });
+  /** Les meetings ; `space` : ceux ouverts dans cet espace seulement. */
+  listMeetings(limit: number, space?: string): Meeting[] {
+    return this.#ctx.store.listWorkstationMeetings(space === undefined ? { limit } : { limit, space });
   }
 
-  meetingView(id: string): { meeting: Meeting; transcript: Segment[] } {
+  /** Un meeting et son transcript ; avec `space` (`?space=`), celui d'un autre espace — ou d'aucun — est inconnu (404). */
+  meetingView(id: string, space?: string): { meeting: Meeting; transcript: Segment[] } {
     const meeting = this.getMeeting(id);
+    if (space !== undefined && meeting.space !== space) throw new HarnessError(404, `meeting inconnu : ${id}`);
     return { meeting, transcript: this.#ctx.store.listWorkstationSegments(id) };
   }
 
@@ -2000,7 +2291,12 @@ export class Workstation {
     this.#ctx.event(
       "workstation_request",
       null,
-      { id: request.id, state: request.state, reason: request.reason },
+      {
+        id: request.id,
+        state: request.state,
+        reason: request.reason,
+        ...(request.space === undefined ? {} : { space: request.space }),
+      },
       null,
     );
   }
@@ -2024,19 +2320,26 @@ export class Workstation {
       this.#transition(action.seq, ["queued", "awaiting_approval"], { state: "failed", error });
   }
 
-  getRequest(id: string): WorkstationRequest {
+  /** Une demande ; avec `space` (`?space=`), celle d'un autre espace — ou d'aucun — est inconnue (404). */
+  getRequest(id: string, space?: string): WorkstationRequest {
     const request = this.#ctx.store.getWorkstationRequest(id);
-    if (!request) throw new HarnessError(404, `demande inconnue : ${id}`);
+    if (!request || (space !== undefined && request.space !== space))
+      throw new HarnessError(404, `demande inconnue : ${id}`);
     return request;
   }
 
+  /**
+   * Une demande en file. Son espace est celui qu'on lui donne, sinon celui du navigateur où elle
+   * partira (le sien, sinon le navigateur par défaut) : `null` hors espace.
+   */
   #enqueue(
-    input: { instruction: string; automationId: string | null; browserId: string | null },
+    input: { instruction: string; automationId: string | null; browserId: string | null; space?: string },
     actor: Actor,
   ): WorkstationRequest {
     const { store } = this.#ctx;
+    const space = input.space ?? this.spaceOfBrowser(input.browserId ?? this.defaultBrowserId());
     return store.transaction(() => {
-      const request = store.createWorkstationRequest({ id: newId("q"), by: actor.by, ...input });
+      const request = store.createWorkstationRequest({ id: newId("q"), by: actor.by, ...input, space });
       this.#requestEvent(request);
       return request;
     });
@@ -2046,6 +2349,10 @@ export class Workstation {
    * Une demande de l'humain : une consigne que le job `poste-demande` exécutera dans le
    * navigateur (`browserId`, sinon le navigateur par défaut), quelle que soit l'autonomie.
    * Refusée en pause ; extension hors ligne : elle attend en file. Aucun run, aucun worktree.
+   * Dans un espace (`space` : son id) elle s'exécute dans UN navigateur de cet espace — celui
+   * qu'on désigne s'il lui appartient, sinon l'un des siens (en ligne de préférence) — et jamais
+   * ailleurs : 404 espace inconnu, 409 s'il n'a pas de navigateur ou si le navigateur désigné
+   * est d'un autre espace.
    */
   createRequest(body: Record<string, unknown>, actor: Actor): WorkstationRequest {
     if (this.settings().paused) throw new HarnessError(409, "le poste est en pause");
@@ -2054,18 +2361,23 @@ export class Workstation {
     const trimmed = raw.trim();
     if (trimmed === "") bad("instruction : consigne non vide attendue");
     if (trimmed.length > MAX_INSTRUCTION) bad(`instruction : ${MAX_INSTRUCTION} caractères au plus`);
-    const browserId = browserRef(body.browserId, "browserId");
-    if (browserId !== null) this.#known(browserId);
-    return this.#enqueue({ instruction: clean(trimmed, MAX_INSTRUCTION), automationId: null, browserId }, actor);
+    const given = browserRef(body.browserId, "browserId");
+    if (given !== null) this.#known(given);
+    const space = this.#spaceRef(body.space);
+    const instruction = clean(trimmed, MAX_INSTRUCTION);
+    return space === null
+      ? this.#enqueue({ instruction, automationId: null, browserId: given }, actor)
+      : this.#enqueue({ instruction, automationId: null, browserId: this.browserIn(space, given), space }, actor);
   }
 
-  listRequests(filter: { states?: readonly RequestState[]; limit?: number }): WorkstationRequest[] {
+  /** Les demandes ; `space` : celles de cet espace seulement. */
+  listRequests(filter: { states?: readonly RequestState[]; limit?: number; space?: string }): WorkstationRequest[] {
     return this.#ctx.store.listWorkstationRequests(filter);
   }
 
   /** Une demande et toutes ses actions (celles qu'a déposées son job, et elles seules), les plus anciennes d'abord. */
-  requestView(id: string): { request: WorkstationRequest; actions: WorkstationAction[] } {
-    const request = this.getRequest(id);
+  requestView(id: string, space?: string): { request: WorkstationRequest; actions: WorkstationAction[] } {
+    const request = this.getRequest(id, space);
     return {
       request,
       actions: this.#ctx.store.listWorkstationActions({ requestId: id, order: "asc", limit: 10_000 }),
@@ -2106,6 +2418,26 @@ export class Workstation {
       if (next) this.#requestEvent(next);
       return next;
     });
+  }
+
+  /**
+   * Une demande en file qui ne partira pas (son navigateur a quitté son espace) : `failed`, la raison
+   * dite, ses actions closes. `null` si elle n'était plus en file.
+   */
+  rejectRequest(id: string, reason: string): WorkstationRequest | null {
+    const { store } = this.#ctx;
+    const failure = clip(reason, MAX_REQUEST_REASON);
+    const rejected = store.transaction(() => {
+      const next = store.updateWorkstationRequestIf(id, ["queued"], {
+        state: "failed",
+        reason: failure,
+        endedAt: Date.now(),
+      });
+      if (next) this.#requestEvent(next);
+      return next;
+    });
+    if (rejected) this.#closeRequestActions(id, failure);
+    return rejected;
   }
 
   /**
@@ -2151,15 +2483,19 @@ export class Workstation {
     return automation;
   }
 
-  listAutomations(): WorkstationAutomation[] {
-    return this.#ctx.store.listWorkstationAutomations();
+  /** Les automatisations ; `space` : celles créées dans cet espace seulement. */
+  listAutomations(space?: string): WorkstationAutomation[] {
+    return this.#ctx.store.listWorkstationAutomations(space);
   }
 
   /**
    * Une automatisation tirée de la tâche `task` (son rang) de la version `version` du profil,
    * si elle est automatisable : titre, fréquence et étapes copiés. Idempotente (même titre et
-   * mêmes étapes : l'existante, `created: false`), permise en pause. `browserId` : le
-   * navigateur de ses demandes ; `schedule` : son expression cron, lue par le planificateur.
+   * mêmes étapes dans le même espace : l'existante, `created: false`), permise en pause.
+   * `browserId` : le navigateur de ses demandes ; `schedule` : son expression cron, lue par le
+   * planificateur. Elle PORTE l'espace où elle est créée (`space` ; hors espace sinon) : la tâche vient
+   * du profil de cet espace et le navigateur est l'un des siens (409 sinon, ou s'il n'en a aucun) —
+   * hors espace, un navigateur hors espace (409 sinon). Elle garde ce navigateur et cet espace.
    */
   createAutomation(
     body: Record<string, unknown>,
@@ -2168,17 +2504,22 @@ export class Workstation {
     const { version, task } = body;
     if (typeof version !== "number" || !Number.isInteger(version) || version < 1) bad("version : entier attendu");
     if (typeof task !== "number" || !Number.isInteger(task) || task < 0) bad("task : entier attendu");
-    const browserId = browserRef(body.browserId, "browserId");
+    const given = browserRef(body.browserId, "browserId");
     const schedule = parseSchedule(body.schedule);
+    const space = this.#spaceRef(body.space);
     const { store } = this.#ctx;
-    const profile = store.workstationProfile(version);
+    const profile = store.workstationProfile(version, space);
     if (!profile) throw new HarnessError(404, `profil inconnu : ${version}`);
     const source = profile.repetitiveTasks[task];
     if (!source) throw new HarnessError(404, `tâche inconnue : ${task}`);
     if (!source.automatable) throw new HarnessError(409, "cette tâche n'est pas automatisable");
-    if (browserId !== null) this.#known(browserId);
+    if (given !== null) this.#known(given);
+    if (space === null) this.outsideSpaces(given);
+    const browserId = space === null ? given : this.browserIn(space, given);
     return store.transaction(() => {
-      const existing = store.findWorkstationAutomation(source.title, source.steps);
+      const existing = store
+        .findWorkstationAutomations(source.title, source.steps)
+        .find((automation) => (automation.space ?? null) === space);
       if (existing) return { automation: existing, created: false };
       const automation = store.createWorkstationAutomation({
         id: newId("au"),
@@ -2188,6 +2529,7 @@ export class Workstation {
         steps: source.steps,
         profileVersion: version,
         browserId,
+        ...(space === null ? {} : { space }),
         schedule,
       });
       this.#ctx.event("workstation_automation", null, { id: automation.id }, null);
@@ -2199,13 +2541,23 @@ export class Workstation {
    * Lance une automatisation : une demande « en file » dont la consigne reprend son titre et
    * ses étapes, rattachée à elle. C'est le point d'entrée du lancement par l'humain
    * (`POST …/automations/{id}/launch`) ET du planificateur (cible `automation`) : 404 si
-   * l'automatisation n'existe plus, 409 en pause ; l'appelant relance le tour de l'agent.
+   * l'automatisation n'existe plus, 409 en pause ou si son navigateur n'est plus dans l'espace où
+   * elle a été créée ; l'appelant relance le tour de l'agent.
    */
   runAutomation(automationId: string, actor: Actor): WorkstationRequest {
     const automation = this.getAutomation(automationId);
     if (this.settings().paused) throw new HarnessError(409, "le poste est en pause");
+    // Réattribué (ou son espace retiré), son navigateur ne rejoue pas ailleurs des étapes apprises chez un client.
+    const space = automation.space ?? null;
+    if (this.spaceOfBrowser(automation.browserId ?? this.defaultBrowserId()) !== space)
+      throw new HarnessError(409, AUTOMATION_OUT_OF_SPACE);
     return this.#enqueue(
-      { instruction: automationInstruction(automation), automationId, browserId: automation.browserId },
+      {
+        instruction: automationInstruction(automation),
+        automationId,
+        browserId: automation.browserId,
+        ...(space === null ? {} : { space }),
+      },
       actor,
     );
   }
@@ -2224,15 +2576,38 @@ export class Workstation {
 
   // -- profil et services --------------------------------------------------------------
 
-  profileView(): { profile: WorkstationProfile | null; stats: ProfileStats; browsers: BrowserView[] } {
-    return { profile: this.#ctx.store.latestWorkstationProfile(), stats: this.stats(), browsers: this.browsers() };
+  /**
+   * Le profil d'une portée : celui de l'espace `space` (établi sur ses seuls navigateurs, avec leurs
+   * statistiques), ou — `null` — le profil hors espace, qui ne lit que les navigateurs sans espace.
+   */
+  profileView(space: string | null = null): {
+    profile: WorkstationProfile | null;
+    stats: ProfileStats;
+    browsers: BrowserView[];
+  } {
+    return {
+      profile: this.profileOf(space),
+      stats: this.stats(space),
+      browsers: this.browsers().filter((browser) => space === null || browser.space === space),
+    };
   }
 
-  writeProfile(profile: WorkstationProfileBody): WorkstationProfile {
+  /** Le dernier profil d'une portée (un espace, ou `null` : hors espace) : celui que reçoit un job qui y agit. */
+  profileOf(space: string | null): WorkstationProfile | null {
+    return this.#ctx.store.latestWorkstationProfile(space);
+  }
+
+  /** Une nouvelle version du profil de la portée `space` (`null` : le profil hors espace). */
+  writeProfile(profile: WorkstationProfileBody, space: string | null = null): WorkstationProfile {
     const { store } = this.#ctx;
     return store.transaction(() => {
-      const written = store.addWorkstationProfile(profile);
-      this.#ctx.event("workstation_profile", null, { version: written.version }, null);
+      const written = store.addWorkstationProfile(profile, space);
+      this.#ctx.event(
+        "workstation_profile",
+        null,
+        { version: written.version, ...(space === null ? {} : { space }) },
+        null,
+      );
       return written;
     });
   }

@@ -10,13 +10,13 @@
 // issue fermée, run terminal) est un résultat `isError`, lisible par l'agent ; une erreur
 // de protocole est une erreur JSON-RPC.
 import type { Client, Role } from "./auth.ts";
-import { allows, canSeeRepo } from "./auth.ts";
+import { allows, canSeeRepo, repoFilter } from "./auth.ts";
 import { HARNESS_COMMIT } from "./build-info.ts";
 import type { RepoConfig } from "./config.ts";
 import { isRecord } from "./config.ts";
 import type { Actor } from "./context.ts";
 import { CANCEL_CAUSES } from "./db.ts";
-import type { RepoFilter } from "./db.ts";
+import type { RepoFilter, Space } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import {
   alwaysInput,
@@ -48,6 +48,7 @@ import { intakeView, visibleIntake } from "./intake.ts";
 import { TARGET_KINDS, scheduleInput } from "./schedules.ts";
 import { SCOREBOARD_MAX_DAYS, scoreboardDays, scoreboardOf } from "./scoreboard.ts";
 import { readerOf } from "./proposals.ts";
+import { SPACES_OWNER_ONLY, onboardInput } from "./spaces.ts";
 import type { ConfigAdmin } from "./repos.ts";
 
 /** Les versions du protocole comprises, la plus récente d'abord. */
@@ -60,8 +61,13 @@ export type McpCall = {
   repos: () => RepoConfig[];
   /** L'orchestrateur : les runs, leurs gestes et leur lecture. */
   orchestrator: Orchestrator;
-  /** Les dépôts que le client voit (`null` : tous). */
+  /**
+   * Les dépôts que l'appel voit (`null` : tous) : ceux du client, bornés à l'espace de `?space=` de la
+   * requête ou de l'argument `space` d'un outil de lecture (`SPACE_SCOPED`).
+   */
   visible: RepoFilter;
+  /** L'espace qui borne l'appel, tel que le client le voit ; `null` : aucun. */
+  space: Space | null;
   version: string;
   /** La configuration administrée à chaud (403 client borné, 409 sans `--config`) : la règle de palier d'une proposition. */
   admin: () => ConfigAdmin;
@@ -295,9 +301,13 @@ export const MCP_TOOLS: readonly Tool[] = [
       },
     },
     required: ["repo", "title", "request"],
-    run: async (call, args) => ({
-      run: call.orchestrator.createRun(newRunInput(args, call.client), gestureActor(call, {})),
-    }),
+    run: async (call, args) => {
+      const input = newRunInput(args, call.client);
+      // Sous `?space=` (comme `POST /v1/runs`) : le run se lance dans un dépôt de l'espace.
+      if (call.space !== null && !call.space.repos.includes(input.repo))
+        throw new HarnessError(400, `repo : le dépôt ${input.repo} n'est pas dans l'espace « ${call.space.name} »`);
+      return { run: call.orchestrator.createRun(input, gestureActor(call, {})) };
+    },
   },
   {
     name: "run_get",
@@ -553,6 +563,7 @@ export const MCP_TOOLS: readonly Tool[] = [
         status,
         call.visible,
         call.orchestrator.config.review.escalationTimeoutSec,
+        (run) => call.orchestrator.withWait(run),
       );
     },
   },
@@ -605,7 +616,8 @@ export const MCP_TOOLS: readonly Tool[] = [
     run: async (call, args) => {
       const since = integer(args.since ?? undefined, "since") ?? null;
       if (since !== null && since < 0) throw new HarnessError(400, "since : instant en ms (epoch) attendu");
-      const brief = call.orchestrator.briefView(call.client.name, since, call.visible);
+      const owner = call.client.repos === "*";
+      const brief = call.orchestrator.briefView(call.client.name, since, call.visible, Date.now(), owner);
       return { brief };
     },
   },
@@ -635,12 +647,56 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "spaces",
     title: "Les espaces (clients)",
     description:
-      "Les espaces que le client voit : `GET /v1/spaces`. Chacun réunit des dépôts, un budget journalier et un curseur d'autonomie par défaut, avec ses compteurs (au travail, chez l'humain, en file, mergés, échoués et annulés sur 7 jours), son coût du jour et de la semaine et ce qu'il reste de son budget du jour.",
+      "Les espaces que le client voit : `GET /v1/spaces`. Chacun réunit des dépôts, un budget journalier et un curseur d'autonomie par défaut, avec ses compteurs (au travail, chez l'humain, en file, mergés, échoués et annulés sur 7 jours), son coût du jour et de la semaine, ce qu'il reste de son budget du jour, et son étanchéité (`isolation` : `sealed`, et les lacunes `gaps` — code, dépôt, phrase qui dit quoi faire — qui le laissent encore lire, écrire ou parler hors de sa frontière).",
     role: "viewer",
     readOnly: true,
     properties: {},
     required: [],
-    run: async (call) => ({ spaces: call.orchestrator.spaces.list(call.visible, Date.now()) }),
+    // Avec les droits du client (le propriétaire les voit entiers), `space` n'en gardant qu'un.
+    run: async (call) => {
+      const spaces = call.orchestrator.spaces.list(repoFilter(call.client), Date.now());
+      return { spaces: call.space === null ? spaces : spaces.filter((space) => space.id === call.space?.id) };
+    },
+  },
+  {
+    name: "space_onboard",
+    title: "Accueillir un client",
+    description:
+      "Accueille un client en un geste : `POST /v1/spaces/onboard`. Crée son espace (un nom libre, des dépôts déclarés qui n'appartiennent à aucun autre espace) et rend `space`, son étanchéité (`isolation`) et `next` : ce qu'il reste à faire (poser un jeton mémoire, un compte de forge, connecter Jira, rattacher un navigateur…), une phrase par étape. Réservé à un admin qui voit tous les dépôts ; un geste d'humain, refusé à un client pilote.",
+    role: "admin",
+    readOnly: false,
+    properties: {
+      name: { type: "string", description: "Le nom de l'espace (1 à 60 caractères, unique)." },
+      repos: {
+        type: "array",
+        items: { type: "string" },
+        description: "Les dépôts déclarés du client (la liste peut être vide).",
+      },
+      jiraProjects: {
+        type: "array",
+        items: { type: "string" },
+        description: "Facultatif : les clés de ses projets Jira.",
+      },
+      dailyBudgetUsd: {
+        type: "number",
+        description: "Facultatif : le plafond de dépense de l'espace sur le jour UTC, en dollars.",
+      },
+      autonomy: {
+        type: "string",
+        enum: ["ask", "deliver"],
+        description: "Facultatif : le curseur d'autonomie donné par défaut aux runs de ses dépôts.",
+      },
+      policy: {
+        type: "object",
+        description:
+          'Facultatif : la politique de modèles de l\'espace, croisée au plus strict avec celle de chaque dépôt — `{privacy?: "local-only", providers?: string[], models?: {fast?, standard?, heavy?}}` (chaque tier : une liste de "fournisseur/modèle").',
+      },
+    },
+    required: ["name", "repos"],
+    run: async (call, args) => {
+      if (call.client.repos !== "*") throw new HarnessError(403, SPACES_OWNER_ONLY);
+      return { ...call.orchestrator.spaces.onboard(onboardInput(args), gestureActor(call, {}), Date.now()) };
+    },
   },
   {
     name: "run_instructions",
@@ -769,7 +825,9 @@ export const MCP_TOOLS: readonly Tool[] = [
     readOnly: true,
     properties: {},
     required: [],
-    run: async (call) => ({ proposals: call.orchestrator.proposals.list(readerOf(call.client)) }),
+    run: async (call) => ({
+      proposals: call.orchestrator.proposals.list({ ...readerOf(call.client), repos: call.visible }),
+    }),
   },
   {
     name: "proposal_accept",
@@ -857,6 +915,11 @@ export const MCP_TOOLS: readonly Tool[] = [
         description: "Facultatif : d'où vient la demande (défaut : cli).",
       },
       repo: { type: "string", description: "Facultatif : impose ce dépôt au plan." },
+      space: {
+        type: "string",
+        description:
+          "Facultatif : l'espace (client) où poser la demande, par son identifiant ou son nom — le plan ne peut alors créer que dans un dépôt de cet espace, et son coût lui est imputé.",
+      },
       context: {
         type: "object",
         description:
@@ -867,20 +930,23 @@ export const MCP_TOOLS: readonly Tool[] = [
     required: [],
     run: async (call, args) => {
       const id = optionalText(args, "id");
+      const { spaces, store, intake } = call.orchestrator;
       if (id !== undefined)
-        return { intake: intakeView(visibleIntake(call.orchestrator.store, call.client, id), call.client) };
-      const row = call.orchestrator.intake.create(
+        return { intake: intakeView(visibleIntake(store, call.client, id, call.space), call.client, spaces) };
+      const row = intake.create(
         {
           text: args.text,
           source: optionalText(args, "source") ?? "cli",
           repo: optionalText(args, "repo"),
           context: args.context,
+          space: optionalText(args, "space"),
         },
         call.client,
         gestureActor(call, {}),
+        call.space,
       );
       void call.orchestrator.tick();
-      return { intake: intakeView(row, call.client) };
+      return { intake: intakeView(row, call.client, spaces) };
     },
   },
   {
@@ -900,7 +966,7 @@ export const MCP_TOOLS: readonly Tool[] = [
         plan: args.plan ?? undefined,
       });
       void call.orchestrator.tick();
-      return { intake: intakeView(row, call.client) };
+      return { intake: intakeView(row, call.client, call.orchestrator.spaces) };
     },
   },
   {
@@ -918,7 +984,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     run: async (call, args) => {
       const row = call.orchestrator.intake.answer(text(args, "id"), call.client, gestureActor(call, {}), args);
       void call.orchestrator.tick();
-      return { intake: intakeView(row, call.client) };
+      return { intake: intakeView(row, call.client, call.orchestrator.spaces) };
     },
   },
   {
@@ -952,7 +1018,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "pause",
     title: "Tout suspendre, ou reprendre",
     description:
-      "La pause globale du serveur : `GET /v1/pause` sans `paused`, `POST /v1/pause` avec. En pause, plus aucun run n'est admis, chaque run vivant finit son étape puis retourne en file à l'étape suivante, et ni audit, ni rêve, ni planification, ni demande ne démarre ; rien n'est annulé. Avec `now: true`, les runs, audits et demandes en cours sont interrompus tout de suite et reprennent à `paused: false` (un run à la même étape, sans échec compté). `paused: false` relance tout. Réservé au propriétaire : un client borné à des dépôts ou un pilote est refusé.",
+      "La pause globale du serveur : `GET /v1/pause` sans `paused`, `POST /v1/pause` avec. En pause, plus aucun run n'est admis, chaque run vivant finit son étape puis retourne en file à l'étape suivante, et ni audit, ni rêve, ni planification, ni demande ne démarre ; rien n'est annulé. Avec `now: true`, les runs, audits et demandes en cours sont interrompus tout de suite et reprennent à `paused: false` (un run à la même étape, sans échec compté). `paused: false` relance tout. Avec `space`, la pause d'UN espace (client) : ses runs ne sont plus admis, ses runs vivants retournent en file, ses merges, son autonomie et ses échéances attendent — les autres espaces continuent. Rend la pause globale et, dans `spaces`, les espaces en pause. Réservé au propriétaire : un client borné à des dépôts ou un pilote est refusé.",
     role: "operator",
     readOnly: false,
     properties: {
@@ -963,12 +1029,23 @@ export const MCP_TOOLS: readonly Tool[] = [
         description:
           "Facultatif, avec `paused: true` : interrompre tout de suite ce qui tourne au lieu de laisser finir les étapes.",
       },
+      space: {
+        type: "string",
+        description:
+          "Facultatif : l'espace (identifiant ou nom) à suspendre ou à reprendre, au lieu de tout le serveur.",
+      },
     },
     required: [],
     run: async (call, args) => {
-      if (args.paused === undefined) return { pause: call.orchestrator.pause };
-      const { paused, reason, now } = pauseInput(args);
-      return { pause: call.orchestrator.setPause(paused, reason, call.actor, call.visible, now) };
+      const { orchestrator } = call;
+      const ref = optionalText(args, "space") ?? call.space?.id ?? null;
+      if (args.paused !== undefined) {
+        const { paused, reason, now } = pauseInput(args);
+        // Les droits du client (propriétaire ou non), pas la portée de l'appel : `space` dit QUOI suspendre.
+        orchestrator.setPause(paused, reason, call.actor, repoFilter(call.client), now, ref);
+      }
+      const scope = ref === null ? call.visible : orchestrator.spaces.resolve(ref, call.visible).repos;
+      return { pause: orchestrator.pauseView(scope) };
     },
   },
   {
@@ -998,7 +1075,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "rules",
     title: "Les consignes permanentes",
     description:
-      "Les consignes permanentes de l'humain (« toujours faire ainsi ») que ce client voit : `GET /v1/rules`. Chaque consigne active est dite dans le prompt de chaque étape des runs de son dépôt (`repo: null` : de tous les dépôts, lisible seulement par un client qui les voit tous).",
+      "Les consignes permanentes de l'humain (« toujours faire ainsi ») que ce client voit : `GET /v1/rules`. Chaque consigne active est dite dans le prompt de chaque étape des runs de son dépôt (`repo`), des dépôts de son espace (`space`), ou de tous les dépôts (`repo` et `space` nuls : lisible seulement par un client qui les voit tous). Un dépôt ne reçoit jamais la consigne d'un autre espace.",
     role: "viewer",
     readOnly: true,
     properties: {},
@@ -1009,13 +1086,17 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "rule_set",
     title: "Écrire une consigne permanente",
     description:
-      "Crée, modifie ou retire une consigne permanente. Sans `id` : la crée (`POST /v1/rules`, `text` requis, `repo` absent pour tous les dépôts). Avec `id` : change son `text` ou l'active et la désactive (`enabled`, `PUT /v1/rules/{id}`), ou la retire (`remove: true`, `DELETE /v1/rules/{id}`). 40 consignes actives au plus par dépôt ; un client borné n'écrit que pour ses dépôts ; refusé à un client pilote (403).",
+      "Crée, modifie ou retire une consigne permanente. Sans `id` : la crée (`POST /v1/rules`, `text` requis ; `repo` pour un dépôt, `space` pour tous les dépôts d'un espace, au plus un des deux ; ni l'un ni l'autre : tous les dépôts). Avec `id` : change son `text` ou l'active et la désactive (`enabled`, `PUT /v1/rules/{id}`), ou la retire (`remove: true`, `DELETE /v1/rules/{id}`). 40 consignes actives au plus par dépôt, celles de son espace comprises ; un client borné n'écrit que pour ses dépôts, ou pour un espace qu'il voit en entier ; refusé à un client pilote (403).",
     role: "operator",
     readOnly: false,
     properties: {
       id: { type: "string", description: "L'id de la consigne à modifier ou à retirer (rendu par rules)." },
       text: { type: "string", maxLength: 600, description: "La consigne, une phrase (1 à 600 caractères)." },
-      repo: { type: "string", description: "Le nom du dépôt déclaré ; absent : tous les dépôts." },
+      repo: { type: "string", description: "Le nom du dépôt déclaré ; absent (et sans `space`) : tous les dépôts." },
+      space: {
+        type: "string",
+        description: "L'espace (identifiant ou nom) dont la consigne vaut pour tous les dépôts ; jamais avec `repo`.",
+      },
       enabled: { type: "boolean", description: "Avec `id` : `false` la désactive sans la retirer." },
       remove: { type: "boolean", description: "Avec `id` : `true` la retire." },
     },
@@ -1036,6 +1117,37 @@ function rpcError(id: JsonRpcId, code: number, message: string): Record<string, 
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
+/**
+ * Les outils de lecture qui acceptent `space` (identifiant ou nom d'un espace) : leur portée devient celle
+ * de l'espace, comme `?space=` d'une route — 404 pour un espace inconnu ou dont le client ne voit aucun dépôt.
+ */
+const SPACE_SCOPED: readonly string[] = [
+  "runs_list",
+  "inbox",
+  "escalations_list",
+  "digest",
+  "brief",
+  "scoreboard",
+  "spaces",
+  "schedules_list",
+  "proposals",
+  "rules",
+];
+
+const SPACE_PROPERTY = {
+  type: "string",
+  description:
+    "Facultatif : borne la lecture à cet espace (client), par son identifiant ou son nom — seuls ses dépôts sont rendus.",
+};
+
+/** L'appel borné à l'espace de l'argument `space`, s'il est donné : ses dépôts deviennent la portée de l'appel. */
+function spaceCall(call: McpCall, args: ToolArgs): McpCall {
+  const ref = optionalText(args, "space");
+  if (ref === undefined) return call;
+  const space = call.orchestrator.spaces.resolve(ref, call.visible);
+  return { ...call, visible: space.repos, space };
+}
+
 async function callTool(call: McpCall, params: Record<string, unknown>): Promise<Record<string, unknown>> {
   const tool = MCP_TOOLS.find((candidate) => candidate.name === params.name);
   if (!tool) throw new McpError(-32602, `outil inconnu : ${String(params.name)}`);
@@ -1045,7 +1157,8 @@ async function callTool(call: McpCall, params: Record<string, unknown>): Promise
   try {
     if (!allows(call.client.role, tool.role))
       throw new HarnessError(403, `le rôle ${call.client.role} ne permet pas ${tool.name} (${tool.role} requis)`);
-    const result = await tool.run(call, args as ToolArgs);
+    const scoped = SPACE_SCOPED.includes(tool.name) ? spaceCall(call, args as ToolArgs) : call;
+    const result = await tool.run(scoped, args as ToolArgs);
     return {
       content: tool.content?.(result) ?? [
         { type: "text", text: tool.render?.(result) ?? JSON.stringify(result, null, 2) },
@@ -1115,7 +1228,13 @@ export async function handleMcp(message: unknown, call: McpCall): Promise<Record
               name: tool.name,
               title: tool.title,
               description: tool.description,
-              inputSchema: { type: "object", properties: tool.properties, required: tool.required },
+              inputSchema: {
+                type: "object",
+                properties: SPACE_SCOPED.includes(tool.name)
+                  ? { ...tool.properties, space: SPACE_PROPERTY }
+                  : tool.properties,
+                required: tool.required,
+              },
               annotations: { readOnlyHint: tool.readOnly, destructiveHint: false, openWorldHint: true },
             })),
           },

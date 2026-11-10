@@ -339,6 +339,34 @@ export class Notifier {
     return [...(url !== null ? [{ kind: "ntfy" as const, url, headers: {} }] : []), ...targets];
   }
 
+  /**
+   * Les dépôts d'une cible bornée à des espaces (`spaces` : identifiants ou noms), à l'instant de
+   * l'envoi — un espace inconnu n'en apporte aucun ; `null` : une cible sans `spaces`, qui reçoit tout.
+   */
+  scopeOf(target: NotifyTarget): string[] | null {
+    const { spaces } = target;
+    if (spaces === undefined) return null;
+    const named = spaces.map((space) => space.toLowerCase());
+    return this.#store
+      .listSpaces()
+      .filter((space) => spaces.includes(space.id) || named.includes(space.name.toLowerCase()))
+      .flatMap((space) => space.repos);
+  }
+
+  /**
+   * Les espaces nommés par `notify.targets[].spaces` qui n'existent pas (ni identifiant ni nom) : une
+   * phrase par espace, à dire au démarrage. Jamais une erreur : les espaces vivent en base, et la cible
+   * ne reçoit simplement rien de lui.
+   */
+  spaceWarnings(): string[] {
+    const spaces = this.#store.listSpaces();
+    return this.#config.notify.targets.flatMap((target, index) =>
+      (target.spaces ?? [])
+        .filter((ref) => !spaces.some((space) => space.id === ref || space.name.toLowerCase() === ref.toLowerCase()))
+        .map((ref) => `notify.targets[${index}].spaces : espace inconnu « ${ref} » — cette cible n'en recevra rien`),
+    );
+  }
+
   /** Un événement du journal : envoyé s'il est dans `notify.events` et qu'une cible est posée. */
   handle(event: EventRow): void {
     if (event.ephemeral || event.type === "notify_failed" || !this.#config.notify.events.includes(event.type)) return;
@@ -350,13 +378,24 @@ export class Notifier {
   }
 
   /**
-   * Un message envoyé à chaque cible, sans attendre (le rapport du matin passe par là) ;
-   * rend `false` s'il n'est pas parti : aucune cible, ou le même envoyé il y a moins de
-   * `notify.dedupMin` minutes.
+   * Un message envoyé, sans attendre (le rapport du matin passe par là), à chaque cible que son origine
+   * concerne : toutes les cibles sans `spaces`, et celles dont un espace tient le dépôt de l'origine —
+   * une cible bornée ne reçoit donc rien de ce qui n'a pas de dépôt. `only` : ces seules cibles (le
+   * rapport propre à une cible bornée). Rend `false` s'il n'est pas parti : aucune cible, ou le même
+   * envoyé il y a moins de `notify.dedupMin` minutes.
    */
-  post(notification: Notification, origin: Origin = { event: null, runId: null, repo: null }): boolean {
-    const targets = this.targets();
-    if (targets.length === 0 || this.#duplicate(notification)) return false;
+  post(
+    notification: Notification,
+    origin: Origin = { event: null, runId: null, repo: null },
+    only: readonly NotifyTarget[] | null = null,
+  ): boolean {
+    const targets =
+      only ??
+      this.targets().filter((target) => {
+        const scope = this.scopeOf(target);
+        return scope === null || (origin.repo !== null && scope.includes(origin.repo));
+      });
+    if (targets.length === 0 || this.#duplicate(notification, only)) return false;
     for (const target of targets) {
       const sending = this.send(target, notification, origin).finally(() => this.#inFlight.delete(sending));
       this.#inFlight.add(sending);
@@ -364,14 +403,18 @@ export class Notifier {
     return true;
   }
 
-  /** Vrai si la même notification est partie il y a moins de `dedupMin` minutes ; sinon l'envoi est noté. */
-  #duplicate(notification: Notification): boolean {
+  /**
+   * Vrai si la même notification est partie il y a moins de `dedupMin` minutes ; sinon l'envoi est noté.
+   * `only` : un envoi réservé à ces cibles ne se confond pas avec le même texte envoyé à d'autres.
+   */
+  #duplicate(notification: Notification, only: readonly NotifyTarget[] | null): boolean {
     const { dedupMin } = this.#config.notify;
     const now = this.#now();
     const windowMs = (dedupMin ?? 0) * 60_000;
     for (const [key, at] of this.#sentAt) if (now - at >= windowMs) this.#sentAt.delete(key);
     if (windowMs <= 0) return false;
-    const key = `${notification.title}\n${notification.body}`;
+    const to = only === null ? "" : `\n→ ${only.map((target) => target.url).join(" ")}`;
+    const key = `${notification.title}\n${notification.body}${to}`;
     if (this.#sentAt.has(key)) return true;
     this.#sentAt.set(key, now);
     return false;

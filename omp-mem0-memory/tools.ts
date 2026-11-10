@@ -1,6 +1,12 @@
 // Les 5 tools mem0 offerts au modèle : recherche, écriture, liaison, réécriture, suppression.
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
-import { GLOBAL_SCOPE, SEARCH_POOL_MAX, SEARCH_THRESHOLD } from "./config.ts";
+import {
+  GLOBAL_SCOPE,
+  GLOBAL_SCOPE_REFUSED,
+  SEARCH_POOL_MAX,
+  SEARCH_THRESHOLD,
+  globalScopeAllowed,
+} from "./config.ts";
 import { findSimilar, planMerge } from "./dedupe.ts";
 import { LINK_TYPES, observationMark, renderLinks, textResolver } from "./liens.ts";
 import type { LinkType } from "./liens.ts";
@@ -81,6 +87,13 @@ export function registerMem0Tools(pi: ExtensionAPI, rt: Mem0Runtime): void {
       _onUpdate: unknown,
       ctx: ExtensionContext,
     ) {
+      // Une session qui tourne pour un espace du harness (MEM0_NO_GLOBAL) ne lit pas `_global`.
+      if (params.scope === "global" && !globalScopeAllowed()) {
+        return {
+          content: [{ type: "text", text: GLOBAL_SCOPE_REFUSED }],
+          details: { candidates: 0, scored: 0, floor: SEARCH_THRESHOLD, kept: [] },
+        };
+      }
       const scope = params.scope === "global" ? GLOBAL_SCOPE : projectId(ctx?.cwd ?? process.cwd());
       const limit = Math.min(params.limit ?? 6, 50);
       // Sur-échantillonnage : le serveur classe par score combiné, donc sans marge
@@ -173,6 +186,10 @@ export function registerMem0Tools(pi: ExtensionAPI, rt: Mem0Runtime): void {
       _onUpdate: unknown,
       ctx: ExtensionContext,
     ) {
+      // … ni n'y écrit : ce qu'elle retient d'un client ne se retrouve pas chez un autre.
+      if (params.scope === "global" && !globalScopeAllowed()) {
+        return { content: [{ type: "text", text: GLOBAL_SCOPE_REFUSED }], details: { refused: "global" } };
+      }
       const scope = params.scope === "global" ? GLOBAL_SCOPE : projectId(ctx?.cwd ?? process.cwd());
       const text = redact(params.text);
 

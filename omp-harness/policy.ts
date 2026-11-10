@@ -8,6 +8,10 @@
 // pour un tier refuse l'étape (jamais de repli sur un autre fournisseur), un jeton
 // déclaré mais absent de l'environnement refuse le runner ou l'appel gh (jamais de
 // repli sur le jeton global).
+//
+// Un ESPACE (un client, spaces.ts) peut porter sa propre politique de modèles : elle se croise
+// avec celle de chacun de ses dépôts, au plus strict (`strictest`). Un dépôt hors de tout espace,
+// ou d'un espace sans politique, garde exactement la sienne.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { HarnessConfig, ModelChoice, ModelPolicy, RepoConfig, Tier } from "./config.ts";
@@ -15,6 +19,7 @@ import { MODEL_REF, TIERS } from "./config.ts";
 import { HarnessError } from "./errors.ts";
 import type { GitIdentity } from "./git.ts";
 import { LOCAL_PROVIDER, localProvider } from "./local-model.ts";
+import type { Space } from "./db.ts";
 
 /** Une étape (ou un appel) que la politique d'un dépôt interdit : jamais relancée telle quelle. */
 export class PolicyRefusal extends HarnessError {
@@ -74,6 +79,57 @@ export function policyChain(
       `${owner} : aucun modèle du tier ${tier} (ni au-dessus) chez ses fournisseurs permis (${policy.providers.join(", ") || "liste vide"}) — l'étape ne bascule jamais hors de la liste`,
     );
   return [];
+}
+
+/**
+ * La politique `own` (un dépôt, une Demande, un job du poste) croisée avec celle de son espace, au
+ * plus STRICT, en échec fermé : `local-only` l'emporte dès que l'un des deux le pose ; les listes
+ * blanches se croisent (une intersection vide reste une liste VIDE : `policyChain` refuse, jamais de
+ * repli) ; les chaînes propres s'enchaînent tier par tier, celle de `own` d'abord, celle de l'espace
+ * ensuite — toutes passent ensuite par la liste blanche et `local-only` croisés. Sans politique
+ * d'espace (`null`), `own` est rendue telle quelle : rien ne change hors d'un espace.
+ */
+export function strictest(own: ModelPolicy, space: ModelPolicy | null): ModelPolicy {
+  if (space === null) return own;
+  const providers =
+    own.providers === undefined || space.providers === undefined
+      ? (own.providers ?? space.providers)
+      : own.providers.filter((name) => space.providers?.includes(name));
+  const models: Partial<Record<Tier, string[]>> = {};
+  for (const tier of TIERS) {
+    const chain = [...new Set([...(own.models?.[tier] ?? []), ...(space.models?.[tier] ?? [])])];
+    if (chain.length > 0) models[tier] = chain;
+  }
+  const privacy = own.privacy === "local-only" || space.privacy === "local-only" ? "local-only" : own.privacy;
+  return {
+    ...(Object.keys(models).length > 0 ? { models } : {}),
+    ...(providers !== undefined ? { providers } : {}),
+    ...(privacy !== undefined ? { privacy } : {}),
+  };
+}
+
+/** L'espace d'un dépôt quand il porte une politique de modèles : son nom (pour le dire) et elle ; sinon `null`. */
+export function spaceRule(
+  spaces: readonly Pick<Space, "name" | "repos" | "policy">[],
+  repo: string,
+): { space: string; policy: ModelPolicy } | null {
+  const space = spaces.find((candidate) => candidate.repos.includes(repo));
+  return space?.policy ? { space: space.name, policy: space.policy } : null;
+}
+
+/**
+ * Ce que borne la politique de modèles EN VIGUEUR d'un dépôt — la sienne croisée avec celle de son
+ * espace (`strictest`) : « local-only » et sa liste blanche de fournisseurs ; `null` quand elle ne borne
+ * rien. C'est ce que `GET /v1/repos` rend (`policy`) : un client qui n'a pas la configuration (la vigie)
+ * sait ainsi ce qu'il ne doit pas envoyer à son propre modèle.
+ */
+export function policyBounds(
+  repo: RepoConfig,
+  spaces: readonly Pick<Space, "name" | "repos" | "policy">[],
+): Pick<ModelPolicy, "privacy" | "providers"> | null {
+  const { privacy, providers } = strictest(repo, spaceRule(spaces, repo.name)?.policy ?? null);
+  if (privacy === undefined && providers === undefined) return null;
+  return { ...(privacy !== undefined ? { privacy } : {}), ...(providers !== undefined ? { providers } : {}) };
 }
 
 /** `dir` est `root` ou se trouve dessous. */

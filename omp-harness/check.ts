@@ -6,13 +6,14 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { HarnessConfig, ModelPolicy, RepoConfig } from "./config.ts";
-import { modelChain } from "./config.ts";
+import { modelChain, policyDefect } from "./config.ts";
 import { openForge } from "./forge.ts";
 import { remoteEnv, type Git } from "./git.ts";
 import { LOCAL_PROVIDER, localProvider } from "./local-model.ts";
 import { STEP_KINDS } from "./machine.ts";
-import { PolicyRefusal, policyChain } from "./policy.ts";
+import { PolicyRefusal, policyChain, spaceRule, strictest } from "./policy.ts";
 import type { Exec } from "./proc.ts";
 import { engine, memoryExtension } from "./runner.ts";
 
@@ -28,7 +29,12 @@ export type CheckDeps = {
   env?: Record<string, string | undefined>;
   /** Les modèles que sert un fournisseur compatible OpenAI (`GET <base>/models`), `null` s'il ne répond pas. */
   servedModels?: (baseUrl: string) => Promise<string[] | null>;
+  /** Les espaces et leur politique de modèles ; absent : ceux de la base (`storedSpacePolicies`). */
+  spaces?: readonly SpacePolicy[];
 };
+
+/** Un espace tel que `--check` le lit : ses dépôts et sa politique de modèles. */
+export type SpacePolicy = { name: string; repos: string[]; policy: ModelPolicy | null };
 
 /** `GET <base>/models` d'un serveur compatible OpenAI (oMLX), borné à 5 s. */
 async function fetchServedModels(baseUrl: string, token: string | undefined): Promise<string[] | null> {
@@ -42,6 +48,33 @@ async function fetchServedModels(baseUrl: string, token: string | undefined): Pr
     return (body.data ?? []).flatMap((entry) => (typeof entry.id === "string" ? [entry.id] : []));
   } catch {
     return null;
+  }
+}
+
+/**
+ * Les espaces de la base et leur politique de modèles, lus sans l'ouvrir en écriture ni la migrer (le
+ * service tourne peut-être) ; aucun sans base, ou d'une base d'avant les espaces et leur politique.
+ */
+function storedSpacePolicies(config: HarnessConfig): SpacePolicy[] {
+  const file = path.join(config.dataDir, "harness.sqlite");
+  if (!fs.existsSync(file)) return [];
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    return db
+      .prepare("SELECT name, repos, policy FROM spaces ORDER BY created_at, rowid")
+      .all()
+      .map((row) => {
+        const policy: unknown = row.policy === null ? null : JSON.parse(String(row.policy));
+        return {
+          name: String(row.name),
+          repos: JSON.parse(String(row.repos)) as string[],
+          policy: policy !== null && policyDefect("policy", policy) === null ? (policy as ModelPolicy) : null,
+        };
+      });
+  } catch {
+    return [];
+  } finally {
+    db.close();
   }
 }
 
@@ -426,12 +459,18 @@ export async function runChecks(config: HarnessConfig, deps: CheckDeps): Promise
       : "Ajoute une entrée à `repos` dans la configuration du harness.";
     lines.push({ status: "fail", label: "dépôts", detail: "aucun dépôt déclaré", fix });
   }
-  for (const repo of config.repos)
+  // Chaque dépôt est jugé sous la politique EN VIGUEUR : la sienne croisée avec celle de son espace
+  // (policy.ts `strictest`) — un espace « local-only » sans modèle local se voit ici, avant le premier run.
+  const spaces = deps.spaces ?? storedSpacePolicies(config);
+  for (const repo of config.repos) {
+    const rule = spaceRule(spaces, repo.name);
+    const owner = `dépôt ${repo.name}${rule ? ` (espace « ${rule.space} »)` : ""}`;
     lines.push(
       ...(await checkRepo(repo, deps, contained)),
       ...checkRepoAccounts(repo, deps.env ?? process.env),
-      ...(await checkModelPolicy(config, repo, `dépôt ${repo.name}`, deps, contained)),
+      ...(await checkModelPolicy(config, strictest(repo, rule?.policy ?? null), owner, deps, contained)),
     );
+  }
   if (config.workstation.enabled && config.workstation.policy)
     lines.push(...(await checkModelPolicy(config, config.workstation.policy, "poste de travail", deps, contained)));
   // GitHub refuse une même clé de déploiement sur deux dépôts : la clé du service n'en sert qu'un.

@@ -39,7 +39,7 @@ const PLAN = {
       next: "relire la PR ouverte",
       source: "jira",
       key: "PROJ-1",
-      url: "https://adeogroup.atlassian.net/browse/PROJ-1",
+      url: "https://exemple.atlassian.net/browse/PROJ-1",
       repo: null,
       request: null,
     },

@@ -247,13 +247,17 @@ export function autonomyRuleInput(body: Record<string, unknown>): AutonomyRuleIn
   return { repo: text(body, "repo"), kind, gate, mode };
 }
 
-/** Le corps de `POST /v1/rules` : `text` requis ; `repo` absent ou `null` : tous les dépôts ; `source` : `manual` par défaut. */
+/**
+ * Le corps de `POST /v1/rules` : `text` requis ; `repo` (un dépôt) ou `space` (un espace : identifiant ou nom),
+ * au plus un des deux ; ni l'un ni l'autre : tous les dépôts ; `source` : `manual` par défaut.
+ */
 export function standingRuleInput(body: Record<string, unknown>): StandingRuleInput {
   const source = STANDING_RULE_SOURCES.find((candidate) => candidate === (body.source ?? "manual"));
   if (source === undefined) throw new HarnessError(400, `source : ${STANDING_RULE_SOURCES.join(" | ")}`);
   return {
     text: text(body, "text"),
     repo: body.repo === undefined || body.repo === null ? null : text(body, "repo"),
+    space: body.space === undefined || body.space === null ? null : text(body, "space"),
     source,
     sourceRunId: body.sourceRunId === undefined || body.sourceRunId === null ? null : text(body, "sourceRunId"),
   };

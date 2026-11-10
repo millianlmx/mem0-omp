@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { LOOPBACK_REDIRECT } from "../../omp-harness/config.ts";
+import { spaceTokenFile } from "../../omp-harness/atlassian/oauth.ts";
 import type { AtlassianFetch, AtlassianResponse, AtlassianTokens } from "../../omp-harness/atlassian/oauth.ts";
 import type { FakeWorld } from "./harness-fixtures.ts";
 
@@ -266,10 +267,14 @@ export function fakeAtlassian(opts: { sse?: boolean; issues?: FakeIssue[] } = {}
   return double;
 }
 
-/** Range des jetons valides (site et compte compris) : un test « déjà branché », sans danse OAuth. */
+/**
+ * Range des jetons valides (site et compte compris) : un test « déjà branché », sans danse OAuth.
+ * `space` : la connexion de cet espace (son fichier `atlassian-<espaceId>.json`) ; absent : celle par défaut.
+ */
 export function connectAtlassian(
   world: Pick<FakeWorld, "config">,
   patch: Partial<AtlassianTokens> = {},
+  space?: string,
 ): AtlassianTokens {
   const now = Date.now();
   const tokens: AtlassianTokens = {
@@ -286,7 +291,8 @@ export function connectAtlassian(
     connectedBy: "admin",
     ...patch,
   };
-  const file = world.config.atlassian.tokenFile;
+  const { atlassian } = world.config;
+  const file = space === undefined ? atlassian.tokenFile : spaceTokenFile(atlassian, space);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(tokens), { mode: 0o600 });
   return tokens;

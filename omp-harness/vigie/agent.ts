@@ -84,7 +84,29 @@ type VigieState = {
   piloted: Record<string, { rev: number; actions: number; history: string[] }>;
 };
 
-type RepoInfo = { name: string; scope: string; mainBranch: string; github: string | null };
+/**
+ * `space` : l'espace (client) auquel appartient le dépôt (`GET /v1/spaces`) ; `null` : hors de tout espace.
+ * `localOnly`, `providers` : sa politique de modèles croisée avec celle de son espace (`GET /v1/repos` →
+ * `policy`) — « local-only », et sa liste blanche de fournisseurs (`null` : aucune).
+ */
+type RepoInfo = {
+  name: string;
+  scope: string;
+  mainBranch: string;
+  github: string | null;
+  space: string | null;
+  localOnly: boolean;
+  providers: string[] | null;
+};
+
+/** Ce que dit un incident gardé sans tri parce que les espaces du serveur sont illisibles. */
+const UNTRIAGED_BLIND =
+  "non trié : politique de l'espace — les espaces du serveur sont illisibles, rien n'est envoyé au modèle";
+
+/** L'espace du dépôt `name` ; `null` : hors de tout espace, ou dépôt inconnu. */
+function spaceOfRepo(repos: readonly RepoInfo[], name: string): string | null {
+  return repos.find((repo) => repo.name === name)?.space ?? null;
+}
 
 function clip(value: string, max: number): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
@@ -152,6 +174,8 @@ export class Vigie {
   #triaging: Promise<void> = Promise.resolve();
   readonly #inflight = new Set<string>();
   #repos: { at: number; list: RepoInfo[] } | null = null;
+  /** Les espaces (ou les dépôts d'un serveur qui a des espaces) n'ont pas pu être lus : aucun tri (`#reposInfo`). */
+  #blind = false;
   readonly #timers: NodeJS.Timeout[] = [];
   readonly #abort = new AbortController();
   #saveTimer: NodeJS.Timeout | null = null;
@@ -466,9 +490,34 @@ export class Vigie {
     }
   }
 
+  /**
+   * Les dépôts du harness, chacun avec son espace et sa politique de modèles. Les espaces d'abord : s'ils
+   * sont illisibles alors que le serveur en sert (`#servesSpaces`), ou si les dépôts le sont alors qu'un
+   * espace existe, la vigie est AVEUGLE (`#blind`) — elle ne sait plus à qui est un dépôt : aucun tri,
+   * rien en cache, la lecture suivante réessaie. Un serveur sans la capacité, ou sans espace : comme avant.
+   */
   async #reposInfo(): Promise<RepoInfo[]> {
     if (this.#repos && this.#now() - this.#repos.at < REPOS_TTL_MS) return this.#repos.list;
-    const listed = await this.#api.json("GET", "/v1/repos");
+    // L'espace de chaque dépôt : un incident n'est publié que dans l'espace du dépôt observé.
+    const spaces = new Map<string, string>();
+    this.#blind = false;
+    try {
+      const answer = await this.#api.json("GET", "/v1/spaces");
+      for (const raw of Array.isArray(answer.spaces) ? answer.spaces : []) {
+        const space = record(raw);
+        for (const repo of strings(space.repos)) spaces.set(repo, textOf(space.id));
+      }
+    } catch (err) {
+      this.#blind = await this.#servesSpaces();
+      this.#log(`espaces illisibles : ${err instanceof Error ? err.message : String(err)}`);
+    }
+    let listed: Record<string, unknown>;
+    try {
+      listed = await this.#api.json("GET", "/v1/repos");
+    } catch (err) {
+      this.#blind = this.#blind || spaces.size > 0;
+      throw err;
+    }
     const github = new Map<string, string | null>();
     try {
       const mcp = await this.#api.tool("repos_list", {});
@@ -482,15 +531,28 @@ export class Vigie {
     const list = (Array.isArray(listed.repos) ? listed.repos : []).map((raw) => {
       const repo = record(raw);
       const name = textOf(repo.name);
+      const policy = record(repo.policy);
       return {
         name,
         scope: textOf(repo.scope),
         mainBranch: textOf(repo.mainBranch) || "main",
         github: github.get(name) ?? null,
+        space: spaces.get(name) ?? null,
+        localOnly: policy.privacy === "local-only",
+        providers: Array.isArray(policy.providers) ? strings(policy.providers) : null,
       };
     });
-    this.#repos = { at: this.#now(), list };
+    if (!this.#blind) this.#repos = { at: this.#now(), list };
     return list;
+  }
+
+  /** Le serveur sert-il les espaces (`GET /v1/health` → `features`) ? Sans réponse : oui (échec fermé). */
+  async #servesSpaces(): Promise<boolean> {
+    try {
+      return strings((await this.#api.health()).body.features).includes("spaces");
+    } catch {
+      return true;
+    }
   }
 
   // -- incidents et tri -----------------------------------------------------------
@@ -531,34 +593,93 @@ export class Vigie {
       .finally(() => this.#inflight.delete(fingerprint));
   }
 
-  /** Le dépôt d'un incident : le sien s'il est à la vigie, celui du tri, sinon le premier de la vigie. */
+  /**
+   * Le dépôt d'un incident : le sien s'il est à la vigie, celui du tri, sinon le premier de la vigie —
+   * toujours dans l'ESPACE du dépôt observé (`candidates[0]`) quand il est connu : jamais le repli sur le
+   * dépôt d'un autre espace. Sans dépôt de la vigie dans l'espace : le dépôt observé lui-même (le serveur
+   * retient alors l'issue, hors de ses dépôts permis : l'incident reste non publié), sinon `null`.
+   */
   #targetRepo(candidates: (string | null)[], settings: VigieSettings, repos: RepoInfo[]): string | null {
-    for (const candidate of candidates) if (candidate && settings.repos.includes(candidate)) return candidate;
-    return settings.repos[0] ?? candidates.find((candidate) => candidate !== null) ?? repos[0]?.name ?? null;
+    const observed = candidates[0] ?? null;
+    const same = (name: string): boolean =>
+      observed === null || spaceOfRepo(repos, name) === spaceOfRepo(repos, observed);
+    for (const candidate of candidates)
+      if (candidate && settings.repos.includes(candidate) && same(candidate)) return candidate;
+    return (
+      settings.repos.find(same) ??
+      candidates.find((candidate): candidate is string => candidate !== null && same(candidate)) ??
+      repos.find((repo) => same(repo.name))?.name ??
+      null
+    );
+  }
+
+  /**
+   * Pourquoi rien de ce dépôt ne part au modèle de la vigie, ou `null` : sa politique de modèles croisée
+   * avec celle de son espace (`GET /v1/repos` → `policy`) est « local-only », ou sa liste blanche de
+   * fournisseurs n'a pas celui du modèle de la vigie (`VIGIE_MODEL` ; sans lui, le fournisseur est
+   * inconnu : refusé). Un dépôt sans politique, ou inconnu : `null`.
+   */
+  #barred(repos: readonly RepoInfo[], name: string | null): string | null {
+    const repo = name === null ? undefined : repos.find((candidate) => candidate.name === name);
+    if (repo === undefined || (!repo.localOnly && repo.providers === null)) return null;
+    const model = this.#options.omp.model;
+    const provider = model?.includes("/") ? model.slice(0, model.indexOf("/")) : null;
+    if (!repo.localOnly && provider !== null && repo.providers?.includes(provider)) return null;
+    const whose = repo.space === null ? "politique de modèles du dépôt" : "politique de l'espace";
+    const why = repo.localOnly
+      ? "« local-only », rien ne part chez un fournisseur"
+      : `fournisseurs permis : ${repo.providers?.join(", ") || "aucun"} — le modèle de la vigie (${model ?? "celui d'omp"}) n'en est pas`;
+    return `non trié : ${whose} — ${repo.name} est ${why}`;
   }
 
   async #triage(fingerprint: string, observed: Observed, incident: Record<string, unknown>): Promise<void> {
     const settings = this.#settings ?? DEFAULT_VIGIE_SETTINGS;
     const repos = await this.#reposInfo().catch(() => [] as RepoInfo[]);
     const target = this.#targetRepo([observed.repo], settings, repos);
+    // Le dépôt de l'incident : celui du signal, sinon celui que le serveur lui a trouvé (son run).
+    const source = observed.repo ?? (textOf(incident.repo) || null);
+    // Aucun envoi au modèle quand la politique de modèles du dépôt observé (ou du dépôt à corriger, dont
+    // le code serait lu) ne permet pas celui de la vigie, ni quand les espaces sont illisibles : l'incident
+    // est gardé, non trié, et le dit.
+    const untriaged = this.#blind ? UNTRIAGED_BLIND : (this.#barred(repos, source) ?? this.#barred(repos, target));
+    if (untriaged !== null) {
+      if (textOf(incident.note) !== untriaged)
+        await this.#api.json("POST", "/v1/vigie/incidents", { fingerprint, untriaged });
+      this.#log(`incident ${fingerprint} ${untriaged}`);
+      return;
+    }
     const info = repos.find((repo) => repo.name === target) ?? null;
     const clone = info && this.#options.reposDir ? path.join(this.#options.reposDir, info.name) : null;
     let verdict: VigieVerdict | null = null;
     const count = typeof incident.count === "number" ? incident.count : 1;
     const firstAt = typeof incident.firstAt === "number" ? incident.firstAt : observed.at;
+    // Ce qui entoure le signal : jamais le journal d'un dépôt d'un AUTRE espace que celui du dépôt observé,
+    // ni celui d'un dépôt dont la politique de modèles ne permet pas le modèle de la vigie.
+    const around = (repo: string | null | undefined): boolean => {
+      if (repo === null || repo === undefined) return true;
+      if (this.#barred(repos, repo) !== null) return false;
+      const space = spaceOfRepo(repos, repo);
+      return source === null || space === null || space === spaceOfRepo(repos, source);
+    };
     const prompt = triagePrompt({
       repo: target,
-      repos: settings.repos,
+      repos: settings.repos.filter(
+        (name) => source === null || spaceOfRepo(repos, name) === spaceOfRepo(repos, source),
+      ),
       clone: clone && fs.existsSync(clone) ? clone : null,
       signal: { ...observed, count, firstAt },
-      events: this.#around(this.#events, observed.at).map(
-        (event) =>
-          `${new Date(event.at).toISOString()} ${event.type}${event.runId ? ` run ${event.runId}` : ""} ${clip(JSON.stringify(event.payload), 240)}`,
-      ),
-      logs: this.#around(this.#logLines, observed.at).map(
-        (line) =>
-          `${line.ts} [${line.level}] ${line.src} ${clip(line.msg, 300)}${line.err ? ` — ${clip(line.err.message, 300)}` : ""}`,
-      ),
+      events: this.#around(this.#events, observed.at)
+        .filter((event) => around(event.repo))
+        .map(
+          (event) =>
+            `${new Date(event.at).toISOString()} ${event.type}${event.runId ? ` run ${event.runId}` : ""} ${clip(JSON.stringify(event.payload), 240)}`,
+        ),
+      logs: this.#around(this.#logLines, observed.at)
+        .filter((line) => around(line.repo))
+        .map(
+          (line) =>
+            `${line.ts} [${line.level}] ${line.src} ${clip(line.msg, 300)}${line.err ? ` — ${clip(line.err.message, 300)}` : ""}`,
+        ),
       run: observed.runId ? await this.#runSummary(observed.runId) : null,
       gitLog: clone && info ? await this.#gitLog(clone, info.mainBranch) : "",
       memories: info ? await this.#recall(info.scope, `${observed.message}\n${observed.location}`) : "",
@@ -722,6 +843,13 @@ export class Vigie {
       }
       if (past.actions >= MAX_PILOT_ACTIONS) {
         await this.#defer(fingerprint, `la vigie a déjà agi ${MAX_PILOT_ACTIONS} fois sur ce run : à toi de trancher`);
+        continue;
+      }
+      // La politique de modèles du dépôt (ou des espaces illisibles) : rien ne part au modèle, l'humain tranche.
+      const repos = await this.#reposInfo().catch(() => [] as RepoInfo[]);
+      const bar = this.#blind ? UNTRIAGED_BLIND : this.#barred(repos, textOf(run.repo) || null);
+      if (bar !== null) {
+        await this.#defer(fingerprint, bar.replace("non trié", "non piloté"));
         continue;
       }
       await this.#pilotRun(fingerprint, incident, view, wait, rev, past);

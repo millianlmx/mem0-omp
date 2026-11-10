@@ -323,7 +323,8 @@ export class VigieDesk {
 
   /**
    * `POST /v1/vigie/incidents` : une occurrence d'un signal (nouvelle empreinte, ou une de
-   * plus), le tri d'un incident (`triage`), ou son renvoi à l'humain (`defer`).
+   * plus), le tri d'un incident (`triage`), son renvoi à l'humain (`defer`), ou sa garde sans tri
+   * (`untriaged` : pourquoi rien n'est parti au modèle).
    */
   report(body: Record<string, unknown>, now: number): Promise<ReportOutcome> {
     if (this.settings().mode === "off") throw new HarnessError(409, "la vigie est coupée (mode off)");
@@ -331,10 +332,14 @@ export class VigieDesk {
     if (!isFingerprint(fingerprint)) throw new HarnessError(400, "fingerprint : empreinte hexadécimale (16 à 64)");
     return this.#serial(fingerprint, async () => {
       const existing = this.#store.getVigieIncident(fingerprint);
-      if (body.triage !== undefined || body.defer !== undefined) {
+      if (body.triage !== undefined || body.defer !== undefined || body.untriaged !== undefined) {
         if (!existing) throw new HarnessError(404, `incident inconnu : ${fingerprint}`);
         if (body.triage !== undefined)
           return { incident: this.#applyTriage(existing, body.triage, now), known: true, triage: "skip" };
+        if (body.untriaged !== undefined) {
+          const why = redactSecrets(bounded(body, "untriaged", 500, true) as string);
+          return { incident: this.#untriaged(existing, why), known: true, triage: "skip" };
+        }
         const reason = bounded(body, "defer", 1000, true) as string;
         return { incident: this.#defer(existing, redactSecrets(reason)), known: true, triage: "skip" };
       }
@@ -405,6 +410,18 @@ export class VigieDesk {
   #defer(incident: VigieIncident, note: string): VigieIncident {
     const updated = this.#store.updateVigieIncident(incident.fingerprint, { status: "deferred", note });
     this.#event(updated, "deferred");
+    return updated;
+  }
+
+  /**
+   * L'incident que la vigie garde SANS le trier (`untriaged`) : la politique de modèles de son dépôt, ou
+   * de son espace, ne permet pas d'en envoyer quoi que ce soit à son modèle. Il reste `new`, sa note dit
+   * pourquoi ; une occurrence suivante le représente au tri, que la vigie rejuge.
+   */
+  #untriaged(incident: VigieIncident, note: string): VigieIncident {
+    if (incident.status !== "new" || incident.note === note) return incident;
+    const updated = this.#store.updateVigieIncident(incident.fingerprint, { note });
+    this.#event(updated, "untriaged");
     return updated;
   }
 
@@ -507,8 +524,20 @@ export class VigieDesk {
         issue: { number: incident.issueNumber, url: incident.issueUrl },
         reason: null,
       };
-    // Tout ce que le serveur garde du poste (pages, meetings, actions, profil) : jamais dans une issue.
-    const poste = this.#store.workstationTexts(0);
+    // Multi-client : un incident n'est publié que sur un dépôt du MÊME espace que le dépôt observé — jamais
+    // chez un autre client. Rien ne part, et l'incident garde son dépôt : il reste non publié.
+    const foreign = this.#foreignTarget(incident, repo);
+    if (foreign !== null) {
+      const kept = this.#store.updateVigieIncident(fingerprint, {
+        note: foreign,
+        ...(incident.status === "new" ? { status: "bug" as const } : {}),
+      });
+      this.#event(kept, "withheld");
+      return { status: "withheld", fingerprint, issue: null, reason: foreign };
+    }
+    // Tout ce que le serveur garde du poste (pages, meetings, actions, profil) : jamais dans une issue ; ni
+    // les titres et les demandes des runs et des Demandes des AUTRES espaces que celui du dépôt visé.
+    const poste = [...this.#store.workstationTexts(0), ...this.#store.foreignSpaceTexts(repo.name)];
     const title = redactForIssue(input.title, poste).slice(0, TITLE_MAX);
     const body = `${redactForIssue(input.body, poste).slice(0, BODY_MAX)}\n\n${fingerprintMarker(fingerprint)}\n`;
     const withheld = client.pilot ? this.#withheldReason(repo, now) : null;
@@ -552,6 +581,21 @@ export class VigieDesk {
       `vigie : issue ${forge.name} ${forge.project ?? repo.name}#${number} publiée (empreinte ${fingerprint})`,
     );
     return { status: "published", fingerprint, issue: { number, url }, reason: null };
+  }
+
+  /**
+   * Pourquoi l'incident ne part pas sur `repo` : son dépôt observé (le sien, sinon celui de son run) est
+   * d'un autre espace que lui ; `null` : même espace (ou tous deux hors espace), ou dépôt observé inconnu
+   * (un signal du service lui-même). Sur un serveur sans espace : toujours `null`.
+   */
+  #foreignTarget(incident: VigieIncident, repo: RepoConfig): string | null {
+    const observed = incident.repo ?? (incident.runId ? (this.#store.getRun(incident.runId)?.repo ?? null) : null);
+    if (observed === null || observed === repo.name) return null;
+    const spaces = this.#store.listSpaces();
+    const spaceOf = (name: string): string | null => spaces.find((space) => space.repos.includes(name))?.id ?? null;
+    return spaceOf(observed) === spaceOf(repo.name)
+      ? null
+      : `dépôt ${repo.name} hors de l'espace du dépôt observé : un incident n'est publié que sur un dépôt de son espace`;
   }
 
   /** Pourquoi une issue de la vigie ne part pas : le mode, le dépôt, le plafond du jour ; `null` : elle part. */
@@ -794,7 +838,9 @@ export function vigieDigestLines(store: Store, since: number, until: number, rep
   const incidents = store.listVigieIncidents({ repos });
   const title = (incident: VigieIncident) => short(incident.triage?.title || incident.message, 90);
   const lines: string[] = [];
-  const heartbeat = store.getSetting<Heartbeat>(HEARTBEAT_KEY);
+  // Le silence de la vigie est un fait du SERVEUR : il n'entre que dans le rapport global, jamais dans
+  // celui d'un lecteur ou d'une cible bornés à des dépôts ou à un espace.
+  const heartbeat = repos === null ? store.getSetting<Heartbeat>(HEARTBEAT_KEY) : null;
   if (heartbeat?.silentSince != null)
     lines.push(`Muette depuis ${new Date(heartbeat.at).toISOString()} : son conteneur est-il arrêté ?`);
   const fresh = incidents.filter((incident) => within(incident.firstAt)).length;
@@ -813,6 +859,8 @@ export function vigieDigestLines(store: Store, since: number, until: number, rep
       lines.push(`Issue publiée — ${title(incident)} — ${incident.issueUrl}`);
     else if (incident.status === "bug" && incident.draft !== null && within(incident.updatedAt))
       lines.push(`Repérée, non publiée — ${title(incident)} (${short(incident.note ?? "", 80)})`);
+    else if (incident.status === "new" && incident.note !== null && within(incident.updatedAt))
+      lines.push(`Gardée sans tri — ${title(incident)} (${short(incident.note, 120)})`);
   }
   return lines;
 }

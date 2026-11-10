@@ -610,7 +610,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `runner.failoverOn` | `["rate_limit", "server_error", "network"]` | les causes d'échec d'un prompt qui font basculer sur le fournisseur suivant de la chaîne |
 | `notify.url`, `notify.events` | `null`, escalades, specs prêtes, verdict, échec, projet fini, merge, feature muette, budget dépassé, plafond journalier atteint, approbation demandée par le poste (`workstation_approval`) | une URL ntfy (ou webhook) qui reçoit un POST par événement de la liste : corps texte court, en-têtes `Title` (RFC 2047 si accentué), `Priority`, `Tags`, `Click` (la PR d'un merge) ; `null` : aucune notification. Fire-and-forget : une erreur d'envoi n'arrête rien et n'est journalisée (`notify_failed`) qu'une fois par heure |
 | `notify.digestHour` | `8` | l'heure locale du serveur (0-23) du rapport du matin : avec une cible (`notify.url` ou `notify.targets`), un POST par jour titré « Rapport du matin » (corps Markdown, en-tête `Markdown: yes`) sur la fenêtre depuis le précédent envoi — runs mergés, décisions prises seules à relire, runs qui attendent l'humain, échecs, coût, puis la santé (mémoire, sauvegardes). L'instant du dernier envoi est gardé en base (réglage `digest-sent`) : un redémarrage ne le renvoie pas, un service arrêté à l'heure dite l'envoie à son retour. `null` : aucun rapport |
-| `notify.targets` | `[]` | des cibles en plus de `notify.url` : `{ "kind": "ntfy" \| "webhook", "url", "headers"? }` ; un `webhook` reçoit un POST JSON `{title, body, priority, tags, click, event, runId, repo, at}`, `headers` porte un jeton d'accès |
+| `notify.targets` | `[]` | des cibles en plus de `notify.url` : `{ "kind": "ntfy" \| "webhook", "url", "headers"?, "spaces"? }` ; un `webhook` reçoit un POST JSON `{title, body, priority, tags, click, event, runId, repo, at}`, `headers` porte un jeton d'accès. `spaces` (identifiants ou noms d'espaces, liste non vide) borne la cible : elle ne reçoit que les événements des dépôts de ces espaces, et son rapport du matin est le leur (§ « La portée d'un espace ») ; sans lui, elle reçoit tout. Un espace inconnu est un avertissement au démarrage, jamais un refus |
 | `notify.dedupMin` | `30` | une même notification (titre et corps) n'est pas renvoyée avant ces minutes, à aucune cible ; `null` ou `0` : toujours |
 | `memory.runnerMode` | `true` | les agents reçoivent `MEM0_MODE=runner` : pas de rappel mémoire par tour ni d'épinglage, les outils `mem0_*` restent |
 | `dreams.checkMinutes` | `60` | le rêve de la mémoire (§ La mémoire du projet) : chaque dépôt au repos (aucun run en cours) est examiné au plus toutes les N minutes ; `null` coupe les rêves. Sans `oracle`, rien |
@@ -1083,6 +1083,9 @@ la fois (le Mac, l'iPhone, un collègue, une CI).
 Un client borné à des dépôts ne voit rien des autres : listes et flux filtrés, 404
 sur un run d'ailleurs, 403 à la création. Le jeton historique (`tokenFile`) reste le
 client `admin` sur tous les dépôts : les codes d'appairage déjà distribués marchent.
+Un client peut être borné à des **espaces** plutôt qu'à une liste de dépôts
+(`POST /v1/clients {spaces}`, `main.ts --add-client <nom> --space <id|nom>`) : ses dépôts
+sont ceux de ces espaces, relus à chaque appel (§ « La portée d'un espace »).
 Le drapeau `approver` (rendu par `GET /v1/clients` et `/v1/me`) marque l'approbateur
 du poste ; il ne se pose qu'en ligne de commande (`main.ts --add-client <nom>
 --approver`, admin sur tous les dépôts) et `POST /v1/clients` refuse tout champ
@@ -1197,6 +1200,10 @@ fournisseur, un autre compte ou le jeton global.
   scope (403). Aucun runner ne voit la variable d'un dépôt (la sienne comprise).
 - **Le poste de travail** : `workstation.policy` (`models`, `providers`, `privacy`)
   vaut pour ses jobs comme pour un dépôt.
+- **L'espace d'un client** : un espace (§ « Les espaces, le brief et les chiffres ») peut
+  porter sa propre politique de modèles (`policy`), croisée au plus strict avec celle de
+  chacun de ses dépôts, et dit par son `isolation` ce qui, parmi ces réglages, manque
+  encore à ses dépôts pour ne plus rien devoir au service.
 
 `--check` (`harness.sh check`) dit, dépôt par dépôt, ce qui manque : modèle local
 injoignable ou absent, liste blanche vide ou sans modèle pour une étape, variable
@@ -1353,9 +1360,10 @@ Chaque run porte un curseur (`run.autonomy`), au-dessus des règles du dépôt :
 
 Une consigne permanente est une phrase de l'humain (600 caractères au plus) pour un dépôt, ou pour tous (`repo: null`), que le serveur redit à chaque run : le prompt de **chaque étape** (et celui du contradicteur) reçoit une section `## Consignes permanentes de l'humain` listant les consignes actives du dépôt et celles de tous les dépôts, les plus récentes d'abord, dans la limite de 4000 caractères, avec « Elles s'imposent : ne les rouvre pas. ». Sans consigne, pas de section.
 
-- **Les écrire.** `POST /v1/rules` (`source: "manual"` par défaut), `PUT /v1/rules/{id}` (texte, ou `enabled: false` pour la suspendre), `DELETE /v1/rules/{id}`. 40 consignes actives au plus par dépôt (et 40 pour tous les dépôts) : 400 au-delà.
+- **Les écrire.** `POST /v1/rules` (`source: "manual"` par défaut), `PUT /v1/rules/{id}` (texte, ou `enabled: false` pour la suspendre), `DELETE /v1/rules/{id}`. 40 consignes actives au plus par dépôt, celles de son espace comprises (et 40 pour tous les dépôts) : 400 au-delà.
+- **Trois niveaux.** Une consigne vaut pour un dépôt (`repo`), pour tous les dépôts d'un **espace** (`space` : son identifiant ou son nom — un client, § « Les espaces »), ou pour tous les dépôts (ni l'un ni l'autre) ; `repo` et `space` ensemble : 400. Un run reçoit les consignes de son dépôt, celles de SON espace et celles de tous — jamais celles d'un autre espace : la phrase écrite pour un client ne part pas dans le prompt d'un autre. `GET /v1/rules?space=` rend celles de l'espace et de ses dépôts ; sous `?space=`, `POST /v1/rules` sans `repo` écrit une consigne de l'espace. Retirer un espace retire ses consignes.
 - **Les faire naître d'un geste.** `always: true` sur une réponse d'escalade (`POST /v1/runs/{id}/escalations`) crée une consigne qui dit sa provenance, car la question — et l'option, si la réponse en est une — ont été écrites par un agent : « Réponse de l'humain à la question de l'agent « … » — option proposée par l'agent, retenue : <option>. » quand la réponse est exactement une des options proposées, « … — texte de l'humain : <réponse>. » sinon (`source: "answer"`, la question coupée à 200 caractères) ; sur un refus (`POST /v1/runs/{id}/validate`) ou une correction (`POST /v1/runs/{id}/amend`), la raison devient la consigne (`source: "correction"`). Elle vaut pour le dépôt du run, sur une ligne, coupée à 600 caractères ; la même phrase déjà active n'est pas doublée ; un dépôt qui a déjà ses 40 consignes refuse le geste (400) avant d'écrire quoi que ce soit.
-- **Qui.** Un client borné à des dépôts ne lit et n'écrit que les consignes de ses dépôts, jamais celles de tous. Un pilote n'en écrit pas : 403 sur les routes, `always` ignoré sans erreur sur ses gestes.
+- **Qui.** Un client borné à des dépôts lit les consignes de ses dépôts et celles des espaces où il en voit au moins un, jamais celles de tous ; il n'écrit que pour ses dépôts, ou pour un espace qu'il voit EN ENTIER (403 sinon ; 404 pour un espace dont il ne voit aucun dépôt). Un pilote n'en écrit pas : 403 sur les routes, `always` ignoré sans erreur sur ses gestes.
 
 ## Les fournisseurs LLM, déclarés depuis les apps
 
@@ -1461,7 +1469,8 @@ humaine. En `act`, il agit seul — la garde d'envoi reste entière. Les réglag
 part jamais sans son accord. L'extension classe chaque geste qui enverrait et rend
 `needs_approval` au lieu de l'exécuter ; le serveur ne remet l'action en file
 (`approved: true`) que sur `POST …/approve` d'un client humain, ou si **tous** les
-destinataires extraits (liste non vide) sont l'utilisateur lui-même (`selfIdentities`,
+destinataires extraits (liste non vide) sont l'utilisateur lui-même (`selfIdentities` —
+pour un navigateur rattaché à un espace, les `identities` de cet espace à leur place —,
 sans casse ni espaces). Sinon l'action attend (`awaiting_approval`, événement
 `workstation_approval`, notification ntfy). Aucune échéance n'approuve : après
 `approvalTtlHours`, l'action passe `expired`, qui vaut refus. Aucun outil d'agent —
@@ -1694,7 +1703,7 @@ ne journalise rien et ses événements `activity` n'ont pas d'`intent`.
 
 ### Plusieurs navigateurs
 
-Chaque extension appairée (un profil Chrome : « Perso », « ADEO »…) se présente à chaque
+Chaque extension appairée (un profil Chrome : « Perso », « Client »…) se présente à chaque
 appel par `X-OMP-Browser: <id>` (stable, créé une fois dans `chrome.storage.local`) et
 `X-OMP-Browser-Label: <libellé encodeURIComponent>` (réglé dans ses options). Le serveur
 garde la liste (`workstation_browsers` : libellé, version, première et dernière vue ;
@@ -1755,6 +1764,62 @@ en isolation `container`, ignoré par le lanceur `systemd` (hors de `REPOS_ROOT`
 répertoire de travail est `<worktreesDir>/workstation/_poste`, la forme
 `<dépôt>/<feature>` qu'exige le lanceur. La scope mémoire est `workstation` : l'agent
 ne touche à la mémoire d'aucun projet.
+
+### Le poste d'un espace
+
+Un indépendant travaille pour plusieurs clients depuis le même poste : chaque navigateur
+appairé peut **appartenir à un espace** (§ « Les espaces, le brief et les chiffres »), et
+ce qui se passe chez un client ne se mélange pas avec le reste (capacité
+`space-workstation`). Sans espace — ou pour un navigateur hors de tout espace —, rien de ce
+qui précède ne change.
+
+- **Rattacher.** `PUT /v1/workstation/browsers/{id}` `{space}` (l'identifiant ou le nom de
+  l'espace, `null` pour le détacher), par l'appareil approbateur : 404 navigateur ou
+  espace inconnu. `GET /v1/workstation` rend `browsers[].space` (l'identifiant, `null`
+  hors espace) ; événement `workstation_browser` `{id, label, space}`. Retirer un espace
+  rend ses navigateurs hors espace (ils restent appairés) et emporte son profil.
+- **Hériter.** Observations, meetings, actions et captures héritent de l'espace de leur
+  navigateur, par jointure sur `browserId` (aucune copie : déplacer un navigateur déplace
+  ce qui en vient). Les lectures du poste se bornent à un espace par `?space=<id|nom>` :
+  statut, observations, actions, meetings, demandes, automatisations, profil ; un objet
+  d'un autre navigateur y est inconnu (404), un espace inconnu aussi. `POST
+  /v1/workstation/actions?space=` dépose dans un navigateur de l'espace (409 sinon).
+- **Demander.** `POST /v1/workstation/requests {instruction, space?}` (ou `?space=`) : la
+  demande s'exécute dans UN navigateur de cet espace — celui qu'on désigne (`browserId`)
+  s'il lui appartient, sinon l'un des siens, en ligne de préférence —, jamais dans le
+  navigateur par défaut ni dans celui d'un autre espace : 409 « cet espace n'a pas de
+  navigateur », 409 si le navigateur désigné est ailleurs. Sans `space`, la demande hérite
+  de l'espace du navigateur où elle partira ; `request.space` le dit (clé absente hors
+  espace), comme l'événement `workstation_request`. Une Demande classée
+  `workstation_request` dans un espace suit la même règle. Si le navigateur quitte son
+  espace avant le départ, la demande échoue (« le navigateur de la demande n'est plus dans
+  son espace ») au lieu de partir ailleurs, et son job ne dépose plus rien. Une
+  automatisation garde le navigateur qu'on lui a donné ; créée avec `space`, elle vient du
+  profil de l'espace et prend l'un de ses navigateurs.
+- **Profil, mémoire, répertoire de travail.** Le job `poste-profil` tourne par PORTÉE :
+  une fois hors espace, sur les seuls navigateurs sans espace, et une fois par espace qui
+  a un navigateur, sur ses SEULES observations et réunions (`workstation_space_profiles`,
+  versions comptées par espace ; `POST …/profile/rebuild?space=`, 409 sans navigateur ;
+  événement `workstation_profile` `{version, space}`). Un job du poste tourne dans
+  l'espace du navigateur où il agit — `poste-demande` : celui de sa demande ;
+  `poste-service` : celui du navigateur par défaut, épinglé pour la durée du service ;
+  `poste-digest` : celui du navigateur du meeting. Il reçoit alors le profil de CET
+  espace, lit son seul journal et sa seule activité, écrit dans la scope mémoire
+  `workstation:<espace>`, travaille dans `<worktreesDir>/workstation/_poste-<espace>` (son
+  dossier d'envoi aussi : un fichier écrit pour un client ne se joint pas chez un autre)
+  et suit la politique `workstation.policy` croisée au plus strict avec celle de l'espace.
+- **Identités.** `PUT /v1/spaces/{id} {identities}` (50 au plus, 200 caractères chacune) :
+  les adresses et pseudos de l'utilisateur CHEZ ce client. La garde d'envoi d'un
+  navigateur de l'espace les lit À LA PLACE de `selfIdentities` : un envoi « à soi » chez
+  un client ne l'est pas ailleurs, et un espace sans identité n'a aucun envoi « à soi ».
+- **Gardes.** « Déjà vu dans l'observation » (navigation de l'agent) se juge sur les
+  navigateurs du même espace. Le mirroir de session vers `vps` ne copie que si la source
+  et `vps` sont dans le même espace (`PUT …/settings {mirrorBrowser}` : 409 sinon ; un
+  rattachement qui les sépare suspend la copie).
+- **Consommation.** Chaque message d'un job du poste porte l'espace où il tourne
+  (`usage.space_id`) : il compte dans `GET /v1/spaces/{id}/usage` et dans le budget
+  journalier de l'espace ; hors espace, il reste hors espace.
+- **`poste` d'un espace** se déduit : vrai dès qu'un navigateur lui est rattaché.
 
 ### Le navigateur du serveur (`vps`)
 
@@ -1912,6 +1977,40 @@ lit dans `GET /v1/atlassian` (`knowledge`).
 sont retirés mot pour mot des issues que publie la vigie (comme ceux du poste), et
 aucun outil Atlassian n'est donné aux runs d'un dépôt qui ne le déclare pas.
 
+**Une connexion par espace.** Sur un serveur qui sert plusieurs clients, chaque **espace**
+(§ « Les espaces ») a SA connexion Atlassian, en plus de la connexion par défaut (hors
+espace), qui reste telle qu'elle est sur un serveur sans espace. Toutes les routes
+`/v1/atlassian*` prennent `?space=<id|nom>` : sans lui, la connexion par défaut.
+
+- **Ses jetons** : `atlassian-<espaceId>.json` (0600) à côté de `atlassian.tokenFile` ;
+  son site et son compte sont découverts à SON consentement. Le `state` du consentement
+  porte l'espace (`<espaceId>.<aléa>`) : le retour (`GET` ou `POST /v1/atlassian/callback`)
+  est rendu à la connexion qui l'a demandé, qui compare le `state` entier au sien — un
+  `state` au préfixe changé ne branche jamais l'espace d'un autre (400). Retirer un espace
+  supprime ses jetons.
+- **Son savoir** : la portée mémoire `corpo:<espaceId>` (`corpo` pour la connexion par
+  défaut). `corpo_recall` et les lectures Atlassian d'un run (`repos[].atlassian: true`)
+  passent par la connexion de L'ESPACE DU DÉPÔT ; un dépôt d'un espace sans connexion n'a
+  AUCUN de ces outils (jamais le repli sur la connexion par défaut) ; un dépôt hors espace
+  garde la connexion par défaut. Les jobs du poste lisent de même la connexion de l'espace
+  où ils tournent.
+- **Son plan et sa passe de savoir** : `poste-plan` et `poste-savoir` tournent pour chaque
+  connexion vivante, une à la fois. Le plan d'un espace cherche les tickets de ses
+  `jiraProjects` (`project in (…)` quand il en déclare), ne propose que les dépôts de
+  l'espace — `atlassian_plan_write` refuse tout autre dépôt — et se lit par
+  `GET /v1/atlassian/plan?space=`. Le plan de la connexion par défaut ne vise que les
+  dépôts hors de tout espace. Le nom du site vient de la connexion, jamais du prompt.
+- **Ses écritures** : une transition ou un commentaire ne vise qu'un ticket d'un projet
+  de l'espace quand il déclare des `jiraProjects` (« ticket … hors des projets Jira de
+  l'espace : écriture refusée »). Une écriture se tranche par son identifiant, dans la
+  connexion qui l'a écrite ; `GET /v1/atlassian/writes?space=` liste celles de l'espace.
+- **Autour** : une proposition `jira` du bac ne vise qu'un dépôt de l'espace de son plan ;
+  un signalement remis par un job du poste d'un espace ne se propose et ne se confirme
+  que vers un dépôt de cet espace (409 sinon) ; la vigie ne publie un incident que sur un
+  dépôt du MÊME espace que le dépôt observé (sans cible dans l'espace, il reste non
+  publié) et retire de ses issues les titres et les demandes des runs et des Demandes des
+  AUTRES espaces que celui du dépôt visé.
+
 ## Les issues (MCP)
 
 `POST /v1/mcp` est un serveur MCP (transport « Streamable HTTP », réponses JSON, sans
@@ -1936,12 +2035,12 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 | `runs_list` `{state?, repo?}` | viewer | Les runs que le client voit, filtrés par états et par dépôt : `GET /v1/runs`. |
 | `run_cancel` `{id, cause?, note?, rev?}` | operator | Annule un run non terminal (409 `run déjà <état>` sinon), avec son motif facultatif (`cause` : `off_target` · `too_big` · `obsolete` · `duplicate` · `too_costly` · `other` ; `note`, 500 caractères au plus) : `POST /v1/runs/{id}/cancel`. |
 | `run_amend` `{id, text, always?, rev?}` | operator | Corrige un run là où il est au lieu de l'annuler ; rend `{run, via}` (`specs` · `fix` · `retry` · `instruction`) ; un run en merge, mergé ou annulé : 409. `POST /v1/runs/{id}/amend`. |
-| `pause` `{paused?, reason?, now?}` | operator | La pause globale du serveur : sans `paused`, la lit (`GET /v1/pause`) ; avec, la pose ou la lève (`POST /v1/pause`, propriétaire seulement) ; `now: true` interrompt tout de suite ce qui tourne. Rend `{pause}`. |
+| `pause` `{paused?, reason?, now?, space?}` | operator | La pause globale du serveur : sans `paused`, la lit (`GET /v1/pause`) ; avec, la pose ou la lève (`POST /v1/pause`, propriétaire seulement) ; `now: true` interrompt tout de suite ce qui tourne. `space` (identifiant ou nom) : la pause de cet espace seulement (§ « La portée d'un espace »). Rend `{pause}` : la pause globale et, dans `spaces`, les espaces en pause. |
 | `run_priority` `{id, priority, rev?}` | operator | Change la priorité (entier de -1000 à 1000) d'un run non terminal : `POST /v1/runs/{id}/priority`. |
 | `run_validate` `{id, approve, reason?, rev?}` | operator | Sort un run de `awaiting_human` : valide ou refuse les specs (avant /impl) ou le verdict de revue, selon l'étape du run. Un refus porte sa raison (400 `un refus porte sa raison`) ; un run qui n'attend pas de validation : 409. `POST /v1/runs/{id}/validate`. |
 | `run_autonomy` `{id, level, rev?}` | operator | Pose le curseur d'autonomie d'un run non terminal (`ask` · `deliver` · `null`, § « Le curseur d'autonomie d'un run ») : `POST /v1/runs/{id}/autonomy`. Un client pilote ne le monte pas (403). |
 | `rules` | viewer | Les consignes permanentes que le client voit (`{rules}`) : `GET /v1/rules`. |
-| `rule_set` `{id?, text?, repo?, enabled?, remove?}` | operator | Sans `id`, crée une consigne permanente (`text` requis, `repo` absent : tous les dépôts) ; avec `id`, change son texte ou l'active et la désactive, ou la retire (`remove: true`) : `POST /v1/rules`, `PUT` et `DELETE /v1/rules/{id}`. Refusé à un client pilote. |
+| `rule_set` `{id?, text?, repo?, space?, enabled?, remove?}` | operator | Sans `id`, crée une consigne permanente (`text` requis ; `repo` : un dépôt, `space` : tous les dépôts d'un espace, au plus un des deux ; ni l'un ni l'autre : tous les dépôts) ; avec `id`, change son texte ou l'active et la désactive, ou la retire (`remove: true`) : `POST /v1/rules`, `PUT` et `DELETE /v1/rules/{id}`. Refusé à un client pilote. |
 | `run_retry` `{id, instructions?, rev?}` | operator | Relance un run `failed` ou `awaiting_human`, même étape, tout de suite (409 sinon), avec la consigne `instructions` pour l'étape relancée : `POST /v1/runs/{id}/retry`. |
 | `run_revert` `{id}` | operator | Défait le commit d'un run `merged` sur `main` et ouvre un run de suite (409 `n'est pas mergé` sinon), sans contrôle de révision : `POST /v1/runs/{id}/revert`. |
 | `run_decisions_accept` `{id, rev?}` | operator | Accepte d'un geste les décisions `auto` et `auto_timeout` d'un run (`{accepted}`, 0 sans erreur) : `POST /v1/runs/{id}/decisions/accept`. |
@@ -1953,6 +2052,8 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 | `brief` `{since?}` | viewer | Le brief « pendant votre absence » du client : `GET /v1/brief` (`{brief}`), depuis `since` (ms epoch), sinon depuis son dernier « vu », sinon sur 24 h. Lecture seule : il ne marque pas le brief comme vu. |
 | `scoreboard` `{days?}` | viewer | Les chiffres sur `days` jours (7 par défaut, de 1 à 90 sans dépasser `events.retentionDays`) : `GET /v1/scoreboard` (`{scoreboard}`). |
 | `spaces` | viewer | Les espaces que le client voit, avec leurs compteurs et leur budget du jour : `GET /v1/spaces` (`{spaces}`). |
+| argument `space` des outils de lecture | viewer | `runs_list`, `inbox`, `escalations_list`, `digest`, `brief`, `scoreboard`, `spaces`, `schedules_list`, `proposals` et `rules` acceptent `space` (identifiant ou nom d'un espace) : la lecture est bornée à ses dépôts, comme `?space=` d'une route ; espace inconnu ou sans dépôt visible : erreur 404 (§ « La portée d'un espace »). |
+| `space_onboard` `{name, repos, jiraProjects?, dailyBudgetUsd?, autonomy?, policy?}` | admin | Accueille un client en un geste (client qui voit tous les dépôts, jamais un pilote) : crée son espace et rend `{space, isolation, next}` — son étanchéité et ce qu'il reste à faire : `POST /v1/spaces/onboard`. |
 | `run_instructions` `{id, text, rev?}` | operator | Une consigne à un run ni mergé ni annulé (409 sinon) : injectée dans la session de son agent s'il tourne (`delivered: "session"`), gardée pour son prochain prompt sinon (`"pending"`) : `POST /v1/runs/{id}/instructions`. |
 | `run_budget` `{id, budgetUsd, rev?}` | operator | Le budget propre d'un run non terminal, en dollars (`null` : celui de la configuration) ; rend `{run, budget}` : `POST /v1/runs/{id}/budget`. |
 | `schedules_list` | viewer | Les planifications des dépôts que le client voit, avec le fuseau : `GET /v1/schedules`. |
@@ -1962,7 +2063,7 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 | `proposal_accept` `{id}` | operator | Accepte une proposition par le geste existant de sa source, avec ses gardes (approbateur pour un signalement et pour un item du plan Atlassian, admin pour une règle de palier, gardes de la vigie pour un pilote) ; rend `{proposal, created: {kind, id}}` : `POST /v1/proposals/{id}/accept`. |
 | `proposal_dismiss` `{id}` | operator | Écarte une proposition, qui ne revient pas (`{dismissed: true}`) ; refusé à un client pilote : `POST /v1/proposals/{id}/dismiss`. |
 | `issue_create` `{repo, title, body, labels?, fingerprint}` | operator | Publie une issue sur la forge du dépôt déclaré (GitHub ou GitLab, forge.ts ; 409 sans forge), label `omp:vigie` (créé au besoin), l'empreinte en marqueur caché `<!-- omp-vigie:fingerprint=… -->`. Le serveur caviarde titre et corps avant de les confier à la forge (§ « La vigie »). Une empreinte déjà publiée — en base, ou retrouvée par son marqueur sur la forge — rend son issue (`already`) ; un client pilote hors de son mode, de ses dépôts ou de `maxIssuesPerDay` ne publie rien (`withheld`, brouillon gardé). |
-| `intake` `{id?, text?, source?, repo?, context?}` | operator | Pose une demande en une phrase libre (`text` requis, `source` : `cli` par défaut, `context` : la page d'où elle part, `{url?, title?, selection?}`) ou, avec `id`, la lit : `POST /v1/intake`, `GET /v1/intake/{id}`. Rend `{intake}` ; relis-la tant que `state` est `classifying`. |
+| `intake` `{id?, text?, source?, repo?, space?, context?}` | operator | Pose une demande en une phrase libre (`text` requis, `source` : `cli` par défaut, `space` : l'espace où la poser — son plan n'en sort pas —, `context` : la page d'où elle part, `{url?, title?, selection?}`) ou, avec `id`, la lit : `POST /v1/intake`, `GET /v1/intake/{id}`. Rend `{intake}` ; relis-la tant que `state` est `classifying`. |
 | `intake_confirm` `{id, plan?}` | operator | Confirme le plan d'une demande (`plan` le corrige) : crée l'objet du plan, rend `{intake}` avec `created` ; une demande déjà confirmée est une erreur (409) : `POST /v1/intake/{id}/confirm`. |
 | `intake_answer` `{id, text}` | operator | Répond à la question de clarification d'une demande ; la même demande est reclassée : `POST /v1/intake/{id}/answer`. |
 | `browser_open` `{url}` | viewer | Ouvre `url` dans un contexte neuf du navigateur ; rend `{context, page}` (`context` : `bx_` + 16 hexadécimaux ; `page` : un texte enveloppé comme contenu non fiable). |
@@ -2068,6 +2169,8 @@ et exécute après UNE confirmation. Rien n'est créé avant `POST /v1/intake/{i
   `providers`, `privacy`) ; sans dépôt, le classement est `local-only` dès qu'un dépôt
   visible de l'auteur l'est ; sinon les chaînes du serveur. Un refus de politique met la
   demande en échec.
+  Chaque dépôt compte avec la politique de son espace, et la demande d'un espace suit
+  aussi celle de cet espace, au plus strict (§ « Les espaces, le brief et les chiffres »).
 - **Confirmation.** Elle passe par les chemins existants (`POST /v1/runs`, `/v1/audits`,
   `/v1/schedules`, `/v1/workstation/requests` et leurs gardes : dépôt, appareil approbateur)
   dans une seule transaction : un refus n'en laisse rien. Un `bug` crée un run, comme une
@@ -2309,15 +2412,24 @@ par `OMP_HARNESS_LOCAL_SESSIONS=0` et ne fait rien sans harness configuré.
 
 ## Les espaces, le brief et les chiffres
 
-Un **espace** est un client, ou un contexte de travail : des dépôts déclarés, le poste,
-des projets Jira, un budget journalier et un curseur d'autonomie par défaut
-(`spaces.ts`, table `spaces`). Un dépôt appartient à au plus un espace.
+Un **espace** est un client, ou un contexte de travail : des dépôts déclarés, le poste
+(ses navigateurs rattachés : `poste` s'en déduit, § « Le poste d'un espace »), les
+identités de l'utilisateur chez ce client, des projets Jira, un budget journalier et un
+curseur d'autonomie par défaut (`spaces.ts`, table `spaces`). Un dépôt appartient à au
+plus un espace.
 
 - **Créer, modifier, retirer.** `POST /v1/spaces`, `PUT /v1/spaces/{id}` (`If-Match` :
   la révision lue, 412 si l'espace a changé) et `DELETE /v1/spaces/{id}` sont à un admin
   qui voit tous les dépôts. Le nom (1 à 60 caractères) est unique, sans égard à la casse
   (409) ; un dépôt non déclaré est refusé (400), un dépôt déjà pris par un autre espace
   aussi (409). Événement `space` `{id, action}` (`created`, `updated`, `removed`).
+  **Retirer un espace** rend ses dépôts « hors espace » : sa pause, son budget, sa politique
+  de modèles et ses consignes ne les couvrent plus, et ses navigateurs du poste redeviennent
+  libres. Il est refusé (409) tant que l'espace est en pause (reprends-le d'abord : le retirer
+  libérerait ses runs et ses jobs), et — quand la connexion Atlassian par défaut est branchée
+  et que l'espace a la sienne ou des dépôts `atlassian: true` — sans `?confirm=1` : ses
+  dépôts liraient aussitôt le site par défaut. La réponse dit ce qui change :
+  `{removed: true, repos, defaultAtlassian, text}`.
 - **Lire.** `GET /v1/spaces` rend chaque espace avec les scopes mémoire de ses dépôts
   (`memoryScopes`) et ses compteurs (`stats`) : `working` (au travail), `yours` (attend
   l'humain), `queued`, `mergedWeek`, `failedWeek`, `cancelledWeek` (finis sur 7 jours),
@@ -2336,6 +2448,125 @@ des projets Jira, un budget journalier et un curseur d'autonomie par défaut
 - **Rapport.** `GET /v1/spaces/{id}/report?since=` rend le rapport du matin borné aux
   dépôts de l'espace (7 jours par défaut), sans la santé ni le commit du service, avec ses
   comptes et le coût de la fenêtre : de quoi rendre compte à un client.
+- **Politique de modèles.** `PUT /v1/spaces/{id} {policy}` (ou `policy` à la création)
+  pose `{privacy?: "local-only", providers?: [...], models?: {fast?, standard?, heavy?}}`,
+  validée comme la politique d'un dépôt (§ « Projets perso et corpo ») ; `policy: null` la
+  lève. Elle se croise avec celle de CHAQUE dépôt de l'espace, au plus strict et en échec
+  fermé (`policy.ts`, `strictest`) : `local-only` l'emporte dès que l'un des deux le pose,
+  même si le dépôt se dit `standard` ; les listes blanches `providers` se croisent, et
+  une intersection vide refuse l'étape (409, sans relance, jamais de repli) ; les chaînes
+  `models` s'enchaînent tier par tier, celle du dépôt d'abord. Elle vaut pour les runs,
+  les audits, les rêves, la Demande et les jobs du poste de l'espace, et se relit à chaque
+  lancement de runner. Un dépôt hors de tout espace, ou d'un espace sans politique, garde
+  exactement la sienne. Régler la politique est un geste d'humain : un pilote est refusé (403).
+- **Étanchéité.** `GET /v1/spaces` et `GET /v1/spaces/{id}` rendent
+  `isolation: {sealed, gaps: [{code, repo, text}]}` : ce qui laisse encore l'espace lire,
+  écrire ou parler hors de sa frontière. Elle est calculée à chaque lecture, jamais
+  stockée (`isolation.ts`) : une lacune se ferme dès que sa cause est réglée. `repo` nomme
+  le dépôt touché (`null` : l'espace entier), `text` dit quoi faire, `sealed` vaut « aucune
+  lacune ». Les codes :
+  - `shared_scope` — la portée mémoire (`scope`) du dépôt est aussi celle d'un dépôt d'un
+    autre espace, ou hors espace (deux dépôts du même espace peuvent la partager) ;
+  - `reserved_scope` — sa portée est celle du service : `corpo`, `workstation`, ou l'une
+    d'elles suivie de `:` (celles des espaces) ;
+  - `global_memory_token` — pas de `memory.tokenEnv` : ses runners reçoivent le jeton
+    mémoire global, qui lit toutes les portées ;
+  - `service_forge_identity` — pas de compte de forge (`gh` ou `gitlab` : `configDir` ou
+    `tokenEnv` ; `"forge": "none"` en dispense) ou pas d'identité git (`git`) propres : il
+    parle sous le compte du service ;
+  - `service_ssh_key` — un distant poussé (`remote`) sans `sshKey` : la clé du service ;
+  - `no_atlassian` — des `jiraProjects`, ou un dépôt `atlassian: true`, sans connexion
+    Atlassian de l'espace (ses runs n'y lisent rien, jamais la connexion d'un autre) ;
+  - `shared_atlassian_site` — la connexion Atlassian de l'espace lit le même site qu'une
+    autre (un seul compte, plusieurs clients) : chacune y lit les tickets et les pages de
+    l'autre. Un site par client ; à défaut, `jiraProjects` borne `jira_issue` et
+    `jira_search`, pas Confluence ni la recherche Rovo ;
+  - `no_browser` — des identités déclarées pour le poste (`identities`) mais aucun
+    navigateur rattaché à l'espace ;
+  - `public_repo_target` — la vigie publie (`report`, `fix`) et aucun de ses dépôts n'est
+    dans l'espace : un incident né ici n'y a aucune cible.
+
+  Un client restreint à des dépôts ne lit ni `policy` (`null` pour lui), ni les lacunes des
+  dépôts qu'il ne voit pas, ni celles de l'espace entier (`repo: null`), ni le nom d'un
+  dépôt qu'il ne voit pas ; `sealed` ne juge alors que ce qu'il lit.
+- **Accueil d'un client.** `POST /v1/spaces/onboard` crée l'espace en un geste (mêmes
+  gardes que la création ; un admin qui voit tous les dépôts, jamais un pilote) et rend
+  `{space, isolation, next}` : `next` liste ce qu'il reste à faire, une phrase par étape —
+  une par code de lacune (les dépôts touchés dits ensemble), puis `no_repos` (aucun dépôt
+  encore), `connect_atlassian` et `attach_browser` (les branchements que rien n'exige
+  mais qu'un client a souvent, proposés seulement s'ils sont possibles et absents).
+- **Avertissements de configuration.** Deux dépôts qui partagent une portée mémoire, ou
+  un dépôt dont la portée est réservée au service, n'empêchent JAMAIS le démarrage : ils
+  sont dits au journal (niveau `warn`, « configuration : … ») et dans `warnings` de
+  `GET /v1/status` — à un client restreint, seulement ceux dont il voit tous les dépôts.
+
+### La portée d'un espace
+
+Un espace est la frontière d'un client : ce qui s'y lit, s'y demande, s'y suspend et s'y
+compte reste dans SA portée (capacité `space-scope`). Un serveur sans espace ne change en
+rien.
+
+- **`?space=<id|nom>` sur toutes les lectures.** Le paramètre est résolu une fois, avant la
+  route : la requête ne voit plus que les dépôts du client qui sont dans l'espace. Runs,
+  boîte, escalades, décisions, projets, audits, planifications, rapport du matin, brief,
+  chiffres, statistiques, propositions, Demandes, consignes, autonomie et le flux
+  `GET /v1/events?space=` sont bornés du même coup ; `GET /v1/spaces?space=` ne rend que
+  cet espace ; les lectures sans dépôt du propriétaire (signalements, sessions locales) ne
+  rendent que ce qui s'y rattache par son dépôt. Un espace inconnu, ou dont le client ne
+  voit aucun dépôt, rend 404 — jamais 403 : son existence n'est pas révélée. Le propriétaire
+  reste propriétaire sous `?space=` : les droits sont ceux du client, la portée celle de la
+  requête. Une création sous `?space=` (`POST /v1/runs`, `/v1/projects`, `/v1/audits`,
+  `/v1/schedules`, `/v1/dreams`) dans un dépôt hors de l'espace est refusée (400). Les
+  outils MCP de lecture `runs_list`, `inbox`, `escalations_list`, `digest`, `brief`,
+  `scoreboard`, `spaces`, `schedules_list`, `proposals` et `rules` acceptent l'argument
+  `space`, de même effet ; `POST /v1/mcp?space=` borne tout un lot.
+- **Une Demande dans un espace.** `POST /v1/intake {space}` (identifiant ou nom ; ou
+  `?space=`) garde l'espace de la demande : le classeur ne choisit que parmi les dépôts de
+  l'espace que voit l'auteur, l'« État de l'usine » de son prompt est borné de même, un
+  dépôt imposé hors de l'espace est refusé (400), et un plan — rendu par le classeur ou
+  corrigé à la confirmation — ne peut créer que dans un dépôt de l'espace (400). Une tâche
+  du poste n'y est proposée que si l'espace a un poste, et s'exécute dans un de ses
+  navigateurs. La vue rend `space: {id, name}` (`null` hors espace). Un client borné à UN
+  espace y pose ses demandes sans le dire. Le coût du classement est imputé à l'espace.
+  Un espace retiré depuis : le classement échoue, la confirmation est refusée (409).
+- **Un client d'API borné à des espaces.** `POST /v1/clients {name, role?, spaces}`
+  (identifiants ou noms ; à la place de `repos`, 400 avec les deux) ou
+  `main.ts --add-client <nom> --space <id|nom>` (répétable) : le client voit les dépôts de
+  ces espaces, relus à CHAQUE appel — un dépôt ajouté à l'espace lui devient visible sans
+  toucher au client, un flux déjà ouvert se ferme et reprend avec la nouvelle portée. Il
+  porte `spaces` (les identifiants) et `repos` (leurs dépôts du moment) dans `GET /v1/me`
+  et `GET /v1/clients`. C'est un client borné comme un autre : jamais propriétaire (poste,
+  signalements, pause, configuration : 403), ni admin ni approbateur (`role: "admin"` avec
+  `spaces` : 400 — les routes d'administration ne regardent que le rôle). Un espace retiré :
+  il ne voit plus rien.
+- **La pause d'un espace.** `POST /v1/pause {paused, space}` (identifiant ou nom ; ou
+  `?space=`) suspend UN espace par le chemin de la pause globale : ses runs ne sont plus
+  admis (`waitCause: "paused"`, « en pause : suspendu par <qui> (espace « <nom> ») »), ses
+  runs vivants retournent en file avant leur prochaine étape — tout de suite avec `now` —,
+  ses merges non engagés, les attentes que l'autonomie lèverait et les échéances de ses
+  escalades attendent la reprise. Les autres espaces continuent ; les audits, rêves et
+  Demandes ne sont retenus que par la pause globale. Gardée dans les réglages
+  (`pause:<espaceId>`) : elle survit à un redémarrage. Réservée au propriétaire (client
+  borné ou pilote : 403). `GET /v1/pause` rend la pause globale et, dans `spaces`, les
+  espaces en pause que voit le lecteur ; l'événement `pause` porte `space`.
+- **Consommation et facturation.** Toute consommation a un espace : celui de son dépôt
+  (run, audit, rêve), ou celui qui lui est imputé (`usage.space_id`) pour un job sans dépôt
+  — une Demande posée dans l'espace, un job du poste dans un de ses navigateurs. Le budget
+  journalier de l'espace compte les deux. `GET /v1/spaces/{id}/usage?since=&until=` rend le
+  total d'une fenêtre (défaut : le mois UTC en cours ; `until` exclu) et sa répartition par
+  jour, par dépôt, par modèle et par nature (`feature`, `audit`, `poste`, `demande`,
+  `reve`, `autre`) ; `format=csv` rend le relevé à joindre à une facture
+  (`jour;espace;depot;modele;cout_usd;jetons_entree;jetons_sortie`, une ligne par jour,
+  dépôt et modèle, `depot` vide pour ce qui n'a pas de dépôt ; séparateur `;`, décimales
+  avec un point, CRLF). `GET /v1/spaces` porte `stats.costMonth`. Un client borné n'y lit
+  que ses dépôts, sans ce qui est imputé à l'espace entier. Hors de tout espace, la
+  Demande et le rêve ne notent rien, comme avant.
+- **Notifications par espace.** `notify.targets[].spaces` (identifiants ou noms) borne une
+  cible : elle ne reçoit que les événements des dépôts de ces espaces — rien de ce qui n'a
+  pas de dépôt — et son rapport du matin est le leur, sans la santé ni le commit du
+  service. Une cible sans `spaces` reçoit tout, comme avant. Un espace inconnu n'empêche
+  pas le démarrage : il est dit au journal et dans `warnings` de `GET /v1/status`, et la
+  cible n'en reçoit rien.
 
 Le **brief** (`GET /v1/brief`, `brief.ts`) dit ce qui s'est passé « pendant votre
 absence » : une phrase (`headline` : « 3 livrées, 1 vous attend, 2 propositions —
@@ -2365,8 +2596,12 @@ compterait « seul » :
   suite d'un autre run (`afterRun`), ou dans le projet d'un audit.
 
 S'y ajoutent les annulations par motif (`cancelCauses`, clé `none` sans motif) et, par
-dépôt, mergés, mergés seuls, annulés, échoués, taux de succès et `suggestion` (`raise` ou
-`lower` quand une proposition de palier existe, § « L'autonomie par paliers »).
+dépôt, mergés, mergés seuls, annulés, échoués, arrêtés (`stopped` : les annulations par
+l'humain hors motifs `obsolete` et `duplicate`, sans les tâches abandonnées avec leur
+parent), le taux de succès (`successRate` = mergés / (mergés + échoués + arrêtés)), la
+taille de son échantillon (`sample` : sous cinq cas, une app n'affiche pas de pourcentage)
+et `suggestion` (`raise` ou `lower` quand une proposition de palier existe,
+§ « L'autonomie par paliers » ; elle ne dépend pas du taux de succès).
 « Humain » : un acteur qui n'est ni le service, ni l'autonomie (`autonomie:…`), ni un
 pilote (`pilote:…`), ni un client pilote (la vigie ; un geste d'un client pilote porte
 `pilot: true` dans le journal — réponse, relance, consigne, validation).
@@ -2473,9 +2708,27 @@ annonce le bac « Propositions » et le gabarit « refaire » (§ « Les proposi
 l'humain (`POST /v1/runs/{id}/modules`), et ce qui retient un run en file (`waitCause`,
 `blockedBy`, `waitUntil`) — et `pause` la pause globale (`GET /v1/pause`,
 `POST /v1/pause`, `paused` de `GET /v1/status`).
+`space-scope` annonce la portée d'un espace (§ « La portée d'un espace ») : `?space=` sur
+les lectures et le flux, `space` de `POST /v1/intake` et de `POST /v1/pause`, `spaces` de
+`GET /v1/pause` et de `POST /v1/clients`, `GET /v1/spaces/{id}/usage` et `stats.costMonth`.
 `spaces` (`/v1/spaces*`), `brief` (`GET /v1/brief`, `POST /v1/brief/seen`) et
 `scoreboard` (`GET /v1/scoreboard`) annoncent les espaces, le brief « pendant votre
 absence » et les chiffres (§ « Les espaces, le brief et les chiffres »).
+`run-facts` annonce les CODES et les FAITS qui dispensent une app d'afficher une phrase
+du serveur : `humanWait`, `failure` et `waitFacts` d'un run, `counts`, `costToday` et les
+mêmes codes dans le brief, `stopped` et `sample` des chiffres, `facts` d'une proposition,
+et le titre court d'une Demande classée. `run.reason` garde son texte, pour le journal.
+`space-knowledge` annonce le savoir d'un espace : les consignes permanentes d'espace
+(`space` de `POST /v1/rules`, `GET /v1/rules?space=`), une connexion Atlassian par espace
+(`?space=` sur `/v1/atlassian*`, portée mémoire `corpo:<espaceId>`, `atlassian` de
+`GET /v1/spaces`), et le cantonnement à l'espace des propositions `jira`, des signalements
+et des issues de la vigie (§ « Atlassian », « Une connexion par espace »).
+`space-policy` annonce la frontière d'un client : la politique de modèles d'un espace
+(`policy`), son étanchéité (`isolation` de `GET /v1/spaces` et `GET /v1/spaces/{id}`),
+son accueil en un geste (`POST /v1/spaces/onboard`) et `warnings` de `GET /v1/status`.
+`space-workstation` annonce le poste d'un espace : `PUT /v1/workstation/browsers/{id}`,
+`browsers[].space`, `?space=` sur les lectures du poste, `space` des demandes, le profil et
+les identités (`identities`) par espace (§ « Le poste d'un espace »).
 `push-answer` annonce la réponse à une question depuis sa notification (catégorie
 `omp.answer`, charge `omp.question`), `push-start` la Live Activity démarrée par le serveur
 (`POST /v1/push/activities/start`), et `intake-context` le contexte de page d'une Demande
@@ -2497,7 +2750,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | Route | Rôle | Effet |
 |---|---|---|
 | `GET /v1/me` | viewer | Le client du jeton : nom, rôle, dépôts. |
-| `GET /v1/status` | viewer | Compteurs par état et par dépôt, runs vivants, slots et files d'attente, `MemAvailable`, jetons par fournisseur, `paused` (la pause globale tient, voir `GET /v1/pause`), `queue` : `{held, byCause, dominant}` — les runs dus retenus en file, par cause, et la cause la plus fréquente avec son texte (`null` : rien ne retient la file) —, et `oracle` : `{configured, ok, lostWrites}` (§ La mémoire du projet). |
+| `GET /v1/status` | viewer | Compteurs par état et par dépôt, runs vivants, slots et files d'attente, `MemAvailable`, jetons par fournisseur, `paused` (la pause globale tient, voir `GET /v1/pause`), `queue` : `{held, byCause, dominant}` — les runs dus retenus en file, par cause, et la cause la plus fréquente avec son texte (`null` : rien ne retient la file) —, `warnings` : les avertissements de configuration (portées mémoire en double ou réservées ; une liste vide sinon), et `oracle` : `{configured, ok, lostWrites}` (§ La mémoire du projet). |
 | `GET /v1/repos` · `POST /v1/repos` `{url, name?}` | viewer · admin | Les dépôts que le client voit (nom, scope, branche, merge, `maxParallel`, `judge` : `local` ou `ci`, le juge de la suite complète en vigueur). `POST` fait `--add-repo` par l'API (client qui voit tous les dépôts ; 403 sinon) : clé SSH du dépôt créée ou reprise, clone nu, écriture éprouvée à blanc, tests devinés, entrée écrite dans `config.json`, puis la configuration rechargée. Rend `{repo, added, message, reload}` (201 s'il sert désormais, 200 s'il était déjà là) ; si le distant refuse la clé (lecture ou écriture), 200 avec `added: false` et `deployKey: {publicKey, url}` — la clé à poser avec écriture, et sur GitHub la page où la coller (`url`, sinon `null`) — et rien n'est déclaré. `url` : un distant SSH (`git@hôte:chemin`, `ssh://…`) ou HTTPS, jamais un chemin local (400) ; nom invalide ou clone impossible : 400 ; service lancé sans `--config` : 409. |
 | `PATCH /v1/repos/{name}` `{tests: {judge?, ciTimeoutSec?}}` | admin | Le juge de la suite complète d'un dépôt déclaré (§ « La CI de la forge comme juge de la suite complète »), sans éditer `config.json` à la main (client qui voit tous les dépôts ; 403 sinon). `judge` : `local` · `ci` · `null` (le défaut) ; `ciTimeoutSec` : entier ≥ 1 ou `null`. Le fichier candidat est validé avant d'être écrit, puis la configuration rechargée ; rend `{repo, judge, ciTimeoutSec, reload}` (valeurs en vigueur, défauts compris). Autre champ que ces deux-là, valeur invalide, `ci` sans forge : 400 et rien ne change ; dépôt non déclaré : 404 ; sans `--config` : 409. |
 | `POST /v1/reload` | admin | SIGHUP par l'API (client qui voit tous les dépôts ; 403 sinon) : la configuration relue, les dépôts rechargés sans arrêter les runs ; rend `{reload: {repos, added, removed, kept}}`. Une configuration illisible ou invalide : 400 avec sa cause, la courante reste en place ; sans `--config` : 409. |
@@ -2530,8 +2783,8 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/autonomy` | viewer | L'autonomie par paliers, en lecture seule : `{repos: [{repo, rules}], validations, proposals}` pour les dépôts que le client voit. `validations` : les décisions prises seules par l'autonomie de la fenêtre `autonomyLearning.windowDays` (100 au plus, récentes d'abord, avec `step`) ; `proposals` : `{repo, kind, gate, direction, current, rule, runs, passages, corrections, rate, changes: [{path, value}]}`. `/v1/inbox` et `/v1/decisions` portent `autonomy` sur chaque décision (`null` hors autonomie). Une règle s'écrit par `POST /v1/autonomy/rules`. |
 | `POST /v1/autonomy/rules` `{repo, kind, gate, mode}` | admin | « Toujours valider seul ce type » (capacité `os-autonomy`) : met la porte `gate` (`specs` · `review`) du type `kind` du dépôt en `mode` (`auto` · `human`) dans `repos[].autonomy.rules`, par la même modification qu'une proposition de palier. En `human`, toutes les règles du type qui pouvaient lever la porte la rendent (§ « L'autonomie par paliers »). Rend `{repo, rules}` (les règles rechargées). Champ invalide ou configuration refusée : 400, rien ne change ; dépôt non déclaré : 404 ; client borné à des dépôts : 403 ; service sans `--config` : 409. Événement `autonomy_rule` (`repo`, `kind`, `gate`, `mode`, `by`). |
 | `POST /v1/runs/{id}/autonomy` `{level}` | operator | Le curseur d'autonomie du run : `"ask"`, `"deliver"` ou `null` (§ « Le curseur d'autonomie d'un run »). Rend `{run}` ; 400 pour un autre niveau, 409 sur un run terminal, 403 pour un pilote qui le monterait. Événement `autonomy_level` (`level`, `by`). `POST /v1/runs`, `POST /v1/projects` et `POST /v1/intake/{id}/confirm` acceptent `autonomy` (mêmes valeurs) ; `run.autonomy` le rend. |
-| `GET /v1/rules` · `POST /v1/rules` `{text, repo?, source?, sourceRunId?}` | viewer · operator | Les consignes permanentes (§ « Les consignes permanentes ») : `{rules}`, chacune `{id, repo, text, enabled, source, sourceRunId, by, createdAt, updatedAt}` (`source` : `answer` · `correction` · `cancel` · `manual`), celles des dépôts du client — celles de tous les dépôts (`repo: null`) seulement pour un client qui les voit tous. `POST` : 201 `{rule}` ; texte vide ou de plus de 600 caractères, ou 40 consignes actives déjà : 400 ; dépôt non permis, ou `repo` absent pour un client borné : 403 ; dépôt non déclaré : 404 ; pilote : 403. Événement `standing_rule` (`id`, `repo`, `action` : `created` · `updated` · `removed`). |
-| `PUT /v1/rules/{id}` `{text?, enabled?}` · `DELETE /v1/rules/{id}` | operator | Changer le texte d'une consigne, la suspendre ou la réactiver (`{rule}`), la retirer (`{removed: true}`). Consigne inconnue ou d'un dépôt non permis : 404 ; pilote : 403. |
+| `GET /v1/rules?space=` · `POST /v1/rules` `{text, repo?, space?, source?, sourceRunId?}` | viewer · operator | Les consignes permanentes (§ « Les consignes permanentes ») : `{rules}`, chacune `{id, repo, space, text, enabled, source, sourceRunId, by, createdAt, updatedAt}` (`source` : `answer` · `correction` · `cancel` · `manual`), celles des dépôts du client et des espaces où il en voit — celles de tous les dépôts (`repo` et `space` à `null`) seulement pour un client qui les voit tous ; `?space=` : celles de l'espace et de ses dépôts. `POST` : 201 `{rule}`, pour un dépôt (`repo`), un espace (`space` : identifiant ou nom ; ou `?space=` sans `repo`) ou tous ; `repo` et `space` ensemble, texte vide ou de plus de 600 caractères, ou 40 consignes actives déjà (celles de l'espace du dépôt comprises) : 400 ; dépôt non permis, `repo` absent pour un client borné, ou espace vu en partie seulement : 403 ; dépôt non déclaré, espace inconnu ou sans dépôt visible : 404 ; pilote : 403. Événement `standing_rule` (`id`, `repo`, `space` pour une consigne d'espace, `action` : `created` · `updated` · `removed`). |
+| `PUT /v1/rules/{id}` `{text?, enabled?}` · `DELETE /v1/rules/{id}` | operator | Changer le texte d'une consigne, la suspendre ou la réactiver (`{rule}`), la retirer (`{removed: true}`). Consigne inconnue, d'un dépôt non permis ou d'un espace sans dépôt visible (ou hors de l'espace de `?space=`) : 404 ; consigne d'un espace vu en partie : 403 ; pilote : 403. |
 | `GET /v1/projects` · `POST /v1/projects` `{repo, title, priority?, autonomy?, features: [{title, request, modules?}]}` · `GET /v1/projects/{id}` | viewer · operator · viewer | /project. La liste porte le décompte des runs de chaque projet par état. Le projet et ses runs naissent dans la même transaction ; `autonomy` pose le curseur de toutes ses features. |
 | `GET /v1/audits` · `POST /v1/audits` `{repo, focus?}` · `GET /v1/audits/{id}` | viewer · operator · viewer | /audit : `queued` → `analysing` → `proposed`. Chaque proposition rendue porte `kind`, `modules`, `rationale`, `evidence` (`fichier:ligne`, non vide pour une faiblesse), `dependsOn` (index des propositions prérequises), `impact` et `effort` (`low` · `medium` · `high`). |
 | `GET /v1/dreams` · `POST /v1/dreams` `{repo}` | viewer · operator | Le rêve de la mémoire : le dernier rêve de chaque dépôt (`state` `dreaming` · `done` · `skipped` · `failed`, `facts`, `reason`, `report` de mem0-rs) ; `POST` demande un rêve, examiné au prochain tour sans seuil de faits ni attente du repos (202 ; 409 sans oracle). |
@@ -2570,28 +2823,42 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/workstation/requests/{id}/cancel` | operator (approbateur) | Annule une demande en file ou en cours : 200 `{request}` `cancelled` ; 409 « la demande est déjà <état> ». |
 | `GET /v1/workstation/automations` · `POST /v1/workstation/automations` `{version, task, browserId?, schedule?}` | viewer · operator (approbateur) | Les automatisations (`{id, createdAt, by, title, frequency, steps, profileVersion, browserId, schedule}`) ; en crée une depuis la tâche `task` de la version `version` du profil : 201, ou 200 l'existante (même titre et étapes) ; 404 profil ou tâche inconnus ; 409 tâche non automatisable ; 400 `schedule` illisible. Avec `schedule`, la création pose sa planification liée. |
 | `POST /v1/workstation/automations/{id}/launch` · `DELETE /v1/workstation/automations/{id}` | operator (approbateur) | Lance l'automatisation (201 `{request}`, 409 en pause) ; la supprime (200 `{removed}`), avec ses planifications ; ses demandes restent. |
+| `PUT /v1/workstation/browsers/{id}` `{space}` | operator (approbateur) | Rattache le navigateur à un espace (`space` : son identifiant ou son nom), ou le détache (`null`) : 200 `{browser}` (`{id, label, online, lastSeenAt, firstSeenAt, extensionVersion, isDefault, space}`) ; 404 navigateur ou espace inconnu, 400 `space` absent, 403 pour tout autre client que l'approbateur. Tout ce qui vient du navigateur hérite de l'espace (§ « Le poste d'un espace », capacité `space-workstation`). Événement `workstation_browser` `{id, label, space}`. |
+| `GET /v1/workstation?space=` · `GET /v1/workstation/observations?since=&limit=&space=` · `GET /v1/workstation/actions?state=a,b&limit=&before=&space=` · `GET /v1/workstation/meetings?limit=&space=` · `GET /v1/workstation/requests?state=a,b&limit=&space=` · `GET /v1/workstation/automations?space=` · `GET /v1/workstation/profile?space=` | viewer | Les lectures du poste bornées à un espace (`space` : identifiant ou nom ; 404 inconnu) : seulement ce qui vient de SES navigateurs. Le statut rend ses navigateurs, sa présence, son temps observé, ses identités (`selfIdentities`), ses approbations en attente et la date de son profil (l'autonomie, la pause et les services restent ceux du poste) ; le profil est celui de l'espace, avec ses statistiques. `GET …/actions/{n}`, `…/actions/{n}/capture`, `…/meetings/{id}` et `…/requests/{id}` rendent 404 pour un objet d'un autre navigateur. Sans `space` : tout, et le profil hors espace (les navigateurs sans espace). |
+| `POST /v1/workstation/requests` `{instruction, browserId?, space?}` · `POST /v1/workstation/automations` `{version, task, browserId?, schedule?, space?}` · `POST /v1/workstation/actions?space=` · `POST /v1/workstation/profile/rebuild?space=` | operator (approbateur pour les deux premières) | Les écritures du poste dans un espace (`space` du corps, ou `?space=`) : la demande, l'automatisation (tirée du profil de l'espace) ou l'action partent dans un navigateur de CET espace — 409 « cet espace n'a pas de navigateur », 409 si le navigateur désigné est ailleurs, 404 espace inconnu. `request.space` porte l'espace (clé absente hors espace). La synthèse du profil de l'espace : 202, 409 sans navigateur. |
 | `GET /v1/signals?state=&limit=` · `GET /v1/signals/{id}` | viewer (propriétaire) | Les signalements des collègues, récents d'abord (`state` : `received`, `proposed` par défaut, `ignored`, `dismissed`, `confirmed`, séparés par des virgules ; `limit` ≤ 200) : `{signals}` ; un signalement : `{signal}` = `{id, createdAt, updatedAt, channel, threadRef, url, personRef, excerpt, state, reason, error, repo, kind, title, body, issue, runId, confirmedBy, confirmedAt}`. 403 client restreint (« le poste est réservé au propriétaire ») ou pilote ; 404 inconnu ; 400 `state` inconnu. Même sans poste actif. |
 | `POST /v1/signals/{id}/preview` `{repo?, title?, body?}` | viewer (propriétaire) | Le texte EXACT que `confirm` enverrait à la forge : `{repo, policy: {declared, applied, note}, title, body, issue}` (`issue` : l'issue déjà créée, dont le texte n'est alors pas renvoyé). Sans `title`/`body`, la proposition ; sous `full` appliqué, le corps porte la section « Origine ». 409 dépôt en `forbid` ou sans forge, signalement déjà traité. Ne crée rien. |
 | `POST /v1/signals/{id}/confirm` `{repo, title, body}` · `POST /v1/signals/{id}/dismiss` `{reason?}` | operator (approbateur) | Confirme : crée l'issue puis le run lié (201 `{signal, issue, run, policy}`) ; 502 si la forge échoue (la proposition reste, avec `error`), 409 « le signalement est déjà <état> », dépôt `forbid`/sans forge, ou dépôt autre que celui de l'issue déjà créée ; 404 `dépôt inconnu`. Écarte (200 `{signal}`, `reason` ≤ 500) : jamais reproposé. 403 non approbateur, pilote ou client restreint. Événement `signal`. |
+| `GET /v1/signals` — `space` | viewer (propriétaire) | Chaque signalement porte `space` : l'espace d'où il vient (celui du job du poste qui l'a remis ; `null` : hors espace). Il ne se propose et ne se confirme (`preview`, `confirm`) que vers un dépôt de cet espace : 409 « n'est pas dans l'espace d'où vient ce signalement » sinon ; un fil déjà suivi dans un autre espace n'y reçoit rien. Un signalement hors espace n'est pas borné. Capacité `space-knowledge`. |
 | `GET /v1/runs/{id}/origin` | viewer (propriétaire) | L'origine du run (`{origin: {signalId, channel, threadRef, url, personRef, excerpt, issue: {repo, number, url}, confirmedBy, confirmedAt}}`, ou `{origin: null}`). 404 `run inconnu` hors des dépôts du client, puis 403 client restreint ou pilote. Capacité `corporate-signals`. |
-| `GET /v1/atlassian` | viewer (propriétaire) | `{atlassian}` = `{enabled, connected, site: {cloudId, url} \| null, accountId, connectedAt, connectedBy, expiresAt, lastError, redirectUri, pasteBack, pending: {authorizeUrl, expiresAt} \| null, plan: {hour, weekdaysOnly, lastAt}, knowledge: {everyHours, lastAt, lastSummary}, proposed}` ; jamais un jeton. 403 client restreint ou pilote ; 404 « Atlassian désactivé » si `atlassian.enabled` est faux (toutes les routes `/v1/atlassian*`). |
-| `POST /v1/atlassian/connect` | operator (approbateur) | Un consentement : `{authorizeUrl, redirectUri, expiresAt, pasteBack}` (10 min, remplace le précédent) ; 502 si Atlassian ne répond pas. |
-| `GET /v1/atlassian/callback?code=&state=` | aucun (publique) | Le retour du navigateur (redirection tailnet) : page HTML 200 « Atlassian est branché… », 400 « Lien de connexion invalide ou expiré. » (state inconnu, expiré ou déjà servi), 502 refus d'Atlassian ; aucun paramètre repris. Servie seulement si `atlassian.enabled`. |
-| `POST /v1/atlassian/callback` `{url}` | operator (approbateur) | L'adresse de retour collée (boucle locale) : 200 `{atlassian}` ; 400 lien invalide ou expiré ; 502 échange refusé ou aucun site. Événement `atlassian` `{connected}`. |
-| `DELETE /v1/atlassian` | operator (approbateur) | Débranche (fichier de jetons supprimé) : 200 `{atlassian}`. |
-| `GET /v1/atlassian/writes?state=&limit=` | viewer (propriétaire) | Les écritures Jira, récentes d'abord : `{writes}` = `[{id, kind: "comment" \| "transition", issueKey, body, why, state, by, error, decidedBy, createdAt, updatedAt}]` ; `state` : `proposed` (défaut), `sent`, `dismissed`, `failed` ; `limit` 50 par défaut, 200 au plus. |
-| `POST /v1/atlassian/writes/{id}/approve` `{body?}` · `POST /v1/atlassian/writes/{id}/dismiss` | operator (approbateur) | Publie le commentaire proposé (le texte édité s'il est donné, 1 à 4000 caractères) : 200 `{write}` ; 502 si Atlassian refuse (l'écriture passe `failed` avec `error`). Écarte : 200 `{write}`. 409 s'il n'est plus `proposed`. Événement `atlassian_write` `{id, state, kind}`. |
-| `GET /v1/atlassian/plan` | viewer (propriétaire) | Le dernier plan du jour : `{plan}` = `{id, createdAt, trigger: "auto" \| "manual", by, summary, items: [{title, why, next, source, key, url, repo, request}]}` ou `null`. Événement `atlassian_plan` `{id}`. |
-| `POST /v1/atlassian/plan` · `POST /v1/atlassian/knowledge` | operator (approbateur) | Demande un plan du jour (job `poste-plan`) ou une passe de savoir (job `poste-savoir`) au prochain tour : 202 `{queued: true}` ; 409 si Atlassian n'est pas branché. |
+| `GET /v1/atlassian?space=` | viewer (propriétaire) | `{atlassian}` = `{enabled, space, scope, connected, site: {cloudId, url} \| null, accountId, connectedAt, connectedBy, expiresAt, lastError, redirectUri, pasteBack, pending: {authorizeUrl, expiresAt} \| null, plan: {hour, weekdaysOnly, lastAt}, knowledge: {everyHours, lastAt, lastSummary}, proposed}` ; jamais un jeton. `?space=<id\|nom>` (sur toutes les routes `/v1/atlassian*`) : la connexion de cet espace (`space` : son identifiant, `scope` : `corpo:<espaceId>`) ; sans lui, la connexion par défaut (`space: null`, `scope: "corpo"`). 403 client restreint ou pilote ; 404 « Atlassian désactivé » si `atlassian.enabled` est faux (toutes les routes `/v1/atlassian*`) ; 404 espace inconnu. |
+| `POST /v1/atlassian/connect?space=` | operator (approbateur) | Un consentement : `{authorizeUrl, redirectUri, expiresAt, pasteBack}` (10 min, remplace le précédent de cette connexion) ; le `state` porte l'espace ; 502 si Atlassian ne répond pas. |
+| `GET /v1/atlassian/callback?code=&state=` | aucun (publique) | Le retour du navigateur (redirection tailnet) : page HTML 200 « Atlassian est branché… », 400 « Lien de connexion invalide ou expiré. » (state inconnu, expiré, déjà servi, ou préfixé d'un autre espace que celui qui l'a demandé), 502 refus d'Atlassian ; aucun paramètre repris. Branche la connexion que désigne le `state`. Servie seulement si `atlassian.enabled`. |
+| `POST /v1/atlassian/callback?space=` `{url}` | operator (approbateur) | L'adresse de retour collée (boucle locale) : 200 `{atlassian}` ; 400 lien invalide ou expiré, ou `state` d'une autre connexion que celle de `?space=` (sans `?space=`, le retour est rendu à la connexion de son `state`) ; 502 échange refusé ou aucun site. Événement `atlassian` `{connected}` (`space` en plus pour la connexion d'un espace). |
+| `DELETE /v1/atlassian?space=` | operator (approbateur) | Débranche (fichier de jetons supprimé) : 200 `{atlassian}`. |
+| `GET /v1/atlassian/writes?space=&state=&limit=` | viewer (propriétaire) | Les écritures Jira de la connexion, récentes d'abord : `{writes}` = `[{id, space, kind: "comment" \| "transition", issueKey, body, why, state, by, error, decidedBy, createdAt, updatedAt}]` ; `state` : `proposed` (défaut), `sent`, `dismissed`, `failed` ; `limit` 50 par défaut, 200 au plus. |
+| `POST /v1/atlassian/writes/{id}/approve` `{body?}` · `POST /v1/atlassian/writes/{id}/dismiss` | operator (approbateur) | Publie le commentaire proposé (le texte édité s'il est donné, 1 à 4000 caractères), par la connexion qui l'a écrit : 200 `{write}` ; 502 si Atlassian refuse (l'écriture passe `failed` avec `error`). Écarte : 200 `{write}`. 409 s'il n'est plus `proposed`, ou si son ticket n'est plus dans les projets Jira de l'espace ; 404 écriture inconnue, ou d'une autre connexion que celle de `?space=`. Événement `atlassian_write` `{id, state, kind}` (`space` en plus pour un espace). |
+| `GET /v1/atlassian/plan?space=` | viewer (propriétaire) | Le dernier plan du jour de la connexion : `{plan}` = `{id, space, createdAt, trigger: "auto" \| "manual", by, summary, items: [{title, why, next, source, key, url, repo, request}]}` ou `null`. Événement `atlassian_plan` `{id}` (`space` en plus pour un espace). |
+| `POST /v1/atlassian/plan?space=` · `POST /v1/atlassian/knowledge?space=` | operator (approbateur) | Demande un plan du jour (job `poste-plan`) ou une passe de savoir (job `poste-savoir`) de la connexion au prochain tour : 202 `{queued: true}` ; 409 si elle n'est pas branchée. |
 | `POST /v1/local-sessions` `{id, host, cwd, title, state, remote?, branch?, intent?, tool?, model?, cost?}` | operator (propriétaire) | Le battement d'une session omp locale (§ « Les sessions omp locales ») : 200 `{session}` = `{id, client, host, cwd, repo, remote, branch, title, intent, tool, state: "working" \| "idle" \| "ended", model, cost, runId, startedAt, updatedAt, endedAt}`. `id` : 1 à 120 caractères parmi lettres, chiffres, `.`, `_`, `-` ; `host` et `cwd` requis ; `cost` ≥ 0 ; `branch` : un nom sobre (lettres, chiffres, `_`, `.`, `/`, `-`, sans `..` ni `-` initial) ; sinon 400. `title` est ramené sur une ligne. 403 client restreint ou pilote, et sur la session d'un autre client. Événement `local_session` `{id, state}` au changement d'état ; `activity` éphémère `{tool, intent, localSession}` à chaque `intent` ; tous deux sans dépôt, et jamais à un client pilote (le propriétaire seul). Capacité `local-sessions`. |
 | `GET /v1/local-sessions?state=` | viewer (propriétaire) | `{sessions}`, le dernier battement d'abord (200 au plus), après vieillissement (`working` muette depuis 2 min → `idle`, muette depuis 30 min → `ended`) et purge (`ended` depuis plus de 7 jours) ; `state` : un ou plusieurs états séparés par des virgules (inconnu : 400). 403 client restreint ou pilote. |
 | `POST /v1/local-sessions/{id}/handoff` `{request?}` | operator (propriétaire) | Confie le travail de la session à un run de son dépôt, par la voie complète (/req) : 201 `{run, session}` (`session.runId` posé, `ETag` du run) ; `request` : la consigne (4000 caractères au plus), citée dans la demande comme une donnée, comme le titre. 404 session inconnue ; 409 si elle ne travaille aucun dépôt déclaré, ou si le run qui l'a déjà reprise n'est pas terminé (même après un retrait suivi d'un battement). |
 | `DELETE /v1/local-sessions/{id}` | operator (propriétaire) | Retire la session de la liste (son run lié reste connu) : 200 `{removed: true}` ; 404 si elle est inconnue. Événement `local_session` `{…, removed: true}`. |
-| `GET /v1/spaces` | viewer | `{spaces}` : chaque espace (`id`, `name`, `repos`, `poste`, `jiraProjects`, `dailyBudgetUsd`, `autonomy`, `by`, `createdAt`, `updatedAt`, `rev`) avec `memoryScopes` et `stats {working, yours, queued, mergedWeek, failedWeek, cancelledWeek, costToday, costWeek, budgetLeftToday}`. Un client restreint ne voit que les espaces qui tiennent un de ses dépôts, réduits à ses dépôts (sans `poste` ni `jiraProjects` ; `dailyBudgetUsd`, `by` et `budgetLeftToday` à `null`). |
-| `POST /v1/spaces` `{name, repos?, poste?, jiraProjects?, dailyBudgetUsd?, autonomy?}` | admin | Crée un espace : 201 `{space}` (`ETag` : sa révision). 400 nom vide ou de plus de 60 caractères, dépôt non déclaré, budget ou autonomie (`ask`, `deliver`, `null`) invalides ; 409 nom déjà pris, ou dépôt déjà dans un autre espace ; 403 pour un admin restreint à des dépôts. Événement `space` `{id, action: "created"}`. |
-| `PUT /v1/spaces/{id}` `{name?, repos?, poste?, jiraProjects?, dailyBudgetUsd?, autonomy?}` | admin | Modifie les champs présents : `{space}` ; `If-Match` : la révision lue (412 si l'espace a changé). Mêmes refus que la création ; 404 espace inconnu. Événement `space` `{id, action: "updated"}`. |
-| `DELETE /v1/spaces/{id}` | admin | Retire l'espace (ses dépôts et leurs runs restent) : `{removed: true}` ; `If-Match` comme la modification ; 404 espace inconnu. Événement `space` `{id, action: "removed"}`. |
+| `GET /v1/spaces` | viewer | `{spaces}` : chaque espace (`id`, `name`, `repos`, `poste`, `identities`, `jiraProjects`, `dailyBudgetUsd`, `autonomy`, `by`, `createdAt`, `updatedAt`, `rev`) avec `memoryScopes` et `stats {working, yours, queued, mergedWeek, failedWeek, cancelledWeek, costToday, costWeek, budgetLeftToday}`. `poste` est DÉRIVÉ : vrai quand un navigateur du poste est rattaché à l'espace (`PUT /v1/workstation/browsers/{id}`). Un client restreint ne voit que les espaces qui tiennent un de ses dépôts, réduits à ses dépôts (sans `poste`, `identities` ni `jiraProjects` ; `dailyBudgetUsd`, `by` et `budgetLeftToday` à `null`). |
+| `GET /v1/spaces` — `atlassian` | viewer | Chaque espace porte `atlassian` : `{connected, site}` — sa connexion Atlassian (§ « Atlassian », « Une connexion par espace » ; `site` : l'adresse du site, `null` tant qu'elle n'est pas branchée) —, ou `null` quand Atlassian est désactivé sur le serveur, ou pour un client qui ne voit pas l'espace entier. Capacité `space-knowledge`. |
+| `POST /v1/spaces` `{name, repos?, jiraProjects?, dailyBudgetUsd?, autonomy?}` | admin | Crée un espace : 201 `{space}` (`ETag` : sa révision). 400 nom vide ou de plus de 60 caractères, dépôt non déclaré, budget ou autonomie (`ask`, `deliver`, `null`) invalides ; 409 nom déjà pris, ou dépôt déjà dans un autre espace ; 403 pour un admin restreint à des dépôts. Un `poste` donné (booléen) est ignoré : il se déduit des navigateurs. Événement `space` `{id, action: "created"}`. |
+| `PUT /v1/spaces/{id}` `{name?, repos?, jiraProjects?, dailyBudgetUsd?, autonomy?}` | admin | Modifie les champs présents : `{space}` ; `If-Match` : la révision lue (412 si l'espace a changé). Mêmes refus que la création ; 404 espace inconnu. Un `poste` donné est ignoré. Événement `space` `{id, action: "updated"}`. |
+| `DELETE /v1/spaces/{id}` | admin | Retire l'espace (ses dépôts et leurs runs restent) : `{removed: true, repos, defaultAtlassian, text}` ; `If-Match` comme la modification ; 404 espace inconnu ; 409 s'il est en pause, ou sans `?confirm=1` quand ses dépôts liraient la connexion Atlassian par défaut (§ « Les espaces »). Événement `space` `{id, action: "removed"}`. |
 | `GET /v1/spaces/{id}/report?since=` | viewer | Le rapport de l'espace : `{space, since, until, text, counts {merged, decisions, waiting, failed}, cost}` — le rapport du matin borné à ses dépôts (ceux que voit le client), sans la santé ni le commit. `since` en ms epoch (défaut : il y a 7 jours ; 400 s'il est illisible) ; 404 espace inconnu ou sans dépôt visible. |
+| `GET /v1/spaces/{id}/usage?since=&until=&format=` | viewer | La consommation de l'espace, pour la facturation (capacité `space-scope`, § « La portée d'un espace ») : `{usage: {since, until, total, days[{day, cost, input, output}], repos[{repo, cost}], models[{model, cost, input, output}], kinds[{kind, cost}]}}` — `since` et `until` en ms epoch (`until` exclu ; défaut : le mois UTC en cours jusqu'à maintenant ; 400 illisibles ou à l'envers), `day` : `AAAA-MM-JJ` UTC, `kind` ∈ `feature` · `audit` · `poste` · `demande` · `reve` · `autre`, coûts en dollars au millionième. `format=csv` (`json` par défaut ; 400 sinon) : `Content-Type: text/csv`, l'en-tête `jour;espace;depot;modele;cout_usd;jetons_entree;jetons_sortie` puis une ligne par jour, dépôt et modèle (`depot` vide : imputé à l'espace sans dépôt). Un client restreint n'y lit que ses dépôts ; 404 espace inconnu ou sans dépôt visible. `GET /v1/spaces` porte `stats.costMonth`. |
+| `?space=<id\|nom>` sur une route · `GET /v1/events?space=` | viewer | La portée d'un espace (capacité `space-scope`) : la requête ne voit que les dépôts du client qui sont dans l'espace — runs, boîte, escalades, décisions, projets, audits, planifications, rapport, brief, chiffres, statistiques, propositions, Demandes, consignes, autonomie, et le flux. 404 pour un espace inconnu ou dont le client ne voit aucun dépôt ; 400 pour une création (`POST /v1/runs`, `/v1/projects`, `/v1/audits`, `/v1/schedules`, `/v1/dreams`) dans un dépôt hors de l'espace. Le propriétaire reste propriétaire. |
+| `POST /v1/pause` `{paused, space, reason?, now?}` | operator (propriétaire) | La pause d'UN espace (`space` : identifiant ou nom ; ou `?space=`) : ses runs ne sont plus admis, ses runs vivants retournent en file (tout de suite avec `now`), ses merges non engagés, son autonomie et ses échéances attendent ; les autres espaces continuent. Persistante (réglage `pause:<espaceId>`). Rend `{pause: {paused, by, at, reason, now, spaces[{id, name, paused, by, at, reason, now}]}}` — la pause globale et les espaces en pause que voit le lecteur, comme `GET /v1/pause`. 404 espace inconnu ; 403 client borné ou pilote. Événement `pause` `{paused, by, reason, now, space}`. |
+| `POST /v1/intake` `{text, source, space, repo?, context?}` | operator | Une Demande posée dans un espace (`space` : identifiant ou nom ; ou `?space=`) : portée du classeur = dépôts de l'espace que voit l'auteur, plan refusé hors de l'espace (400, au classement comme à la confirmation), tâche du poste seulement si l'espace a un poste. La vue rend `space: {id, name}` (`null` hors espace). 404 espace inconnu ou sans dépôt visible ; 400 `repo` hors de l'espace. |
+| `POST /v1/clients` `{name, role?, pilot?, spaces}` | admin | Un client borné à des espaces (`spaces` : identifiants ou noms ; exclusif d'une liste `repos`, 400 avec les deux ; `viewer` ou `operator`, 400 pour `admin`) : il voit leurs dépôts, relus à chaque appel ; jamais propriétaire. Rendu avec `spaces` (identifiants) et `repos` (leurs dépôts du moment). 404 espace inconnu. En ligne de commande : `main.ts --add-client <nom> --space <id\|nom>` (répétable). |
+| `GET /v1/spaces/{id}` | viewer | Un espace seul, comme dans la liste : `{space}` (`ETag` : sa révision), avec `policy` et `isolation {sealed, gaps[{code, repo, text}]}` — l'étanchéité, calculée à chaque lecture (§ « Les espaces, le brief et les chiffres »). Un client restreint le lit réduit à ses dépôts (`policy` à `null`, les seules lacunes de ses dépôts) ; 404 espace inconnu ou sans dépôt visible. |
+| `PUT /v1/spaces/{id}` `{policy}` | admin | La politique de modèles de l'espace : `{privacy?, providers?, models?}`, validée comme celle d'un dépôt (400 : fournisseur distant sous `local-only`, modèle hors liste blanche, champ inconnu…), ou `null` pour la lever ; croisée au plus strict avec celle de chaque dépôt. `POST /v1/spaces` l'accepte aussi. 403 pour un pilote. |
+| `PUT /v1/spaces/{id}` `{identities}` | admin | Les identités de l'utilisateur chez ce client (`identities` : 50 adresses ou pseudos au plus, 200 caractères chacun ; 400 sinon) : la garde d'envoi des navigateurs de l'espace les lit à la place de `selfIdentities` (§ « Le poste d'un espace »). `POST /v1/spaces` les accepte aussi. |
+| `POST /v1/spaces/onboard` `{name, repos, jiraProjects?, dailyBudgetUsd?, autonomy?, policy?}` | admin | Accueille un client en un geste : 201 `{space, isolation, next[{code, text}]}` (`ETag` : la révision de l'espace) — l'espace créé, son étanchéité et ce qu'il reste à faire. `repos` est exigé (la liste peut être vide). Mêmes refus que `POST /v1/spaces` (400, 409 nom ou dépôt déjà pris, 403 admin restreint) ; 403 pour un pilote. Événement `space` `{id, action: "created"}`. |
 | `GET /v1/brief?since=` | viewer | Le brief « pendant votre absence » : `{brief: {since, until, seenAt, headline, delivered[{runId, repo, title, prUrl, at, cost, alone}], waiting[{runId, repo, title, wait, since}], failed[{runId, repo, title, reason, at}], stopped[{runId, repo, title, cause, at}], decided[{runId, repo, title, seq, question, chosen, status}], blocked[{runId, repo, title, cause, text}], proposals, cost}}`. `since` en ms epoch (400 s'il est illisible) ; défaut : le dernier « vu » du client, sinon il y a 24 h. |
 | `POST /v1/brief/seen` | viewer | Le client a vu le brief : `{seenAt}` (maintenant) ; le prochain brief part de cet instant. |
 | `GET /v1/scoreboard?days=` | viewer | Les chiffres des dépôts du client : `{scoreboard: {since, until, merged, mergedAlone, aloneRate, decisions, medianDecisionMs, started, startedAlone, startedAloneRate, cancelled, cancelCauses, repos[{repo, merged, mergedAlone, cancelled, failed, successRate, suggestion}]}}`. `days` : entier de 1 à 90, sans dépasser `events.retentionDays` (défaut 7 ; 400 sinon) ; un taux sans dénominateur vaut `null`. |
@@ -2615,6 +2882,13 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/proposals/{id}/dismiss` | operator | Écarte la proposition : 200 `{dismissed: true}` ; elle ne revient pas. Déjà écartée : 200 ; 404 si elle est inconnue ou n'est pas au lecteur ; 403 pour un client pilote. |
 | `GET /v1/runs/{id}/template` | viewer | « Refaire » : `{template: {repo, title, request, kind, labels, modules, lane: "full" \| null, budgetUsd, autonomy}}`, le corps d'un `POST /v1/runs` à la demande d'origine du fil (titre nettoyé ; `lane` : `full` si le premier run est passé par /req ; `budgetUsd` : son budget propre, `null` sinon). 404 hors des dépôts du client. |
 | événement `proposals` | viewer (tous les dépôts) | `{count}` : l'ensemble des propositions ouvertes a changé (`count` : leur nombre, toutes sources) ; le client relit `GET /v1/proposals`. Sans dépôt : seuls les clients qui voient tous les dépôts le reçoivent. |
+| `GET /v1/runs` · `GET /v1/runs/{id}` · `GET /v1/inbox` · `GET /v1/escalations` — `humanWait` | viewer | Capacité `run-facts`. Un run `awaiting_human` ou `escalated` porte `humanWait: {kind, reasons[{code, …}]}` (absent sinon) : `kind` ∈ `specs` · `irreversible` · `verdict` · `arbitration` · `budget` · `failure` · `questions` ; `reasons` n'est jamais vide et ne porte jamais de texte. Specs (relues à la lecture, donc `irreversible` même sous `review.specsGate: true`) : `split_proposed`, `empty_modules`, `irreversible {category}`, `first_of_project`, `dispute {ids}`, `autonomy_reversed`, `specs_gate` (porte systématique, sans autre raison). Verdict (relu de l'évidence de la dernière revue) : `blockers {count}`, `risk {risk, max}`, `tests_not_green {tests: "fail" \| "not_run"}`, `diff_over_limit {diffLines, maxDiffLines}`, `open_questions {count}`, `criteria_missing {ids}`, `criteria_unproven {ids}`, `specs_drift {ids}`, `files_unread {count, files}` (dix au plus), `criteria_unverified {ids}`, `weak_verdict`. Arbitrage : `fix_cap {fixes, cap}` (et `blockers`), `contest`. Budget : `budget {spent, budget}`. Panne : `step_failed {step, cause, attempts, oom}` (`cause` = `lastFailCause`), `merge_stopped {attempts, resume: "review" \| "fix"}`, `merge_failed`. Questions : `open_questions {count}`. En « tout me demander » : `ask_level`. Un motif que le serveur ne sait pas structurer : `other`. Rien n'est recalculé : les specs, l'évidence, le budget et les escalades du run sont relus de la base, pour les seuls runs qui attendent. |
+| `GET /v1/runs` · `GET /v1/runs/{id}` · `GET /v1/inbox` — `failure` | viewer | Capacité `run-facts`. Un run `failed` porte `failure: {step, cause}` : l'étape en échec et la cause de son dernier échec (`timeout` · `rate_limit` · `server_error` · `network` · `provider` · `context` · `runner` · `missing_output` · `aborted` · `other`) ; `cause: null` pour une panne du service (worktree perdu, erreur de conduite). Un run annulé garde `cancelCause`. |
+| `GET /v1/runs` · `GET /v1/runs/{id}` · `GET /v1/inbox` — `waitFacts` | viewer | Capacité `run-facts`. Un run retenu en file porte, à côté de `waitCause`, `blockedBy` et `waitUntil`, les chiffres de sa cause : `daily_budget` → `{spent, ceiling, resetsAt}` ; `space_budget` → `{space}` (le nom, sans montant) ; `repo_cap` → `{running, maxParallel}` ; `memory` → `{availableMiB, requiredMiB}` ; `slots` → `{used, slots}` ; `backoff` → `{step, cause}` (l'étape à relancer et la cause de son échec). Absent pour `modules` et `parent` (voir `blockedBy`), `paused`, `inferring` et `unknown_repo`. |
+| `GET /v1/brief` — codes, `counts`, `costToday` | viewer | Capacité `run-facts`. `waiting[]` porte `humanWait` (dont `wait` est la sorte), `failed[]` porte `failure`, `blocked[]` porte `waitCause` (= `cause`) et, selon la cause, `blockedBy`, `waitUntil`, `waitFacts` ; `stopped[].cause` est le motif. `counts: {yours, working, waiting, delivered, failed, stopped, decided}` : `yours` — ce qui attend l'humain, `working` — runs `running` et `merging`, `waiting` — runs retenus en file. `costToday` : le coût du jour UTC de `until`, la même journée que le plafond du serveur et le budget des espaces (`cost` reste celui de la fenêtre). |
+| `GET /v1/scoreboard` — `stopped`, `sample` | viewer | Capacité `run-facts`. `repos[]` porte `stopped` (arrêts par l'humain hors motifs `obsolete` et `duplicate`) et `sample` (mergés + échoués + arrêtés) ; `successRate` = `merged / sample`, `null` sans échantillon : 3 fusions et 56 arrêts ne font plus 100 %. |
+| `GET /v1/proposals` — `facts`, `title` | viewer | Capacité `run-facts`. Chaque proposition porte `facts`, selon `source` : `pr` `{number, author, branch, idleDays, draft}` · `ci` `{branch, sha}` · `issue` `{number}` · `audit` `{count, titles}` · `retry` `{runId, step, cause}` · `autonomy` `{kind, gate, direction, corrected, runs, windowDays}` · `vigie` `{fingerprint, count, issueNumber}` · `jira` `{key}` · `signal` `{signalId, channel, kind}`. `title` est sans préfixe de commit conventionnel, sans numéro de PR ni nom de branche (PR : son titre ; CI : « CI en échec ») ; `detail` garde son texte. |
+| `POST /v1/intake` — titre du plan | operator | Capacité `run-facts`. Le classeur rend un `plan.title` de 50 caractères au plus, sans préfixe technique ; un titre plus long est coupé par le serveur à la fin d'un mot (« … »). Le titre corrigé par l'humain à la confirmation reste le sien (200 caractères au plus). |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
 insuffisant rend 403, un dépôt non permis 403 à la création et 404 en lecture. Une

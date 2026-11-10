@@ -1219,8 +1219,9 @@ test("harness-issues-mcp/AC-66 : tools/list rend les huit nouveaux outils après
         ["run_decisions_accept", ["id"], ["id", "rev"], false],
         ["run_decision_accept", ["id", "n"], ["id", "n", "rev"], false],
         ["run_answer_escalation", ["id", "answers"], ["id", "answers", "rev"], false],
-        ["inbox", [], [], true],
-        ["escalations_list", [], ["status"], true],
+        // Les outils de lecture acceptent `space` : la même portée que `?space=` d'une route.
+        ["inbox", [], ["space"], true],
+        ["escalations_list", [], ["status", "space"], true],
       ],
     );
     const init = (await (

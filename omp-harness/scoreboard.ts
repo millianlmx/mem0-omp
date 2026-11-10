@@ -15,6 +15,7 @@ import { AUTONOMY_BY } from "./autonomy-rules.ts";
 import type { HarnessConfig } from "./config.ts";
 import type { EventRow, RepoFilter, RunRow, Store } from "./db.ts";
 import { HarnessError } from "./errors.ts";
+import { CANCELLED_BY_HUMAN } from "./machine.ts";
 import { HEARTBEAT_KEY } from "./vigie/desk.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -57,7 +58,14 @@ export type RepoScore = {
   mergedAlone: number;
   cancelled: number;
   failed: number;
-  /** La part des runs finis (mergés ou échoués) qui sont mergés ; `null` sans run fini. */
+  /**
+   * Les arrêts par l'humain qui disent quelque chose du travail : annulés par lui, hors motifs `obsolete`
+   * et `duplicate` (le travail n'était pas en cause). Une feature découpée abandonnée avec son parent n'en est pas un.
+   */
+  stopped: number;
+  /** La taille de l'échantillon de `successRate` : mergés + échoués + arrêtés. Sous cinq cas, un pourcentage ne dit rien. */
+  sample: number;
+  /** La part des runs finis (mergés, échoués ou arrêtés par l'humain) qui sont mergés ; `null` sans run fini. */
   successRate: number | null;
   /** Une proposition de palier existe pour le dépôt (autonomy-learning.ts). */
   suggestion: "raise" | "lower" | null;
@@ -158,6 +166,9 @@ function decisionDelays(store: Store, gestures: Gestures, repos: RepoFilter, sin
   return delays;
 }
 
+/** Les motifs d'annulation qui ne disent rien du travail fait : le run n'avait plus lieu d'être. */
+const NEUTRAL_CAUSES: readonly string[] = ["obsolete", "duplicate"];
+
 /**
  * Les chiffres des dépôts que le lecteur voit (`repos`, `null` : tous) sur les `days` derniers jours
  * (`scoreboardDays` : jamais plus que la rétention du journal).
@@ -179,6 +190,12 @@ export function scoreboardOf(
   const ended = (state: RunRow["state"]) => runs.filter((run) => run.state === state && inWindow(run.updatedAt));
   const merged = ended("merged");
   const cancelled = ended("cancelled");
+  // Un motif est toujours donné par l'humain ; sans motif, la raison dit si c'est lui qui a arrêté.
+  const stopped = cancelled.filter((run) =>
+    run.cancelCause !== null
+      ? !NEUTRAL_CAUSES.includes(run.cancelCause)
+      : (run.reason ?? "").startsWith(CANCELLED_BY_HUMAN),
+  );
   const failed = ended("failed");
   const gestures = readGestures(store, repos);
   const { human } = gestures;
@@ -219,14 +236,16 @@ export function scoreboardOf(
     cancelled: cancelled.length,
     cancelCauses,
     repos: names.map((repo) => {
-      const done = count(merged, repo) + count(failed, repo);
+      const sample = count(merged, repo) + count(failed, repo) + count(stopped, repo);
       return {
         repo,
         merged: count(merged, repo),
         mergedAlone: count(alone, repo),
         cancelled: count(cancelled, repo),
         failed: count(failed, repo),
-        successRate: done === 0 ? null : count(merged, repo) / done,
+        stopped: count(stopped, repo),
+        sample,
+        successRate: sample === 0 ? null : count(merged, repo) / sample,
         suggestion: suggestions.get(repo) ?? null,
       };
     }),

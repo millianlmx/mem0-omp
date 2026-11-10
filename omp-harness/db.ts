@@ -10,8 +10,8 @@
 // d'héritage linéaire, chacune ne voyant que celles du dessous :
 //
 //   core → runs → journal → steps → decisions → heavy → projects → providers
-//        → sessions → usage → push → push-devices → workstation → workstation-meetings
-//        → workstation-captures → workstation-browsers → workstation-requests
+//        → sessions → usage → push → push-devices → workstation-observations → workstation
+//        → workstation-meetings → workstation-captures → workstation-browsers → workstation-requests
 //        → issues → schedules → observability → vigie → corporate-signals → intakes → atlassian
 //        → standing-rules → spaces → proposals → local-sessions → idempotency
 //        → Store
@@ -80,14 +80,13 @@ export type {
   ScheduleTarget,
 } from "./db/schedules.ts";
 export { ACTION_KINDS, ACTION_STATES } from "./db/workstation.ts";
+export type { Observation, StoredObservation } from "./db/workstation-observations.ts";
 export type {
   ActionKind,
   ActionPatch,
   ActionOrigin,
   ActionState,
   Approval,
-  Observation,
-  StoredObservation,
   WorkstationAction,
 } from "./db/workstation.ts";
 export type {

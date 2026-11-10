@@ -20,6 +20,7 @@ import type { HarnessConfig } from "./config.ts";
 import type { Store } from "./db.ts";
 import type { EventType } from "./events.ts";
 import { isTerminal } from "./machine.ts";
+import { usageOf } from "./session-feed.ts";
 import type { SessionFeeds, SessionUsage } from "./session-feed.ts";
 
 export type AlertKind = "stalled" | "step_slow" | "fix_loop" | "budget_exceeded";
@@ -95,6 +96,8 @@ export class Monitor {
   /** L'arrêt de l'étape en cours de chaque run gardé (`guard`) : ce que la veille appelle au plafond. */
   readonly #guards = new Map<string, (due: BudgetDue) => void>();
   #medians: { at: number; byKind: Map<string, number> } | null = null;
+  /** L'espace auquel imputer les consommations d'un propriétaire de direct sans dépôt (`usageSpace`). */
+  readonly #usageSpaces = new Map<string, string>();
 
   constructor(deps: MonitorDeps) {
     this.#deps = deps;
@@ -103,12 +106,25 @@ export class Monitor {
 
   // -- consommation et budget ---------------------------------------------------
 
-  /** La consommation d'un message d'agent (run ou audit `audit:<id>`) : écrite, puis le budget du run relu. */
-  recordUsage(owner: string, step: string | null, usage: SessionUsage): void {
+  /**
+   * L'espace auquel imputer les consommations À VENIR d'un propriétaire de direct qui n'a pas de dépôt
+   * (un job du poste `workstation:<job>`, une Demande `intake:<id>`) ; `null` : hors espace, comme avant.
+   * Un run ou un audit n'en a pas besoin : leur espace est celui de leur dépôt.
+   */
+  usageSpace(owner: string, spaceId: string | null): void {
+    if (spaceId === null) this.#usageSpaces.delete(owner);
+    else this.#usageSpaces.set(owner, spaceId);
+  }
+
+  /**
+   * La consommation d'un message d'agent (run, audit `audit:<id>`, ou job sans run ni audit) : écrite, puis
+   * le budget du run relu. `ownRepo` : le dépôt d'un job qui en a un sans être un run ni un audit (un rêve).
+   */
+  recordUsage(owner: string, step: string | null, usage: SessionUsage, ownRepo: string | null = null): void {
     const { store } = this.#deps;
     const auditId = owner.startsWith("audit:") ? owner.slice("audit:".length) : null;
     const run = auditId === null ? store.getRun(owner) : null;
-    const repo = run?.repo ?? (auditId !== null ? (store.getAudit(auditId)?.repo ?? null) : null);
+    const repo = run?.repo ?? (auditId !== null ? (store.getAudit(auditId)?.repo ?? null) : ownRepo);
     store.addUsage({
       runId: run?.id ?? null,
       auditId,
@@ -121,8 +137,24 @@ export class Monitor {
       cacheRead: usage.cacheRead,
       cacheWrite: usage.cacheWrite,
       cost: usage.cost,
+      spaceId: repo === null ? (this.#usageSpaces.get(owner) ?? null) : null,
     });
     if (run) this.#checkBudget(run.id);
+  }
+
+  /**
+   * La consommation que porte une trame RPC d'un job SANS direct (le classeur d'une Demande, un rêve) :
+   * la fin d'un message d'agent est relevée comme `recordUsage`, toute autre trame est ignorée. Ne jette
+   * jamais : un relevé qui échoue n'arrête pas le job.
+   */
+  recordFrame(owner: string, step: string, frame: Record<string, unknown>, ownRepo: string | null = null): void {
+    if (frame.type !== "message_end") return;
+    try {
+      const usage = usageOf(frame.message);
+      if (usage) this.recordUsage(owner, step, usage, ownRepo);
+    } catch {
+      /* la consommation de ce message est perdue, le job continue */
+    }
   }
 
   /** Le coût d'un run, son budget (le sien avant celui de la configuration) et le seuil de son prochain avertissement. */

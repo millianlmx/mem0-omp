@@ -19,6 +19,14 @@
 // approbateur, et la boucle humaine lui refuse en 403 les gestes réservés à l'humain
 // (gestures.ts : geste irréversible, budget, escalades, envois du poste).
 //
+// Un client peut être borné à des ESPACES plutôt qu'à une liste de dépôts (`spaces`, exclusif d'une
+// liste `repos`) : ses dépôts sont alors ceux de ces espaces, relus À CHAQUE lecture du registre — un
+// dépôt ajouté à l'espace lui devient visible sans toucher au client. Pour tout le reste du service il
+// est un client borné comme un autre (`repos` : une liste, jamais `"*"`) : jamais propriétaire — ni
+// admin non plus : les routes d'administration (clients, fournisseurs, modèles) ne regardent que le
+// rôle, et lui donneraient de quoi sortir de son espace. Sans résolveur branché (`useSpaces`), ou si
+// l'espace n'existe plus, il ne voit rien.
+//
 // Le fichier (`clientsFile`, 0600) est relu à chaque changement de date : un client
 // ajouté ou révoqué par la ligne de commande vaut tout de suite, sans redémarrage.
 // Un fichier illisible (édité à la main, JSON cassé) ne casse pas l'API : le dernier
@@ -35,7 +43,8 @@ export const ROLES: readonly Role[] = ["viewer", "operator", "admin"];
 
 /**
  * Un client tel que l'API le montre (jamais son jeton). `approver` : il tranche les envois du poste ;
- * `pilot` : un agent (la vigie), à qui les gestes réservés à l'humain sont refusés.
+ * `pilot` : un agent (la vigie), à qui les gestes réservés à l'humain sont refusés. `spaces` : les
+ * espaces auxquels il est borné (leurs identifiants) — `repos` porte alors leurs dépôts du moment.
  */
 export type Client = {
   name: string;
@@ -44,7 +53,11 @@ export type Client = {
   createdAt: number;
   approver: boolean;
   pilot: boolean;
+  spaces?: string[];
 };
+
+/** Les dépôts d'une liste d'espaces (leurs identifiants), au moment de l'appel. */
+export type SpaceRepos = (spaces: readonly string[]) => string[];
 
 type StoredClient = Client & { tokenSha256: string };
 
@@ -82,6 +95,8 @@ export class ClientRegistry {
   #broken: string | null = null;
   /** La signature du fichier lu (date et taille) : relu dès qu'elle change. */
   #seen = "";
+  /** D'où viennent les dépôts d'un client borné à des espaces ; sans lui, un tel client ne voit rien. */
+  #spaceRepos: SpaceRepos = () => [];
 
   /**
    * `file` : le fichier des clients (`null` : seul le jeton historique) ; `legacyToken` : le
@@ -96,6 +111,29 @@ export class ClientRegistry {
     this.#legacy = legacyToken ? digest(legacyToken) : null;
     this.#log = log;
     this.#reload();
+  }
+
+  /** Branche la lecture des espaces (`SpaceDesk.reposOf`) : les dépôts d'un client borné à des espaces en viennent. */
+  useSpaces(resolve: SpaceRepos): void {
+    this.#spaceRepos = resolve;
+  }
+
+  /**
+   * Le client tel que le service le lit. Borné à des espaces, ses dépôts sont ceux de ces espaces
+   * MAINTENANT — quoi que dise son `repos` enregistré, jamais `"*"` — et il n'est jamais admin
+   * (un fichier édité à la main qui le dirait le rend operator).
+   */
+  #public(client: StoredClient): Client {
+    const { spaces } = client;
+    return {
+      name: client.name,
+      role: spaces !== undefined && client.role === "admin" ? "operator" : client.role,
+      repos: spaces === undefined ? client.repos : this.#spaceRepos(spaces),
+      createdAt: client.createdAt,
+      approver: client.approver,
+      pilot: client.pilot,
+      ...(spaces === undefined ? {} : { spaces }),
+    };
   }
 
   #reload(): void {
@@ -135,8 +173,16 @@ export class ClientRegistry {
               /^[0-9a-f]{64}$/.test(entry.tokenSha256) &&
               ROLES.includes(entry.role),
           )
-          // Un fichier d'avant les approbateurs (ou les pilotes) : aucun client ne l'est.
-          .map((entry) => ({ ...entry, approver: entry.approver === true, pilot: entry.pilot === true }))
+          // Un fichier d'avant les approbateurs (ou les pilotes) : aucun client ne l'est. `spaces` présent
+          // mais illisible : aucun espace (le client ne voit rien), jamais le repli sur `repos`.
+          .map(({ spaces, ...entry }) => ({
+            ...entry,
+            approver: entry.approver === true,
+            pilot: entry.pilot === true,
+            ...(spaces === undefined
+              ? {}
+              : { spaces: Array.isArray(spaces) ? spaces.filter((id) => typeof id === "string") : [] }),
+          }))
       : [];
   }
 
@@ -167,20 +213,23 @@ export class ClientRegistry {
     if (this.#legacy && timingSafeEqual(given, this.#legacy)) found = { ...LEGACY };
     for (const client of this.#clients) {
       // Pas de sortie anticipée : chaque empreinte est comparée.
-      if (timingSafeEqual(given, Buffer.from(client.tokenSha256, "hex")) && found === null) found = publicOf(client);
+      if (timingSafeEqual(given, Buffer.from(client.tokenSha256, "hex")) && found === null)
+        found = this.#public(client);
     }
     return found;
   }
 
   list(): Client[] {
     this.#reload();
-    return [...(this.#legacy ? [{ ...LEGACY }] : []), ...this.#clients.map(publicOf)];
+    return [...(this.#legacy ? [{ ...LEGACY }] : []), ...this.#clients.map((client) => this.#public(client))];
   }
 
   /**
    * Crée un client et rend son jeton, montré UNE fois (seule son empreinte est gardée).
    * `approver` : réservé à la ligne de commande du serveur, admin sur tous les dépôts.
    * `pilot` : un agent (la vigie), operator ou viewer, jamais approbateur.
+   * `spaces` : les identifiants des espaces auxquels il est borné, à la place d'une liste de dépôts
+   * (`repos` vaut alors `"*"` : les deux bornes ne se combinent pas) ; ni admin ni approbateur.
    */
   add(
     name: string,
@@ -188,6 +237,7 @@ export class ClientRegistry {
     repos: string[] | "*",
     approver = false,
     pilot = false,
+    spaces: string[] | null = null,
   ): { client: Client; token: string } {
     this.#reloadForWrite();
     if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(name))
@@ -201,19 +251,29 @@ export class ClientRegistry {
       throw new Error("un approbateur est admin sur tous les dépôts");
     if (pilot && (approver || role === "admin"))
       throw new Error("un client pilote n'est ni admin ni approbateur : c'est un agent, pas l'humain");
+    if (spaces !== null && (spaces.length === 0 || spaces.some((id) => !/^[\w.-]+$/.test(id))))
+      throw new Error("spaces : une liste d'identifiants d'espaces");
+    if (spaces !== null && repos !== "*")
+      throw new Error("spaces et repos : un client est borné à des espaces OU à des dépôts, pas aux deux");
+    if (spaces !== null && role === "admin")
+      throw new Error(
+        "un client borné à des espaces n'est ni admin ni approbateur : l'administration du serveur reste au propriétaire",
+      );
     const token = randomBytes(32).toString("hex");
     const client: StoredClient = {
       name,
       role,
-      repos,
+      // Borné à des espaces : aucun dépôt enregistré (une version d'avant les espaces ne lui montrerait rien).
+      repos: spaces === null ? repos : [],
       createdAt: Date.now(),
       approver,
       pilot,
+      ...(spaces === null ? {} : { spaces: [...new Set(spaces)] }),
       tokenSha256: digest(token).toString("hex"),
     };
     this.#clients = [...this.#clients, client];
     this.#write();
-    return { client: publicOf(client), token };
+    return { client: this.#public(client), token };
   }
 
   /** Révoque un client : son jeton cesse de valoir à la requête suivante. */
@@ -225,15 +285,4 @@ export class ClientRegistry {
     this.#write();
     return true;
   }
-}
-
-function publicOf(client: StoredClient): Client {
-  return {
-    name: client.name,
-    role: client.role,
-    repos: client.repos,
-    createdAt: client.createdAt,
-    approver: client.approver,
-    pilot: client.pilot,
-  };
 }

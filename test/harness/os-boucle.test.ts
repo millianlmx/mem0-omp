@@ -592,7 +592,7 @@ test("os-boucle/AC-8 : en pause, plus rien n'est admis ni lancé et un run vivan
   const api = await serve(world);
   try {
     assert.deepEqual((await api.call("GET", "/v1/pause", undefined, { token: api.viewer })).body, {
-      pause: { paused: false, by: null, at: null, reason: null, now: false },
+      pause: { paused: false, by: null, at: null, reason: null, now: false, spaces: [] },
     });
     const live = newRun(world, "En cours", ["src/api"]);
     await waitFor(

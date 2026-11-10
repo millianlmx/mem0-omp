@@ -39,6 +39,7 @@ import type { LabeledOutcome } from "./issues.ts";
 import { TERMINAL_STATES } from "./machine.ts";
 import type { NewRunInput } from "./orchestrator.ts";
 import { untrusted } from "./workstation-guards.ts";
+import type { SpaceHold } from "./spaces.ts";
 import { APPROVER_ONLY } from "./workstation.ts";
 
 /** Les cibles servies. */
@@ -291,12 +292,19 @@ export class Schedules {
   /**
    * Un tour : chaque planification due est traitée une fois et son échéance avance. Rend
    * la fin des lancements partis à ce tour (l'orchestrateur ne l'attend pas).
+   *
+   * `held` : ce qui retient l'espace de la cible (celui de son dépôt ; pour une automatisation, celui
+   * de son navigateur). En pause, la planification n'est pas traitée et reste due, comme sous la pause
+   * globale : la reprise la rattrape (`catchUpMin`) ou la compte manquée. Son budget du jour atteint,
+   * l'échéance est sautée comme sous le plafond du serveur (`daily_budget`, la phrase nomme l'espace).
    */
-  tick(now = Date.now()): Promise<void> {
+  tick(now = Date.now(), held: (target: ScheduleTarget) => SpaceHold | null = () => null): Promise<void> {
     const started: Promise<unknown>[] = [];
     for (const schedule of this.#ctx.store.dueSchedules(now)) {
       try {
-        const fired = this.#handle(schedule, now);
+        const hold = held(schedule.target);
+        if (hold?.cause === "paused") continue;
+        const fired = this.#handle(schedule, now, hold);
         if (fired) started.push(fired);
       } catch (err) {
         this.#ctx.log(`planification « ${schedule.name} » (${schedule.id}) : ${message(err)}`);
@@ -310,7 +318,7 @@ export class Schedules {
     await Promise.allSettled([...this.#inflight.values()]);
   }
 
-  #handle(schedule: ScheduleRow, now: number): Promise<unknown> | null {
+  #handle(schedule: ScheduleRow, now: number, hold: SpaceHold | null): Promise<unknown> | null {
     const { store, config } = this.#ctx;
     const tz = this.timeZone;
     const cron = parseCron(schedule.cron);
@@ -346,7 +354,7 @@ export class Schedules {
       return null;
     }
     const missed = late + recent - 1;
-    const blocked = this.#blocked(schedule);
+    const blocked = hold === null ? this.#blocked(schedule) : { status: "daily_budget" as const, detail: hold.text };
     if (blocked) {
       this.#record(schedule, { ...base, ...blocked, dueAt: last, missed });
       return null;

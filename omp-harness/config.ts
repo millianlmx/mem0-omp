@@ -142,8 +142,15 @@ export type ModelPolicy = {
  * Une cible des notifications sortantes : `ntfy` (corps texte, en-têtes `Title`, `Priority`,
  * `Tags`, `Click`) ou `webhook` (un POST JSON `{title, body, priority, tags, click, event,
  * runId, repo, at}`). `headers` : des en-têtes en plus (un jeton d'accès, par exemple).
+ * `spaces` : la cible est bornée à ces espaces (identifiants ou noms) — elle ne reçoit que les
+ * événements de leurs dépôts et son rapport du matin est le leur ; absent : elle reçoit tout.
  */
-export type NotifyTarget = { kind: "ntfy" | "webhook"; url: string; headers: Record<string, string> };
+export type NotifyTarget = {
+  kind: "ntfy" | "webhook";
+  url: string;
+  headers: Record<string, string>;
+  spaces?: string[];
+};
 
 /**
  * La copie hors machine de chaque instantané : `command` (argv, sans shell) où `{file}`
@@ -791,8 +798,11 @@ function merge<T>(base: T, over: unknown): T {
   return out as T;
 }
 
+/** Le préfixe de toute erreur de configuration. */
+const CONFIG_ERROR = "configuration du harness : ";
+
 function fail(message: string): never {
-  throw new Error(`configuration du harness : ${message}`);
+  throw new Error(`${CONFIG_ERROR}${message}`);
 }
 
 function checkModels(tier: string, list: unknown): ModelChoice[] {
@@ -840,6 +850,22 @@ function checkPolicy(where: string, policy: ModelPolicy): void {
           fail(`${where}.models.${tier} : ${provider} est hors de la liste blanche \`providers\``);
       }
     }
+  }
+}
+
+/**
+ * La même validation pour une politique reçue par l'API (celle d'un espace, spaces.ts) : son défaut
+ * en clair, ou `null` si elle est valide. Seules les trois clés d'une politique sont admises.
+ */
+export function policyDefect(where: string, policy: unknown): string | null {
+  if (!isRecord(policy)) return `${where} : { models?, providers?, privacy? }`;
+  const unknown = Object.keys(policy).filter((key) => key !== "models" && key !== "providers" && key !== "privacy");
+  if (unknown.length > 0) return `${where} : champ inconnu (${unknown.join(", ")})`;
+  try {
+    checkPolicy(where, policy);
+    return null;
+  } catch (err) {
+    return (err instanceof Error ? err.message : String(err)).replace(CONFIG_ERROR, "");
   }
 }
 
@@ -1070,11 +1096,26 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
       typeof target.url !== "string" ||
       !/^https?:\/\//.test(target.url)
     )
-      fail(`notify.targets[${index}] : { "kind": "ntfy" | "webhook", "url": "https://…", "headers"? }`);
+      fail(`notify.targets[${index}] : { "kind": "ntfy" | "webhook", "url": "https://…", "headers"?, "spaces"? }`);
     const headers = target.headers ?? {};
     if (!isRecord(headers) || Object.values(headers).some((value) => typeof value !== "string"))
       fail(`notify.targets[${index}].headers : { nom: valeur }`);
-    return { kind: target.kind, url: target.url, headers: headers as Record<string, string> };
+    // Les espaces vivent en base : un nom inconnu n'est pas une erreur de configuration (notify.ts le dit au
+    // démarrage), mais une liste vide ou mal formée en est une — elle ne dirait pas à qui la cible est bornée.
+    const { spaces } = target;
+    if (
+      spaces !== undefined &&
+      (!Array.isArray(spaces) ||
+        spaces.length === 0 ||
+        spaces.some((space) => typeof space !== "string" || space.trim() === ""))
+    )
+      fail(`notify.targets[${index}].spaces : liste non vide d'identifiants ou de noms d'espaces`);
+    return {
+      kind: target.kind,
+      url: target.url,
+      headers: headers as Record<string, string>,
+      ...(spaces === undefined ? {} : { spaces: (spaces as string[]).map((space) => space.trim()) }),
+    };
   });
   if (typeof config.memory.runnerMode !== "boolean") fail("memory.runnerMode : booléen");
   const { dreams } = config;
@@ -1298,6 +1339,45 @@ export function retryBackoff(config: HarnessConfig): number[] {
   const list = config.runner.retryBackoffSec;
   const last = list[list.length - 1] ?? 0;
   return Array.from({ length: config.runner.stepRetries }, (_, index) => list[index] ?? last);
+}
+
+/** Les portées mémoire du service : le savoir de la boîte et le poste — et, par espace, `corpo:<id>` et `workstation:<id>`. */
+export const RESERVED_SCOPES = ["corpo", "workstation"] as const;
+
+/** `scope` est réservée au service : `corpo`, `workstation`, ou l'une d'elles suivie de `:` (celle d'un espace). */
+export function reservedScope(scope: string): boolean {
+  return RESERVED_SCOPES.some((name) => scope === name || scope.startsWith(`${name}:`));
+}
+
+/** Un avertissement de configuration : sa phrase, et les dépôts qu'elle nomme (un client borné ne lit que ceux qu'il voit tous). */
+export type ConfigWarning = { repos: string[]; text: string };
+
+/**
+ * Ce qui, dans la configuration, mêle la mémoire de plusieurs dépôts : une portée (`scope`) que
+ * plusieurs dépôts partagent, ou réservée au service. Des AVERTISSEMENTS, jamais une erreur : une
+ * configuration qui démarrait hier démarre encore (journal du démarrage, `GET /v1/status`). Les
+ * portées non déclarées se lisent une fois calculées (orchestrator.ts `#prepareRepos`) ; vides, elles
+ * sont ignorées.
+ */
+export function configWarnings(config: HarnessConfig): ConfigWarning[] {
+  const warnings: ConfigWarning[] = [];
+  const byScope = new Map<string, string[]>();
+  for (const repo of config.repos) {
+    if (repo.scope === "") continue;
+    byScope.set(repo.scope, [...(byScope.get(repo.scope) ?? []), repo.name]);
+    if (reservedScope(repo.scope))
+      warnings.push({
+        repos: [repo.name],
+        text: `dépôt ${repo.name} : la portée mémoire « ${repo.scope} » est réservée au service (savoir de la boîte, poste) — ses runners liraient ce savoir : donne-lui une portée propre (\`repos[].scope\`)`,
+      });
+  }
+  for (const [scope, repos] of byScope)
+    if (repos.length > 1)
+      warnings.push({
+        repos,
+        text: `les dépôts ${repos.join(", ")} partagent la portée mémoire « ${scope} » : chacun lit et écrit les souvenirs des autres — donne à chacun sa portée (\`repos[].scope\`)`,
+      });
+  return warnings;
 }
 
 /** Les défauts d'un dépôt déclaré par son seul nom et son chemin. */

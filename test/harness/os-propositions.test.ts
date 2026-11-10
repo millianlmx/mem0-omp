@@ -511,6 +511,7 @@ test("os-propositions/AC-1 : chaque cause donne une proposition — id stable `<
         "action",
         "createdAt",
         "detail",
+        "facts",
         "id",
         "repo",
         "source",
@@ -532,14 +533,18 @@ test("os-propositions/AC-1 : chaque cause donne une proposition — id stable `<
       ["Le tri des exports est instable", "https://github.com/moi/demo/issues/7", proposalId("issue", "demo#7")],
     );
     const pr = only(proposals, "pr");
-    assert.equal(
-      pr.title,
-      "PR #12 : Pagination des exports",
-      "ni la PR touchée hier, ni celle d'un run vivant du harness",
-    );
+    // Le titre est celui de la PR, sans son numéro ni sa branche : ils sont dans `facts`.
+    assert.equal(pr.title, "Pagination des exports", "ni la PR touchée hier, ni celle d'un run vivant du harness");
     assert.equal(pr.detail, "Ouverte par bob, sans activité depuis 5 jours, branche feature/pagination");
+    assert.deepEqual(pr.facts, {
+      number: 12,
+      author: "bob",
+      branch: "feature/pagination",
+      idleDays: 5,
+      draft: false,
+    });
     const ci = only(proposals, "ci");
-    assert.equal(ci.title, "CI de main en échec");
+    assert.deepEqual([ci.title, ci.facts], ["CI en échec", { branch: "main", sha: SHA }]);
     assert.match(
       ci.detail,
       /^check — feat: export CSV \(c0ffee1\)$/,
@@ -548,9 +553,9 @@ test("os-propositions/AC-1 : chaque cause donne une proposition — id stable `<
     assert.equal(ci.url, "https://github.com/moi/demo/actions/runs/900");
     assert.equal(only(proposals, "vigie").title, "L'export plante sans lignes");
     assert.equal(only(proposals, "signal").title, "L'export plante sur les grands fichiers");
-    assert.equal(
-      only(proposals, "jira").title,
-      "PROJ-42 — Brancher l'export Jira",
+    assert.deepEqual(
+      [only(proposals, "jira").title, only(proposals, "jira").facts],
+      ["PROJ-42 — Brancher l'export Jira", { key: "PROJ-42" }],
       "l'item sans dépôt n'est pas proposé",
     );
     assert.equal(only(proposals, "autonomy").title, "Valider seul la revue des « bug » de demo");
@@ -878,7 +883,10 @@ test("os-propositions/AC-6 : une proposition sort dès que sa cause disparaît �
 
     // La PR d'un run du harness qui n'est plus vivant redevient proposable.
     store.updateRun("r-vivant", { state: "cancelled" });
-    assert.equal(only(desk9.list(owner), "pr").title, "PR #14 : Run vivant du harness");
+    assert.deepEqual(
+      [only(desk9.list(owner), "pr").title, only(desk9.list(owner), "pr").facts],
+      ["Run vivant du harness", { number: 14, author: "bob", branch: "harness/vivant", idleDays: 6, draft: false }],
+    );
     desk9.announce();
     assert.deepEqual(announced(), [6, 7], "une proposition de plus s'annonce aussi");
     (d.hub.pulls[2] as HubPull).updatedAt = ago(0);
@@ -1372,13 +1380,9 @@ test("os-propositions/AC-13 : la reprise d'une PR n'est proposée que pour une P
     assert.deepEqual(
       proposals.map((proposal) => [proposal.source, proposal.title, proposal.detail]),
       [
-        ["pr", `PR #29 : ${hostile}`, "Ouverte par carole, sans activité depuis 4 jours, branche fix/titre"],
-        [
-          "pr",
-          "PR #12 : Pagination des exports",
-          "Ouverte par bob, sans activité depuis 5 jours, branche feature/pagination",
-        ],
-        ["pr", "PR #30 : Du propriétaire", "Ouverte par moi, sans activité depuis 6 jours, branche moi/tri_1.2"],
+        ["pr", hostile, "Ouverte par carole, sans activité depuis 4 jours, branche fix/titre"],
+        ["pr", "Pagination des exports", "Ouverte par bob, sans activité depuis 5 jours, branche feature/pagination"],
+        ["pr", "Du propriétaire", "Ouverte par moi, sans activité depuis 6 jours, branche moi/tri_1.2"],
       ],
     );
 
@@ -1444,7 +1448,7 @@ test("os-propositions/AC-14 : l'exécution d'une PR (`pull_request*`, `workflow_
     const ci = only(await api.list(api.tokens.operator), "ci");
     assert.deepEqual(
       [ci.title, ci.url, ci.id],
-      ["CI de main en échec", "https://github.com/moi/demo/actions/runs/900", proposalId("ci", `demo\u0000${SHA}`)],
+      ["CI en échec", "https://github.com/moi/demo/actions/runs/900", proposalId("ci", `demo\u0000${SHA}`)],
     );
 
     const run = createdRun(d.world, await api.call("POST", `/v1/proposals/${ci.id}/accept`, api.tokens.operator));

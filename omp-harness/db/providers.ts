@@ -85,4 +85,9 @@ export class ProviderStore extends ProjectStore {
       by,
     );
   }
+
+  /** Retire un réglage (celui d'un espace retiré : sa pause, sa dernière passe de savoir). */
+  deleteSetting(key: string): void {
+    this.execute("DELETE FROM settings WHERE key = ?", key);
+  }
 }

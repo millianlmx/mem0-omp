@@ -138,6 +138,17 @@ function sqlValue(value: unknown): SqlValue {
 /** Les textes du poste qu'une issue ne doit jamais porter : au moins ce nombre de caractères. */
 const POSTE_TEXT_MIN = 8;
 
+/** Garde dans `texts` chaque chaîne de `value` (tableaux et objets parcourus) d'au moins POSTE_TEXT_MIN caractères. */
+function keepTexts(texts: Set<string>, value: unknown): void {
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (text.length >= POSTE_TEXT_MIN) texts.add(text);
+    return;
+  }
+  if (Array.isArray(value)) for (const item of value) keepTexts(texts, item);
+  else if (value !== null && typeof value === "object") for (const item of Object.values(value)) keepTexts(texts, item);
+}
+
 export class VigieStore extends ObservabilityStore {
   createVigieIncident(input: {
     fingerprint: string;
@@ -266,20 +277,13 @@ export class VigieStore extends ObservabilityStore {
   /**
    * Les textes du poste de travail gardés depuis `since` (ms) : adresses et titres des
    * pages observées et de leurs cibles, meetings et leurs segments, paramètres, résultats
-   * et erreurs des actions, profil et identités de l'utilisateur, écritures Jira et plans du
-   * jour du connecteur Atlassian. Tout ce qui fait au moins POSTE_TEXT_MIN caractères.
+   * et erreurs des actions, profil et identités de l'utilisateur (ceux du poste et ceux de chaque
+   * espace), écritures Jira et plans du jour du connecteur Atlassian, toutes connexions confondues.
+   * Tout ce qui fait au moins POSTE_TEXT_MIN caractères.
    */
   workstationTexts(since: number): string[] {
     const texts = new Set<string>();
-    const add = (value: unknown): void => {
-      if (typeof value === "string") {
-        const text = value.trim();
-        if (text.length >= POSTE_TEXT_MIN) texts.add(text);
-        return;
-      }
-      if (Array.isArray(value)) for (const item of value) add(item);
-      else if (value !== null && typeof value === "object") for (const item of Object.values(value)) add(item);
-    };
+    const add = (value: unknown): void => keepTexts(texts, value);
     const parsed = (value: unknown): unknown => {
       if (typeof value !== "string") return value;
       try {
@@ -306,6 +310,14 @@ export class VigieStore extends ObservabilityStore {
       add(parsed(row.profile));
     const settings = this.selectOne("SELECT value FROM settings WHERE key = 'workstation'");
     if (settings) add((parsed(settings.value) as { selfIdentities?: unknown } | null)?.selfIdentities);
+    // Le profil et les identités de chaque espace (multi-client) : la dernière version du profil de chacun.
+    for (const row of this.selectAll(
+      `SELECT profile FROM workstation_space_profiles AS latest
+       WHERE version = (SELECT MAX(version) FROM workstation_space_profiles WHERE space_id = latest.space_id)`,
+    ))
+      add(parsed(row.profile));
+    for (const row of this.selectAll("SELECT identities FROM spaces WHERE identities IS NOT NULL"))
+      add(parsed(row.identities));
     // Le connecteur Atlassian : textes des écritures Jira, résumés et éléments des plans du jour
     // (sans le dépôt ni la source d'un élément : ce sont des mots de l'usine, pas de la boîte).
     for (const row of this.selectAll("SELECT body, why FROM atlassian_writes WHERE created_at >= ?", since))
@@ -320,6 +332,54 @@ export class VigieStore extends ObservabilityStore {
             add([title, why, next, key, url, request]);
           }
     }
+    return [...texts];
+  }
+
+  /**
+   * Ce qu'une issue publiée sur le dépôt `target` ne doit pas porter de ce qui n'est PAS à son espace : les
+   * titres et les demandes des runs, et le texte des Demandes.
+   * - Cible dans un espace : tout le reste — les autres espaces ET le hors-espace (le tri d'un incident
+   *   d'espace lit aussi les événements des dépôts hors espace).
+   * - Cible hors espace (`null` compris) : tous les espaces (ceux de l'espace, ou d'un de ses dépôts) ;
+   *   le hors-espace est le sien.
+   * Rien sur un serveur sans espace.
+   */
+  foreignSpaceTexts(target: string | null): string[] {
+    const spaces = this.selectAll("SELECT id, repos FROM spaces").map((row) => ({
+      id: str(row, "id"),
+      repos: json<string[]>(row, "repos", []),
+    }));
+    if (spaces.length === 0) return [];
+    const texts = new Set<string>();
+    const own = target === null ? undefined : spaces.find((space) => space.repos.includes(target));
+    if (own !== undefined) {
+      const marks = own.repos.map(() => "?").join(", ");
+      for (const row of this.selectAll(`SELECT title, request FROM runs WHERE repo NOT IN (${marks})`, ...own.repos))
+        keepTexts(texts, [row.title, row.request]);
+      // Une Demande posée dans son espace, ou sur l'un de ses dépôts, est la sienne ; toute autre ne l'est pas.
+      for (const row of this.selectAll(
+        `SELECT text FROM intakes WHERE space_id IS NOT ? AND repo NOT IN (${marks})`,
+        own.id,
+        ...own.repos,
+      ))
+        keepTexts(texts, row.text);
+      return [...texts];
+    }
+    const repos = spaces.flatMap((space) => space.repos);
+    const repoMarks = repos.map(() => "?").join(", ");
+    if (repos.length > 0)
+      for (const row of this.selectAll(`SELECT title, request FROM runs WHERE repo IN (${repoMarks})`, ...repos))
+        keepTexts(texts, [row.title, row.request]);
+    const foreign = [
+      `space_id IN (${spaces.map(() => "?").join(", ")})`,
+      ...(repos.length > 0 ? [`repo IN (${repoMarks})`] : []),
+    ];
+    for (const row of this.selectAll(
+      `SELECT text FROM intakes WHERE ${foreign.join(" OR ")}`,
+      ...spaces.map((space) => space.id),
+      ...repos,
+    ))
+      keepTexts(texts, row.text);
     return [...texts];
   }
 }

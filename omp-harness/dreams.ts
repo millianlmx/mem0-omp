@@ -24,6 +24,9 @@ import { dreamPrompt } from "./prompts.ts";
 import type { HostToolResult } from "./rpc.ts";
 import { hostToolsFor, runnerUnit } from "./runner.ts";
 import { RunnerSession } from "./runner-session.ts";
+import { REVE_STEP } from "./space-usage.ts";
+import { NO_SPACE_HOLDS } from "./spaces.ts";
+import type { SpaceHolds } from "./spaces.ts";
 
 export type DreamState = "dreaming" | "done" | "skipped" | "failed";
 
@@ -166,12 +169,16 @@ export class Dreamer {
     return this.#live.has(repo);
   }
 
-  /** Les dépôts dont l'examen est dû et qui sont au repos : un rêve chacun, si un slot runner est libre. */
-  tick(now = Date.now()): void {
+  /**
+   * Les dépôts dont l'examen est dû et qui sont au repos : un rêve chacun, si un slot runner est libre.
+   * `holds` : un dépôt dont l'espace est en pause, ou au budget du jour atteint, ne rêve pas (un rêve
+   * demandé reste demandé) ; les autres rêvent.
+   */
+  tick(now = Date.now(), holds: SpaceHolds = NO_SPACE_HOLDS): void {
     const { config, store, scheduler, monitor } = this.#ctx;
     if (config.oracle === null) return;
     for (const repo of config.repos) {
-      if (this.#live.has(repo.name)) continue;
+      if (this.#live.has(repo.name) || holds.ofRepo(repo.name) !== null) continue;
       const requested = this.#requested.has(repo.name);
       if (!requested) {
         if (config.dreams.checkMinutes === null) continue;
@@ -246,7 +253,10 @@ export class Dreamer {
     worktree: string,
     dossier: DreamDossier,
   ): Promise<ConsolidationReport> {
-    const { git, config } = this.#ctx;
+    const { git, config, store, monitor } = this.#ctx;
+    // Le rêve d'un dépôt d'un espace est imputé à ce dépôt, donc à son espace (facturation) ; hors espace, rien
+    // n'est relevé, comme avant.
+    const billed = store.listSpaces().some((space) => space.repos.includes(repo.name));
     await git.addWorktree(repo.path, worktree, null, await git.revParse(repo.path, repo.mainBranch));
     let report: ConsolidationReport | null = null;
     const session = new RunnerSession(
@@ -259,6 +269,12 @@ export class Dreamer {
           return result.answer;
         },
         event: (type, payload) => this.#ctx.event(type, null, { dreamId: row.id, ...payload }, repo.name),
+        ...(billed
+          ? {
+              frame: (frame: Record<string, unknown>) =>
+                monitor.recordFrame(`dream:${row.id}`, REVE_STEP, frame, repo.name),
+            }
+          : {}),
       },
     );
     live.session = session;

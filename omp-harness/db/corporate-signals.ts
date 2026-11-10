@@ -41,9 +41,13 @@ export type SignalRow = {
   runId: string | null;
   confirmedBy: string | null;
   confirmedAt: number | null;
+  /** L'espace d'où vient le signalement (celui du job du poste qui l'a remis) ; `null` : hors espace. */
+  space: string | null;
 };
 
-export type NewSignal = Pick<SignalRow, "id" | "channel" | "threadRef" | "url" | "personRef" | "excerpt">;
+export type NewSignal = Pick<SignalRow, "id" | "channel" | "threadRef" | "url" | "personRef" | "excerpt"> & {
+  space?: string | null;
+};
 
 export type SignalPatch = Partial<Omit<SignalRow, "id" | "createdAt" | "updatedAt" | "channel" | "threadRef">>;
 
@@ -68,6 +72,7 @@ const COLUMNS: Record<keyof SignalPatch, string> = {
   runId: "run_id",
   confirmedBy: "confirmed_by",
   confirmedAt: "confirmed_at",
+  space: "space_id",
 };
 
 function signalOf(row: Row): SignalRow {
@@ -97,6 +102,7 @@ function signalOf(row: Row): SignalRow {
     runId: strOrNull(row, "run_id"),
     confirmedBy: strOrNull(row, "confirmed_by"),
     confirmedAt: numOrNull(row, "confirmed_at"),
+    space: strOrNull(row, "space_id"),
   };
 }
 
@@ -105,8 +111,8 @@ export class CorporateSignalStore extends VigieStore {
   insertSignal(input: NewSignal): SignalRow {
     const at = this.now();
     this.execute(
-      `INSERT INTO corporate_signals (id, created_at, updated_at, channel, thread_ref, url, person_ref, excerpt, state)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'received')`,
+      `INSERT INTO corporate_signals (id, created_at, updated_at, channel, thread_ref, url, person_ref, excerpt, state, space_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'received', ?)`,
       input.id,
       at,
       at,
@@ -115,6 +121,7 @@ export class CorporateSignalStore extends VigieStore {
       input.url,
       input.personRef,
       input.excerpt,
+      input.space ?? null,
     );
     return this.getSignal(input.id) as SignalRow;
   }
@@ -133,13 +140,17 @@ export class CorporateSignalStore extends VigieStore {
     return row ? signalOf(row) : null;
   }
 
-  /** Les signaux des états donnés (tous si la liste est vide), récents d'abord. */
-  listSignals(options: { states?: readonly SignalState[]; limit?: number } = {}): SignalRow[] {
+  /** Les signaux des états donnés (tous si la liste est vide), récents d'abord ; `space` : ceux venus de cet espace seulement. */
+  listSignals(options: { states?: readonly SignalState[]; limit?: number; space?: string } = {}): SignalRow[] {
     const states = options.states ?? [];
-    const where = states.length > 0 ? `WHERE state IN (${states.map(() => "?").join(", ")})` : "";
+    const clauses = [
+      ...(states.length > 0 ? [`state IN (${states.map(() => "?").join(", ")})`] : []),
+      ...(options.space !== undefined ? ["space_id = ?"] : []),
+    ];
     return this.selectAll(
-      `SELECT * FROM corporate_signals ${where} ORDER BY created_at DESC, id DESC LIMIT ?`,
+      `SELECT * FROM corporate_signals ${clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : ""} ORDER BY created_at DESC, id DESC LIMIT ?`,
       ...states,
+      ...(options.space !== undefined ? [options.space] : []),
       options.limit ?? 50,
     ).map(signalOf);
   }

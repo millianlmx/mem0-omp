@@ -141,6 +141,19 @@ export function runnerMode(env: Record<string, string | undefined> = process.env
   return env.MEM0_MODE === "runner";
 }
 
+// MEM0_NO_GLOBAL=1 : la session tourne POUR un espace du harness (un client) — un run
+// d'un de ses dépôts, un job de son poste. La portée `_global` est partagée entre tous
+// les projets, donc entre tous les clients : elle lui est fermée, en lecture (rappel,
+// mem0_search) comme en écriture (mem0_add). Sans la variable : inchangé. Lu à l'APPEL.
+export function globalScopeAllowed(env: Record<string, string | undefined> = process.env): boolean {
+  return env.MEM0_NO_GLOBAL !== "1";
+}
+
+export const GLOBAL_SCOPE_REFUSED =
+  "[mem0] Portée « global » refusée : cette session travaille pour un espace (un client), et la " +
+  "portée globale est partagée entre tous les clients. Rien n'a été lu ni écrit. Reste dans la " +
+  'portée du projet (scope: "project").';
+
 // MEM0_NUDGE=0 coupe la relance d'écriture de fin de session seule — pour les
 // agents pilotés qui gardent le reste du dispositif : sans elle, chaque étape
 // paierait un tour de plus. MEM0_MODE=runner la coupe aussi. Lu à l'APPEL.

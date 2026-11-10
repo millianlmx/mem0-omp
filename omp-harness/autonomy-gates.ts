@@ -292,10 +292,11 @@ export class AutonomyGates {
   /**
    * Un tour : chaque run dont l'attente est retenue est réévalué, puis validé par le geste de l'humain,
    * ou rendu à l'humain (`defer`, l'événement retenu part). Une exception sur un run ne touche pas les autres.
+   * `held` : les dépôts dont l'espace est en pause — leurs attentes retenues restent ouvertes jusqu'à la reprise.
    */
-  async tick(): Promise<void> {
+  async tick(held?: (repo: string) => boolean): Promise<void> {
     for (const run of this.#ctx.store.listRuns({ state: ["awaiting_human"] })) {
-      if (this.#holdOpen(run.id) === null) continue;
+      if (held?.(run.repo) || this.#holdOpen(run.id) === null) continue;
       try {
         await this.#settle(run);
       } catch (err: unknown) {

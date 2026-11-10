@@ -26,6 +26,8 @@ export type AtlassianToolName =
 export const TOOL_TEXT_MAX = 12_000;
 /** Une clé de ticket Jira. */
 export const JIRA_KEY = /^[A-Z][A-Z0-9_]+-\d+$/;
+/** Une clé de projet Jira : ce qui précède le numéro d'un ticket. */
+export const JIRA_PROJECT = /^[A-Z][A-Z0-9_]+$/;
 export const NOT_CONNECTED = "Atlassian n'est pas connecté : l'approbateur le branche depuis l'app (Poste › Atlassian)";
 export const WRITES_RESERVED = "écriture Jira réservée aux jobs du poste";
 /** Les champs d'un ticket rendus par `jira_search`. */
@@ -182,10 +184,65 @@ export type AtlassianToolHost = {
   record(input: Omit<NewAtlassianWrite, "id">): AtlassianWrite;
   /** Le commentaire déjà proposé sur ce ticket avec ce texte. */
   proposed(issueKey: string, body: string): AtlassianWrite | null;
+  /** Les projets Jira auxquels les écritures et les lectures de tickets sont bornées (ceux de l'espace) ; `null` : aucune borne. */
+  projects(): readonly string[] | null;
 };
 
 /** Un argument refusé : son message va tel quel à l'agent. */
 class ToolInputError extends Error {}
+
+/**
+ * Le refus d'une écriture (ou d'une `lecture`) du ticket `key` quand il n'est pas d'un projet permis
+ * (`projects` : les projets Jira de l'espace de la connexion) ; `null` : permise (aucune borne, ou ticket
+ * d'un de ces projets).
+ */
+export function outsideProjects(
+  projects: readonly string[] | null,
+  key: string,
+  what: "écriture" | "lecture" = "écriture",
+): string | null {
+  if (projects === null || projects.includes(key.slice(0, key.lastIndexOf("-")))) return null;
+  return `ticket ${key} hors des projets Jira de l'espace (${projects.join(", ") || "aucun"}) : ${what} refusée`;
+}
+
+const ORDER_BY = /order\s+by(?![A-Za-z0-9_])/iy;
+
+/**
+ * La JQL d'une recherche bornée aux projets Jira de l'espace : `project in ("A", "B") AND (<filtre>)`,
+ * son tri (`ORDER BY …`) gardé en fin. Sans borne (`null`) : la requête telle quelle. Le filtre est
+ * refusé s'il pouvait sortir des parenthèses qui le bornent — guillemet non fermé, parenthèse fermée
+ * avant d'être ouverte ou laissée ouverte — ; toute recherche l'est quand l'espace n'a aucun projet lisible.
+ */
+function boundJql(jql: string, projects: readonly string[] | null): string {
+  if (projects === null) return jql;
+  if (projects.length === 0)
+    throw new ToolInputError("aucun projet Jira lisible n'est déclaré pour cet espace : recherche refusée");
+  let quote: string | null = null;
+  let depth = 0;
+  let order = -1;
+  for (let index = 0; index < jql.length; index++) {
+    const char = jql[index];
+    if (quote !== null) {
+      if (char === "\\") index++;
+      else if (char === quote) quote = null;
+    } else if (char === '"' || char === "'") quote = char;
+    else if (char === "(") depth++;
+    else if (char === ")") depth--;
+    else if (order < 0 && depth === 0 && (index === 0 || /[\s)]/.test(jql[index - 1] ?? ""))) {
+      ORDER_BY.lastIndex = index;
+      if (ORDER_BY.test(jql)) order = index;
+    }
+    if (depth < 0) break;
+  }
+  if (quote !== null || depth !== 0)
+    throw new ToolInputError(
+      "jql : guillemets ou parenthèses déséquilibrés — la recherche d'un espace reste bornée à ses projets",
+    );
+  const scope = `project in (${projects.map((key) => `"${key}"`).join(", ")})`;
+  const filter = (order < 0 ? jql : jql.slice(0, order)).trim();
+  const sort = order < 0 ? "" : ` ${jql.slice(order).trim()}`;
+  return `${scope}${filter === "" ? "" : ` AND (${filter})`}${sort}`;
+}
 
 function textArg(args: Record<string, unknown>, key: string, max: number, min = 1): string {
   const value = args[key];
@@ -267,15 +324,20 @@ export async function runAtlassianTool(
         return readResult(name, await host.call("search", { query, limit }, signal));
       }
       case "jira_search": {
-        const jql = textArg(args, "jql", 2000);
+        // Dans un espace qui déclare ses projets Jira, la recherche n'en sort pas (`boundJql`).
+        const jql = boundJql(textArg(args, "jql", 2000), host.projects());
         const maxResults = intArg(args, "maxResults", 1, 50, 20);
         return readResult(
           name,
           await host.call("searchJiraIssuesUsingJql", { jql, maxResults, fields: SEARCH_FIELDS }, signal),
         );
       }
-      case "jira_issue":
-        return readResult(name, await host.call("getJiraIssue", { issueIdOrKey: keyArg(args) }, signal));
+      case "jira_issue": {
+        const key = keyArg(args);
+        const outside = outsideProjects(host.projects(), key, "lecture");
+        if (outside !== null) return { text: outside, isError: true };
+        return readResult(name, await host.call("getJiraIssue", { issueIdOrKey: key }, signal));
+      }
       case "confluence_search": {
         const cql = textArg(args, "cql", 2000);
         const limit = intArg(args, "limit", 1, 25, 10);
@@ -325,6 +387,8 @@ async function transition(
   const key = keyArg(args);
   const name = textArg(args, "transition", 100);
   const why = textArg(args, "why", 500);
+  const outside = outsideProjects(host.projects(), key);
+  if (outside !== null) return { text: outside, isError: true };
   // La garde : le ticket doit être assigné à l'utilisateur connecté, prouvé par Jira lui-même.
   const jql = `key = "${key}" AND assignee = currentUser()`;
   const mine = await host.call("searchJiraIssuesUsingJql", { jql, maxResults: 1, fields: ["summary"] }, signal);
@@ -359,6 +423,8 @@ function proposeComment(host: AtlassianToolHost, args: Record<string, unknown>, 
   const key = keyArg(args);
   const body = textArg(args, "body", 4000);
   const why = textArg(args, "why", 500);
+  const outside = outsideProjects(host.projects(), key);
+  if (outside !== null) return { text: outside, isError: true };
   const write =
     host.proposed(key, body) ??
     host.record({ kind: "comment", issueKey: key, body, why, state: "proposed", by, error: null });

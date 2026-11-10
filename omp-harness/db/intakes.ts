@@ -51,6 +51,8 @@ export type IntakeRow = {
   reason: string | null;
   /** Le contexte de page donné à la pose (`null` : aucun) ; une donnée, jamais une consigne. */
   context: IntakeContext | null;
+  /** L'espace où la demande a été posée (`?space=`, `body.space`) ; `null` : hors espace. */
+  spaceId: string | null;
   createdBy: string | null;
   createdAt: number;
   updatedAt: number;
@@ -65,7 +67,14 @@ export type IntakePatch = Partial<
 
 export type NewIntake = Pick<IntakeRow, "id" | "text" | "source" | "repo" | "requestedRepo" | "scope" | "createdBy"> & {
   context?: IntakeContext | null;
+  spaceId?: string | null;
 };
+
+/**
+ * Le lecteur de `listIntakes`. `space` : la lecture est bornée à un espace (`?space=`) — les demandes
+ * sans dépôt y sont celles de CET espace : toutes pour `everyone` (le propriétaire), sinon les siennes.
+ */
+export type IntakeViewer = { repos: RepoFilter; name: string; space?: { id: string; everyone: boolean } };
 
 const COLUMNS: Record<keyof IntakePatch, string> = {
   repo: "repo",
@@ -98,6 +107,7 @@ function intakeOf(row: Row): IntakeRow {
     targetId: strOrNull(row, "target_id"),
     reason: strOrNull(row, "reason"),
     context: json<IntakeContext | null>(row, "context", null),
+    spaceId: strOrNull(row, "space_id"),
     createdBy: strOrNull(row, "created_by"),
     createdAt: num(row, "created_at"),
     updatedAt: num(row, "updated_at"),
@@ -108,8 +118,8 @@ export class IntakeStore extends CorporateSignalStore {
   createIntake(input: NewIntake): IntakeRow {
     const at = this.now();
     this.execute(
-      `INSERT INTO intakes (id, text, source, repo, requested_repo, scope, state, context, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'classifying', ?, ?, ?, ?)`,
+      `INSERT INTO intakes (id, text, source, repo, requested_repo, scope, state, context, space_id, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'classifying', ?, ?, ?, ?, ?)`,
       input.id,
       input.text,
       input.source,
@@ -117,6 +127,7 @@ export class IntakeStore extends CorporateSignalStore {
       input.requestedRepo,
       JSON.stringify(input.scope),
       input.context ? JSON.stringify(input.context) : null,
+      input.spaceId ?? null,
       input.createdBy,
       at,
       at,
@@ -131,11 +142,10 @@ export class IntakeStore extends CorporateSignalStore {
 
   /**
    * Les demandes d'un lecteur, des plus récentes aux plus anciennes. `viewer` applique la
-   * visibilité REST : les demandes de ses dépôts, plus celles sans dépôt qu'il a posées.
+   * visibilité REST : les demandes de ses dépôts, plus celles sans dépôt qu'il a posées (dans un
+   * espace : celles de l'espace, `IntakeViewer`).
    */
-  listIntakes(
-    options: { states?: readonly IntakeState[]; viewer?: { repos: RepoFilter; name: string }; limit?: number } = {},
-  ): IntakeRow[] {
+  listIntakes(options: { states?: readonly IntakeState[]; viewer?: IntakeViewer; limit?: number } = {}): IntakeRow[] {
     const where: string[] = [];
     const params: SqlValue[] = [];
     if (options.states && options.states.length > 0) {
@@ -144,10 +154,15 @@ export class IntakeStore extends CorporateSignalStore {
     }
     const { viewer } = options;
     if (viewer && viewer.repos !== null) {
-      const own = "(repo = '' AND created_by = ?)";
+      const { space } = viewer;
+      const own =
+        space === undefined
+          ? "(repo = '' AND created_by = ?)"
+          : `(repo = '' AND space_id = ?${space.everyone ? "" : " AND created_by = ?"})`;
       if (viewer.repos.length === 0) where.push(own);
       else where.push(`(repo IN (${viewer.repos.map(() => "?").join(", ")}) OR ${own})`);
-      params.push(...viewer.repos, viewer.name);
+      params.push(...viewer.repos, ...(space === undefined ? [] : [space.id]));
+      if (space === undefined || !space.everyone) params.push(viewer.name);
     }
     const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
     return this.selectAll(

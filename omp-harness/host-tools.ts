@@ -92,9 +92,13 @@ export async function runHostTool(
     return state.qa.tool(name, args);
   }
   // Les lectures Atlassian : seulement pour un dépôt qui le déclare ; une écriture est refusée par le desk.
+  // Le run lit la connexion de l'ESPACE de son dépôt (son site, son savoir `corpo:<espace>`) : un espace
+  // sans connexion n'a aucun de ces outils, jamais ceux de la connexion par défaut.
   if (isAtlassianTool(name)) {
     if (ctx.repo(run.repo).atlassian !== true) return { text: `outil inconnu : ${name}`, isError: true };
-    return hooks.atlassian.runTool(name, args, { by: `run:${run.id}`, writes: false }, signal);
+    const desk = hooks.atlassian.forRepo(run.repo);
+    if (desk.space !== null && !desk.connected()) return { text: `outil inconnu : ${name}`, isError: true };
+    return desk.runTool(name, args, { by: `run:${run.id}`, writes: false }, signal);
   }
   switch (name) {
     case "progress": {
