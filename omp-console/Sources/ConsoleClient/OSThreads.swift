@@ -242,7 +242,8 @@ public enum OSThreads {
             else if first.createdBy?.hasPrefix("pilote") == true { origin = .factory }
             else { origin = .person(intake?.by ?? first.createdBy) }
             let title = intake?.plan?.title ?? project.map { clean($0.title).title } ?? cleaned[first.id]?.title ?? first.title
-            let phases = runs.map { phase(of: $0, inbox: inbox) }
+            // `Self.` : la constante `phase` déclarée juste après masque la fonction pour un compilateur plus ancien.
+            let phases = runs.map { Self.phase(of: $0, inbox: inbox) }
             let phase: OSPhase
             if let live = phases.filter(\.isLive).min() {
                 phase = live
