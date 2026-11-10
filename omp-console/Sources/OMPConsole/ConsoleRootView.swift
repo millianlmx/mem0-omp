@@ -1,6 +1,11 @@
-// Racine de la fenêtre. Par défaut elle rend l'« OS agentique » (`OSRootView` : le Radar,
-// les fils, « Maintenant ») ; Présentation ▸ « Interface classique » (⌘⇧O, préférence
-// `ui.os`) rend la coque CLASSIQUE décrite ici : `NavigationSplitView` coordonne la
+// Racine de la fenêtre. Elle rend l'« OS agentique » (`OSRootView` : le Radar, les fils,
+// « Maintenant », et les écrans classiques encore nécessaires en « Outils »). Une SEULE
+// chose change d'interface : le choix explicite Présentation ▸ « Interface classique »
+// (⌘⇧O, préférence `ui.os`), qui rend la coque CLASSIQUE décrite ici — et qui porte, au
+// pied de sa barre latérale, « Nouvelle interface » pour en revenir. Ni un lien
+// `ompconsole://…`, ni une notification, ni la palette, ni ⌘1…⌘7 n'écrivent cette
+// préférence : dans la nouvelle interface ils ouvrent l'écran équivalent (`OSRouter`).
+// La coque classique : `NavigationSplitView` coordonne la
 // sélection de la `List` de la colonne latérale avec le panneau de détail (D4) — c'est
 // le composant système qui porte déjà le bouton de bascule de la barre latérale et qui
 // y pose le verre (Liquid Glass, aucun fond maison).
@@ -150,35 +155,38 @@ struct ConsoleRootView: View {
         }
     }
 
-    /// Va à une section. Dans l'« OS agentique », ce qui attend l'humain (« À traiter »,
-    /// Poste) ouvre le tri et une feature ouvre son fil (`drafts.openedRun`) ; une section
-    /// sans équivalent ramène l'interface classique.
+    /// Va à une section. Dans la nouvelle interface, l'écran équivalent s'ouvre SANS
+    /// changer d'interface (`OSRouter`) : ce qui attend l'humain ouvre le tri, une feature
+    /// son fil (`drafts.openedRun`), la Mémoire, le Terminal, les Fichiers, le Poste et
+    /// Système un outil du détail.
     private func go(_ section: ConsoleSection) {
         guard osMode else {
             model.select(section)
             return
         }
-        switch section {
-        case .inbox, .workstation:
-            osTriage = true
-        case .runs:
-            model.select(section)
-        default:
-            osMode = false
-            model.select(section)
-        }
+        let route = OSRouter.route(
+            section: section, page: drafts.systemPage, opensRun: drafts.openedRun != nil,
+            pendingAtPoste: workstation.pendingCount > 0
+        )
+        if section == .system { drafts.systemPage = nil }
+        if let route { model.osRoute = route }
     }
 
     /// L'« OS agentique » est l'interface par défaut ; Présentation ▸ « Interface classique »
-    /// (⌘⇧O) rend la coque à barre latérale.
+    /// (⌘⇧O) rend la coque à barre latérale. LUE ici, écrite seulement par ce menu et par
+    /// « Nouvelle interface » au pied de la barre latérale classique.
     @AppStorage("ui.os") private var osMode = true
-    /// Un lien ou une notification demande ce qui attend l'humain : l'« OS agentique » ouvre le tri.
-    @State private var osTriage = false
 
     var body: some View {
         Group {
             if osMode {
-                OSRootView(server: server, drafts: drafts, triageRequested: $osTriage) { model.select($0) }
+                OSRootView(server: server, drafts: drafts, console: model) { tool in
+                    AnyView(OSToolDetail(
+                        tool: tool, server: server, drafts: drafts, filesModel: filesModel, memoryModel: memoryModel,
+                        memoryGraph: memoryGraph, podmanCleanup: podmanCleanup, terminalModel: terminalModel,
+                        projectChooser: projectChooser
+                    ))
+                }
             } else {
                 classic
             }
@@ -215,7 +223,9 @@ struct ConsoleRootView: View {
             session: { [server] request in AnyView(HarnessSessionSheet(server: server, request: request)) },
             select: { [model] in model.select($0) }
         ))
-        .frame(minWidth: 760, minHeight: 480)
+        // La fenêtre la plus étroite : la barre latérale et le détail de la nouvelle
+        // interface à leur minimum (`OSShellLayout`).
+        .frame(minWidth: OSShellLayout.windowMin, minHeight: 480)
     }
 
     private var classic: some View {
@@ -234,6 +244,16 @@ struct ConsoleRootView: View {
             .navigationSplitViewColumnWidth(min: 180, ideal: 220)
             .safeAreaInset(edge: .bottom, alignment: .leading) {
                 VStack(alignment: .leading, spacing: 6) {
+                    // Le retour, visible : l'interface classique n'est qu'un choix du menu Présentation.
+                    Button {
+                        osMode = true
+                    } label: {
+                        Label(OSShellText.newInterface, systemImage: "sparkles")
+                    }
+                    .buttonStyle(.link)
+                    .help(OSShellText.backToNew)
+                    .padding(.leading, 14)
+                    .accessibilityIdentifier("classic.newInterface")
                     ServerConnectionLine(server: server) { drafts.serverSheetShown = true }
                         .padding(.leading, 14)
                     ComponentBadge(status: components.presence.status, open: reopenSetup)

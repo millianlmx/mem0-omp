@@ -126,9 +126,8 @@ extension OSLevel {
     public var title: String {
         switch self {
         case .summary: OSText.levelSummary
-        case .story: OSText.levelStory
         case .proofs: OSText.levelProofs
-        case .raw: OSText.levelRaw
+        case .journal: OSText.levelJournal
         }
     }
 }

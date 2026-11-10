@@ -1,13 +1,15 @@
-// L'« OS agentique » sur le Mac : la COQUE de l'interface par défaut. Le Radar en haut ;
-// les fils à gauche (avec « Demander à l'OS… » en tête, l'espace et le lieu, les entrées
-// fixes) ; au centre « Maintenant », les Propositions, le Savoir, les Automatismes, la
-// page d'un espace ou le fil choisi ; « Comprendre » en inspecteur à droite ; le Tri des
-// décisions en feuille (⌘T). Les écrans eux-mêmes sont partagés avec l'iPhone/iPad
-// (`ConsoleUI/OS/`) : ce fichier ne porte que ce qui est propre au Mac — colonnes,
-// inspecteur, barre d'outils, raccourcis (⌘L composeur, ⌘T tri, ⌘⇧P pause, ⌥⌘I
-// inspecteur), presse-papiers, direct d'une session, variables de recette. L'interface
-// classique reste à un geste : Présentation ▸ « Interface classique » (⌘⇧O), préférence
-// `ui.os`.
+// L'« OS agentique » sur le Mac : la COQUE de l'interface. Le Radar en haut ; les fils à
+// gauche (avec « Demander à l'OS… » en tête, l'espace et le lieu, les entrées fixes, et
+// « Outils » au pied) ; au centre « Maintenant », les Propositions, le Savoir, les
+// Automatismes, la page d'un espace, le fil choisi ou un outil (un écran classique, ouvert
+// ici : `OSToolDetail`) ; « Comprendre » en panneau à droite du détail quand la fenêtre est
+// assez large, en FEUILLE sinon (`OSShellLayout` : la colonne d'un inspecteur natif
+// plantait l'app dans une fenêtre étroite) ; le Tri des décisions en feuille (⌘T). Les écrans eux-mêmes sont partagés
+// avec l'iPhone/iPad (`ConsoleUI/OS/`) : ce fichier ne porte que ce qui est propre au Mac —
+// colonnes, inspecteur, barre d'outils, raccourcis (⌘L composeur, ⌘T tri, ⌘⇧P pause, ⌥⌘I
+// « Comprendre »), presse-papiers, direct d'une session, variables de recette. Rien ici
+// n'écrit la préférence d'interface : ce qui visait une section classique (palette, lien,
+// notification, ⌘1…⌘5) arrive par `ConsoleModel.osRoute` et ouvre un écran d'ici.
 
 import AppKit
 import ConsoleClient
@@ -18,6 +20,8 @@ import SwiftUI
 struct OSRootView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
+    /// L'état de la coque à l'échelle de l'app : l'écran qu'un raccourci, un lien ou une notification demande.
+    @ObservedObject var console: ConsoleModel
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var intakes: HarnessIntakes
     @ObservedObject var history: HarnessRunsHistory
@@ -25,29 +29,25 @@ struct OSRootView: View {
     @ObservedObject var atlassian: AtlassianModel
     @ObservedObject var spaces: HarnessSpacesModel
     @ObservedObject var localSessions: HarnessLocalSessionsModel
+    @ObservedObject var proposals: HarnessProposalsModel
     @StateObject private var workspace: OSWorkspace
-    @AppStorage("ui.os") private var osMode = true
-    /// Un lien ou une notification demande ce qui attend l'humain : le tri s'ouvre.
-    @Binding var triageRequested: Bool
-    /// Ouvre une section de l'interface classique (une commande de la palette qui n'a pas d'équivalent ici).
-    let select: @MainActor (ConsoleSection) -> Void
+    /// Où « Comprendre » se présente et la largeur de son panneau, selon la fenêtre ; `nil`
+    /// tant qu'elle n'est pas mesurée (rien ne s'ouvre avant).
+    @State private var layout: OSShellLayout?
+    /// L'écran classique d'un outil, rendu par la racine (elle tient les modèles locaux).
+    let tool: @MainActor (OSTool) -> AnyView
 
-    /// Recette : `OMP_CONSOLE_OS_LEVEL` nomme un niveau de « Comprendre » par son mot
-    /// français, quelle que soit la langue de l'app (ou par son code : `summary`, `story`…).
-    private static let recipeLevels: [String: OSLevel] = ["Résumé": .summary, "Récit": .story, "Preuves": .proofs, "Brut": .raw]
     /// Recette : `OMP_CONSOLE_OS_VIEW` nomme l'écran du centre ; `space:<identifiant ou nom>`
-    /// ouvre la page d'un espace.
+    /// ouvre la page d'un espace, `tool:<outil>` un outil (`memory`, `workstation`, `health`,
+    /// `admin`, `server`, `terminal`, `files`).
     private static let recipeViews = ["now": OSWorkspace.now, "proposals": OSWorkspace.proposals, "knowledge": OSWorkspace.knowledge, "automations": OSWorkspace.automations]
     private static let recipeSpacePrefix = "space:"
 
-    init(
-        server: HarnessModel, drafts: HarnessDrafts, triageRequested: Binding<Bool>,
-        select: @escaping @MainActor (ConsoleSection) -> Void
-    ) {
+    init(server: HarnessModel, drafts: HarnessDrafts, console: ConsoleModel, tool: @escaping @MainActor (OSTool) -> AnyView) {
         self.server = server
         self.drafts = drafts
-        _triageRequested = triageRequested
-        self.select = select
+        self.console = console
+        self.tool = tool
         _workstation = ObservedObject(wrappedValue: server.workstation)
         _intakes = ObservedObject(wrappedValue: server.intakes)
         _history = ObservedObject(wrappedValue: server.history)
@@ -55,6 +55,7 @@ struct OSRootView: View {
         _atlassian = ObservedObject(wrappedValue: server.atlassian)
         _spaces = ObservedObject(wrappedValue: server.spaces)
         _localSessions = ObservedObject(wrappedValue: server.localSessions)
+        _proposals = ObservedObject(wrappedValue: server.proposals)
         _workspace = StateObject(wrappedValue: OSWorkspace(server: server))
     }
 
@@ -87,19 +88,26 @@ struct OSRootView: View {
                     server: server, intakes: intakes, pulse: workspace.pulse, workspace: workspace,
                     threads: OSThreadScope.threads(threads, spaceId: workspace.spaceId, place: workspace.place, spaces: spaces.spaces),
                     places: OSThreadScope.places(repos: server.repos.map(\.name), threads: threads, space: space),
-                    browsers: browserNames, decisions: decisions
+                    browsers: browserNames, decisions: decisions, tools: OSTool.available(isAdmin: server.isAdmin)
                 )
                 .listStyle(.sidebar)
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320)
+                .navigationSplitViewColumnWidth(min: OSShellLayout.sidebarMin, ideal: OSShellLayout.sidebarIdeal, max: OSShellLayout.sidebarMax)
             } detail: {
-                detail(threads, decisions: decisions)
+                detailAndInspector(threads, decisions: decisions)
             }
+        }
+        // La largeur de la fenêtre décide d'où « Comprendre » se présente ; l'état ne change
+        // qu'au franchissement d'un seuil, pas à chaque point d'un redimensionnement.
+        .onGeometryChange(for: OSShellLayout.self) { proxy in
+            OSShellLayout(width: proxy.size.width)
+        } action: { measured in
+            layout = measured
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                // ⌘N (Fichier ▸ Nouvelle feature…) ouvre la même feuille.
+                // ⌘N (Fichier ▸ Nouveau fil…) ouvre la même feuille.
                 Menu {
-                    Button(OSText.newFeature, systemImage: "plus.square") { drafts.launchSheetShown = true }
+                    Button(OSText.newThread, systemImage: "plus.square") { drafts.launchSheetShown = true }
                     Button(OSText.newProject, systemImage: "square.stack.3d.up") { drafts.projectSheetShown = true }
                     Button(OSText.newAudit, systemImage: "magnifyingglass") { drafts.auditSheetShown = true }
                     Button(OSText.newSchedule, systemImage: "calendar.badge.plus") { drafts.scheduleSheetShown = true }
@@ -108,27 +116,52 @@ struct OSRootView: View {
                 }
                 .disabled(!server.canAct)
             }
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    workspace.understanding.toggle()
-                } label: {
-                    Label(OSText.understand, systemImage: "sidebar.right")
+            // « Comprendre » regarde une tâche : pas devant un outil.
+            if OSTool(selection: workspace.selection) == nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        workspace.understanding.toggle()
+                    } label: {
+                        Label(OSText.understand, systemImage: "sidebar.right")
+                    }
+                    .keyboardShortcut("i", modifiers: [.command, .option])
                 }
-                .keyboardShortcut("i", modifiers: [.command, .option])
             }
         }
         .navigationTitle(title(threads))
-        // Les feuilles de création (nouvelle feature ⌘N, projet, audit, planification, Demande) et la
-        // palette ⌘K : celles de l'interface classique. Une commande vers une section classique y bascule.
-        .consolePalette(server: server, drafts: drafts, sections: ConsoleSection.allCases, memory: true) { section in
-            if section == .runs, drafts.openedRun != nil { return }
-            osMode = false
-            select(section)
+        // Les feuilles de création (nouveau fil ⌘N, projet, audit, planification, Demande) et la
+        // palette ⌘K : elle propose les écrans d'ici ; une commande qui nomme encore une section
+        // classique (une feature, la mémoire à chercher, l'arrêt du poste) ouvre l'écran d'ici.
+        .consolePalette(
+            server: server, drafts: drafts, sections: ConsoleSection.allCases, memory: true,
+            screens: paletteScreens, openScreen: { open(screen: $0) }
+        ) { section in
+            let route = OSRouter.route(section: section, page: drafts.systemPage, opensRun: drafts.openedRun != nil)
+            if section == .system { drafts.systemPage = nil }
+            if let route { apply(route) }
         }
         .sheet(isPresented: $workspace.triage) {
             OSTriageView(server: server, workstation: workstation, intakes: intakes, workspace: workspace)
                 .frame(width: 620)
                 .frame(minHeight: 360)
+        }
+        // « Comprendre » en feuille : la fenêtre est trop étroite pour un inspecteur.
+        .sheet(isPresented: understandSheetShown) {
+            NavigationStack {
+                understand(threads)
+                    .navigationTitle(OSText.understand)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button(PipelineServerText.close) { workspace.understanding = false }
+                                .keyboardShortcut(.cancelAction)
+                        }
+                    }
+            }
+            .frame(minWidth: 560, idealWidth: 640, minHeight: 520, idealHeight: 680)
+        }
+        // La connexion au serveur (palette, « Relier » d'un outil, lien `ompconsole://system/server`).
+        .sheet(isPresented: $drafts.serverSheetShown) {
+            ServerSheet(server: server, drafts: drafts)
         }
         .task(id: server.address) {
             guard server.isConfigured else { return }
@@ -138,12 +171,15 @@ struct OSRootView: View {
             if let thread = environment["OMP_CONSOLE_OS_THREAD"] { workspace.open(thread) }
             if let run = environment["OMP_CONSOLE_OS_RUN"] { drafts.openedRun = run }
             if environment["OMP_CONSOLE_OS_NEW"] != nil { drafts.launchSheetShown = true }
-            if let level = environment["OMP_CONSOLE_OS_LEVEL"].flatMap({ Self.recipeLevels[$0] ?? OSLevel(rawValue: $0) }) {
+            if let level = environment["OMP_CONSOLE_OS_LEVEL"].flatMap({ OSLevel(recipe: $0) }) {
                 workspace.level = level
                 workspace.understanding = true
             }
             if environment["OMP_CONSOLE_OS_TRIAGE"] != nil { workspace.triage = true }
-            if let view = environment["OMP_CONSOLE_OS_VIEW"].flatMap({ Self.recipeViews[$0] }) { workspace.selection = view }
+            if let view = environment["OMP_CONSOLE_OS_VIEW"] {
+                if let screen = Self.recipeViews[view] { workspace.selection = screen }
+                if let shown = OSTool(selection: view) { workspace.selection = shown.selection }
+            }
             await history.refresh()
             await workstation.load()
             await vigie.load()
@@ -169,23 +205,80 @@ struct OSRootView: View {
                 workspace.settle(threads)
             }
         }
-        .onChange(of: triageRequested, initial: true) {
-            guard triageRequested else { return }
-            triageRequested = false
-            workspace.triage = true
+        // Ce qu'un raccourci (⌘1…⌘5), un lien d'une section classique ou une notification demande.
+        .onChange(of: console.osRoute, initial: true) {
+            guard let route = console.osRoute else { return }
+            console.osRoute = nil
+            apply(route)
         }
         // Les liens propres à cette interface : `ompconsole://now`, `ompconsole://decisions`,
         // `ompconsole://threads/<id>` (ceux des sections classiques passent par la racine).
         .onOpenURL { url in
-            switch url.host {
-            case "now": workspace.selection = OSWorkspace.now
-            case "decisions": workspace.triage = true
-            case "threads":
-                if let thread = url.pathComponents.dropFirst().first { workspace.open(thread) }
-            default: break
+            if let route = OSRouter.route(host: url.host) {
+                apply(route)
+            } else if url.host == "threads", let thread = url.pathComponents.dropFirst().first {
+                workspace.open(thread)
             }
         }
         .onDisappear { workspace.pulse.stop() }
+    }
+
+    /// Montre ce qu'une route désigne ; un écran que ce serveur ne sert pas retombe sur « Maintenant ».
+    private func apply(_ route: OSRoute) {
+        switch OSRouter.resolve(route, proposalsServed: proposals.isServed, isAdmin: server.isAdmin) {
+        case let .screen(selection): workspace.selection = selection
+        case .triage: workspace.triage = true
+        }
+    }
+
+    /// Les écrans que la palette propose : ceux de ⌘1…⌘5, puis les outils.
+    private var paletteScreens: [ConsolePaletteScreen] {
+        let screens = OSScreen.allCases.filter { $0 != .proposals || proposals.isServed }
+        return screens.map { ConsolePaletteScreen(id: $0.rawValue, title: $0.title, symbol: $0.symbol) }
+            + OSTool.available(isAdmin: server.isAdmin).map {
+                ConsolePaletteScreen(id: $0.selection, title: $0.title, subtitle: ConsoleSectionGroup.tools.title, symbol: $0.symbol)
+            }
+    }
+
+    /// Ouvre l'écran qu'une entrée de la palette nomme : un écran de ⌘1…⌘5, ou un outil.
+    private func open(screen id: String) {
+        if let screen = OSScreen(rawValue: id) {
+            apply(screen.route)
+        } else if let shown = OSTool(selection: id) {
+            apply(.screen(shown.selection))
+        }
+    }
+
+    /// « Comprendre » est demandé, et le détail montre de quoi comprendre (pas un outil).
+    private var understandingShown: Bool {
+        workspace.understanding && OSTool(selection: workspace.selection) == nil
+    }
+
+    /// « Comprendre » est demandé et la fenêtre le veut en feuille ; le tri, lui aussi en
+    /// feuille, passe d'abord.
+    private var understandSheetShown: Binding<Bool> {
+        Binding(
+            get: { understandingShown && layout?.placement == .sheet && !workspace.triage },
+            set: { shown in
+                if !shown { workspace.understanding = false }
+            }
+        )
+    }
+
+    /// « Comprendre » sur la tâche regardée : celle qu'un geste a désignée, sinon celle du fil ouvert.
+    @ViewBuilder
+    private func understand(_ threads: [OSThread]) -> some View {
+        if let runId = workspace.focusRunId ?? threads.first(where: { $0.id == workspace.selection })?.focusRun?.id {
+            // Le direct d'une session est celui de la coque Mac (`HarnessSessionContent`) ; la
+            // frise se lit seule, sans l'état du direct.
+            OSUnderstandView(server: server, drafts: drafts, workspace: workspace, runId: runId) { [server] runId, pane, followsEnd, focus in
+                if pane == .timeline { return AnyView(HarnessTimelinePane(server: server, runId: runId, refreshKey: 0)) }
+                return AnyView(HarnessSessionContent(server: server, target: .run(runId), pane: pane.macPane, followsEnd: followsEnd, focus: focus))
+            }
+            .id(runId)
+        } else {
+            ContentUnavailableView(OSText.noRun, systemImage: "questionmark.circle")
+        }
     }
 
     /// L'espace qu'une variable de recette nomme, par identifiant ou par nom.
@@ -196,6 +289,7 @@ struct OSRootView: View {
 
     /// Le titre de la fenêtre : ce que montre le centre.
     private func title(_ threads: [OSThread]) -> String {
+        if let shown = OSTool(selection: workspace.selection) { return shown.title }
         switch workspace.selection {
         case OSWorkspace.automations: return OSText.automations
         case OSWorkspace.proposals: return OSWatchText.proposals
@@ -212,19 +306,15 @@ struct OSRootView: View {
     private func detail(_ threads: [OSThread], decisions: Int) -> some View {
         let thread = threads.first { $0.id == workspace.selection }
         Group {
-            if workspace.selection == OSWorkspace.automations {
+            if let shown = OSTool(selection: workspace.selection) {
+                tool(shown)
+                    .id(shown)
+            } else if workspace.selection == OSWorkspace.automations {
                 OSAutomationsView(server: server, drafts: drafts)
             } else if workspace.selection == OSWorkspace.proposals {
                 OSProposalsView(server: server, workspace: workspace, threads: threads)
             } else if workspace.selection == OSWorkspace.knowledge {
-                OSKnowledgeView(
-                    server: server, workspace: workspace,
-                    openMemory: {
-                        osMode = false
-                        select(.memory)
-                    },
-                    openClassic: { osMode = false }
-                )
+                OSKnowledgeView(server: server, workspace: workspace, openMemory: { apply(.screen(OSTool.memory.selection)) })
             } else if let spaceId = OSWorkspace.spaceId(of: workspace.selection) {
                 OSSpacePage(server: server, spaceId: spaceId) { text in
                     NSPasteboard.general.clearContents()
@@ -241,19 +331,22 @@ struct OSRootView: View {
                 OSHomeView(server: server, pulse: workspace.pulse, workspace: workspace, threads: threads, decisions: decisions)
             }
         }
-        .inspector(isPresented: $workspace.understanding) {
-            Group {
-                if let runId = workspace.focusRunId ?? thread?.focusRun?.id {
-                    // Le direct d'une session est celui de la coque Mac (`HarnessSessionContent`).
-                    OSUnderstandView(server: server, drafts: drafts, workspace: workspace, runId: runId) { [server] runId, pane, followsEnd, focus in
-                        AnyView(HarnessSessionContent(server: server, target: .run(runId), pane: pane.macPane, followsEnd: followsEnd, focus: focus))
-                    }
-                    .id(runId)
-                } else {
-                    ContentUnavailableView(OSText.noRun, systemImage: "questionmark.circle")
-                }
+    }
+
+    /// Le détail et, quand la fenêtre en a la place, « Comprendre » en panneau à sa droite.
+    /// Ce n'est PAS l'inspecteur natif : sa colonne, ajoutée à la vue scindée de la fenêtre,
+    /// plantait l'app quand les trois colonnes ne tenaient pas (`OSShellLayout`).
+    private func detailAndInspector(_ threads: [OSThread], decisions: Int) -> some View {
+        HStack(spacing: 0) {
+            detail(threads, decisions: decisions)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if let layout, layout.placement == .inspector, understandingShown {
+                Divider()
+                understand(threads)
+                    .frame(width: layout.inspectorWidth)
+                    .frame(maxHeight: .infinity)
+                    .accessibilityIdentifier("os.understand")
             }
-            .inspectorColumnWidth(min: 340, ideal: 460, max: 720)
         }
     }
 }

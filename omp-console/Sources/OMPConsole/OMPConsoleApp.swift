@@ -1,15 +1,16 @@
 // Point d'entrée de la coque. Le fichier NE s'appelle PAS main.swift : `@main`
 // y est refusé (D5).
 //
-// UNE scène : la fenêtre principale. Par défaut elle montre l'« OS agentique » (le Radar,
-// les fils, « Maintenant » : `OSRootView`) ; l'interface classique à barre latérale reste
-// à un geste. « À traiter », Features, Poste et Système sont servis par le serveur de
-// pipelines du VPS (omp-harness) ; Mémoire, Terminal et Fichiers sont locaux. L'app reste
-// utilisable en plein écran : aucune fenêtre annexe.
+// UNE scène : la fenêtre principale. Elle montre l'« OS agentique » (le Radar, les fils,
+// « Maintenant » : `OSRootView`) ; l'interface classique à barre latérale n'est plus
+// atteinte que par un choix explicite du menu Présentation. Le serveur de pipelines du
+// VPS (omp-harness) sert les fils, le Poste et la Santé ; Mémoire, Terminal et Fichiers
+// sont locaux. L'app reste utilisable en plein écran : aucune fenêtre annexe.
 //
-// Barre des menus : Présentation ▸ « Interface classique » (⌘⇧O), les sept sections de
-// l'interface classique (⌘1…⌘7) et « Actualiser » (⌘R) ; Fichier ▸ « Nouvelle
-// feature… » (⌘N), « Commandes… » (⌘K) et « Rechercher… » (⌘F).
+// Barre des menus : Présentation ▸ « Interface classique » (⌘⇧O), les écrans de
+// l'interface à l'écran — ⌘1…⌘5 : Maintenant, À vous, Propositions, Automatismes, Savoir ;
+// dans la classique ⌘1…⌘7 : ses sept sections — et « Actualiser » (⌘R) ; Fichier ▸
+// « Nouveau fil… » (⌘N), « Commandes… » (⌘K) et « Rechercher… » (⌘F).
 //
 // Les modèles vivent sur la structure `App` (`@StateObject`), donc à l'échelle de
 // l'app : fermer la fenêtre ne laisse pas de shell orphelin, et les accroches de
@@ -22,6 +23,7 @@
 import AppKit
 import ConsoleClient
 import ConsoleCore
+import ConsoleUI
 import SwiftUI
 
 @main
@@ -119,7 +121,8 @@ struct OMPConsoleApp: App {
 }
 
 /// Présentation ▸ « Interface classique » (⌘⇧O) : coché, la fenêtre montre l'interface à
-/// barre latérale ; décoché (le défaut), l'« OS agentique ». Préférence `ui.os`.
+/// barre latérale ; décoché (le défaut), l'« OS agentique ». Préférence `ui.os` : ce menu
+/// et « Nouvelle interface » (au pied de la barre latérale classique) sont SEULS à l'écrire.
 struct OSCommands: Commands {
     @AppStorage("ui.os") private var osMode = true
 
@@ -132,28 +135,39 @@ struct OSCommands: Commands {
     }
 }
 
-/// Menu Présentation ▸ les sections de l'interface classique, dans l'ordre de sa barre
-/// latérale : ⌘1…⌘9 au plus (sept aujourd'hui). Ramène la fenêtre principale, revient à
-/// l'interface classique, puis y sélectionne la section.
+/// Menu Présentation ▸ les écrans de l'interface à l'écran. Dans la nouvelle : ⌘1…⌘5,
+/// Maintenant, À vous, Propositions, Automatismes, Savoir (`OSScreen`). Dans la classique :
+/// ses sections, dans l'ordre de sa barre latérale, ⌘1…⌘9 au plus (sept aujourd'hui).
+/// Chaque commande ramène la fenêtre principale ; AUCUNE ne change d'interface (la
+/// préférence `ui.os` est lue, jamais écrite ici).
 struct SectionCommands: Commands {
     let console: ConsoleModel
     @AppStorage("ui.os") private var osMode = true
 
     var body: some Commands {
         CommandGroup(before: .sidebar) {
-            ForEach(Array(ConsoleSection.allCases.enumerated()), id: \.element) { index, section in
-                Button(section.title) {
-                    MainWindow.reveal()
-                    osMode = false
-                    console.select(section)
+            if osMode {
+                ForEach(OSScreen.allCases) { screen in
+                    Button(screen.title) {
+                        MainWindow.reveal()
+                        console.osRoute = screen.route
+                    }
+                    .keyboardShortcut(KeyboardShortcut(KeyEquivalent(screen.key), modifiers: .command))
                 }
-                .keyboardShortcut(Self.key(at: index).map { KeyboardShortcut(KeyEquivalent($0), modifiers: .command) })
+            } else {
+                ForEach(Array(ConsoleSection.allCases.enumerated()), id: \.element) { index, section in
+                    Button(section.title) {
+                        MainWindow.reveal()
+                        console.select(section)
+                    }
+                    .keyboardShortcut(Self.key(at: index).map { KeyboardShortcut(KeyEquivalent($0), modifiers: .command) })
+                }
             }
             Divider()
         }
     }
 
-    /// La touche du raccourci de la section à `index` : 1…9, aucune au-delà.
+    /// La touche du raccourci de la section classique à `index` : 1…9, aucune au-delà.
     static func key(at index: Int) -> Character? {
         (0..<9).contains(index) ? Character(String(index + 1)) : nil
     }
@@ -177,15 +191,17 @@ struct RefreshCommands: Commands {
     }
 }
 
-/// Fichier ▸ « Nouvelle feature… » (⌘N, à la place de « Nouvelle fenêtre » : l'app
-/// garde une seule fenêtre), « Commandes… » (⌘K) et « Rechercher… » (⌘F) : la palette
-/// partagée avec l'app iOS (ConsoleUI). Chacune ramène la fenêtre principale.
+/// Fichier ▸ « Nouveau fil… » (⌘N, à la place de « Nouvelle fenêtre » : l'app garde une
+/// seule fenêtre ; « Nouvelle feature… » dans l'interface classique), « Commandes… » (⌘K)
+/// et « Rechercher… » (⌘F) : la palette partagée avec l'app iOS (ConsoleUI). Chacune
+/// ramène la fenêtre principale.
 struct PaletteCommands: Commands {
     let drafts: HarnessDrafts
+    @AppStorage("ui.os") private var osMode = true
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button(PipelineServerText.newFeature) {
+            Button(osMode ? OSText.newThread : PipelineServerText.newFeature) {
                 MainWindow.reveal()
                 drafts.launchSheetShown = true
             }

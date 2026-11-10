@@ -59,7 +59,7 @@ public enum OSText {
     // MARK: - Créer
 
     public static let create = L10n.text("Nouveau")
-    public static let newFeature = L10n.text("Nouvelle feature…")
+    public static let newThread = L10n.text("Nouveau fil…")
     public static let newProject = L10n.text("Nouveau projet…")
     public static let newAudit = L10n.text("Nouvel audit…")
     public static let newSchedule = L10n.text("Nouvelle planification…")
@@ -244,13 +244,104 @@ public enum OSText {
     // MARK: - Comprendre
 
     public static let levelSummary = L10n.text("Résumé")
-    public static let levelStory = L10n.text("Récit")
     public static let levelProofs = L10n.text("Preuves")
-    public static let levelRaw = L10n.text("Brut")
+    public static let levelJournal = L10n.text("Journal")
     public static let paneCaptures = L10n.text("Captures")
     public static let paneFiles = L10n.text("Fichiers")
     public static let paneTests = L10n.text("Tests")
     public static let request = L10n.text("Demande")
     public static let specsFull = L10n.text("Specs complètes")
     public static let noRun = L10n.text("Rien à comprendre ici")
+    public static let sessionMap = L10n.text("Carte de la session")
+    public static let mergeRequest = L10n.text("Demande de fusion")
+
+    // MARK: - Comprendre : le résumé en trois blocs
+
+    public static let summaryDone = L10n.text("Ce qui a été fait")
+    public static let summaryWhy = L10n.text("Pourquoi on vous demande")
+    public static let summaryDoubts = L10n.text("Ce qui reste douteux")
+    public static let noDoubt = L10n.text("Rien de signalé")
+    public static let doneSpecs = L10n.text("Les specs sont écrites ; aucun code pour l’instant.")
+    public static let doneQuestion = L10n.text("Le travail s’est arrêté sur une question.")
+    public static let doneWorking = L10n.text("Le travail est en cours : pas encore de revue.")
+    public static let doneNothing = L10n.text("Aucune revue n’a été rendue.")
+    public static let doubtBlocker = L10n.text("Bloquant")
+    public static let doubtRisk = L10n.text("Risque")
+    public static let doubtUnverified = L10n.text("Non vérifié")
+
+    // MARK: - Comprendre : pourquoi on vous demande (la porte, en clair)
+
+    public static let gateQuestion = L10n.text("L’agent a besoin de votre réponse pour continuer.")
+    public static let gateTestsRed = L10n.text("La suite de tests complète est rouge.")
+    public static let gateTestsNotRun = L10n.text("La suite de tests complète n’a pas tourné sur cette version.")
+    public static let gateAskLevel = L10n.text("Vous avez choisi « Tout me demander » pour ce fil.")
+    public static let gateOpenQuestions = L10n.text("Des questions restent ouvertes.")
+    public static let gateCriteriaMissing = L10n.text("Des critères d’acceptation manquent au verdict.")
+    public static let gateCriteriaUnproven = L10n.text("Des critères d’acceptation ne sont pas prouvés.")
+    public static let gateCriteriaChanged = L10n.text("Des critères validés ont changé depuis les specs.")
+    public static let gateCriteriaUnverified = L10n.text("Des critères n’ont pas pu être vérifiés.")
+    public static let gateUnreadFiles = L10n.text("Des fichiers touchés n’ont pas été relus.")
+    public static let gateWeakVerdict = L10n.text("La revue n’est pas sûre de son verdict.")
+    public static let gateReviewRequired = L10n.text("Ce dépôt vous fait valider chaque revue.")
+    public static let gateSplit = L10n.text("Les specs proposent de découper le travail.")
+    public static let gateNoModules = L10n.text("Les specs ne disent pas quels modules sont touchés.")
+    public static let gateFirstOfProject = L10n.text("Première tâche d’un projet.")
+    public static let gateSpecsAlways = L10n.text("Ce dépôt vous fait valider les specs avant le code.")
+    public static let gateOverturned = L10n.text("Vous avez renversé une validation prise seule.")
+    public static let gateFixCapUnknown = L10n.text("Les corrections n’ont pas levé tous les bloquants.")
+    public static let gateContest = L10n.text("La revue et la correction ne sont pas d’accord : à vous d’arbitrer.")
+    public static let gateBudgetUnknown = L10n.text("Le budget est dépassé.")
+    public static let gateFailure = L10n.text("L’agent n’y arrive pas seul.")
+    public static let irreversibleSchema = L10n.text("schéma de données")
+    public static let irreversiblePublicApi = L10n.text("interface publique")
+    public static let irreversibleDeletion = L10n.text("suppression")
+
+    /// « Le changement fait 412 lignes, le plafond est 300. »
+    public static func gateDiff(lines: Int, limit: Int) -> String {
+        L10n.format("Le changement fait %lld lignes, le plafond est %lld.", lines, limit)
+    }
+
+    /// « Le changement fait 412 lignes : c’est plus que le plafond. »
+    public static func gateDiff(lines: Int) -> String {
+        L10n.format("Le changement fait %lld lignes : c’est plus que le plafond.", lines)
+    }
+
+    /// « La revue signale 2 bloquants. »
+    public static func gateBlockers(_ count: Int) -> String {
+        L10n.format("La revue signale %@.", ConsoleFormat.count(count, L10n.text("bloquant"), L10n.text("bloquants")))
+    }
+
+    /// « Risque moyen : au-dessus de ce qui se valide seul. » (`risk` : le mot du risque).
+    public static func gateRisk(_ risk: String) -> String {
+        L10n.format("%@ : au-dessus de ce qui se valide seul.", risk)
+    }
+
+    /// « Geste irréversible : suppression. » (`what` : ce qu'il touche, déjà en clair).
+    public static func gateIrreversible(_ what: String) -> String {
+        what.isEmpty ? L10n.text("Geste irréversible.") : L10n.format("Geste irréversible : %@.", what)
+    }
+
+    /// « 2 décisions irréversibles : elles vous reviennent toujours. »
+    public static func gateIrreversibleDecisions(_ count: Int) -> String {
+        count == 1
+            ? L10n.text("Une décision irréversible : elle vous revient toujours.")
+            : L10n.format("%lld décisions irréversibles : elles vous reviennent toujours.", count)
+    }
+
+    /// « Après 3 corrections, il reste 2 bloquants. »
+    public static func gateFixCap(fixes: Int, blockers: Int) -> String {
+        let fixed = ConsoleFormat.count(fixes, L10n.text("correction"), L10n.text("corrections"))
+        let left = ConsoleFormat.count(blockers, L10n.text("bloquant"), L10n.text("bloquants"))
+        return L10n.format("Après %@, il reste %@.", fixed, left)
+    }
+
+    /// « Le budget est dépassé : 5,21 $ dépensés, plafond 5,00 $. »
+    public static func gateBudget(spent: Double, ceiling: Double) -> String {
+        L10n.format("Le budget est dépassé : %@ dépensés, plafond %@.", MonitoringText.cost(spent), MonitoringText.cost(ceiling))
+    }
+
+    /// « 3 captures », « 5 fichiers » : le compte d'un volet de Preuves.
+    public static func paneCount(_ title: String, _ count: Int) -> String {
+        L10n.format("%@ · %lld", title, count)
+    }
 }

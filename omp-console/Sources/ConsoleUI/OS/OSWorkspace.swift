@@ -8,14 +8,14 @@ import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-/// Le niveau de zoom de « Comprendre », du plus court au plus brut.
+/// Les trois vues de « Comprendre » : ce qu'il faut savoir, ce qui le prouve, ce qui s'est passé.
 public enum OSLevel: String, CaseIterable, Identifiable, Sendable {
-    case summary, story, proofs, raw
+    case summary, proofs, journal
 
     public var id: String { rawValue }
 }
 
-/// Ce que montre le niveau Preuves de « Comprendre ».
+/// Les volets de la vue Preuves de « Comprendre ».
 public enum OSProofPane: String, CaseIterable, Identifiable, Sendable {
     case captures, files, tests
 

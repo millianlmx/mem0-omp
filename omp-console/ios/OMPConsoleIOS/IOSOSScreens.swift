@@ -121,7 +121,7 @@ struct IOSOSThreadPage: View {
     }
 }
 
-/// « Comprendre » : le zoom en quatre niveaux sur une feature (partagé avec le Mac), dans
+/// « Comprendre » : les trois vues d'une tâche — Résumé, Preuves, Journal — (partagées avec le Mac), dans
 /// sa pile — une entrée du direct y pousse son détail — avec « Fermer » dans la barre.
 struct IOSOSUnderstandPanel: View {
     @ObservedObject var server: HarnessModel

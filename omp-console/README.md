@@ -786,40 +786,64 @@ L'app Mac s'ouvre sur l'OS agentique (préférence `ui.os`, vraie par défaut) :
 objets — le **fil** (une intention, de la demande au résultat), l'**agent** (usine,
 poste, vigie, session omp locale), la **décision** (ce qui vous attend), le **savoir**
 (mémoire, consignes permanentes, paliers) — plus l'**espace** (un client : ses dépôts,
-son budget, son autonomie). Présentation ▸ « Interface classique » (⌘⇧O) rend la coque
-à barre latérale ; les sections ⌘1…⌘7, une commande de la palette vers une section
-classique et Savoir ▸ « Interface classique » y ramènent aussi. Les écrans sont écrits
+son budget, son autonomie). C'est la SEULE interface : les écrans classiques encore
+nécessaires — Mémoire, Poste, Santé, Administration (admin), Serveur, Terminal, Fichiers —
+s'ouvrent dans son détail, depuis l'entrée « Outils » au pied de la liste (le Radar et
+la liste restent). Rien ne change d'interface à votre insu : ni ⌘1…⌘5, ni la palette
+⌘K, ni un lien `ompconsole://…`, ni une notification n'écrivent la préférence `ui.os`
+(`OSRouter` ouvre l'écran équivalent). L'interface classique à barre latérale n'est
+atteinte que par Présentation ▸ « Interface classique » (⌘⇧O), et porte au pied de sa
+barre latérale « Nouvelle interface » pour en revenir. Les écrans sont écrits
 une fois dans `Sources/ConsoleUI/OS/` (Mac et iOS), leurs mots dans
-`ConsoleCore/Design/OSText.swift` et `OSWatchText.swift` ; la coque Mac est
-`Sources/OMPConsole/OS/OSRootView.swift`, celle de l'iPhone et de l'iPad
+`ConsoleCore/Design/OSText.swift`, `OSShellText.swift` et `OSWatchText.swift` ; la coque Mac est
+`Sources/OMPConsole/OS/OSRootView.swift` (et `OSToolDetail.swift` pour les outils), celle de l'iPhone et de l'iPad
 `ios/OMPConsoleIOS/IOSOSRootView.swift` (cinq onglets, voir « Coque iOS »). Chaque partie
 que le serveur ne sert pas (404) est absente : ni erreur, ni écran vide, ni bouton mort.
 
 | Écran | Fichier | Ce qu'il montre |
 |---|---|---|
 | Radar (toujours en haut) | `OSRadar.swift` | une pastille par agent et ce qu'il fait (`OSPulse`) : features vivantes, Poste, Vigie, **Sessions locales** ; le coût du jour, et le reste du budget de l'espace retenu ; « Tout suspendre » = la pause du serveur (« Après l'étape en cours » ou « Tout de suite », confirmée) — en pause la barre devient orange, dit « En pause » et porte « Reprendre » ; sans la capacité `pause`, l'arrêt du poste et des fils |
-| Liste des fils | `OSThreadList.swift` | le composeur « Demander à l'OS… » (filtre, ⏎ = Demande) ; l'espace puis le lieu ; les entrées Maintenant, Décisions (n), Propositions (n), Automatismes, Savoir ; les fils par état — une session omp locale en est un (ordinateur portable, « machine · branche · ↳ intention ») |
+| Liste des fils | `OSThreadList.swift` | le composeur « Demander à l'OS… » (filtre, ⏎ = Demande) ; l'espace puis le lieu ; les entrées Maintenant, Décisions (n), Propositions (n), Automatismes, Savoir ; les fils par état — une session omp locale en est un (ordinateur portable, « machine · branche · ↳ intention ») ; au pied, « Outils » |
 | Maintenant | `OSHomeView.swift`, `OSBriefSections.swift`, `OSScoreTiles.swift` | le brief : sa phrase, « depuis … », « Vu » ; le composeur et, dessous, la réponse de l'OS à une question d'état ; les trois chiffres (sept jours, tendance des trois derniers jours) ; les agents au travail ; les sections repliables Vous attend, Livré (« seul »), Bloqué (sa cause), Échecs, Décidé seul (Garder / Revoir), Arrêtés (le motif). Sans la capacité `brief`, l'accueil d'avant |
 | Propositions | `OSProposalsView.swift` | le travail que les agents proposent, groupé par source ; le geste porte le nom de ce qu'il fait (Lancer, Corriger, Appliquer, Confirmer, Relancer) et ouvre le fil qu'il crée ; « Écarter ». Appliquer un palier revient à l'admin, confirmer un signalement et lancer un item Jira à l'approbateur |
-| Savoir | `OSKnowledgeView.swift`, `OSSpaceViews.swift` | les consignes permanentes (interrupteur, modifier, supprimer, ajouter, dépôt ou partout, origine) ; les paliers d'autonomie par dépôt (règles en phrases, confiance, « Appliquer » pour un admin) ; les espaces (créer, modifier, supprimer pour un admin non borné) ; la mémoire et l'interface classique |
+| Savoir | `OSKnowledgeView.swift`, `OSSpaceViews.swift` | les consignes permanentes (interrupteur, modifier, supprimer, ajouter, dépôt ou partout, origine) ; les paliers d'autonomie par dépôt (règles en phrases, confiance, « Appliquer » pour un admin) ; les espaces (créer, modifier, supprimer pour un admin non borné) ; la mémoire (elle ouvre l'outil Mémoire) |
 | Page d'un espace | `OSSpaceViews.swift` | les chiffres de la semaine, le budget du jour, le rapport hebdomadaire (Markdown rendu), « Copier » et le partage natif |
-| Fil, décisions, tri, Comprendre, Automatismes | `OSThreadView.swift`, `OSDecisionCard.swift`, `OSTriageView.swift`, `OSUnderstandView.swift`, `OSAutomationsView.swift` | la page d'un fil et ses cartes, le tri des décisions en feuille, l'inspecteur « Comprendre », ce que l'OS lance seul |
+| Fil, décisions, tri, Automatismes | `OSThreadView.swift`, `OSDecisionCard.swift`, `OSTriageView.swift`, `OSAutomationsView.swift` | la page d'un fil et ses cartes, le tri des décisions en feuille, ce que l'OS lance seul |
+| Comprendre | `OSUnderstandView.swift`, `OSUnderstandLogic.swift` | trois vues d'une tâche. **Résumé** : trois blocs écrits par l'app — ce qui a été fait (la première phrase du verdict), pourquoi on vous demande (la porte en clair, lue dans la raison du serveur : « Le changement fait 412 lignes, le plafond est 300. »), ce qui reste douteux (bloquants, risques, non vérifié) — puis « Tout lire », la demande, les specs et les détails, repliés. **Preuves** : captures, fichiers, tests sur une rangée de volets. **Journal** : la carte de la session et le direct. Aucun geste de décision : ils sont sur la carte du fil |
+| Outils | `OSTools.swift`, `OMPConsole/OS/OSToolDetail.swift` | Mémoire, Poste, Santé (statistiques), Administration, Serveur, Terminal, Fichiers : l'écran classique, dans le détail de la nouvelle coque ; `OSRouter` y mène aussi les liens, les notifications et la palette qui nommaient une section classique |
+| Nouveau fil… (⌘N) | `LaunchViews.swift` | le dépôt (`LaunchScope` : ceux de l'espace, le préféré d'abord), la phrase, « Lancer » à côté d'« Annuler » ; « Plus d'options » replie le type, le budget et l'autonomie, puis « Expert » la voie, le cadrage, les modules, la priorité et les labels. Le titre du fil est la première ligne de la phrase |
 
-Raccourcis du Mac : ⌘L le composeur, ⌘T le tri, ⌘⇧P suspendre (après confirmation) ou
-reprendre, ⌥⌘I l'inspecteur « Comprendre », ⌘N une nouvelle feature, ⌘K la palette,
-⌘⇧O l'interface classique. Liens : `ompconsole://runs/<id>` ouvre le fil de la feature,
-`ompconsole://threads/<id>` un fil, `ompconsole://decisions` (comme `inbox` et
-`workstation`) le tri, `ompconsole://now` « Maintenant » ; un lien vers une section sans
-équivalent (Mémoire, Terminal, Fichiers, Système) ramène l'interface classique.
+« Comprendre » sur le Mac est un panneau à droite du détail quand la fenêtre fait au
+moins 1 250 pt de large, une feuille sinon, et bascule de l'un à l'autre quand on la
+redimensionne (`OSShellLayout`). Ce n'est pas l'inspecteur natif : sa colonne, ajoutée à
+la vue scindée de la fenêtre, levait une exception de contraintes — l'app plantait —
+dès que barre latérale, détail et inspecteur ne tenaient pas ensemble. La fenêtre la
+plus étroite fait 760 pt : la barre latérale (260) et le détail (500).
+
+Raccourcis du Mac : ⌘1…⌘5 Maintenant, À vous, Propositions, Automatismes, Savoir ; ⌘L le
+composeur, ⌘T le tri, ⌘⇧P suspendre (après confirmation) ou reprendre, ⌥⌘I
+« Comprendre », ⌘N un nouveau fil, ⌘K la palette (elle propose ces mêmes écrans et les
+outils), ⌘⇧O l'interface classique. Liens : `ompconsole://runs/<id>` ouvre le fil de la
+feature, `ompconsole://threads/<id>` un fil, `ompconsole://decisions` et `inbox` le tri
+(`workstation` aussi quand un envoi du poste attend, sinon l'outil Poste),
+`ompconsole://now` « Maintenant », `ompconsole://memory`, `terminal`, `files` l'outil du
+même nom, `ompconsole://system/<page>` les Automatismes (vigie, planifications), le
+Savoir (autonomie) ou un outil (statistiques, administration, serveur). Aucun ne change
+d'interface.
 
 Variables de recette (captures, `scripts/recette/os-shots.sh`) : `OMP_CONSOLE_OS_VIEW`
-(`now`, `proposals`, `knowledge`, `automations`, `space:<identifiant ou nom>`),
+(`now`, `proposals`, `knowledge`, `automations`, `space:<identifiant ou nom>`,
+`tool:<memory|workstation|health|admin|server|terminal|files>`),
 `OMP_CONSOLE_OS_SPACE` (l'espace retenu dans la liste, par identifiant ou par nom),
 `OMP_CONSOLE_OS_THREAD` (un fil), `OMP_CONSOLE_OS_RUN` (le fil d'une feature),
-`OMP_CONSOLE_OS_TRIAGE` (le tri), `OMP_CONSOLE_OS_LEVEL` (le niveau de « Comprendre »),
-`OMP_CONSOLE_OS_NEW` (la feuille « Nouvelle feature »).
+`OMP_CONSOLE_OS_TRIAGE` (le tri), `OMP_CONSOLE_OS_LEVEL` (la vue de « Comprendre » :
+`summary`, `proofs`, `journal` ; les anciens noms `story` et `raw` ouvrent le Journal),
+`OMP_CONSOLE_OS_NEW` (la feuille « Nouveau fil… »).
 
-Tests : `Tests/OMPConsoleTests/OSWatchTests.swift` (tri par espace et par lieu,
+Tests : `Tests/OMPConsoleTests/OSShellTests.swift` (panneau ou feuille selon la largeur,
+somme des colonnes, la porte lue dans la raison du serveur, le résumé en trois blocs, le
+routage sans bascule des sections, liens et raccourcis, la palette, les dépôts et le
+titre d'un nouveau fil), `Tests/OMPConsoleTests/OSWatchTests.swift` (tri par espace et par lieu,
 regroupement des propositions et qui les accepte, règles de palier en phrases, tendance
 d'un chiffre) ; les gardes `test/console/autonomie-console.test.ts` (la seule écriture
 de l'autonomie, réservée à l'admin) et `test/console/serveur-de-pipelines.test.ts` (chaque
@@ -1189,9 +1213,12 @@ revue à valider, une question, une feature au travail, une feature retenue en f
 échec, un arrêt motivé, un audit proposé, deux espaces, des consignes permanentes, une
 règle de palier, une session omp locale), puis relance une COPIE de l'app
 (`com.omp.console.recette-os`, préférences vides : `ui.os` n'est pas posée) une fois
-par écran, ouvert par les variables `OMP_CONSOLE_OS_*`. Six images sous
+par écran, ouvert par les variables `OMP_CONSOLE_OS_*`. Douze images sous
 `omp-console/build/os-shots/` (dossier ignoré par git) : `maintenant.png`, `fil.png`,
-`tri.png`, `propositions.png`, `savoir.png`, `espace.png`. Codes de sortie : 0 les six
+`tri.png`, `propositions.png`, `savoir.png`, `espace.png`, `comprendre-resume.png` et
+`comprendre-preuves.png` (la revue à valider, en panneau), `comprendre-journal.png` (un
+fil livré), `comprendre-feuille.png` (fenêtre de 1 000 pt : « Comprendre » en feuille),
+`outils.png` (la Mémoire dans le détail), `nouveau-fil.png`. Codes de sortie : 0 les douze
 images produites, 1 échec, 2 non exécuté hors macOS. `mac-shots.sh` pose `ui.os` à faux :
 l'onglet « Preuves » est celui de l'interface classique.
 

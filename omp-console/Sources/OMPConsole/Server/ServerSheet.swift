@@ -15,6 +15,8 @@ import SwiftUI
 struct ServerSheet: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
+    /// Dans le détail de la nouvelle interface (Outils ▸ Serveur) : une page, sans « Fermer ».
+    var embedded = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -77,12 +79,14 @@ struct ServerSheet: View {
             .formStyle(.grouped)
             .navigationTitle(PipelineServerText.title)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(PipelineServerText.close) { dismiss() }
+                if !embedded {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(PipelineServerText.close) { dismiss() }
+                    }
                 }
             }
         }
-        .frame(minWidth: 520, idealWidth: 560, minHeight: 320)
+        .frame(minWidth: embedded ? nil : 520, idealWidth: embedded ? nil : 560, minHeight: embedded ? nil : 320)
         .confirmationDialog(PipelineServerText.forgetConfirm, isPresented: $drafts.forgetAsked) {
             Button(PipelineServerText.forget, role: .destructive) {
                 Task { await server.forget() }

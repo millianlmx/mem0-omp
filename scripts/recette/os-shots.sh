@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Produit les captures de l'app Mac dans son interface par défaut (l'« OS agentique ») :
 # « Maintenant » (le brief), un fil au travail, le tri des décisions, les Propositions, le
-# Savoir et la page d'un espace. Un serveur de démonstration (`os-demo-serveur.ts` : le
+# Savoir, la page d'un espace, « Comprendre » (Résumé et Preuves de la revue à valider en
+# panneau, Journal d'un fil livré, puis Résumé en FEUILLE dans une fenêtre de 1 000 pt),
+# un outil (la Mémoire, ouverte dans le détail) et la feuille « Nouveau fil… ». Un serveur de démonstration (`os-demo-serveur.ts` : le
 # vrai gestionnaire HTTP d'omp-harness et le vrai orchestrateur sur un monde de test)
 # sert une revue à valider, une question ouverte, une feature au travail, une feature
 # retenue en file, un échec, un arrêt motivé, un audit proposé, deux espaces, des
@@ -26,7 +28,7 @@
 # l'écran le temps de chaque capture.
 #
 # Vérifications DURES avant de rendre 0 : chaque PNG existe et ses dimensions (`sips`)
-# sont non nulles. Codes de sortie : 0 les six captures produites, 1 échec, 2 « non
+# sont non nulles. Codes de sortie : 0 les douze captures produites, 1 échec, 2 « non
 # exécuté » (pas macOS, ou Node/Swift absents).
 set -uo pipefail
 
@@ -101,6 +103,8 @@ field() { node -e 'const j = JSON.parse(require("fs").readFileSync(process.argv[
 url="$(field url)"
 token="$(field token)"
 working="$(field runs.working)"
+review="$(field runs.review)"
+delivered="$(field runs.delivered)"
 
 # Le dossier personnel jetable : le seul réglage que lit l'app sans préférences.
 mkdir -p "$WORK/home/.omp"
@@ -132,10 +136,12 @@ if let largest = mine.max(by: { area($0) < area($1) }), let id = largest[kCGWind
 SWIFT
 
 # shot <nom> [VARIABLE=valeur …] : relance l'app avec ces variables de recette, attend que
-# l'écran soit servi, capture sa fenêtre dans `$SHOTS/<nom>.png`.
+# l'écran soit servi, capture sa fenêtre dans `$SHOTS/<nom>.png`. `SHOT_WIDTH` : la largeur
+# de la fenêtre en points (1 500 par défaut ; sous 1 250, « Comprendre » est une feuille).
 shot() {
   local name="$1"
   shift
+  local window_width="${SHOT_WIDTH:-1500}"
   local envs=()
   local variable
   for variable in "$@"; do envs+=(--env "$variable"); done
@@ -143,7 +149,7 @@ shot() {
   # Des préférences neuves à chaque écran : seules la taille de la fenêtre et la recette de
   # préparation sont posées.
   defaults delete "$BUNDLE_ID" >/dev/null 2>&1
-  defaults write "$BUNDLE_ID" "NSWindow Frame main-AppWindow-1" "80 60 1500 960 0 0 1728 1084 "
+  defaults write "$BUNDLE_ID" "NSWindow Frame main-AppWindow-1" "80 60 $window_width 960 0 0 1728 1084 "
   defaults write "$BUNDLE_ID" setup.recipe succes
   echo "  · $name"
   open -n -a "$APP" --env "CFFIXED_USER_HOME=$WORK/home" --env "OMP_CONSOLE_SUPPORT_ROOT=$WORK/support" \
@@ -197,3 +203,9 @@ shot tri "OMP_CONSOLE_OS_TRIAGE=1" || exit 1
 shot propositions "OMP_CONSOLE_OS_VIEW=proposals" || exit 1
 shot savoir "OMP_CONSOLE_OS_VIEW=knowledge" || exit 1
 shot espace "OMP_CONSOLE_OS_VIEW=space:$SPACE" "OMP_CONSOLE_OS_SPACE=$SPACE" || exit 1
+shot comprendre-resume "OMP_CONSOLE_OS_RUN=$review" "OMP_CONSOLE_OS_LEVEL=summary" || exit 1
+shot comprendre-preuves "OMP_CONSOLE_OS_RUN=$review" "OMP_CONSOLE_OS_LEVEL=proofs" || exit 1
+shot comprendre-journal "OMP_CONSOLE_OS_RUN=$delivered" "OMP_CONSOLE_OS_LEVEL=journal" || exit 1
+SHOT_WIDTH=1000 shot comprendre-feuille "OMP_CONSOLE_OS_RUN=$review" "OMP_CONSOLE_OS_LEVEL=summary" || exit 1
+shot outils "OMP_CONSOLE_OS_VIEW=tool:memory" || exit 1
+shot nouveau-fil "OMP_CONSOLE_OS_NEW=1" || exit 1

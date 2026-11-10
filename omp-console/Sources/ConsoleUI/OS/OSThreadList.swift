@@ -26,6 +26,8 @@ public struct OSThreadList: View {
     /// Les brouillons de la coque : sur l'iPhone et l'iPad, l'appui long sur un fil ouvre
     /// les gestes de sa feature (les mêmes que la liste des features).
     let drafts: HarnessDrafts?
+    /// Les outils de l'entrée « Outils », au pied de la liste (Mac) ; aucun : pas d'entrée.
+    let tools: [OSTool]
 
     @State private var draft = ""
     @State private var sending = false
@@ -35,9 +37,11 @@ public struct OSThreadList: View {
     /// `places` : les lieux proposés (`OSThreadScope.places`). `browsers` : le nom de chaque
     /// navigateur du poste, par identifiant. `decisions` : le nombre de décisions qui attendent.
     /// `drafts` : les brouillons de la coque, pour le menu contextuel d'un fil (iPhone, iPad).
+    /// `tools` : les écrans classiques de l'entrée « Outils » (Mac).
     public init(
         server: HarnessModel, intakes: HarnessIntakes, pulse: OSPulse, workspace: OSWorkspace,
-        threads: [OSThread], places: [String], browsers: [String: String], decisions: Int, drafts: HarnessDrafts? = nil
+        threads: [OSThread], places: [String], browsers: [String: String], decisions: Int, drafts: HarnessDrafts? = nil,
+        tools: [OSTool] = []
     ) {
         self.server = server
         self.intakes = intakes
@@ -50,6 +54,7 @@ public struct OSThreadList: View {
         self.browsers = browsers
         self.decisions = decisions
         self.drafts = drafts
+        self.tools = tools
     }
 
     private var shown: [OSThread] {
@@ -74,6 +79,7 @@ public struct OSThreadList: View {
             // onglets de la coque.
             #if os(macOS)
             List(selection: $workspace.selection) { content }
+            if !tools.isEmpty { OSToolsEntry(workspace: workspace, tools: tools) }
             #else
             List { content }
             #endif
