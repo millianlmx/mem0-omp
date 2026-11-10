@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-console 1.2.1 — 2026-11-10
+
+- fix(console): la feuille du Serveur s'ouvre aussi depuis la nouvelle interface (⌘K › Serveur) (#453) (c49b79c)
+
 ## omp-console 1.2.0 — 2026-11-10
 
 - feat(console): les apps comprennent le multi-client — espace sur chaque carte, portée gardée, étanchéité (#451) (0b177c1)

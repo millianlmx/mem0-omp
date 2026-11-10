@@ -1,6 +1,6 @@
 {
   "name": "omp-console",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Les apps OMP Console (macOS et iOS). Ce fichier ne porte que leur version : le job de release la monte d'après les commits qui touchent omp-console/, tague omp-console-v<version> et joint les apps à la release (.github/workflows/release-assets.yml).",
   "engines": {
