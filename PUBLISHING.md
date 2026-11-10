@@ -340,6 +340,11 @@ L'extension Chrome `omp-chrome/` aussi : `omp-chrome/package.json` porte sa vers
 bumpée d'après les commits qui touchent `omp-chrome/` et taguée `omp-chrome-v<version>`.
 `scripts/chrome-extension.sh` l'écrit dans le manifeste construit ;
 `omp-chrome/manifest.json` n'en porte pas, et la construction échoue s'il en porte une.
+Les apps OMP Console (`omp-console/`) suivent le même chemin : `omp-console/package.json`
+ne porte que leur version, bumpée d'après les commits qui touchent `omp-console/` et
+taguée `omp-console-v<version>`. Une PR qui ne change que les apps publie donc sa propre
+release, et `release-assets` y joint les apps construites depuis ce tag. Cette version
+n'est pas celle du bundle (`CFBundleShortVersionString`) : elle nomme la release et son tag.
 
 ```bash
 # Ce que la CI exécute — rejouable à la main, et sans rien écrire avec --dry-run :

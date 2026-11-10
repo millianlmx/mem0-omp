@@ -1134,6 +1134,8 @@ type ScenarioSet = {
   noToken: NoTokenBuilt;
   /** Un `feat` sur le harness, en `--dry-run` : le service a son bump, sans catalogue. */
   service: Built;
+  /** Un `feat` sur les apps, en `--dry-run` : omp-console a son bump et rien d'autre ne bouge. */
+  console: Built;
   /** Dépôt vierge pour les cas d'arguments de `--simulate` : aucun run de moteur. */
   argCases: Repo;
   /** Des PR de release laissées ouvertes par des runs précédents. */
@@ -1151,7 +1153,13 @@ async function buildScenarios(): Promise<ScenarioSet> {
       edits: [{ file: "omp-harness/README.md", append: "\nUne ligne.\n" }],
     },
   ]);
-  const [patch, docs, major, tagged, backlog, blocked, noToken, serviceRun, stale, concurrent, deploy] =
+  const consoleRepo = makeRepo("console", [
+    {
+      subject: "feat(console): un repère de plus",
+      edits: [{ file: "omp-console/README.md", append: "\nUne ligne.\n" }],
+    },
+  ]);
+  const [patch, docs, major, tagged, backlog, blocked, noToken, serviceRun, consoleRun, stale, concurrent, deploy] =
     await Promise.all([
       buildSimple("patch", PATCH_STEPS),
       buildSimple("docs", DOCS_STEPS),
@@ -1161,6 +1169,7 @@ async function buildScenarios(): Promise<ScenarioSet> {
       buildBlocked("blocked"),
       buildNoToken("token"),
       runEngine(serviceRepo, { extra: ["--dry-run"] }),
+      runEngine(consoleRepo, { extra: ["--dry-run"] }),
       buildStale("stale"),
       buildConcurrent("concurrent"),
       buildDeploy("deploy"),
@@ -1174,6 +1183,7 @@ async function buildScenarios(): Promise<ScenarioSet> {
     blocked,
     noToken,
     service: { repo: serviceRepo, run: serviceRun },
+    console: { repo: consoleRepo, run: consoleRun },
     argCases: makeRepo("args", PATCH_STEPS),
     stale,
     concurrent,
@@ -1717,6 +1727,26 @@ test("release/AC-10 : un service hors catalogue (omp-harness) est versionné com
   );
   assert.match(body, /harness\.sh up/);
   assert.doesNotMatch(body, /\/marketplace install omp-harness/);
+});
+
+test("release/AC-16 : une PR qui ne touche que omp-console publie omp-console — bump, tag, note qui renvoie aux apps jointes — et laisse plugins, harness et extension Chrome inchangés", (t) => {
+  const built = scenario(SCENARIOS?.console, t);
+  if (built === null) return;
+  const { repo, run } = built;
+  assert.equal(run.status, 0, output(run));
+  const current = versionIn(repo.dir, "omp-console/package.json");
+  assert.ok(output(run).includes(`✓ omp-console : minor ${current} → ${bumpVersion(current, "minor")}`), output(run));
+  for (const plugin of PLUGINS) assert.ok(output(run).includes(`· ${plugin.name} : inchangé`), output(run));
+  for (const name of ["omp-harness", "omp-chrome"]) {
+    assert.ok(output(run).includes(`· ${name} : inchangé`), output(run));
+  }
+
+  const body = renderReleaseBody(
+    [{ ...fixtureRelease("minor", null), name: "omp-console", dir: "omp-console", tag: "omp-console-v1.1.0" }],
+    { ownerRepo: "o/r", marketplace: "m" },
+  );
+  assert.match(body, /OMP-Console-macOS\.zip/);
+  assert.doesNotMatch(body, /\/marketplace install omp-console/);
 });
 
 // ---------------------------------------------------------------------------

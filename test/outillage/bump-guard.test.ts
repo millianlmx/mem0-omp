@@ -209,8 +209,8 @@ test("base absente ou introuvable : sortie non nulle, diagnostic nommé", () => 
   assert.ok(output(bogus).includes("✗ option inconnue : --inconnue"), output(bogus));
 });
 
-test("services : les versions d'omp-harness et d'omp-chrome, hors catalogue, ne se montent pas non plus à la main", () => {
-  for (const dir of ["omp-harness", "omp-chrome"]) {
+test("services : les versions d'omp-harness, d'omp-chrome et d'omp-console, hors catalogue, ne se montent pas non plus à la main", () => {
+  for (const dir of ["omp-harness", "omp-chrome", "omp-console"]) {
     const repo = makeRepo();
     const rel = `${dir}/package.json`;
     fs.mkdirSync(path.join(repo, dir), { recursive: true });
