@@ -20,6 +20,8 @@ import SwiftUI
 /// Les notifications sont posées dès `init` (une action touchée app fermée relance
 /// l'app en arrière-plan) : catégories et gestes (`HarnessNotificationCenter`), jeton
 /// APNs rendu au délégué d'application (`IOSAppDelegate`) puis enregistré au serveur.
+/// Les Live Activities aussi (`IOSLiveActivityCenter.attach`) : jeton push-to-start
+/// enregistré au serveur, activités démarrées par le serveur adoptées.
 @main
 struct OMPConsoleIOSApp: App {
     private let initialSection: ConsoleSection
@@ -29,7 +31,7 @@ struct OMPConsoleIOSApp: App {
     @StateObject private var server: HarnessModel
     @StateObject private var drafts = HarnessDrafts()
     /// Les Live Activities des features suivies sur l'écran verrouillé.
-    @StateObject private var activities = IOSLiveActivityCenter()
+    @StateObject private var activities: IOSLiveActivityCenter
     /// Le widget d'écran d'accueil, nourri par le groupe d'apps.
     @StateObject private var widgets = IOSWidgetBridge()
     /// Les catégories de notification et la réponse à leurs actions.
@@ -55,6 +57,11 @@ struct OMPConsoleIOSApp: App {
         let notifications = HarnessNotificationCenter()
         notifications.attach(server)
         _notifications = StateObject(wrappedValue: notifications)
+        // Le jeton push-to-start et les activités démarrées par le serveur s'écoutent dès
+        // le lancement, même en arrière-plan.
+        let activities = IOSLiveActivityCenter()
+        activities.attach(server)
+        _activities = StateObject(wrappedValue: activities)
     }
 
     var body: some Scene {
@@ -80,6 +87,8 @@ struct OMPConsoleIOSApp: App {
             // Après l'appairage : la permission de notifier, puis le jeton de l'appareil,
             // enregistré au serveur relié (et à chaque nouveau jeton que rend le système).
             .task(id: server.address) {
+                widgets.sync(with: server)
+                await activities.serverChanged(server)
                 if server.isConfigured { await IOSPush.enable(notifications) }
             }
             .onReceive(appDelegate.$deviceToken) { token in

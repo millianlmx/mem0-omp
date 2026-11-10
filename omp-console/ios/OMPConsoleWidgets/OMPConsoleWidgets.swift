@@ -1,4 +1,5 @@
 import ActivityKit
+import AppIntents
 import ConsoleClient
 import ConsoleCore
 import SwiftUI
@@ -7,14 +8,17 @@ import WidgetKit
 // L'extension de widgets de l'app iOS :
 // - la Live Activity d'une feature suivie, sur l'écran verrouillé et dans la Dynamic
 //   Island — son état, son étape, l'outil que l'agent emploie, une alerte en cours et
-//   son coût. L'app la démarre depuis le menu contextuel d'une feature
+//   son coût. Le serveur la démarre seul (push-to-start), sinon l'app
 //   (`IOSLiveActivityCenter`) ; ses mises à jour viennent de l'app ouverte ou du
-//   serveur par APNs ;
-// - le widget d'écran d'accueil « Boîte du serveur » : ce qui attend l'humain et les
-//   features en cours avec leur étape et leurs alertes. Il relit la boîte lui-même
-//   toutes les 15 minutes par le groupe d'apps partagé avec l'app
+//   serveur par APNs. Un toucher ouvre le fil de la feature (`ompconsole://threads/<id>`) ;
+//   une revue qui attend offre « Ouvrir » et « Valider » (`OMPRunValidateIntent`,
+//   appareil déverrouillé) ;
+// - le widget d'écran d'accueil « Boîte du serveur » : le compte des décisions qui
+//   attendent et les features en cours avec leur étape et leurs alertes. Il relit la
+//   boîte lui-même toutes les 15 minutes par le groupe d'apps partagé avec l'app
 //   (`HarnessWidgetStore`), et montre le dernier instantané hors ligne. Un toucher
-//   ouvre l'app sur l'Accueil.
+//   ouvre le tri des décisions (`ompconsole://decisions`), ou « Maintenant » quand rien
+//   n'attend ; dans les grands formats, une feature ouvre son fil.
 // Les mots viennent du noyau.
 
 @main
@@ -92,7 +96,7 @@ struct OMPInboxWidget: Widget {
         StaticConfiguration(kind: Self.kind, provider: OMPInboxProvider()) { entry in
             OMPInboxView(snapshot: entry.snapshot)
                 .containerBackground(.fill.tertiary, for: .widget)
-                .widgetURL(HarnessWidgetLink.url(.inbox))
+                .widgetURL(entry.snapshot.pending > 0 ? HarnessWidgetLink.decisions : HarnessWidgetLink.now)
         }
         .configurationDisplayName(MonitoringText.widgetName)
         .description(MonitoringText.widgetDescription)
@@ -160,29 +164,35 @@ struct OMPInboxView: View {
                 .foregroundStyle(.secondary)
         }
         ForEach(shown) { run in
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: run.alert.map(MonitoringText.alertSymbol) ?? (run.needsHuman ? "person.crop.circle.badge.questionmark" : "gearshape.2"))
-                    .foregroundStyle(run.alert != nil || run.needsHuman ? Color.orange : Color.blue)
-                    .font(.caption)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(run.title)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                    Text(Self.line(run))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                if let cost = run.cost {
-                    Text(MonitoringText.cost(cost))
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .accessibilityElement(children: .combine)
+            Link(destination: HarnessWidgetLink.url(thread: run.id)) { row(run) }
         }
+    }
+
+    /// Une feature : son symbole, son titre, son état et son coût. Elle ouvre son fil.
+    private func row(_ run: HarnessWidgetSnapshot.Run) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: run.alert.map(MonitoringText.alertSymbol) ?? (run.needsHuman ? "person.crop.circle.badge.questionmark" : "gearshape.2"))
+                .foregroundStyle(run.alert != nil || run.needsHuman ? Color.orange : Color.blue)
+                .font(.caption)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(run.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(Self.line(run))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if let cost = run.cost {
+                Text(MonitoringText.cost(cost))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 
     /// « En cours · /impl », ou l'alerte en cours.
@@ -199,6 +209,7 @@ struct OMPRunLiveActivity: Widget {
         ActivityConfiguration(for: OMPRunActivityAttributes.self) { context in
             OMPRunLockScreenView(attributes: context.attributes, state: context.state)
                 .padding()
+                .widgetURL(HarnessWidgetLink.url(thread: context.attributes.runId))
         } dynamicIsland: { context in
             let state = context.state
             return DynamicIsland {
@@ -219,7 +230,10 @@ struct OMPRunLiveActivity: Widget {
                         .lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    OMPRunStatusLines(state: state)
+                    VStack(alignment: .leading, spacing: 8) {
+                        OMPRunStatusLines(state: state)
+                        if state.awaitsReview { OMPRunReviewActions(runId: context.attributes.runId) }
+                    }
                 }
             } compactLeading: {
                 Image(systemName: OMPRunActivityStyle.symbol(state))
@@ -234,16 +248,25 @@ struct OMPRunLiveActivity: Widget {
                     .accessibilityHidden(true)
             }
             .keylineTint(OMPRunActivityStyle.tint(state))
+            .widgetURL(HarnessWidgetLink.url(thread: context.attributes.runId))
         }
     }
 }
 
-/// L'activité sur l'écran verrouillé : la feature, son dépôt, son état et son coût.
+/// L'activité sur l'écran verrouillé : la feature, son dépôt, son état et son coût ; pour
+/// une revue qui attend, « Ouvrir » et « Valider ».
 struct OMPRunLockScreenView: View {
     let attributes: OMPRunActivityAttributes
     let state: HarnessActivityState
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            summary
+            if state.awaitsReview { OMPRunReviewActions(runId: attributes.runId) }
+        }
+    }
+
+    private var summary: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: OMPRunActivityStyle.symbol(state))
                 .font(.title2)
@@ -266,6 +289,31 @@ struct OMPRunLockScreenView: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Les gestes d'une revue qui attend : ouvrir le fil dans l'app, ou valider d'ici
+/// (appareil déverrouillé ; le geste passe par le serveur relié du groupe d'apps).
+struct OMPRunReviewActions: View {
+    let runId: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Link(destination: HarnessWidgetLink.url(thread: runId)) {
+                Label(NotificationText.open, systemImage: "arrow.up.forward.app")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(.quaternary, in: Capsule())
+            }
+            .foregroundStyle(.primary)
+            Button(intent: OMPRunValidateIntent(runId: runId)) {
+                Label(NotificationText.validate, systemImage: "checkmark")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .background(.green, in: Capsule())
+        }
+        .font(.subheadline.weight(.semibold))
     }
 }
 

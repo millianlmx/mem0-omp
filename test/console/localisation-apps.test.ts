@@ -42,6 +42,7 @@ const ROOTS = [
   "omp-console/Sources/OMPConsole",
   "omp-console/ios/OMPConsoleIOS",
   "omp-console/ios/OMPConsoleWidgets",
+  "omp-console/ios/OMPConsoleShared",
 ] as const;
 
 const NBSP = " ";
@@ -279,6 +280,11 @@ const UNTRANSLATED: readonly Untranslated[] = [
     file: "omp-console/ios/OMPConsoleIOS/IOSSiriText.swift",
     name,
     reason: "App Intents : littéraux extraits au build, figés par scripts/app-intents/attendus.json",
+  })),
+  ...["Demande", "Que voulez-vous demander ?"].map((literal) => ({
+    file: "omp-console/ios/OMPConsoleIOS/IOSSiriText.swift",
+    literal,
+    reason: "App Intents : titre et invite d'un paramètre, littéraux extraits au build",
   })),
   {
     file: "omp-console/Sources/OMPConsole/Setup/SetupText.swift",

@@ -9,7 +9,8 @@
 // Refuser), `omp.answer` (une seule question ouverte, avec sa recommandation : la
 // prendre, ou répondre autre chose), `omp.open` ; `rev` est l'If-Match du geste.
 // Valider, refuser, approuver ou répondre écrivent : l'appareil doit être déverrouillé
-// (`authenticationRequired`). Approuver ou refuser un envoi exige le jeton APPROBATEUR
+// (`authenticationRequired`). Toucher une notification `omp.answer` ouvre le fil de sa
+// feature : la question s'y lit en entier, avec ses options. Approuver ou refuser un envoi exige le jeton APPROBATEUR
 // déjà au trousseau ; sans lui, ces actions ouvrent le Poste au lieu d'agir. Un refus de
 // specs ou de verdict porte sa raison (le serveur l'exige) : sans texte saisi, l'action
 // ouvre l'app ; de même une réponse sans texte.
@@ -52,6 +53,8 @@ public struct HarnessNotificationActionSpec: Equatable, Sendable {
     public var destructive: Bool
     /// L'invite du champ d'une action à texte ; `nil` sans champ.
     public var placeholder: String? = nil
+    /// Le bouton d'envoi du champ d'une action à texte ; `nil` : le titre de l'action.
+    public var submitTitle: String? = nil
 }
 
 /// La question qu'une alerte `omp.answer` porte : de quoi y répondre sans ouvrir l'app.
@@ -268,7 +271,8 @@ public enum HarnessNotificationRouting {
                 ),
                 HarnessNotificationActionSpec(
                     action: .answer, title: HarnessNotificationAction.answer.title, textInput: true,
-                    authenticationRequired: true, foreground: false, destructive: false, placeholder: PipelineServerText.answerPlaceholder
+                    authenticationRequired: true, foreground: false, destructive: false,
+                    placeholder: NotificationText.answerPlaceholder, submitTitle: NotificationText.answerSend
                 ),
                 open,
             ]
@@ -280,16 +284,18 @@ public enum HarnessNotificationRouting {
     /// Le geste d'une action sur une notification. `action` absent : un toucher sur la
     /// notification. `text` : la saisie d'une action à texte. Une action que la
     /// notification ne permet pas (catégorie, charge incomplète, jeton non approbateur,
-    /// refus sans raison, réponse vide) ouvre l'app là où le geste se fait.
+    /// refus sans raison, réponse vide) ouvre l'app là où le geste se fait. Toucher une
+    /// notification `omp.answer` (ou son « Ouvrir ») ouvre le fil de la feature.
     public static func gesture(
         category: String, action: HarnessNotificationAction?, alert: HarnessPushAlert?, text: String?, approver: Bool
     ) -> HarnessNotificationGesture {
         let destination = alert?.destination ?? .section(.inbox)
-        guard let action, let alert else { return .open(destination) }
+        let answers = category == HarnessNotificationCategory.answer.rawValue && alert?.kind == .escalation
+        let thread = answers ? alert?.runId.map(HarnessPaletteCommand.run) : nil
+        guard let action, let alert else { return .open(thread ?? destination) }
         let reason = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let validates = category == HarnessNotificationCategory.validate.rawValue && (alert.kind == .specs || alert.kind == .verdict)
         let approves = category == HarnessNotificationCategory.approve.rawValue && alert.kind == .approval && approver
-        let answers = category == HarnessNotificationCategory.answer.rawValue && alert.kind == .escalation
         switch action {
         case .validate:
             guard validates, let runId = alert.runId else { return .open(destination) }
@@ -310,7 +316,7 @@ public enum HarnessNotificationRouting {
             guard answers, let runId = alert.runId, let question = alert.question, !reason.isEmpty else { return .open(destination) }
             return .answer(runId: runId, rev: alert.rev, question: question.id, answer: reason)
         case .open:
-            return .open(destination)
+            return .open(thread ?? destination)
         }
     }
 
@@ -370,16 +376,14 @@ public enum HarnessNotificationRouting {
 }
 
 extension HarnessNotificationAction {
-    /// Le libellé du bouton, pris au vocabulaire partagé. `takeRecommended` emprunte
-    /// « Accepter les recommandations » de la boîte : le seul point à changer le jour où la
-    /// couche des textes lui donne un libellé propre.
+    /// Le libellé du bouton, pris au vocabulaire partagé (`NotificationText`).
     public var title: String {
         switch self {
         case .validate: NotificationText.validate
         case .refuse, .refuseSend: NotificationText.refuse
         case .approve: NotificationText.approve
-        case .takeRecommended: PipelineServerText.acceptRecommended
-        case .answer: PipelineServerText.answer
+        case .takeRecommended: NotificationText.takeRecommended
+        case .answer: NotificationText.answer
         case .open: NotificationText.open
         }
     }

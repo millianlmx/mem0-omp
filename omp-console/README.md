@@ -537,11 +537,25 @@ elle-même.
   tests occupés, file d'attente, mémoire libre, limites de débit), relue au rythme
   du serveur tant que l'écran est ouvert. Face à un serveur sans séries, les blocs le
   disent au lieu d'échouer.
-- **Live Activity (iPhone).** « Suivre sur l'écran verrouillé », dans le menu « … »
-  de la page d'une feature ou le menu contextuel de sa ligne, démarre sa Live Activity (extension
-  `ios/OMPConsoleWidgets`) : état, étape, outil du moment, alerte et coût, sur
-  l'écran verrouillé et dans la Dynamic Island. L'app la met à jour tant qu'elle est
-  ouverte et enregistre son jeton push au serveur (`POST /v1/push/activities`) ;
+- **Live Activity (iPhone).** La Live Activity d'une feature (extension
+  `ios/OMPConsoleWidgets`) montre son état, son étape, l'outil du moment, une alerte et
+  son coût, sur l'écran verrouillé et dans la Dynamic Island. Elle démarre **seule** :
+  dès son lancement, l'app enregistre au serveur son jeton push-to-start
+  (`POST /v1/push/activities/start`), et un serveur qui a une clé APNs démarre
+  lui-même l'activité d'une feature qui se met au travail ou attend l'humain, app
+  fermée ; l'app adopte cette activité et enregistre son jeton de mise à jour
+  (`POST /v1/push/activities`). Quand le serveur ne pousse pas (pas de clé, serveur
+  antérieur), l'app en démarre une elle-même tant qu'elle est au premier plan : une
+  seule à la fois, la plus urgente — la feature qui attend l'humain depuis le plus
+  longtemps, sinon celle qui travaille (`HarnessActivityStart`). « Suivre sur l'écran
+  verrouillé », dans le menu « … » de la page d'une feature ou le menu contextuel de sa
+  ligne, en démarre ou en arrête une à la main ; une activité arrêtée ou écartée ne
+  redémarre pas d'office. Un toucher ouvre le fil de la feature
+  (`ompconsole://threads/<id>`) ; quand une revue attend, l'activité porte « Ouvrir »
+  et « Valider » : valider exige l'appareil déverrouillé et part à la révision que le
+  serveur vient de rendre (`OMPRunValidateIntent`, une `LiveActivityIntent` compilée
+  dans l'app et dans l'extension, `ios/OMPConsoleShared`), sinon une notification
+  « Geste non abouti » le dit. L'app met l'activité à jour tant qu'elle est ouverte ;
   app fermée, le serveur la tient à jour par APNs s'il a une clé (`apns` de sa
   configuration, voir `omp-harness/README.md` § « Les Live Activities app fermée »).
   Une feature terminée clôt son activité. Si iOS refuse le jeton push (capacité
@@ -559,8 +573,11 @@ elle-même.
   que sa `headline` (titre) et son `stake` (corps, suivi de « · +N autres questions »
   pour un lot), comme l'alerte push du serveur. Les gestes sont les mêmes des deux côtés :
   **Valider** / **Refuser** (specs, verdict ; le refus demande sa raison),
-  **Approuver** / **Refuser** (envoi du poste) et **Ouvrir**. Valider, refuser et
-  approuver exigent l'appareil déverrouillé et partent avec la révision que portait la
+  **Approuver** / **Refuser** (envoi du poste) et **Ouvrir**. Sur l'iPhone, une
+  question posée seule avec sa recommandation (catégorie `omp.answer`) se tranche
+  depuis la notification : **Prendre la recommandation**, ou **Répondre…** (saisie) ;
+  la toucher ouvre le fil de sa feature. Valider, refuser, approuver et répondre
+  exigent l'appareil déverrouillé et partent avec la révision que portait la
   notification (`If-Match`) : si la feature ou l'envoi a bougé depuis, rien n'est
   tranché et une notification « Geste non abouti » le dit. Sans le jeton approbateur au
   trousseau, Approuver et Refuser d'un envoi ouvrent l'app sur le Poste. Toucher une
@@ -579,8 +596,20 @@ elle-même.
   l'instantané de chaque boîte relue et l'adresse du serveur, et copie le jeton dans
   un article de trousseau du groupe ; le widget relit ainsi la boîte lui-même
   (`GET /v1/inbox`) toutes les 15 minutes, app fermée, et montre le dernier
-  instantané, daté, sans réseau. Un toucher ouvre l'app sur À traiter
-  (`ompconsole://inbox`).
+  instantané, daté, sans réseau. Un toucher ouvre le tri de ce qui attend
+  (`ompconsole://decisions`), ou l'accueil quand rien n'attend (`ompconsole://now`) ;
+  dans les formats moyen et grand, une feature ouvre son fil
+  (`ompconsole://threads/<id>`).
+- **Siri, Raccourcis, bouton Action (iPhone, iPad).** Quatre App Intents pilotent le
+  serveur sans ouvrir l'app, appareil déverrouillé : **Demander à l'OS** (une phrase
+  dictée ou tapée devient une Demande, `POST /v1/intake` de source `voice`), **Tout
+  suspendre** (la pause du serveur, après confirmation) et **Reprendre**
+  (`POST /v1/pause`), **Décisions en attente** (lecture : le compte et les premières
+  décisions). Chacun dit ce qu'il a fait, ou pourquoi il n'a rien fait (aucun serveur
+  relié, serveur antérieur à la fonction, jeton sans le droit). Voir « Siri » plus bas.
+- **Liens.** `ompconsole://<section>`, `ompconsole://threads/<id>` (le fil d'une
+  feature ; `runs/<id>` aussi), `ompconsole://decisions`, `ompconsole://now` et
+  `ompconsole://system/<page>` ouvrent l'app à cet endroit (`HarnessWidgetLink`).
 - **Mise à jour en direct.** L'app suit le flux SSE du serveur
   (`GET /v1/events`) à partir du curseur de la boîte ; chaque événement relit la
   boîte et, une fois un écran de catalogue ouvert, le catalogue. Une coupure
@@ -1920,7 +1949,7 @@ omp-console/
 │   ├── HarnessTransport.swift     le transport https et le lecteur SSE du serveur
 │   ├── HarnessSession.swift       le direct de la session d'une feature ou d'un audit (entrées, pages, événements)
 │   ├── HarnessMonitoring.swift    le contrat du monitoring (coût, alertes, frise, fichiers, tests, santé, modèles)
-│   ├── HarnessLiveActivity.swift  l'état d'une Live Activity, la forme exacte que pousse le serveur
+│   ├── HarnessLiveActivity.swift  l'état d'une Live Activity, la forme exacte que pousse le serveur, et le choix de celle qui démarre seule
 │   ├── WorkstationWire.swift      le contrat JSON du poste de travail (`/v1/workstation*`)
 │   ├── WorkstationModel.swift     le client du poste de travail, porté par `HarnessModel` (même transport, même flux)
 │   ├── CorporateSignals.swift     les signalements de collègues (propositions, aperçu, confirmation) et l'origine d'une feature
@@ -2297,6 +2326,24 @@ n'écrit rien : il lit le serveur de pipelines UNIQUE de l'app (`OMPConsoleIOSAp
 crée et l'enregistre pour les intents par `IOSSharedServer`), relit sa boîte, puis
 énonce « Aucun serveur relié », « Serveur relié, injoignable » ou « Relié au
 serveur, N en attente » (`IOSSiriStatus`).
+
+### Siri : la télécommande
+
+Quatre autres App Intents du même fichier, chacun avec son App Shortcut (Siri,
+Raccourcis, bouton Action), agissent sur le même serveur sans ouvrir l'app ; tous
+exigent l'appareil déverrouillé (le jeton est illisible verrouillé). Ce qu'ils font
+et répondent est décidé dans `ios/OMPConsoleIOS/IOSSiriRemote.swift` :
+
+| Intent | Phrases | Effet |
+|---|---|---|
+| **Demander à l'OS** (`IOSAskIntent`) | « Demander à OMP Console », « Nouvelle demande dans OMP Console » | Siri demande la phrase, puis la pose comme Demande (`POST /v1/intake`, source `voice`) : « Demande transmise à l'OS ». |
+| **Décisions en attente** (`IOSPendingDecisionsIntent`) | « Décisions en attente dans OMP Console », « Décisions de OMP Console » | Lecture : « 2 décisions vous attendent : une question sur « … », la revue de « … » » (trois au plus, le reste compté), ou « Rien ne vous attend ». |
+| **Tout suspendre** (`IOSSuspendAllIntent`) | « Tout suspendre dans OMP Console », « Suspendre OMP Console » | Lit la pause (`GET /v1/pause`), demande confirmation, puis la pose (`POST /v1/pause`) : « Tout est suspendu ». L'étape en cours de chaque agent finit. |
+| **Reprendre** (`IOSResumeAllIntent`) | « Reprendre OMP Console », « Reprendre le travail dans OMP Console » | Lève la pause : « Le travail reprend ». |
+
+Un serveur antérieur à la pause répond « Ce serveur ne propose pas la pause » ; un
+jeton qui n'y a pas droit, le motif du serveur. `OMPRunValidateIntent` (le bouton
+« Valider » d'une Live Activity) n'a pas de phrase et n'apparaît pas dans Raccourcis.
 
 ### Lire la mémoire du serveur depuis l'iPhone
 

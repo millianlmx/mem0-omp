@@ -39,14 +39,15 @@ struct HarnessRemoteTests {
         #expect(broken?.question == nil)
     }
 
-    @Test("la catégorie `omp.answer` offre « prendre la recommandation » et « répondre » (saisie), appareil déverrouillé, sans ouvrir l'app ; aucun libellé n'est vide")
+    @Test("la catégorie `omp.answer` offre « Prendre la recommandation » et « Répondre… » (saisie), appareil déverrouillé, sans ouvrir l'app ; aucun libellé n'est vide")
     func actions() {
         let specs = HarnessNotificationRouting.actions(for: .answer, approver: false)
         #expect(specs.map(\.action) == [.takeRecommended, .answer, .open])
         #expect(specs[0].authenticationRequired && !specs[0].foreground && !specs[0].textInput && !specs[0].destructive)
         #expect(specs[1].authenticationRequired && !specs[1].foreground && specs[1].textInput)
-        #expect(specs[1].placeholder == PipelineServerText.answerPlaceholder)
-        #expect(specs[1].title == PipelineServerText.answer)
+        #expect(specs[0].title == "Prendre la recommandation", "un libellé propre, au singulier : une seule question")
+        #expect(specs[1].title == "Répondre…" && specs[1].submitTitle == "Répondre")
+        #expect(specs[1].placeholder == NotificationText.answerPlaceholder)
         #expect(specs[2].foreground && !specs[2].authenticationRequired)
         #expect(HarnessNotificationAction.allCases.allSatisfy { !$0.title.isEmpty })
         #expect(HarnessNotificationCategory.answer.rawValue == "omp.answer")
@@ -57,7 +58,7 @@ struct HarnessRemoteTests {
         #expect(validate[1].placeholder == NotificationText.refusePlaceholder && validate[0].placeholder == nil)
     }
 
-    @Test("une action `omp.answer` devient la réponse à l'escalade, à la révision de la notification ; hors de sa catégorie, sans question ou sans texte, elle ouvre « À trancher »")
+    @Test("une action `omp.answer` devient la réponse à l'escalade, à la révision de la notification ; un toucher ouvre le fil ; hors de sa catégorie, sans question ou sans texte, elle ouvre « À trancher »")
     func routing() {
         let question = HarnessPushQuestion(id: 12, recommended: "colonne", options: ["colonne", "table"])
         let alert = HarnessPushAlert(kind: .escalation, runId: "r1", rev: 7, question: question)
@@ -67,8 +68,10 @@ struct HarnessRemoteTests {
         #expect(route(.answer, .answer, alert, text: "  une table à part  ") == .answer(runId: "r1", rev: 7, question: 12, answer: "une table à part"))
         #expect(route(.answer, .answer, alert, text: " \n") == open, "une réponse vide ouvre l'app")
         #expect(route(.answer, .answer, alert) == open)
-        #expect(route(.answer, nil, alert) == open, "un toucher ouvre la question")
-        #expect(route(.answer, .open, alert) == open)
+        #expect(route(.answer, nil, alert) == .open(.run("r1")), "un toucher ouvre le fil de la feature")
+        #expect(route(.answer, .open, alert) == .open(.run("r1")))
+        #expect(route(.answer, nil, HarnessPushAlert(kind: .escalation, rev: 7, question: question)) == open, "sans feature, « À trancher »")
+        #expect(route(.open, nil, alert) == open, "une question hors `omp.answer` garde « À trancher »")
 
         // Une charge incomplète ou forgée n'agit pas.
         #expect(route(.answer, .takeRecommended, HarnessPushAlert(kind: .escalation, runId: "r1", rev: 7)) == open)

@@ -154,9 +154,11 @@ struct RootView: View {
             .onChange(of: isCompact, initial: true) { _, compact in
                 if compact, selection == .section(.memory) { selector(.memory) }
             }
-            // Un toucher sur le widget d'écran d'accueil ouvre sa section.
+            // Un lien `ompconsole://` (widget, Live Activity, raccourci) : une section, le
+            // fil d'une feature (`threads/<id>`), le tri (`decisions`) ou « Maintenant » (`now`).
             .onOpenURL { url in
-                if let section = HarnessWidgetLink.section(of: url) { selector(section) }
+                guard let destination = HarnessWidgetLink.destination(of: url) else { return }
+                ConsolePaletteActions.perform(destination.command, server: server, drafts: drafts, select: selector)
             }
             .sheet(isPresented: $drafts.serverSheetShown) {
                 IOSServerSheet(server: server, drafts: drafts)
