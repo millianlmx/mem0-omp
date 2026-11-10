@@ -3,7 +3,14 @@ import ConsoleCore
 import ConsoleUI
 import SwiftUI
 
-/// La racine UNIQUE de l'app iOS : une barre d'onglets native (`TabView`, style
+/// La racine UNIQUE de l'app iOS. Elle montre la nouvelle interface (`IOSOSRootView`, le
+/// défaut) ou l'interface classique à sections, selon `IOSInterface` ; les feuilles, les
+/// confirmations, la palette, les liens et les notifications sont posés ICI, une fois pour
+/// les deux. Dans la nouvelle interface, une section demandée (⌘<n>, palette, notification,
+/// lien) mène à son onglet ou à son fil (`IOSOSRouting`) ; ce qui n'y a pas d'équivalent
+/// montre l'interface classique.
+///
+/// L'interface classique : une barre d'onglets native (`TabView`, style
 /// `.sidebarAdaptable`) porte les deux tailles d'écran. En largeur régulière (iPad)
 /// elle s'ouvre en barre latérale groupée (Travail, Outils, Système) avec les cinq
 /// sections, puis la recherche. En largeur compacte (iPhone), la barre n'a que cinq
@@ -26,6 +33,10 @@ struct RootView: View {
     @ObservedObject var drafts: HarnessDrafts
     /// Les notifications : un toucher ouvre la bonne section ou la feature.
     @ObservedObject var notifications: HarnessNotificationCenter
+    /// L'interface montrée : la nouvelle (le défaut) ou la classique.
+    @ObservedObject var interface: IOSInterface
+    /// L'onglet et les piles de la nouvelle interface.
+    @State private var osNavigation: IOSOSNavigation
     /// Le poste de travail du même serveur (`server.workstation`) : ses badges.
     @ObservedObject var workstation: WorkstationModel
     /// Les propositions des signalements de collègues (`server.signals`) : badge d'À traiter.
@@ -47,6 +58,7 @@ struct RootView: View {
         server: HarnessModel,
         drafts: HarnessDrafts,
         notifications: HarnessNotificationCenter,
+        interface: IOSInterface,
         selection: ConsoleSection = .inbox,
         state: IOSScreenState = .ready,
         memoryRecipe: IOSMemoryGraphRecipe? = nil
@@ -55,6 +67,8 @@ struct RootView: View {
         self.server = server
         self.drafts = drafts
         self.notifications = notifications
+        self.interface = interface
+        _osNavigation = State(initialValue: IOSOSNavigation(tab: interface.launch.initialTab))
         self.workstation = server.workstation
         self.signals = server.signals
         self.atlassian = server.atlassian
@@ -138,9 +152,31 @@ struct RootView: View {
         )
     }
 
+    /// L'interface montrée : la nouvelle, ou la classique et sa barre d'onglets.
+    @ViewBuilder
+    private var shell: some View {
+        if interface.classic {
+            tabs
+        } else {
+            IOSOSRootView(
+                memory: memory, server: server, drafts: drafts, navigation: $osNavigation,
+                launch: interface.launch, state: state, memoryRecipe: memoryRecipe
+            ) {
+                interface.choose(classic: true)
+            }
+        }
+    }
+
+    /// La section que ⌘<n> tient pour affichée : celle de l'onglet classique ; aucune dans
+    /// la nouvelle interface (chaque ⌘<n> y mène à son onglet).
+    private var shownSection: ConsoleSection? {
+        interface.classic ? IOSTabs.shown(selection, compact: isCompact).section : nil
+    }
+
     var body: some View {
-        tabs
-            .focusedSceneValue(\.iosSelectSection, IOSSectionSelector(current: IOSTabs.shown(selection, compact: isCompact).section, select: selector))
+        shell
+            .environmentObject(interface)
+            .focusedSceneValue(\.iosSelectSection, IOSSectionSelector(current: shownSection, select: selector))
             // La page de Système demandée (palette, notification, vigie muette) remplace la
             // pile de l'onglet ; le Serveur, lui, est une feuille. Revenir au hub l'oublie.
             .onChange(of: drafts.systemPage, initial: true) { _, page in
@@ -152,13 +188,13 @@ struct RootView: View {
             }
             // Sur iPhone, la Mémoire choisie (lancement, iPad replié) passe sous Système.
             .onChange(of: isCompact, initial: true) { _, compact in
-                if compact, selection == .section(.memory) { selector(.memory) }
+                if interface.classic, compact, selection == .section(.memory) { selector(.memory) }
             }
             // Un lien `ompconsole://` (widget, Live Activity, raccourci) : une section, le
             // fil d'une feature (`threads/<id>`), le tri (`decisions`) ou « Maintenant » (`now`).
             .onOpenURL { url in
                 guard let destination = HarnessWidgetLink.destination(of: url) else { return }
-                ConsolePaletteActions.perform(destination.command, server: server, drafts: drafts, select: selector)
+                open(destination)
             }
             .sheet(isPresented: $drafts.serverSheetShown) {
                 IOSServerSheet(server: server, drafts: drafts)
@@ -226,14 +262,54 @@ struct RootView: View {
         )
     }
 
+    /// Un lien `ompconsole://` : dans la nouvelle interface, « Maintenant », le tri et le fil
+    /// d'une feature ont leur écran ; le reste passe par la section demandée (`selector`).
+    private func open(_ destination: HarnessWidgetLink.Destination) {
+        if !interface.classic {
+            switch IOSOSRouting.destination(of: destination) {
+            case let .tab(tab):
+                osNavigation.show(tab)
+                return
+            case let .run(runId):
+                osNavigation.show(.threads)
+                drafts.openedRun = runId
+                return
+            case .memory:
+                osNavigation.show(.memory, in: .knowledge)
+                return
+            case .classic, .classicPage:
+                break
+            }
+        }
+        ConsolePaletteActions.perform(destination.command, server: server, drafts: drafts, select: selector)
+    }
+
     /// Montrer une section (⌘<n>, palette, notification, widget, lien d'une vue
-    /// partagée) : sélectionne son onglet. Sur iPhone, la Mémoire s'ouvre dans la pile
-    /// de Système.
+    /// partagée). Dans la nouvelle interface : son onglet, le fil de la feature à ouvrir
+    /// (`drafts.openedRun`, que la coque ouvre) ou la Mémoire dans le Savoir ; une section
+    /// sans équivalent montre l'interface classique. Dans l'interface classique : son
+    /// onglet ; sur iPhone, la Mémoire s'ouvre dans la pile de Système.
     private var selector: @MainActor @Sendable (ConsoleSection) -> Void {
         let selection = $selection
         let systemPath = $systemPath
+        let navigation = $osNavigation
         let compact = isCompact
-        return { section in
+        return { [interface, drafts] section in
+            if !interface.classic {
+                switch IOSOSRouting.destination(of: section, openedRun: drafts.openedRun) {
+                case let .tab(tab):
+                    navigation.wrappedValue.show(tab)
+                    return
+                case .run:
+                    navigation.wrappedValue.show(.threads)
+                    return
+                case .memory:
+                    navigation.wrappedValue.show(.memory, in: .knowledge)
+                    return
+                case .classic, .classicPage:
+                    interface.showClassic()
+                }
+            }
             if IOSTabs.isHidden(section, compact: compact) {
                 selection.wrappedValue = .section(.system)
                 systemPath.wrappedValue = NavigationPath([IOSSystemRoute.memory])

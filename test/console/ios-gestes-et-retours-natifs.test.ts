@@ -216,9 +216,16 @@ function swipeFaults(all: Map<string, string>): string[] {
 
 /** Les surfaces de texte sélectionnable (S-6), une pose chacune : les specs à
  *  valider de « À traiter », les specs lisibles de la page d'une feature, la fiche
- *  d'un souvenir et le direct d'une session. */
+ *  d'un souvenir, le direct d'une session et ce même direct dans « Comprendre »
+ *  (nouvelle interface, `IOSOSSessionPane`). */
 const SPECS = "InboxFeed.swift";
-const SELECTABLE = [SPECS, "IOSRunScreen.swift", "IOSMemoryDetailView.swift", "IOSSessionSheet.swift"];
+const SELECTABLE = [
+  SPECS,
+  "IOSRunScreen.swift",
+  "IOSMemoryDetailView.swift",
+  "IOSSessionSheet.swift",
+  "IOSOSScreens.swift",
+];
 
 /** AC-9 (S-6) : `.textSelection(.enabled)` une fois par surface, nulle part ailleurs. */
 function selectionFaults(all: Map<string, string>): string[] {

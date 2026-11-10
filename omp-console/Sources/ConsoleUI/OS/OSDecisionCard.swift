@@ -52,6 +52,9 @@ public struct OSDecisionCard: View {
     public var body: some View {
         OSCard(tint: .orange, emphasized: true) {
             VStack(alignment: .leading, spacing: large ? 14 : 10) {
+                // Sur l'iPhone et l'iPad, le menu « … » de la feature est au coin de la carte : la
+                // rangée des gestes garde sa largeur.
+                #if os(macOS)
                 HStack(spacing: 6) {
                     Image(systemName: symbol)
                     Text(kind.uppercased())
@@ -59,6 +62,21 @@ public struct OSDecisionCard: View {
                 }
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(.orange)
+                #else
+                HStack(spacing: 6) {
+                    Label {
+                        Text([kind.uppercased(), context].compactMap { $0 }.joined(separator: " · "))
+                    } icon: {
+                        Image(systemName: symbol).accessibilityHidden(true)
+                    }
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.orange)
+                    Spacer(minLength: 0)
+                    if let run = menuRun {
+                        moreMenu(run, gestures: server.osGestures(run))
+                    }
+                }
+                #endif
                 content
                 if let failure {
                     ConsoleFailureBanner(failure: failure)
@@ -109,6 +127,16 @@ public struct OSDecisionCard: View {
         }
     }
 
+    /// La feature dont le menu « … » règle le palier ou l'arrête : celle de la question,
+    /// des specs ou de la revue.
+    private var menuRun: HarnessRun? {
+        switch decision {
+        case let .questions(batch): batch.run
+        case let .specs(run), let .verdict(run): run
+        default: nil
+        }
+    }
+
     private var headlineFont: Font { large ? .title3.weight(.semibold) : .headline }
 
     // MARK: Contenu
@@ -152,7 +180,7 @@ public struct OSDecisionCard: View {
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...4)
         }
-        HStack(spacing: 8) {
+        OSLine(spacing: 8) {
             if editing, let item = batch.items.first {
                 Button(OSText.answer) { answer(batch, with: [item.id: custom]) }
                     .buttonStyle(.borderedProminent)
@@ -179,7 +207,9 @@ public struct OSDecisionCard: View {
             }
             Spacer()
             readButton(batch.id)
+            #if os(macOS)
             moreMenu(batch.run, gestures: gestures)
+            #endif
         }
         if !batch.acceptsAnswers {
             Label(OSText.waitsStep, systemImage: "hourglass").font(.caption).foregroundStyle(.secondary)
@@ -217,7 +247,7 @@ public struct OSDecisionCard: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: ConsolePlatform.minimumTarget, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -231,7 +261,7 @@ public struct OSDecisionCard: View {
         if item.autoDate != nil {
             TimelineView(.periodic(from: .now, by: 1)) { timeline in
                 if let deadline = OSDeadline.of(item, now: timeline.date) {
-                    HStack(spacing: 8) {
+                    OSLine(spacing: 8, gestures: false) {
                         Label(deadline.text, systemImage: "timer")
                             .monospacedDigit()
                             .foregroundStyle(.orange)
@@ -241,7 +271,7 @@ public struct OSDecisionCard: View {
                             } label: {
                                 Text(OSDecideText.waitForMe).underline().foregroundStyle(Color.accentColor)
                             }
-                            .buttonStyle(.borderless)
+                            .osBorderless()
                         }
                     }
                     .font(.caption)
@@ -269,7 +299,7 @@ public struct OSDecisionCard: View {
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...4)
         }
-        HStack(spacing: 8) {
+        OSLine(spacing: 8) {
             if correcting {
                 Button(OSDecideText.amendNow) {
                     perform { await server.osAmend(run, text: reason, always: always) }
@@ -296,7 +326,9 @@ public struct OSDecisionCard: View {
             }
             Spacer()
             readButton(run.id)
+            #if os(macOS)
             moreMenu(run, gestures: gestures)
+            #endif
         }
     }
 
@@ -352,6 +384,7 @@ public struct OSDecisionCard: View {
             } label: {
                 Label(OSDecideText.more, systemImage: "ellipsis.circle")
                     .labelStyle(.iconOnly)
+                    .frame(minWidth: ConsolePlatform.minimumTarget, minHeight: ConsolePlatform.minimumTarget)
             }
             .menuIndicator(.hidden)
             .buttonStyle(.borderless)
@@ -381,7 +414,7 @@ public struct OSDecisionCard: View {
         if correcting {
             TextField(OSText.reason, text: $reason).textFieldStyle(.roundedBorder)
         }
-        HStack(spacing: 8) {
+        OSLine(spacing: 8) {
             if correcting {
                 Button(OSText.refuseNow, role: .destructive) {
                     perform { await workstation.refuse(shown: action, reason: reason) }
@@ -413,7 +446,7 @@ public struct OSDecisionCard: View {
             TextField(OSText.answer, text: $custom, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...4)
-            HStack {
+            OSLine {
                 Button(OSText.answer) {
                     perform { (try? await intakes.answer(intake, text: custom)) != nil }
                 }
@@ -428,7 +461,7 @@ public struct OSDecisionCard: View {
                 Text(creates).font(.callout).foregroundStyle(.secondary).lineLimit(3)
             }
             Text(plan.title).font(headlineFont)
-            HStack {
+            OSLine {
                 Button {
                     perform { (try? await intakes.confirm(intake)) != nil }
                 } label: {
@@ -454,7 +487,7 @@ public struct OSDecisionCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
         Text(write.issueKey + " · " + OSThreads.firstLine(write.why)).font(headlineFont).lineLimit(2)
-        HStack {
+        OSLine {
             Button {
                 perform { await server.atlassian.approve(write.id) }
             } label: {
@@ -477,7 +510,7 @@ public struct OSDecisionCard: View {
                 .lineLimit(1)
         }
         Text(audit.focus.isEmpty ? audit.repo : OSThreads.firstLine(audit.focus)).font(headlineFont)
-        HStack {
+        OSLine {
             Button {
                 perform {
                     await server.launchProposals(auditId: audit.id, items: Array(audit.proposals.indices), title: audit.focus.isEmpty ? audit.repo : audit.focus) != nil
@@ -497,7 +530,7 @@ public struct OSDecisionCard: View {
         } label: {
             Label(OSText.read, systemImage: "text.magnifyingglass")
         }
-        .buttonStyle(.borderless)
+        .osBorderless()
     }
 
     // MARK: Gestes
@@ -547,6 +580,7 @@ struct OSCheckbox: View {
                     .foregroundStyle(isOn ? Color.accentColor : .secondary)
                 Text(label)
             }
+            .frame(minHeight: ConsolePlatform.minimumTarget)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -1741,3 +1741,9 @@
 "Continuer sur le serveur" = "Continue on the Server";
 "Copier la commande de reprise" = "Copy the Resume Command";
 "Oublier" = "Forget";
+
+/* OS — Coque iOS */
+"Fils" = "Threads";
+"Demander à l’OS" = "Ask the OS";
+"Nouvelle interface" = "New Interface";
+"Ce fil n’existe plus" = "This Thread No Longer Exists";

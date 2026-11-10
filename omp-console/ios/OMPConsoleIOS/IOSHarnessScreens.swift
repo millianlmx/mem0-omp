@@ -82,7 +82,7 @@ struct IOSHarnessScreen<Content: View>: View {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !server.isConfigured {
-                notConfigured
+                IOSServerPrompt(drafts: drafts)
             } else {
                 // La palette ou une notification demande un genre de « À traiter »
                 // (`homeAnchor`) : la liste y défile, puis oublie la demande.
@@ -125,8 +125,14 @@ struct IOSHarnessScreen<Content: View>: View {
         if catalog { await server.refreshCatalog() }
         await reloadAlso?()
     }
+}
 
-    private var notConfigured: some View {
+/// L'écran d'un serveur non relié : ce qu'il manque, et le geste qui ouvre la feuille
+/// Serveur. Le même dans la coque classique et dans la nouvelle interface.
+struct IOSServerPrompt: View {
+    let drafts: HarnessDrafts
+
+    var body: some View {
         VStack(spacing: 16) {
             Image(systemName: IOSShellText.serverSymbol)
                 .font(.largeTitle)
@@ -254,10 +260,20 @@ struct IOSFeaturesScreen: View {
 struct IOSSystemScreen: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
+    /// Le choix d'interface : la première rangée ramène à la nouvelle interface.
+    @EnvironmentObject private var interface: IOSInterface
     let showsMemory: Bool
 
     var body: some View {
         IOSHarnessScreen(server: server, drafts: drafts, section: .system, catalog: false, reloadAlso: { await reloadSummaries() }) {
+            Section {
+                Button {
+                    interface.choose(classic: false)
+                } label: {
+                    Label(IOSOSText.newInterface, systemImage: IOSOSText.newInterfaceSymbol)
+                }
+                .accessibilityIdentifier("ios.system.newInterface")
+            }
             if showsMemory {
                 Section {
                     NavigationLink(value: IOSSystemRoute.memory) {

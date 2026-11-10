@@ -49,7 +49,7 @@ public struct OSAutomationsView: View {
                     Text(OSText.scheduled)
                     Spacer()
                     Button(OSText.newSchedule) { drafts.scheduleSheetShown = true }
-                        .buttonStyle(.borderless)
+                        .osBorderless()
                 }
             }
 
@@ -135,9 +135,10 @@ public struct OSAutomationsView: View {
             Image(systemName: symbol)
                 .foregroundStyle(Color.accentColor)
                 .frame(width: 22)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).fontWeight(.semibold).lineLimit(1)
-                HStack(spacing: 6) {
+                Text(title).fontWeight(.semibold).lineLimit(Self.titleLines)
+                OSLine(spacing: 6, gestures: false) {
                     OSTag(text: place, symbol: "mappin.and.ellipse")
                     if !when.isEmpty { OSTag(text: when, symbol: "clock") }
                 }
@@ -150,10 +151,25 @@ public struct OSAutomationsView: View {
                 Toggle("", isOn: enabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
             if let run {
+                // Sur l'iPhone, le geste est son seul symbole : le titre garde la largeur.
+                #if os(macOS)
                 Button(OSText.launch, systemImage: "play.fill", action: run)
                     .disabled(!server.canAct)
+                #else
+                Button(OSText.launch, systemImage: "play.fill", action: run)
+                    .labelStyle(.iconOnly)
+                    .osRowButton()
+                    .disabled(!server.canAct)
+                #endif
             }
         }
         .padding(.vertical, 2)
     }
+
+    /// Le nom d'un automatisme tient sur une ligne sur le Mac, sur deux sur l'iPhone et l'iPad.
+    #if os(macOS)
+    private static let titleLines = 1
+    #else
+    private static let titleLines = 2
+    #endif
 }

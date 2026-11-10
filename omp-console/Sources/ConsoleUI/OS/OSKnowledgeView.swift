@@ -14,16 +14,20 @@ public struct OSKnowledgeView: View {
     @ObservedObject var workspace: OSWorkspace
     let openMemory: (() -> Void)?
     let openClassic: (() -> Void)?
+    let openAutomations: (() -> Void)?
 
-    /// `openMemory`, `openClassic` : ce que la coque sait ouvrir (l'écran de la mémoire,
-    /// l'interface classique) ; sans geste, la ligne n'existe pas.
+    /// `openMemory`, `openClassic`, `openAutomations` : ce que la coque sait ouvrir (l'écran
+    /// de la mémoire, l'interface classique, et les Automatismes quand ils n'ont pas leur
+    /// entrée ailleurs : iPhone, iPad) ; sans geste, la ligne n'existe pas.
     public init(
-        server: HarnessModel, workspace: OSWorkspace, openMemory: (() -> Void)? = nil, openClassic: (() -> Void)? = nil
+        server: HarnessModel, workspace: OSWorkspace, openMemory: (() -> Void)? = nil, openClassic: (() -> Void)? = nil,
+        openAutomations: (() -> Void)? = nil
     ) {
         self.server = server
         self.workspace = workspace
         self.openMemory = openMemory
         self.openClassic = openClassic
+        self.openAutomations = openAutomations
     }
 
     public var body: some View {
@@ -31,8 +35,11 @@ public struct OSKnowledgeView: View {
             OSKnowledgeRules(server: server)
             OSKnowledgeTiers(server: server)
             OSSpacesSection(server: server, workspace: workspace)
-            if openMemory != nil || openClassic != nil {
+            if openMemory != nil || openClassic != nil || openAutomations != nil {
                 Section {
+                    if let openAutomations {
+                        link(OSText.automations, symbol: "gearshape.arrow.triangle.2.circlepath", action: openAutomations)
+                    }
                     if let openMemory {
                         link(OSWatchText.memory, symbol: "brain", action: openMemory)
                     }
@@ -60,12 +67,15 @@ public struct OSKnowledgeView: View {
                 Image(systemName: symbol)
                     .foregroundStyle(Color.accentColor)
                     .frame(width: 22)
+                    .accessibilityHidden(true)
                 Text(title)
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
+            .frame(minHeight: ConsolePlatform.minimumTarget)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -111,7 +121,7 @@ struct OSKnowledgeRules: View {
                     Text(OSWatchText.standingRules)
                     Spacer()
                     Button(OSWatchText.add, systemImage: "plus") { editing = Editing(rule: nil) }
-                        .buttonStyle(.borderless)
+                        .osBorderless()
                         .disabled(!server.canAct)
                 }
                 .sheet(item: $editing) { editing in
@@ -153,6 +163,8 @@ struct OSKnowledgeRules: View {
                 Button(OSWatchText.delete, systemImage: "trash", role: .destructive) { deleting = rule }
             } label: {
                 Image(systemName: "ellipsis.circle")
+                    .frame(minWidth: ConsolePlatform.minimumTarget, minHeight: ConsolePlatform.minimumTarget)
+                    .accessibilityLabel(OSDecideText.more)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -306,7 +318,7 @@ struct OSKnowledgeTiers: View {
                 }
                 ForEach(view.repos) { repo in
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
+                        OSLine(spacing: 6, gestures: false) {
                             Text(repo.repo).font(.headline)
                             confidence(of: repo.repo)
                             Spacer(minLength: 0)
@@ -368,6 +380,7 @@ struct OSKnowledgeTiers: View {
                 Button(OSWatchText.apply) {
                     Task { await autonomy.setRule(repo: proposal.repo, kind: change.kind, gate: change.gate, mode: change.mode) }
                 }
+                .osRowButton()
                 .disabled(autonomy.isSaving)
             }
         }

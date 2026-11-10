@@ -50,7 +50,7 @@ public struct OSRunBlockedCard: View {
                     .font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
                 detail
-                HStack(spacing: 8) {
+                OSLine(spacing: 8) {
                     if cause == "paused", server.osFeatures.contains(OSCapability.pause), server.canAct {
                         Button(OSDecideText.resume, systemImage: "play.fill", action: resume)
                             .buttonStyle(.borderedProminent)
@@ -80,6 +80,8 @@ public struct OSRunBlockedCard: View {
         switch cause {
         case "modules", "parent":
             ForEach(run.blockedBy) { blocker in
+                // Sur le Mac, tout tient sur une ligne ; sur l'iPhone, l'état passe sous le titre.
+                #if os(macOS)
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     OSPhaseMark(phase: Self.phase(blocker.state), size: 11)
                     VStack(alignment: .leading, spacing: 1) {
@@ -95,6 +97,21 @@ public struct OSRunBlockedCard: View {
                     Text(Self.phase(blocker.state).label).font(.caption).foregroundStyle(.secondary)
                     Button(OSDecideText.open) { open(blocker.runId) }
                 }
+                #else
+                HStack(alignment: .center, spacing: 8) {
+                    OSPhaseMark(phase: Self.phase(blocker.state), size: 11)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(OSThreads.clean(blocker.title).title).lineLimit(2)
+                        Text(([Self.phase(blocker.state).label] + blocker.modules).joined(separator: " · "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 0)
+                    Button(OSDecideText.open) { open(blocker.runId) }
+                        .osRowButton()
+                }
+                #endif
             }
         case "backoff":
             if let until = run.waitUntil ?? run.notBefore {
