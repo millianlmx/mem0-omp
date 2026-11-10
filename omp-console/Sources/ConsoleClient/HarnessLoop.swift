@@ -105,6 +105,42 @@ final class HarnessReloader {
 
 // MARK: - Pause globale
 
+/// La pause d'UN espace : ses fils ne sont plus admis, les autres espaces continuent.
+public struct HarnessSpacePause: Codable, Equatable, Sendable, Identifiable {
+    /// L'identifiant de l'espace.
+    public var id: String
+    public var name: String
+    public var paused: Bool
+    public var by: String?
+    public var at: Double?
+    public var reason: String?
+    /// La pause a interrompu tout de suite les fils vivants de l'espace.
+    public var now: Bool
+
+    public init(id: String, name: String = "", paused: Bool = true, by: String? = nil, at: Double? = nil, reason: String? = nil, now: Bool = false) {
+        self.id = id
+        self.name = name
+        self.paused = paused
+        self.by = by
+        self.at = at
+        self.reason = reason
+        self.now = now
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, paused, by, at, reason, now }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        paused = try container.decodeIfPresent(Bool.self, forKey: .paused) ?? true
+        by = try container.decodeIfPresent(String.self, forKey: .by)
+        at = try container.decodeIfPresent(Double.self, forKey: .at)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        now = try container.decodeIfPresent(Bool.self, forKey: .now) ?? false
+    }
+}
+
 /// La pause globale du serveur : plus rien n'est admis ni lancé, rien n'est perdu.
 public struct HarnessPause: Codable, Equatable, Sendable {
     public var paused: Bool
@@ -115,18 +151,23 @@ public struct HarnessPause: Codable, Equatable, Sendable {
     public var reason: String?
     /// La pause a interrompu tout de suite les fils vivants (sinon leur étape en cours finit).
     public var now: Bool
+    /// Les espaces EN PAUSE (les seuls que le serveur liste) ; vide d'un serveur sans pause par espace.
+    public var spaces: [HarnessSpacePause] = []
 
-    public init(paused: Bool, by: String? = nil, at: Double? = nil, reason: String? = nil, now: Bool = false) {
+    public init(
+        paused: Bool, by: String? = nil, at: Double? = nil, reason: String? = nil, now: Bool = false, spaces: [HarnessSpacePause] = []
+    ) {
         self.paused = paused
         self.by = by
         self.at = at
         self.reason = reason
         self.now = now
+        self.spaces = spaces
     }
 
-    private enum CodingKeys: String, CodingKey { case paused, by, at, reason, now }
+    private enum CodingKeys: String, CodingKey { case paused, by, at, reason, now, spaces }
 
-    /// `now` absent se lit `false`.
+    /// `now` absent se lit `false`, `spaces` absent : aucun espace en pause.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         paused = try container.decode(Bool.self, forKey: .paused)
@@ -134,6 +175,12 @@ public struct HarnessPause: Codable, Equatable, Sendable {
         at = try container.decodeIfPresent(Double.self, forKey: .at)
         reason = try container.decodeIfPresent(String.self, forKey: .reason)
         now = try container.decodeIfPresent(Bool.self, forKey: .now) ?? false
+        spaces = try container.decodeIfPresent([HarnessSpacePause].self, forKey: .spaces) ?? []
+    }
+
+    /// La pause de cet espace, s'il est suspendu.
+    public func spacePause(_ id: String) -> HarnessSpacePause? {
+        spaces.first { $0.id == id && $0.paused }
     }
 }
 
@@ -142,9 +189,10 @@ struct HarnessPauseReply: Decodable {
     var pause: HarnessPause
 }
 
-/// Le corps de `POST /v1/pause` ; `reason` et `now` absents du JSON quand ils ne disent rien.
+/// Le corps de `POST /v1/pause` ; `space`, `reason` et `now` absents du JSON quand ils ne disent rien.
 private struct PauseBody: Encodable {
     var paused: Bool
+    var space: String?
     var reason: String?
     var now: Bool?
 }
@@ -172,8 +220,18 @@ public final class HarnessPauseModel: ObservableObject {
     /// Le serveur relié sert la pause (inconnu compris : le geste ne clignote pas).
     public var isServed: Bool { availability != .absent }
 
-    /// Tout est suspendu.
+    /// Tout est suspendu (la pause globale).
     public var isPaused: Bool { pause?.paused ?? false }
+
+    /// La pause de cet espace, s'il est suspendu (la pause globale se lit dans `isPaused`).
+    public func spacePause(_ id: String) -> HarnessSpacePause? {
+        pause?.spacePause(id)
+    }
+
+    /// Rien ne part dans la portée : tout est suspendu, ou l'espace donné l'est (`nil` : aucun espace choisi).
+    public func isSuspended(in space: HarnessSpace?) -> Bool {
+        isPaused || space.map { spacePause($0.id) != nil } ?? false
+    }
 
     /// Relit l'état de la pause ; un serveur antérieur (404) n'en a pas, sans échec.
     public func refresh() async {
@@ -195,18 +253,24 @@ public final class HarnessPauseModel: ObservableObject {
     }
 
     /// Suspend tout (`true`) ou relance le tour (`false`) ; la raison, facultative, est rognée.
-    /// `now` : interrompre tout de suite les fils vivants, au lieu de laisser finir l'étape en
-    /// cours. Réservé au propriétaire : un client borné est refusé (403, dit par `failure`).
+    /// `space` : l'identifiant d'UN espace à suspendre ou à relancer — les autres continuent ;
+    /// `nil` : tout, quelle que soit la portée de l'écran. `now` : interrompre tout de suite
+    /// les fils vivants, au lieu de laisser finir l'étape en cours. Réservé au propriétaire : un
+    /// client borné est refusé (403, dit par `failure`). Sur un serveur qui n'annonce pas
+    /// `space-scope`, la pause d'un espace ne part pas (elle suspendrait tout) : `false`.
     @discardableResult
-    public func setPause(paused: Bool, reason: String = "", now: Bool = false) async -> Bool {
+    public func setPause(paused: Bool, space: String? = nil, reason: String = "", now: Bool = false) async -> Bool {
         let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        if space != nil {
+            guard await harness.supports(.spaceScope) else { return false }
+        }
         isSaving = true
         defer { isSaving = false }
         do {
             let reply: HarnessPauseReply = try await harness.write(
                 "POST", "/v1/pause",
                 body: PauseBody(
-                    paused: paused, reason: trimmed.isEmpty ? nil : String(trimmed.prefix(Self.maxReasonLength)),
+                    paused: paused, space: space, reason: trimmed.isEmpty ? nil : String(trimmed.prefix(Self.maxReasonLength)),
                     now: paused && now ? true : nil
                 )
             )

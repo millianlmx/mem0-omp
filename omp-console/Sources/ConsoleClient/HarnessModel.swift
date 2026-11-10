@@ -65,11 +65,26 @@ public final class HarnessModel: ObservableObject {
     @Published public private(set) var metrics: HarnessMetrics?
     /// La santé des services (`GET /v1/health`), l'état du serveur (`/v1/status`) et le
     /// rapport du matin (`/v1/digest`), lus par `refreshServices()` (HarnessServices.swift).
-    @Published public internal(set) var health: HarnessHealth?
+    @Published public internal(set) var health: HarnessHealth? {
+        didSet { if let health { capabilities = Set(health.features) } }
+    }
     @Published public internal(set) var status: HarnessStatus?
     @Published public internal(set) var digest: HarnessDigest?
     /// La dernière sonde de santé a eu une réponse (même 503).
     var healthReached = false
+    /// L'espace courant — un client de l'utilisateur — ou `nil` : tous les espaces. Posé par
+    /// `setScope`, gardé par serveur, restauré quand les espaces sont lus (HarnessScope.swift).
+    @Published public internal(set) var scope: HarnessSpace?
+    /// Ce que le serveur relié annonce savoir faire (`features` de `GET /v1/health`) ; `nil`
+    /// tant que ce n'est pas lu (`loadCapabilities`).
+    @Published public internal(set) var capabilities: Set<String>?
+    /// Le rang de la portée : +1 à chaque changement. Une lecture partie pour une portée et
+    /// rendue après n'en remplit pas la suivante (`readScoped`).
+    var scopeEpoch = 0
+    var capabilitiesTask: Task<Void, Never>?
+    var scopeRestoreTask: Task<Void, Never>?
+    /// L'espace choisi, gardé par adresse de serveur.
+    let spacePreference: ConsoleSpacePreference
     /// Le poste de travail (extension Chrome, agent 24/24), servi par le même serveur :
     /// il passe par l'échange de ce modèle et reçoit les événements de son flux.
     public private(set) lazy var workstation = WorkstationModel(harness: self, reloadDelay: refreshDelay)
@@ -82,6 +97,24 @@ public final class HarnessModel: ObservableObject {
     /// Atlassian (Jira, Confluence) : connexion OAuth du serveur, plan du jour, savoir de la
     /// boîte et commentaires Jira proposés par l'agent : même échange, même flux.
     public private(set) lazy var atlassian = AtlassianModel(harness: self, reloadDelay: refreshDelay)
+    /// Les connexions Atlassian des espaces (`atlassianConnection(for:)`), créées à la demande, par identifiant d'espace.
+    var spaceConnections: [String: AtlassianModel] = [:]
+    /// Chaque connexion d'espace republie par ce modèle : l'écran qui montre ce qui attend
+    /// l'humain, toutes connexions confondues, n'observe que lui.
+    private var spaceConnectionWatch: [String: AnyCancellable] = [:]
+
+    /// La connexion Atlassian d'UN espace (capacité `space-knowledge`) : ses jetons, son site,
+    /// ses commentaires proposés et son plan, étanches de la connexion par défaut
+    /// (`atlassian`) et de celles des autres espaces. Le même modèle à chaque appel ; sur un
+    /// serveur qui ne l'annonce pas, il reste `.absent` sans rien lire.
+    public func atlassianConnection(for space: HarnessSpace) -> AtlassianModel {
+        if let known = spaceConnections[space.id] { return known }
+        let connection = AtlassianModel(harness: self, reloadDelay: refreshDelay, space: space.id)
+        spaceConnections[space.id] = connection
+        spaceConnectionWatch[space.id] = connection.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        return connection
+    }
+
     /// La Demande : une phrase libre classée en plan par le serveur (`/v1/intake*`).
     public private(set) lazy var intakes = HarnessIntakes(harness: self, reloadDelay: refreshDelay)
     /// L'historique des features (`GET /v1/runs`), terminées comprises.
@@ -167,6 +200,7 @@ public final class HarnessModel: ObservableObject {
         self.reporter = reporter
         self.transport = transport
         self.preferences = preferences
+        spacePreference = ConsoleSpacePreference(preferences: preferences)
         self.tokens = tokens
         self.retryDelay = retryDelay
         self.refreshDelay = refreshDelay
@@ -290,8 +324,9 @@ public final class HarnessModel: ObservableObject {
         }
     }
 
-    /// Oublie le serveur : adresse, jeton et boîte ; l'appareil n'y reçoit plus d'alertes.
+    /// Oublie le serveur : adresse, jeton, boîte et espace choisi ; l'appareil n'y reçoit plus d'alertes.
     public func forget() async {
+        if let address { spacePreference.choose(nil, forServer: address) }
         if let server {
             await unregisterDevice(on: server)
             await unregisterActivityStart(on: server)
@@ -321,6 +356,16 @@ public final class HarnessModel: ObservableObject {
     /// Ce qui appartient au serveur relié : poste, historique, services, remontée.
     private func resetServerState() {
         serverEpoch += 1
+        scope = nil
+        scopeEpoch += 1
+        capabilities = nil
+        capabilitiesTask?.cancel()
+        capabilitiesTask = nil
+        scopeRestoreTask?.cancel()
+        scopeRestoreTask = nil
+        for connection in spaceConnections.values { connection.reset() }
+        spaceConnections = [:]
+        spaceConnectionWatch = [:]
         workstation.reset()
         serverBrowser.reset()
         signals.reset()
@@ -443,6 +488,7 @@ public final class HarnessModel: ObservableObject {
                         workstation.receive(names)
                         signals.receive(names)
                         atlassian.receive(names)
+                        for connection in spaceConnections.values { connection.receive(names) }
                         intakes.receive(names)
                         vigie.receive(names)
                         schedules.receive(names)
@@ -534,11 +580,22 @@ public final class HarnessModel: ObservableObject {
             await pollSession(target, id: id)
             return
         }
+        // Le tampon a déjà été montré, avant l'ouverture du flux.
+        var shown = false
         while !Task.isCancelled {
             guard let server else { return }
             do {
-                // Le flux d'abord, le tampon ensuite : une entrée née entre les deux n'est
-                // jamais perdue (elle attend dans le flux et remplace celle du tampon).
+                // Le tampon d'abord : l'écran montre la session sans attendre le flux. Derrière un
+                // proxy, ses en-têtes tardent tant qu'aucun événement ne part — et un fil fini n'en
+                // émet plus : « connexion au direct » durait alors de longues secondes pour rien.
+                if !shown {
+                    let early: HarnessSessionView = try await perform(HarnessCall(method: "GET", path: target.sessionPath(id, query: [])), on: server)
+                    guard !Task.isCancelled else { return }
+                    session?.load(early)
+                    sessionFailure = nil
+                }
+                // Puis le flux, et le tampon relu une fois le flux ouvert : une entrée née entre
+                // les deux n'est jamais perdue (elle attend dans le flux et remplace celle du tampon).
                 let cursor = inbox?.cursor ?? 0
                 let stream = try await transport.events(
                     HarnessCall(method: "GET", path: "/v1/events?\(streamQuery)&live=1&after=\(cursor)"),
@@ -546,7 +603,9 @@ public final class HarnessModel: ObservableObject {
                 )
                 let view: HarnessSessionView = try await perform(HarnessCall(method: "GET", path: target.sessionPath(id, query: [])), on: server)
                 guard !Task.isCancelled else { return }
-                session?.load(view)
+                // À l'ouverture, les pages plus anciennes déjà demandées restent ; après une coupure, le tampon fait foi.
+                if shown { session?.load(view) } else { session?.merge(view) }
+                shown = true
                 // La sortie des derniers jobs de tests d'une feature (un serveur plus ancien n'en a pas).
                 if case .run = target,
                    let tests: HarnessLiveTests = try? await perform(HarnessCall(method: "GET", path: "/v1/runs/\(id)/tests/live"), on: server) {

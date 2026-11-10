@@ -379,11 +379,13 @@ struct HarnessDeleted: Decodable {}
 
 // MARK: - Administration
 
-/// Le corps de `POST /v1/clients` ; `repos` absent : tous les dépôts.
+/// Le corps de `POST /v1/clients` ; `repos` absent : tous les dépôts ; `spaces` : borné à ces
+/// espaces à la place d'une liste de dépôts (jamais les deux).
 struct HarnessClientBody: Encodable {
     var name: String
     var role: String
     var repos: [String]?
+    var spaces: [String]?
 }
 
 /// Le corps de `POST /v1/repos` ; `name` absent : celui de l'adresse.
@@ -444,12 +446,24 @@ public final class HarnessAdmin: ObservableObject {
         }
     }
 
-    /// Crée un client ; `repos` vide : tous les dépôts. Son jeton n'est montré qu'ici.
+    /// Crée un client ; `repos` vide : tous les dépôts. `spaces` (identifiants d'espaces) : le
+    /// client est borné à ces espaces — il voit leurs dépôts du moment — à la place d'une
+    /// liste de dépôts ; rien ne part vers un serveur qui n'annonce pas `space-scope`. Son
+    /// jeton n'est montré qu'ici.
     @discardableResult
-    public func createClient(name: String, role: String, repos: [String]) async -> HarnessClientCreated? {
+    public func createClient(name: String, role: String, repos: [String], spaces: [String] = []) async -> HarnessClientCreated? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let reply: HarnessClientCreated? = await save("POST", "/v1/clients", body: HarnessClientBody(name: trimmed, role: role, repos: repos.isEmpty ? nil : repos))
+        if !spaces.isEmpty {
+            guard await harness.supports(.spaceScope) else {
+                failure = .rejected("")
+                return nil
+            }
+        }
+        let body = spaces.isEmpty
+            ? HarnessClientBody(name: trimmed, role: role, repos: repos.isEmpty ? nil : repos)
+            : HarnessClientBody(name: trimmed, role: role, spaces: spaces)
+        let reply: HarnessClientCreated? = await save("POST", "/v1/clients", body: body)
         if let reply { created = reply }
         return reply
     }

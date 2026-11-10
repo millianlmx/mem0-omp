@@ -586,10 +586,12 @@ public struct WorkstationMeeting: Codable, Equatable, Sendable, Identifiable {
     public var needs: [WorkstationMeetingNeed]
     /// Le nombre de segments transcrits.
     public var segments: Int
+    /// Le navigateur d'où vient la réunion : elle hérite de son espace ; `nil` : inconnu.
+    public var browserId: String?
 
     public init(
         id: String, title: String, url: String = "", startedAt: Double, endedAt: Double? = nil, state: String,
-        summary: String? = nil, needs: [WorkstationMeetingNeed] = [], segments: Int = 0
+        summary: String? = nil, needs: [WorkstationMeetingNeed] = [], segments: Int = 0, browserId: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -600,10 +602,11 @@ public struct WorkstationMeeting: Codable, Equatable, Sendable, Identifiable {
         self.summary = summary
         self.needs = needs
         self.segments = segments
+        self.browserId = browserId
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, url, startedAt, endedAt, state, summary, needs, segments
+        case id, title, url, startedAt, endedAt, state, summary, needs, segments, browserId
     }
 
     public init(from decoder: Decoder) throws {
@@ -617,6 +620,7 @@ public struct WorkstationMeeting: Codable, Equatable, Sendable, Identifiable {
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         needs = try container.list([WorkstationMeetingNeed].self, .needs)
         segments = try container.decodeIfPresent(Int.self, forKey: .segments) ?? 0
+        browserId = try container.decodeIfPresent(String.self, forKey: .browserId)
     }
 }
 
@@ -661,9 +665,12 @@ public struct WorkstationRequest: Codable, Equatable, Sendable, Identifiable {
     public var report: String?
     public var startedAt: Double?
     public var endedAt: Double?
+    /// L'espace (son identifiant) dans lequel elle s'exécute : celui qu'on lui a donné, sinon
+    /// celui de son navigateur. La clé est absente hors espace.
+    public var space: String? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case id, createdAt, updatedAt, by, instruction, automationId, browserId, state, reason, report, startedAt, endedAt
+        case id, createdAt, updatedAt, by, instruction, automationId, browserId, state, reason, report, startedAt, endedAt, space
     }
 
     public init(from decoder: Decoder) throws {
@@ -681,6 +688,7 @@ public struct WorkstationRequest: Codable, Equatable, Sendable, Identifiable {
         report = try container.decodeIfPresent(String.self, forKey: .report)
         startedAt = try container.decodeIfPresent(Double.self, forKey: .startedAt)
         endedAt = try container.decodeIfPresent(Double.self, forKey: .endedAt)
+        space = try container.decodeIfPresent(String.self, forKey: .space)
     }
 }
 

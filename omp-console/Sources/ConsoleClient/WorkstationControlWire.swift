@@ -43,10 +43,14 @@ public struct WorkstationBrowser: Codable, Equatable, Sendable, Identifiable {
     /// La dernière copie du profil Chrome reçue par le navigateur du serveur (ms, depuis le
     /// démarrage du serveur) ; `nil` pour tout autre navigateur, ou avant la première copie.
     public var mirroredAt: Double?
+    /// L'espace (son identifiant) auquel le navigateur est rattaché : tout ce qui en vient en
+    /// hérite ; `nil` : hors espace, ou serveur antérieur au poste par espace.
+    public var space: String?
 
     public init(
         id: String, label: String? = nil, online: Bool = false, lastSeenAt: Double = 0, firstSeenAt: Double = 0,
-        extensionVersion: String? = nil, isDefault: Bool = false, accounts: [ServerBrowserAccount] = [], mirroredAt: Double? = nil
+        extensionVersion: String? = nil, isDefault: Bool = false, accounts: [ServerBrowserAccount] = [], mirroredAt: Double? = nil,
+        space: String? = nil
     ) {
         self.id = id
         self.label = label
@@ -57,10 +61,11 @@ public struct WorkstationBrowser: Codable, Equatable, Sendable, Identifiable {
         self.isDefault = isDefault
         self.accounts = accounts
         self.mirroredAt = mirroredAt
+        self.space = space
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, label, online, lastSeenAt, firstSeenAt, extensionVersion, isDefault, accounts, mirroredAt
+        case id, label, online, lastSeenAt, firstSeenAt, extensionVersion, isDefault, accounts, mirroredAt, space
     }
 
     public init(from decoder: Decoder) throws {
@@ -74,6 +79,7 @@ public struct WorkstationBrowser: Codable, Equatable, Sendable, Identifiable {
         isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
         accounts = try container.decodeIfPresent([ServerBrowserAccount].self, forKey: .accounts) ?? []
         mirroredAt = try container.decodeIfPresent(Double.self, forKey: .mirroredAt)
+        space = try container.decodeIfPresent(String.self, forKey: .space)
     }
 
     /// Le nom montré : son libellé, sinon son identifiant.
@@ -280,10 +286,28 @@ struct WorkstationCommandBody: Encodable {
     var browserId: String?
 }
 
-/// Le corps de `POST /v1/workstation/requests` ; `browserId` absent quand il est `nil`.
+/// Le corps de `POST /v1/workstation/requests` ; `browserId` et `space` absents quand ils sont `nil`.
 struct WorkstationRequestBody: Encodable {
     var instruction: String
     var browserId: String?
+    var space: String?
+}
+
+/// Le corps de `PUT /v1/workstation/browsers/{id}` : l'espace du navigateur, ou `null` (hors espace).
+struct WorkstationBrowserSpaceBody: Encodable {
+    var space: String?
+
+    private enum CodingKeys: String, CodingKey { case space }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(space, forKey: .space)
+    }
+}
+
+/// `PUT /v1/workstation/browsers/{id}` : le navigateur, rattaché ou détaché.
+struct WorkstationBrowserReply: Decodable {
+    var browser: WorkstationBrowser
 }
 
 /// Le corps de `POST /v1/workstation/automations` ; les champs `nil` restent hors du JSON.

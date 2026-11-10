@@ -25,8 +25,11 @@ public enum HarnessStandingRuleSource: String, CaseIterable, Codable, Sendable {
 /// Une consigne permanente telle que `/v1/rules` la rend.
 public struct HarnessStandingRule: Codable, Equatable, Sendable, Identifiable {
     public var id: String
-    /// Le dépôt de la consigne ; `nil` : tous les dépôts.
+    /// Le dépôt de la consigne ; `nil` : un espace (`space`), sinon tous les dépôts.
     public var repo: String?
+    /// L'espace dont la consigne vaut pour tous les dépôts ; `nil` : un dépôt (`repo`), sinon
+    /// tous. Jamais les deux ; toujours `nil` d'un serveur sans consignes d'espace.
+    public var space: String?
     public var text: String
     public var enabled: Bool
     /// `answer`, `correction`, `cancel` ou `manual`.
@@ -38,11 +41,13 @@ public struct HarnessStandingRule: Codable, Equatable, Sendable, Identifiable {
     public var updatedAt: Double
 
     public init(
-        id: String, repo: String? = nil, text: String, enabled: Bool = true, source: String = HarnessStandingRuleSource.manual.rawValue,
-        sourceRunId: String? = nil, by: String? = nil, createdAt: Double = 0, updatedAt: Double = 0
+        id: String, repo: String? = nil, space: String? = nil, text: String, enabled: Bool = true,
+        source: String = HarnessStandingRuleSource.manual.rawValue, sourceRunId: String? = nil, by: String? = nil, createdAt: Double = 0,
+        updatedAt: Double = 0
     ) {
         self.id = id
         self.repo = repo
+        self.space = space
         self.text = text
         self.enabled = enabled
         self.source = source
@@ -55,8 +60,8 @@ public struct HarnessStandingRule: Codable, Equatable, Sendable, Identifiable {
     /// L'origine connue, ou `nil` pour une origine apparue après cette version de l'app.
     public var origin: HarnessStandingRuleSource? { HarnessStandingRuleSource(rawValue: source) }
 
-    /// La consigne vaut pour tous les dépôts.
-    public var isGlobal: Bool { repo == nil }
+    /// La consigne vaut partout : ni dépôt, ni espace.
+    public var isGlobal: Bool { repo == nil && space == nil }
 }
 
 /// `GET /v1/rules`.
@@ -69,10 +74,11 @@ struct HarnessStandingRuleReply: Decodable {
     var rule: HarnessStandingRule
 }
 
-/// Le corps de `POST /v1/rules` ; les champs absents (`nil`) ne partent pas.
+/// Le corps de `POST /v1/rules` ; les champs absents (`nil`) ne partent pas. Au plus un de `repo` et `space`.
 private struct StandingRuleBody: Encodable {
     var text: String
     var repo: String?
+    var space: String?
     var source: String?
     var sourceRunId: String?
 }
@@ -90,7 +96,9 @@ public final class HarnessStandingRulesModel: ObservableObject {
     public nonisolated static let maxActivePerRepo = 40
 
     @Published public private(set) var availability: HarnessFeatureAvailability = .unknown
-    /// Les consignes des dépôts visibles, les plus récentes d'abord.
+    /// Toutes les consignes visibles, les plus récentes d'abord : celles des dépôts, des espaces
+    /// et de partout. Lues SANS borne d'espace — celles de partout s'imposent aussi aux fils
+    /// d'un espace ; `inScope` et `levels` donnent celles de la portée courante.
     @Published public private(set) var rules: [HarnessStandingRule] = []
     @Published public private(set) var failure: HarnessFailure?
     @Published public private(set) var isLoading = false
@@ -110,10 +118,23 @@ public final class HarnessStandingRulesModel: ObservableObject {
     /// Le serveur relié sert les consignes (inconnu compris : la rangée ne clignote pas).
     public var isServed: Bool { availability != .absent }
 
-    /// Les consignes ACTIVES qui s'imposent aux features d'un dépôt : les siennes et les globales.
+    /// Les consignes ACTIVES qui s'imposent aux features d'un dépôt : les siennes, celles de
+    /// son espace et celles de partout.
     public func active(for repo: String?) -> [HarnessStandingRule] {
-        rules.filter { $0.enabled && ($0.repo == nil || $0.repo == repo) }
+        let owner = harness.spaces.space(ofRepo: repo)?.id
+        return rules.filter { rule in
+            guard rule.enabled else { return false }
+            if let space = rule.space { return space == owner }
+            return rule.repo == nil || rule.repo == repo
+        }
     }
+
+    /// Les consignes qui valent dans la portée courante : celles de l'espace choisi, de ses
+    /// dépôts et de partout ; sans espace choisi, toutes.
+    public var inScope: [HarnessStandingRule] { OSSpaces.rules(rules, in: harness.scope) }
+
+    /// Les mêmes, par niveau : cet espace, ses dépôts, partout.
+    public var levels: OSRuleLevels { OSSpaces.ruleLevels(rules, in: harness.scope) }
 
     /// Relit les consignes ; un serveur antérieur (404) n'en a pas, sans échec.
     public func refresh() async {
@@ -136,10 +157,13 @@ public final class HarnessStandingRulesModel: ObservableObject {
         }
     }
 
-    /// Écrit une consigne ; `repo` vide ou `nil` : tous les dépôts. Rend celle que le serveur a gardée.
+    /// Écrit une consigne pour un dépôt (`repo`), pour un espace (`space` : son identifiant —
+    /// elle vaut pour tous ses dépôts), ou pour tous (ni l'un ni l'autre). Le dépôt l'emporte
+    /// si les deux sont donnés. Rend celle que le serveur a gardée. Une consigne d'espace ne
+    /// part pas vers un serveur qui n'annonce pas `space-knowledge` (elle y vaudrait partout).
     @discardableResult
     public func create(
-        text: String, repo: String? = nil, source: HarnessStandingRuleSource? = nil, sourceRunId: String? = nil
+        text: String, repo: String? = nil, space: String? = nil, source: HarnessStandingRuleSource? = nil, sourceRunId: String? = nil
     ) async -> HarnessStandingRule? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count <= Self.maxTextLength else {
@@ -147,12 +171,22 @@ public final class HarnessStandingRulesModel: ObservableObject {
             return nil
         }
         let target = repo?.trimmingCharacters(in: .whitespaces) ?? ""
+        let owner = target.isEmpty ? space?.trimmingCharacters(in: .whitespaces) ?? "" : ""
+        if !owner.isEmpty {
+            guard await harness.supports(.spaceKnowledge) else {
+                failure = .rejected("")
+                return nil
+            }
+        }
         isSaving = true
         defer { isSaving = false }
         do {
             let reply: HarnessStandingRuleReply = try await harness.write(
                 "POST", "/v1/rules",
-                body: StandingRuleBody(text: trimmed, repo: target.isEmpty ? nil : target, source: source?.rawValue, sourceRunId: sourceRunId)
+                body: StandingRuleBody(
+                    text: trimmed, repo: target.isEmpty ? nil : target, space: owner.isEmpty ? nil : owner, source: source?.rawValue,
+                    sourceRunId: sourceRunId
+                )
             )
             upsert(reply.rule)
             availability = .available
@@ -219,6 +253,11 @@ public final class HarnessStandingRulesModel: ObservableObject {
     func receive(_ names: [String]) {
         guard availability == .available, names.contains("standing_rule") else { return }
         reloader.schedule { [weak self] in await self?.refresh() }
+    }
+
+    /// La portée a changé : `inScope` et `levels` ne sont plus les mêmes, les écrans qui les montrent se redessinent.
+    func rescope() {
+        objectWillChange.send()
     }
 
     func reset() {
