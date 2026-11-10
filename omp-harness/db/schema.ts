@@ -1,6 +1,7 @@
 // Le schéma de la base du harness : une migration par version, jouée dans l'ordre
 // (`PRAGMA user_version` = nombre de migrations appliquées). Une migration publiée ne
-// change plus : un schéma qui évolue ajoute la suivante, en fin de schema-suite.ts.
+// change plus : un schéma qui évolue ajoute la suivante, en fin de schema-os.ts.
+import { MIGRATIONS_OS } from "./schema-os.ts";
 import { MIGRATIONS_SUITE } from "./schema-suite.ts";
 
 export const MIGRATIONS: readonly string[] = [
@@ -319,6 +320,7 @@ export const MIGRATIONS: readonly string[] = [
      created_at INTEGER NOT NULL,
      PRIMARY KEY (repo, number)
    );`,
-  // La suite (schema-suite.ts), jouée après celles-ci dans l'ordre de la liste.
+  // La suite (schema-suite.ts puis schema-os.ts), jouée après celles-ci dans l'ordre de la liste.
   ...MIGRATIONS_SUITE,
+  ...MIGRATIONS_OS,
 ];

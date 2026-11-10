@@ -106,9 +106,8 @@ function report(step: "impl" | "fix", lines: string) {
   );
 }
 
-/** Le monde de démonstration : la feature, ses étapes et ses preuves. */
-export function demoWorld() {
-  const world = fakeWorld({});
+/** Le monde de démonstration : la feature, ses étapes et ses preuves, posées dans `world` (défaut : un monde neuf). */
+export function demoWorld(world: FakeWorld = fakeWorld({})) {
   const { store } = world;
   store.createRun({
     id: DEMO_RUN,

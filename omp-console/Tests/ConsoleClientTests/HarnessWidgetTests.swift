@@ -1,6 +1,8 @@
 // Le widget d'écran d'accueil vu du client : l'instantané qu'il montre (ce qui attend
 // l'humain d'abord, features terminées exclues), le lien qui ouvre l'Accueil, et la
-// lecture de la boîte hors du modèle de l'app — sur la doublure de transport.
+// lecture de la boîte hors du modèle de l'app — sur la doublure de transport. Et la
+// télécommande hors de l'app : les liens `ompconsole://`, le choix de la Live Activity
+// démarrée seule, la validation d'une revue depuis l'activité.
 
 @testable import ConsoleClient
 import ConsoleCore
@@ -42,6 +44,77 @@ struct HarnessWidgetTests {
         #expect(HarnessWidgetLink.section(of: url) == .inbox)
         #expect(HarnessWidgetLink.section(of: URL(string: "https://example.com/inbox")!) == nil)
         #expect(HarnessWidgetLink.section(of: URL(string: "ompconsole://inconnue")!) == nil)
+    }
+
+    @Test("un lien mène à un fil, au tri des décisions, à « Maintenant », à une section ou à une page de Système ; tout autre lien est ignoré")
+    func destinations() {
+        #expect(HarnessWidgetLink.url(thread: "r1").absoluteString == "ompconsole://threads/r1")
+        #expect(HarnessWidgetLink.decisions.absoluteString == "ompconsole://decisions")
+        #expect(HarnessWidgetLink.now.absoluteString == "ompconsole://now")
+        func destination(_ link: String) -> HarnessWidgetLink.Destination? { HarnessWidgetLink.destination(of: URL(string: link)!) }
+        #expect(destination("ompconsole://threads/r1") == .thread("r1"))
+        #expect(HarnessWidgetLink.destination(of: HarnessWidgetLink.url(thread: "r 1")) == .thread("r 1"), "un identifiant se relit tel quel")
+        #expect(destination("ompconsole://runs/r2") == .thread("r2"), "le lien que le Mac lit déjà")
+        #expect(destination("ompconsole://threads") == .section(.runs), "sans identifiant : la liste")
+        #expect(destination("ompconsole://decisions") == .decisions)
+        #expect(destination("ompconsole://now") == .now)
+        #expect(destination("ompconsole://inbox") == .section(.inbox))
+        #expect(destination("ompconsole://system/vigie") == .system(.vigie))
+        #expect(destination("ompconsole://system/inconnue") == .section(.system))
+        #expect(destination("ompconsole://inconnue") == nil)
+        #expect(destination("https://example.com/threads/r1") == nil)
+
+        // Dans la coque à sections : le fil est la page de la feature, le tri « À traiter ».
+        #expect(HarnessWidgetLink.Destination.thread("r1").command == .run("r1"))
+        #expect(HarnessWidgetLink.Destination.decisions.command == .inbox(.toDecide))
+        #expect(HarnessWidgetLink.Destination.now.command == .section(.inbox))
+        #expect(HarnessWidgetLink.Destination.section(.workstation).command == .section(.workstation))
+        #expect(HarnessWidgetLink.Destination.system(.vigie).command == .system(.vigie))
+    }
+
+    @Test("l'activité démarrée seule est celle qui attend l'humain depuis le plus longtemps, sinon celle qui travaille ; une seule à la fois, jamais une activité écartée")
+    func activityStart() {
+        func at(_ id: String, _ state: String, _ updatedAt: Double, step: String? = "impl") -> HarnessRun {
+            var item = run(id, state, step: step)
+            item.updatedAt = updatedAt
+            return item
+        }
+        let inbox = HarnessInbox(runs: [
+            at("travail-ancien", "running", 10), at("travail-recent", "running", 50), at("file", "queued", 60),
+            at("question-recente", "escalated", 40), at("revue-ancienne", "awaiting_human", 20, step: "review"), at("livree", "merged", 70),
+        ])
+        #expect(HarnessActivityStart.candidate(inbox: inbox, running: [])?.id == "revue-ancienne")
+        #expect(HarnessActivityStart.candidate(inbox: inbox, running: [], declined: ["revue-ancienne"])?.id == "question-recente")
+        #expect(HarnessActivityStart.candidate(inbox: inbox, running: [], declined: ["revue-ancienne", "question-recente"])?.id == "travail-recent")
+        #expect(HarnessActivityStart.candidate(inbox: inbox, running: ["travail-ancien"]) == nil, "une seule activité à la fois")
+        #expect(HarnessActivityStart.candidate(inbox: HarnessInbox(runs: [at("file", "queued", 1), at("livree", "merged", 2)]), running: []) == nil)
+        #expect(HarnessActivityStart.candidate(inbox: nil, running: []) == nil)
+
+        // « Valider » ne s'offre que pour une revue qui attend.
+        #expect(HarnessActivityState(state: "awaiting_human", step: "review").awaitsReview)
+        #expect(!HarnessActivityState(state: "awaiting_human", step: "specs").awaitsReview)
+        #expect(!HarnessActivityState(state: "escalated", step: "review").awaitsReview)
+        #expect(!HarnessActivityState(state: "running", step: "review").awaitsReview)
+    }
+
+    @Test("hors de l'app, la revue d'une feature se valide à la révision que le serveur vient de rendre ; des specs ou une feature repartie ne se valident pas")
+    @MainActor
+    func remoteValidation() async throws {
+        let inbox = #"{"cursor":1,"batches":[],"decisions":[],"awaiting":["#
+            + osRunJSON("r1", state: "awaiting_human", step: "review", extra: #","rev":9"#) + ","
+            + osRunJSON("r2", state: "awaiting_human", step: "specs", extra: #","rev":3"#) + #"],"runs":[]}"#
+        let transport = osTransport(inbox: inbox, routes: ["POST /v1/runs/r1/validate": osJSON(#"{"run":"# + osRunJSON("r1", state: "merging", step: "review") + "}")])
+        let model = try #require(await HarnessModel.linked(address: "https://vps.example", token: "t", transport: transport))
+
+        #expect(await HarnessRemote.validateReview(runId: "r1", on: model))
+        let call = try #require(transport.last("POST", "/v1/runs/r1/validate"))
+        #expect(call.headers["If-Match"] == "\"9\"")
+        #expect(transport.body("POST", "/v1/runs/r1/validate")?["approve"] as? Bool == true)
+
+        #expect(await HarnessRemote.validateReview(runId: "r2", on: model) == false, "des specs ne se valident pas d'ici")
+        #expect(await HarnessRemote.validateReview(runId: "inconnue", on: model) == false)
+        #expect(transport.count("POST", "/v1/runs/r2/validate") == 0)
+        #expect(await HarnessModel.linked(address: "pas une adresse", token: "t", transport: transport) == nil)
     }
 
     @Test("l'instantané fait l'aller-retour par le groupe d'apps ; un bundle sans groupe n'en a pas")

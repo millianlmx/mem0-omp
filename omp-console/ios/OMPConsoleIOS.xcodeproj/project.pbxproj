@@ -82,6 +82,15 @@
 			path = OMPConsoleWidgets;
 			sourceTree = "<group>";
 		};
+		E1E2E3E4E5E6E7E8E9EAEB50 /* OMPConsoleShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = OMPConsoleShared;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -122,6 +131,7 @@
 				E1E2E3E4E5E6E7E8E9EAEB04 /* OMPConsoleIOS */,
 				E1E2E3E4E5E6E7E8E9EAEB05 /* OMPConsoleIOSTests */,
 				E1E2E3E4E5E6E7E8E9EAEB37 /* OMPConsoleWidgets */,
+				E1E2E3E4E5E6E7E8E9EAEB50 /* OMPConsoleShared */,
 				E1E2E3E4E5E6E7E8E9EAEB03 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -155,6 +165,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				E1E2E3E4E5E6E7E8E9EAEB04 /* OMPConsoleIOS */,
+				E1E2E3E4E5E6E7E8E9EAEB50 /* OMPConsoleShared */,
 			);
 			name = OMPConsoleIOS;
 			packageProductDependencies = (
@@ -205,6 +216,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				E1E2E3E4E5E6E7E8E9EAEB37 /* OMPConsoleWidgets */,
+				E1E2E3E4E5E6E7E8E9EAEB50 /* OMPConsoleShared */,
 			);
 			name = OMPConsoleWidgets;
 			packageProductDependencies = (

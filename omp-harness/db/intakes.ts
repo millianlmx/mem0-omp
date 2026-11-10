@@ -28,6 +28,9 @@ export type IntakePlan = {
 
 export type IntakeExchange = { question: string; answer: string; at: number };
 
+/** La page d'où part une Demande (popup du navigateur) : son adresse, son titre, le texte sélectionné. */
+export type IntakeContext = { url?: string; title?: string; selection?: string };
+
 export type IntakeRow = {
   id: string;
   text: string;
@@ -46,6 +49,8 @@ export type IntakeRow = {
   targetKind: string | null;
   targetId: string | null;
   reason: string | null;
+  /** Le contexte de page donné à la pose (`null` : aucun) ; une donnée, jamais une consigne. */
+  context: IntakeContext | null;
   createdBy: string | null;
   createdAt: number;
   updatedAt: number;
@@ -58,7 +63,9 @@ export type IntakePatch = Partial<
   >
 >;
 
-export type NewIntake = Pick<IntakeRow, "id" | "text" | "source" | "repo" | "requestedRepo" | "scope" | "createdBy">;
+export type NewIntake = Pick<IntakeRow, "id" | "text" | "source" | "repo" | "requestedRepo" | "scope" | "createdBy"> & {
+  context?: IntakeContext | null;
+};
 
 const COLUMNS: Record<keyof IntakePatch, string> = {
   repo: "repo",
@@ -90,6 +97,7 @@ function intakeOf(row: Row): IntakeRow {
     targetKind: strOrNull(row, "target_kind"),
     targetId: strOrNull(row, "target_id"),
     reason: strOrNull(row, "reason"),
+    context: json<IntakeContext | null>(row, "context", null),
     createdBy: strOrNull(row, "created_by"),
     createdAt: num(row, "created_at"),
     updatedAt: num(row, "updated_at"),
@@ -100,14 +108,15 @@ export class IntakeStore extends CorporateSignalStore {
   createIntake(input: NewIntake): IntakeRow {
     const at = this.now();
     this.execute(
-      `INSERT INTO intakes (id, text, source, repo, requested_repo, scope, state, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'classifying', ?, ?, ?)`,
+      `INSERT INTO intakes (id, text, source, repo, requested_repo, scope, state, context, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'classifying', ?, ?, ?, ?)`,
       input.id,
       input.text,
       input.source,
       input.repo,
       input.requestedRepo,
       JSON.stringify(input.scope),
+      input.context ? JSON.stringify(input.context) : null,
       input.createdBy,
       at,
       at,

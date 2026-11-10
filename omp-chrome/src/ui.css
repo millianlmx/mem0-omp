@@ -251,3 +251,15 @@ svg.schema .schema-node.recommended rect {
 svg.schema .schema-node.impact text {
   fill: var(--muted);
 }
+
+/* Le reste du popup, replié sous les deux gestes : l'état de la liaison en est le titre. */
+details#more > summary {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+  cursor: pointer;
+}
+
+details#more > section:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}

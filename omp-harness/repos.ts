@@ -13,6 +13,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { rulesWith } from "./autonomy-learning.ts";
+import type { AutonomyRuleInput } from "./autonomy-learning.ts";
+import { checkAutonomy } from "./autonomy-rules.ts";
+import type { AutonomyRule } from "./autonomy-rules.ts";
 import type { HarnessConfig, RepoConfig, TestJudge } from "./config.ts";
 import { DEFAULT_CI_TIMEOUT_SEC, ciTimeoutSec, loadConfig, testsJudge } from "./config.ts";
 import { HarnessError } from "./errors.ts";
@@ -337,6 +341,30 @@ export class ConfigAdmin {
   }
 
   /**
+   * Remplace le fichier de configuration par `raw`, puis recharge. Le candidat est validé AVANT de remplacer
+   * l'ancien, hors du dossier du service : refusé, c'est un 400 et rien ne change. Le fichier est réécrit sur
+   * place comme `addRepo` (un fichier monté seul dans un conteneur ne se remplace pas par renommage).
+   */
+  async #replace(file: string, raw: unknown): Promise<ReloadSummary> {
+    const content = `${JSON.stringify(raw, null, 2)}\n`;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-harness-config-"));
+    try {
+      const candidate = path.join(dir, "config.json");
+      fs.writeFileSync(candidate, content);
+      loadConfig(candidate);
+    } catch (err) {
+      throw new HarnessError(
+        400,
+        `réglage refusé, rien ne change : ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    fs.writeFileSync(file, content);
+    return this.#reload();
+  }
+
+  /**
    * Change qui juge la suite complète d'un dépôt déclaré (`tests.judge`, `tests.ciTimeoutSec` ; `null` rend le
    * défaut), sans éditer le fichier à la main. Le fichier candidat est validé AVANT de remplacer l'ancien : une
    * configuration refusée (par exemple `ci` sans forge) est un 400 et rien ne change. Puis rechargement à chaud.
@@ -354,24 +382,7 @@ export class ConfigAdmin {
         else if (value !== undefined) tests[key] = value;
       }
       entry.tests = tests;
-      const content = `${JSON.stringify(raw, null, 2)}\n`;
-      // Le candidat est validé hors du dossier du service ; le fichier est réécrit sur place comme `addRepo`
-      // (un fichier monté seul dans un conteneur ne se remplace pas par renommage).
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-harness-config-"));
-      try {
-        const candidate = path.join(dir, "config.json");
-        fs.writeFileSync(candidate, content);
-        loadConfig(candidate);
-      } catch (err) {
-        throw new HarnessError(
-          400,
-          `réglage refusé, rien ne change : ${err instanceof Error ? err.message : String(err)}`,
-        );
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-      fs.writeFileSync(file, content);
-      const reload = await this.#reload();
+      const reload = await this.#replace(file, raw);
       const repo = this.#service.config.repos.find((candidateRepo) => candidateRepo.name === name);
       return {
         repo: name,
@@ -379,6 +390,34 @@ export class ConfigAdmin {
         ciTimeoutSec: repo ? ciTimeoutSec(repo) : DEFAULT_CI_TIMEOUT_SEC,
         reload,
       };
+    });
+  }
+
+  /**
+   * Règle la porte d'un type de travail d'un dépôt déclaré (`repos[].autonomy.rules`) : la règle qui la règle
+   * déjà change de porte, sinon une règle prudente est ajoutée (autonomy-learning.ts `rulesWith`, la même
+   * modification qu'une proposition de palier). Écrit, validé et rechargé comme `setTests` : une configuration
+   * refusée est un 400 et rien ne change.
+   */
+  setAutonomyRule(input: AutonomyRuleInput): Promise<{ repo: string; rules: AutonomyRule[] }> {
+    return this.#serial(async () => {
+      const file = this.#requireFile();
+      const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { repos?: Record<string, unknown>[] };
+      const entry = (raw.repos ?? []).find((repo) => repo.name === input.repo);
+      if (entry === undefined) throw new HarnessError(404, `dépôt non déclaré : ${input.repo}`);
+      let current: AutonomyRule[];
+      try {
+        current = checkAutonomy(`repos.${input.repo}.autonomy`, entry.autonomy ?? {}).rules;
+      } catch (err) {
+        throw new HarnessError(
+          400,
+          `réglage refusé, rien ne change : ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      entry.autonomy = { rules: rulesWith(current, input, this.#service.config.review.maxDiffLines) };
+      await this.#replace(file, raw);
+      const repo = this.#service.config.repos.find((candidate) => candidate.name === input.repo);
+      return { repo: input.repo, rules: repo?.autonomy?.rules ?? [] };
     });
   }
 }

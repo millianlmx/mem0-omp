@@ -10,26 +10,77 @@ import type { HarnessConfig, ModelPolicy, RepoConfig } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
 import { parseCron } from "./cron.ts";
 import { INTAKE_STATES } from "./db.ts";
-import type { IntakeExchange, IntakePatch, IntakePlan, IntakeRow, IntakeState, Store } from "./db.ts";
+import type {
+  IntakeContext,
+  IntakeExchange,
+  IntakePatch,
+  IntakePlan,
+  IntakeRow,
+  IntakeState,
+  RunAutonomy,
+  Store,
+} from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import { newId } from "./ids.ts";
-import { MAX_INSTRUCTIONS, requireRepo, text } from "./input.ts";
+import { MAX_INSTRUCTIONS, autonomyField, requireRepo, text } from "./input.ts";
 import { intakePrompt } from "./prompts.ts";
 import type { HostToolResult } from "./rpc.ts";
 import { forceStop, hostToolsFor, runnerUnit } from "./runner.ts";
 import { RunnerSession } from "./runner-session.ts";
 import { NAME_MAX } from "./schedules.ts";
-import { MAX_INSTRUCTION } from "./workstation.ts";
+import { MAX_INSTRUCTION, stripUrl } from "./workstation.ts";
 
 export const INTAKE_SOURCES = ["console", "ios", "voice", "slack", "cli", "chrome"] as const;
 export const INTAKE_KINDS = ["feature", "bug", "audit", "workstation_request", "schedule", "question"] as const;
 const PLAN_KINDS = INTAKE_KINDS.filter((kind) => kind !== "question");
 const TITLE_MAX = 200;
+/** Les bornes du contexte de page d'une Demande, en caractères. */
+const CONTEXT_MAX = { url: 2000, title: 300, selection: 4000 } as const;
+
+function isContextKey(key: string): key is keyof typeof CONTEXT_MAX {
+  return Object.hasOwn(CONTEXT_MAX, key);
+}
+
+/**
+ * Le contexte de page d'une Demande (`context`), jugé strictement : un objet, les seules clés `url`,
+ * `title` et `selection`, des chaînes bornées (jamais tronquées ici), une adresse http(s). Un champ
+ * vide est omis ; sans rien de donné, `null`. L'adresse est gardée sans identifiants, query ni
+ * fragment (`stripUrl`) : ils portent des jetons, des recherches, des liens signés.
+ */
+function pageContext(raw: unknown): IntakeContext | null {
+  if (raw === undefined || raw === null) return null;
+  if (!isRecord(raw)) throw new HarnessError(400, "context : objet attendu");
+  const context: IntakeContext = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!isContextKey(key)) throw new HarnessError(400, `context.${key} : champ inconnu (url, title, selection)`);
+    if (typeof value !== "string") throw new HarnessError(400, `context.${key} : chaîne attendue`);
+    const trimmed = value.trim();
+    if (trimmed.length > CONTEXT_MAX[key])
+      throw new HarnessError(400, `context.${key} : ${CONTEXT_MAX[key]} caractères au plus`);
+    if (trimmed !== "") context[key] = trimmed;
+  }
+  if (context.url !== undefined) {
+    const protocol = URL.canParse(context.url) ? new URL(context.url).protocol : "";
+    if (protocol !== "http:" && protocol !== "https:")
+      throw new HarnessError(400, "context.url : adresse http ou https attendue");
+    context.url = stripUrl(context.url, "context.url");
+  }
+  return Object.keys(context).length === 0 ? null : context;
+}
 
 /** L'objet que la confirmation a créé, par le chemin existant du type de la demande. */
 export type Created = { kind: "run" | "audit" | "workstation_request" | "schedule"; id: string };
 
-export type IntakeHooks = { create: (plan: IntakePlan, client: Client, actor: Actor) => Created };
+/**
+ * `state` : la section de données « État de l'usine » (brief.ts `factoryStatePrompt`) des dépôts de
+ * la portée donnée (`stateScope` : celle de l'auteur, ou le seul dépôt de la demande), ajoutée au
+ * prompt du classeur ; absente : le classeur ne connaît pas l'état.
+ */
+export type IntakeHooks = {
+  /** `autonomy` : le curseur d'autonomie demandé à la confirmation, pour le run d'un plan `feature` ou `bug`. */
+  create: (plan: IntakePlan, client: Client, actor: Actor, autonomy?: RunAutonomy | null) => Created;
+  state?: (scope: IntakeRow["scope"]) => string;
+};
 
 type LiveIntake = {
   abort: AbortController;
@@ -78,6 +129,8 @@ export type IntakeView = {
   exchanges: IntakeExchange[];
   /** Le texte d'origine suivi des réponses de clarification. */
   statement: string;
+  /** La page d'où part la demande (`url`, `title`, `selection`) ; `null` sans page, ou pour un lecteur qui n'en est ni l'auteur ni le propriétaire. */
+  context: IntakeContext | null;
   created: Created | null;
   reason: string | null;
   by: string | null;
@@ -85,8 +138,13 @@ export type IntakeView = {
   updatedAt: number;
 };
 
-/** La Demande telle que les clients la lisent (contrat public : jamais la portée de l'auteur). */
-export function intakeView(row: IntakeRow): IntakeView {
+/**
+ * La Demande telle que `reader` la lit (contrat public : jamais la portée de l'auteur). Le contexte
+ * de page — l'adresse, le titre et la sélection d'un onglet du poste — n'est rendu qu'à l'auteur de
+ * la demande et au propriétaire (client non borné, non pilote) ; tout autre lecteur reçoit `null`.
+ */
+export function intakeView(row: IntakeRow, reader: Client): IntakeView {
+  const readsContext = row.createdBy === reader.name || (reader.repos === "*" && !reader.pilot);
   return {
     id: row.id,
     text: row.text,
@@ -100,6 +158,7 @@ export function intakeView(row: IntakeRow): IntakeView {
     answer: row.answer,
     exchanges: row.exchanges,
     statement: [row.text, ...row.exchanges.map((exchange) => exchange.answer)].join("\n\n"),
+    context: readsContext ? row.context : null,
     created: row.targetKind && row.targetId ? { kind: row.targetKind as Created["kind"], id: row.targetId } : null,
     reason: row.reason,
     by: row.createdBy,
@@ -118,6 +177,16 @@ export function visibleIntake(store: Store, client: Client, id: string): IntakeR
   const row = store.getIntake(id);
   if (!row || !visible(client, row)) throw new HarnessError(404, `demande inconnue : ${id}`);
   return row;
+}
+
+/**
+ * La portée de la section « État de l'usine » du classement : celle de l'auteur ; pour une demande qui
+ * porte un dépôt, ce seul dépôt (s'il est dans sa portée). La réponse se lit par tout client qui voit
+ * ce dépôt : elle ne doit rien dire des autres.
+ */
+function stateScope(row: IntakeRow): IntakeRow["scope"] {
+  if (row.repo === "") return row.scope;
+  return row.scope === "*" || row.scope.includes(row.repo) ? [row.repo] : [];
 }
 
 /** `?state=a,b` : des états connus, ou 400. */
@@ -303,6 +372,7 @@ export class Intaker {
       requireRepo(client, repo);
       this.#ctx.repo(repo);
     }
+    const context = pageContext(body.context);
     return store.transaction(() => {
       const row = store.createIntake({
         id: newId("i"),
@@ -311,6 +381,7 @@ export class Intaker {
         repo,
         requestedRepo: repo || null,
         scope: client.repos,
+        context,
         createdBy: actor.by,
       });
       this.#event(row, actor.by ? { by: actor.by } : {});
@@ -352,13 +423,14 @@ export class Intaker {
       await session.open(config.intake.tier, runnerUnit(row.id, 0), live.abort.signal);
       await session.setHostTools(hostToolsFor("intake"));
       let result = await session.prompt(
-        intakePrompt({
+        `${intakePrompt({
           text: row.text,
           source: row.source,
           visibleRepos: visibleRepos(config, row.scope),
           requestedRepo: row.requestedRepo,
           exchanges: row.exchanges,
-        }),
+          context: row.context,
+        })}${this.#hooks.state?.(stateScope(row)) ?? ""}`,
         live.abort.signal,
         deadlineAt,
       );
@@ -463,6 +535,7 @@ export class Intaker {
       new HarnessError(409, `la demande n'a pas de plan à confirmer (état ${state})`);
     if (row.state !== "planned" || row.plan === null) throw notPlanned(row.state);
     const plan = body.plan === undefined ? row.plan : this.#corrected(row.plan, body.plan, client);
+    const autonomy = autonomyField(body);
     return store.transaction(() => {
       const reserved = store.updateIntakeIf(id, ["planned"], {
         state: "confirmed",
@@ -471,7 +544,7 @@ export class Intaker {
         repo: plan.repo ?? "",
       });
       if (!reserved) throw notPlanned(store.getIntake(id)?.state ?? "inconnu");
-      const created = this.#hooks.create(plan, client, actor);
+      const created = this.#hooks.create(plan, client, actor, autonomy);
       const done = store.updateIntakeIf(id, ["confirmed"], {
         targetKind: created.kind,
         targetId: created.id,

@@ -1,6 +1,6 @@
 // La suite des migrations de schema.ts (découpée pour rester sous 400 lignes), jouée après
-// elles : `MIGRATIONS` = les premières puis celles-ci, dans l'ordre. Une migration publiée
-// ne change plus : un schéma qui évolue ajoute la suivante EN FIN de cette liste.
+// elles : `MIGRATIONS` = les premières, puis celles-ci, puis schema-os.ts, dans l'ordre. Une migration
+// publiée ne change plus : un schéma qui évolue ajoute la suivante en fin de schema-os.ts.
 
 export const MIGRATIONS_SUITE: readonly string[] = [
   // Les captures d'écran du poste, gardées par action (workstation-captures.ts) : le JPEG

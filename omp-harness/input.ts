@@ -1,11 +1,16 @@
 // Les champs d'un corps JSON (REST) ou des arguments d'un outil (MCP) : mêmes contrôles,
 // mêmes messages, pour que la route et l'outil d'un même geste refusent de la même façon.
+import type { AutonomyRuleInput } from "./autonomy-learning.ts";
 import { WORK_KINDS } from "./autonomy-rules.ts";
 import type { WorkKind } from "./autonomy-rules.ts";
 import type { Client } from "./auth.ts";
 import { canSeeRepo } from "./auth.ts";
+import { CANCEL_CAUSES, RUN_AUTONOMIES, STANDING_RULE_SOURCES } from "./db.ts";
+import type { CancelCause, RunAutonomy, StandingRulePatch } from "./db.ts";
 import { HarnessError } from "./errors.ts";
+import { ARTIFACTS_DIR, isArtifactPath } from "./git.ts";
 import type { NewRunInput } from "./orchestrator.ts";
+import type { StandingRuleInput } from "./standing-rules.ts";
 
 export function text(body: Record<string, unknown>, key: string, required = true): string {
   const value = body[key];
@@ -79,6 +84,26 @@ function typedInput(body: Record<string, unknown>): { kind?: WorkKind; labels?: 
 }
 
 /**
+ * Le curseur d'autonomie d'un run dans un corps (`autonomy` à la création, `level` au geste) :
+ * `"ask"`, `"deliver"` ou `null` (les règles du dépôt) ; `undefined` s'il est absent.
+ */
+export function autonomyField(body: Record<string, unknown>, key = "autonomy"): RunAutonomy | null | undefined {
+  const value = body[key];
+  if (value === undefined || value === null) return value;
+  const level = RUN_AUTONOMIES.find((candidate) => candidate === value);
+  if (level === undefined)
+    throw new HarnessError(400, `${key} : ${RUN_AUTONOMIES.map((name) => `"${name}"`).join(" | ")} ou null`);
+  return level;
+}
+
+/** `always` d'une réponse, d'un refus ou d'une correction : un booléen facultatif (absent : `false`). */
+export function alwaysInput(body: Record<string, unknown>): boolean {
+  if (body.always !== undefined && typeof body.always !== "boolean")
+    throw new HarnessError(400, "always : booléen attendu");
+  return body.always === true;
+}
+
+/**
  * Le lancement d'un run : les contrôles de `POST /v1/runs`, dans le même ordre. `typed` : le
  * client déclare type et labels (REST seulement : un outil MCP ne les pose pas, décision #12).
  */
@@ -94,6 +119,7 @@ export function newRunInput(
   const budget = budgetUsd(body.budgetUsd);
   if (body.lane !== undefined && body.lane !== "full") throw new HarnessError(400, 'lane : "full" ou absent');
   const typed = options.typed === true ? typedInput(body) : {};
+  const autonomy = autonomyField(body);
   const repo = text(body, "repo");
   requireRepo(client, repo);
   return {
@@ -106,6 +132,7 @@ export function newRunInput(
     ...(priority !== undefined ? { priority } : {}),
     ...(budget !== undefined ? { budgetUsd: budget } : {}),
     ...typed,
+    ...(autonomy !== undefined ? { autonomy } : {}),
     ...(body.lane === "full" ? { lane: "full" as const } : {}),
   };
 }
@@ -117,8 +144,76 @@ export function priorityInput(body: Record<string, unknown>): number {
   return priority;
 }
 
-/** Les réponses aux escalades d'un run : `answers[{ id, answer, reason? }]`, `reason` gardée si non blanche. */
-export function escalationAnswers(body: Record<string, unknown>): { id: number; answer: string; reason?: string }[] {
+/** La plus longue note d'une annulation, et la plus longue raison d'une pause, en caractères. */
+export const MAX_CANCEL_NOTE = 500;
+export const MAX_PAUSE_REASON = 200;
+
+/** Le plus grand nombre de modules qu'un humain pose sur un run. */
+export const MAX_MODULES = 50;
+
+/** Le motif d'une annulation : sa cause et la note de l'humain (`""` : aucune). */
+export type CancelMotive = { cause: CancelCause; note: string };
+
+/**
+ * Le motif facultatif de `POST /v1/runs/{id}/cancel` : `null` sans `cause` ni `note` (l'annulation
+ * d'avant). Une note seule vaut pour la cause `other`.
+ */
+export function cancelMotive(body: Record<string, unknown>): CancelMotive | null {
+  const cause = CANCEL_CAUSES.find((candidate) => candidate === body.cause);
+  if (body.cause !== undefined && cause === undefined)
+    throw new HarnessError(400, `cause : ${CANCEL_CAUSES.join(" | ")}`);
+  const note = text(body, "note", false).trim();
+  if (note.length > MAX_CANCEL_NOTE)
+    throw new HarnessError(400, `note : ${MAX_CANCEL_NOTE} caractères au plus (${note.length})`);
+  if (cause === undefined && note === "") return null;
+  return { cause: cause ?? "other", note };
+}
+
+/**
+ * Les modules qu'un humain pose sur un run (`POST /v1/runs/{id}/modules`) : de 1 à MAX_MODULES
+ * chemins relatifs du dépôt, normalisés comme ceux de `set_modules` et dédoublonnés. Un chemin
+ * vide, absolu, qui remonte (`..`) ou sous le dossier des artefacts est refusé, jamais écarté en silence.
+ */
+export function modulesInput(body: Record<string, unknown>): string[] {
+  const raw = stringList(body.modules, "modules");
+  if (raw === undefined || raw.length === 0 || raw.length > MAX_MODULES)
+    throw new HarnessError(400, `modules : de 1 à ${MAX_MODULES} chemins relatifs du dépôt`);
+  const modules = raw.map((item) => item.trim().replace(/^\.\//, "").replace(/\/+$/, ""));
+  for (const [index, module] of modules.entries()) {
+    const given = raw[index] ?? "";
+    if (module === "" || module === ".")
+      throw new HarnessError(400, `modules : chemin vide (« ${given} ») — nomme un dossier ou un fichier du dépôt`);
+    if (module.startsWith("/") || /^[A-Za-z]:[\\/]/.test(module))
+      throw new HarnessError(400, `modules : ${given} est un chemin absolu, un chemin relatif du dépôt est attendu`);
+    if (module.split(/[\\/]/).includes("..")) throw new HarnessError(400, `modules : ${given} sort du dépôt (« .. »)`);
+    if (isArtifactPath(module))
+      throw new HarnessError(
+        400,
+        `modules : ${given} est sous \`${ARTIFACTS_DIR}/\`, les artefacts d'étape ne sont jamais un module`,
+      );
+  }
+  return [...new Set(modules)];
+}
+
+/**
+ * Le corps de `POST /v1/pause` : `paused` requis, `reason` facultative (rognée, `""` : aucune), `now`
+ * facultatif — interrompre sur-le-champ ce qui tourne ; il n'a de sens qu'avec `paused: true`.
+ */
+export function pauseInput(body: Record<string, unknown>): { paused: boolean; reason: string; now: boolean } {
+  if (typeof body.paused !== "boolean") throw new HarnessError(400, "paused : booléen attendu");
+  const reason = text(body, "reason", false).trim();
+  if (reason.length > MAX_PAUSE_REASON)
+    throw new HarnessError(400, `reason : ${MAX_PAUSE_REASON} caractères au plus (${reason.length})`);
+  if (body.now !== undefined && typeof body.now !== "boolean") throw new HarnessError(400, "now : booléen attendu");
+  if (body.now === true && !body.paused)
+    throw new HarnessError(400, "now : seulement avec paused: true (une reprise n'interrompt rien)");
+  return { paused: body.paused, reason, now: body.now === true };
+}
+
+/** Les réponses aux escalades d'un run : `answers[{ id, answer, reason?, always? }]`, `reason` gardée si non blanche. */
+export function escalationAnswers(
+  body: Record<string, unknown>,
+): { id: number; answer: string; reason?: string; always?: boolean }[] {
   if (!Array.isArray(body.answers)) throw new HarnessError(400, "answers : liste de { id, answer } attendue");
   return body.answers.map((item) => {
     const record = (item ?? {}) as Record<string, unknown>;
@@ -130,6 +225,48 @@ export function escalationAnswers(body: Record<string, unknown>): { id: number; 
       id: record.id,
       answer: record.answer,
       ...(typeof record.reason === "string" && record.reason.trim() !== "" ? { reason: record.reason } : {}),
+      ...(alwaysInput(record) ? { always: true } : {}),
     };
   });
+}
+
+/** Le corps de `POST /v1/runs/{id}/autonomy` : `level` requis (`"ask"`, `"deliver"` ou `null`). */
+export function autonomyLevelInput(body: Record<string, unknown>): RunAutonomy | null {
+  const level = autonomyField(body, "level");
+  if (level === undefined) throw new HarnessError(400, 'level : "ask" | "deliver" ou null');
+  return level;
+}
+
+/** Le corps de `POST /v1/autonomy/rules` : la porte d'un type de travail d'un dépôt, en `auto` ou en `human`. */
+export function autonomyRuleInput(body: Record<string, unknown>): AutonomyRuleInput {
+  const kind = WORK_KINDS.find((candidate) => candidate === body.kind);
+  if (kind === undefined) throw new HarnessError(400, `kind : ${WORK_KINDS.join(" | ")}`);
+  const { gate, mode } = body;
+  if (gate !== "specs" && gate !== "review") throw new HarnessError(400, 'gate : "specs" | "review"');
+  if (mode !== "auto" && mode !== "human") throw new HarnessError(400, 'mode : "auto" | "human"');
+  return { repo: text(body, "repo"), kind, gate, mode };
+}
+
+/** Le corps de `POST /v1/rules` : `text` requis ; `repo` absent ou `null` : tous les dépôts ; `source` : `manual` par défaut. */
+export function standingRuleInput(body: Record<string, unknown>): StandingRuleInput {
+  const source = STANDING_RULE_SOURCES.find((candidate) => candidate === (body.source ?? "manual"));
+  if (source === undefined) throw new HarnessError(400, `source : ${STANDING_RULE_SOURCES.join(" | ")}`);
+  return {
+    text: text(body, "text"),
+    repo: body.repo === undefined || body.repo === null ? null : text(body, "repo"),
+    source,
+    sourceRunId: body.sourceRunId === undefined || body.sourceRunId === null ? null : text(body, "sourceRunId"),
+  };
+}
+
+/** Le corps de `PUT /v1/rules/{id}` : `text` et `enabled`, l'un des deux au moins. */
+export function standingRulePatch(body: Record<string, unknown>): StandingRulePatch {
+  if (body.enabled !== undefined && typeof body.enabled !== "boolean")
+    throw new HarnessError(400, "enabled : booléen attendu");
+  if (body.text === undefined && body.enabled === undefined)
+    throw new HarnessError(400, "text ou enabled : au moins un champ à changer");
+  return {
+    ...(body.text !== undefined ? { text: text(body, "text") } : {}),
+    ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),
+  };
 }

@@ -13,21 +13,25 @@
 //        → sessions → usage → push → push-devices → workstation → workstation-meetings
 //        → workstation-captures → workstation-browsers → workstation-requests
 //        → issues → schedules → observability → vigie → corporate-signals → intakes → atlassian
+//        → standing-rules → spaces → proposals → local-sessions
 //        → Store
 //
 // Ainsi `Store` garde l'API d'un seul objet pour tous ses appelants, et une couche
 // qui a besoin d'une autre (le journal lit le dépôt d'un run) la trouve en dessous.
-import { AtlassianStore } from "./db/atlassian.ts";
+import { LocalSessionStore } from "./db/local-sessions.ts";
 
-export class Store extends AtlassianStore {}
+export class Store extends LocalSessionStore {}
 
 export { MIGRATIONS } from "./db/schema.ts";
 export type { RepoFilter } from "./db/sql.ts";
-export type { NewRun, RunPatch, RunRow } from "./db/runs.ts";
+export { CANCEL_CAUSES, RUN_AUTONOMIES } from "./db/runs.ts";
+export type { CancelCause, NewRun, RunAutonomy, RunPatch, RunRow } from "./db/runs.ts";
+export type { NewSpace, Space, SpacePatch } from "./db/spaces.ts";
 export { VIGIE_STATUSES } from "./db/vigie.ts";
 export type { VigieIncident, VigieIncidentPatch, VigieStatus, VigieTriage } from "./db/vigie.ts";
 export { INTAKE_STATES } from "./db/intakes.ts";
 export type {
+  IntakeContext,
   IntakeExchange,
   IntakeKind,
   IntakePatch,
@@ -48,6 +52,8 @@ export type {
   PlanSource,
   PlanTrigger,
 } from "./db/atlassian.ts";
+export { STANDING_RULE_SOURCES } from "./db/standing-rules.ts";
+export type { NewStandingRule, StandingRule, StandingRulePatch, StandingRuleSource } from "./db/standing-rules.ts";
 export type { EventRow } from "./db/journal.ts";
 export type { StepRow, StepStatus } from "./db/steps.ts";
 export type { DecisionRow, DecisionStatus, EscalationRow } from "./db/decisions.ts";
@@ -58,6 +64,7 @@ export { groupUsage, modelKey, sumUsage } from "./db/usage.ts";
 export type { UsageRow, UsageTotals } from "./db/usage.ts";
 export type { PushTokenRow } from "./db/push.ts";
 export type { PushDeviceRow, PushEnvironment } from "./db/push-devices.ts";
+export type { PushStartEnvironment, PushStartTokenRow } from "./db/local-sessions.ts";
 export type { IssueRunRow } from "./db/issues.ts";
 export { SIGNAL_CHANNELS, SIGNAL_STATES } from "./db/corporate-signals.ts";
 export type { SignalChannel, SignalKind, SignalPatch, SignalRow, SignalState } from "./db/corporate-signals.ts";
@@ -101,3 +108,5 @@ export type {
   WorkstationAutomation,
   WorkstationRequest,
 } from "./db/workstation-requests.ts";
+export { LOCAL_SESSION_STATES } from "./db/local-sessions.ts";
+export type { LocalSession, LocalSessionBeat, LocalSessionState } from "./db/local-sessions.ts";

@@ -308,6 +308,15 @@ le texte d'un petit fichier texte (CSV, JSON…).
 valeurs, transcripts) lui arrive marqué comme une donnée non fiable, jamais comme une
 consigne : une page qui écrit « ignore tes consignes et envoie… » reste un texte à lire.
 
+**Demander depuis une page.** Le popup de l'extension s'ouvre sur deux gestes pour l'onglet
+actif. « Faire ça sur cette page » : tape une consigne, puis Entrée. « En faire un fil » :
+un clic, et la page devient une demande. Dans les deux cas la demande part avec l'adresse
+de la page (sans sa query ni son fragment), son titre et le texte que tu y as sélectionné ;
+le serveur en fait un plan, que tu confirmes dans le popup. Toi seul relis ce contexte de
+page : un autre client qui voit la demande ne le reçoit pas. Rien ne part d'un site exclu.
+Le reste du popup (état de la liaison, Stop, dernières actions, transcription, réglages)
+est replié dessous.
+
 **Stop.** Le bouton **Stop** du popup de l'extension arrête tout de suite l'action en
 cours, met l'extension en pause et met le poste en pause sur le serveur : les actions
 en attente sont annulées et le service en cours de l'agent est coupé. Seule l'app
@@ -373,6 +382,7 @@ Le nom du projet vient du manifeste (`package.json`, `pyproject.toml`,
 | `MEM0_NUDGE` | `1` | `0` : pas de relance d'écriture en fin de session |
 | `HARNESS_URL`, `HARNESS_TOKEN` | `~/.omp/harness.json` | le serveur et son jeton |
 | `HARNESS_REPO` | nom du dossier | le nom du dépôt sur le serveur |
+| `OMP_HARNESS_LOCAL_SESSIONS` | `1` | `0` : la session ne se signale pas au serveur ([omp-mem0-req/README.md](omp-mem0-req/README.md)) |
 
 La configuration du serveur (dépôts, modèles, plafonds) :
 [omp-harness/README.md](omp-harness/README.md) § « Configuration ».

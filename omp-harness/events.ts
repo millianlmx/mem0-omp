@@ -13,6 +13,8 @@ export const EVENT_TYPES = [
   "priority",
   "worktree",
   "modules",
+  // les modules d'un run restreints par l'humain (`{modules, by}`)
+  "modules_set",
   "recovered",
   "admission_refused",
   "run_failed",
@@ -78,6 +80,8 @@ export const EVENT_TYPES = [
   "schedule_skipped",
   // configuration du serveur
   "providers_changed",
+  // la pause globale posée ou levée (`{paused, by, reason}` ; repo null)
+  "pause",
   // notifications sortantes (ntfy)
   "notify_failed",
   // monitoring : veille, coût
@@ -112,6 +116,12 @@ export const EVENT_TYPES = [
   // et chaque validation ou refus d'une attente humaine, par qui que ce soit (`validation`)
   "autonomy",
   "validation",
+  // le curseur d'autonomie d'un run changé par l'humain (`{level, by}`), une règle de palier écrite dans la
+  // configuration (`{repo, kind, gate, mode, by}`), une consigne permanente créée, modifiée ou retirée
+  // (`{id, repo, action}` ; repo null si elle vaut pour tous les dépôts)
+  "autonomy_level",
+  "autonomy_rule",
+  "standing_rule",
   // le pont corpo ↔ usine : l'état d'un signalement d'un collègue (`{id, state}` seulement ; repo null : poste réservé au propriétaire)
   "signal",
   // le connecteur Atlassian (repo null : réservé au propriétaire) : branchement, débranchement ou
@@ -119,6 +129,15 @@ export const EVENT_TYPES = [
   "atlassian",
   "atlassian_write",
   "atlassian_plan",
+  // le bac « Propositions » (proposals.ts) : l'ensemble des propositions ouvertes a changé (`{count}` ; repo null)
+  "proposals",
+  // les espaces (spaces.ts) : un espace créé, modifié ou retiré (`{id, action}` ; repo null)
+  "space",
+  // les sessions omp locales (local-sessions.ts) : l'état d'une session du poste du développeur qui
+  // change (`{id, state}` seulement, `removed` quand elle est retirée, `runId` quand un run la reprend ;
+  // repo null : réservé au propriétaire, qui relit la liste) ; l'intention de ses outils part en
+  // `activity` éphémère (`{tool, intent, localSession}`, repo null)
+  "local_session",
   // éphémères
   "activity",
   "session",

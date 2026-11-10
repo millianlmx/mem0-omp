@@ -145,8 +145,12 @@ Tout se fait depuis l'app, sans terminal :
    serveur et son jeton d'accès (voir « Serveur de pipelines »). La même feuille
    s'ouvre par la ligne de connexion au pied de la barre latérale (`server.open`)
    et par Système › Serveur.
-3. **Piloter** — **À traiter** est la file unique de ce qui vous attend (envois du
-   poste à approuver, questions à trancher, specs et verdicts à valider, décisions
+3. **Piloter** — la fenêtre s'ouvre sur l'**OS agentique** (voir « OS agentique :
+   l'interface ») : le Radar des agents en haut, les fils à gauche avec « Demander à
+   l'OS… », et « Maintenant » au centre — ce qui vous attend, ce qui a été livré, ce
+   qui bloque. L'**interface classique** reste à un geste (Présentation ▸ « Interface
+   classique », ⌘⇧O) : **À traiter** y est la file unique de ce qui vous attend (envois
+   du poste à approuver, questions à trancher, specs et verdicts à valider, décisions
    à relire, audits à trier) ; **Features** liste les features groupées (À vous,
    En cours, En file, Terminées) et ouvre la page de chacune. Le « + » lance une
    feature, un projet ou un audit, toujours dans une feuille. Le serveur conduit
@@ -537,11 +541,25 @@ elle-même.
   tests occupés, file d'attente, mémoire libre, limites de débit), relue au rythme
   du serveur tant que l'écran est ouvert. Face à un serveur sans séries, les blocs le
   disent au lieu d'échouer.
-- **Live Activity (iPhone).** « Suivre sur l'écran verrouillé », dans le menu « … »
-  de la page d'une feature ou le menu contextuel de sa ligne, démarre sa Live Activity (extension
-  `ios/OMPConsoleWidgets`) : état, étape, outil du moment, alerte et coût, sur
-  l'écran verrouillé et dans la Dynamic Island. L'app la met à jour tant qu'elle est
-  ouverte et enregistre son jeton push au serveur (`POST /v1/push/activities`) ;
+- **Live Activity (iPhone).** La Live Activity d'une feature (extension
+  `ios/OMPConsoleWidgets`) montre son état, son étape, l'outil du moment, une alerte et
+  son coût, sur l'écran verrouillé et dans la Dynamic Island. Elle démarre **seule** :
+  dès son lancement, l'app enregistre au serveur son jeton push-to-start
+  (`POST /v1/push/activities/start`), et un serveur qui a une clé APNs démarre
+  lui-même l'activité d'une feature qui se met au travail ou attend l'humain, app
+  fermée ; l'app adopte cette activité et enregistre son jeton de mise à jour
+  (`POST /v1/push/activities`). Quand le serveur ne pousse pas (pas de clé, serveur
+  antérieur), l'app en démarre une elle-même tant qu'elle est au premier plan : une
+  seule à la fois, la plus urgente — la feature qui attend l'humain depuis le plus
+  longtemps, sinon celle qui travaille (`HarnessActivityStart`). « Suivre sur l'écran
+  verrouillé », dans le menu « … » de la page d'une feature ou le menu contextuel de sa
+  ligne, en démarre ou en arrête une à la main ; une activité arrêtée ou écartée ne
+  redémarre pas d'office. Un toucher ouvre le fil de la feature
+  (`ompconsole://threads/<id>`) ; quand une revue attend, l'activité porte « Ouvrir »
+  et « Valider » : valider exige l'appareil déverrouillé et part à la révision que le
+  serveur vient de rendre (`OMPRunValidateIntent`, une `LiveActivityIntent` compilée
+  dans l'app et dans l'extension, `ios/OMPConsoleShared`), sinon une notification
+  « Geste non abouti » le dit. L'app met l'activité à jour tant qu'elle est ouverte ;
   app fermée, le serveur la tient à jour par APNs s'il a une clé (`apns` de sa
   configuration, voir `omp-harness/README.md` § « Les Live Activities app fermée »).
   Une feature terminée clôt son activité. Si iOS refuse le jeton push (capacité
@@ -559,8 +577,11 @@ elle-même.
   que sa `headline` (titre) et son `stake` (corps, suivi de « · +N autres questions »
   pour un lot), comme l'alerte push du serveur. Les gestes sont les mêmes des deux côtés :
   **Valider** / **Refuser** (specs, verdict ; le refus demande sa raison),
-  **Approuver** / **Refuser** (envoi du poste) et **Ouvrir**. Valider, refuser et
-  approuver exigent l'appareil déverrouillé et partent avec la révision que portait la
+  **Approuver** / **Refuser** (envoi du poste) et **Ouvrir**. Sur l'iPhone, une
+  question posée seule avec sa recommandation (catégorie `omp.answer`) se tranche
+  depuis la notification : **Prendre la recommandation**, ou **Répondre…** (saisie) ;
+  la toucher ouvre le fil de sa feature. Valider, refuser, approuver et répondre
+  exigent l'appareil déverrouillé et partent avec la révision que portait la
   notification (`If-Match`) : si la feature ou l'envoi a bougé depuis, rien n'est
   tranché et une notification « Geste non abouti » le dit. Sans le jeton approbateur au
   trousseau, Approuver et Refuser d'un envoi ouvrent l'app sur le Poste. Toucher une
@@ -579,8 +600,20 @@ elle-même.
   l'instantané de chaque boîte relue et l'adresse du serveur, et copie le jeton dans
   un article de trousseau du groupe ; le widget relit ainsi la boîte lui-même
   (`GET /v1/inbox`) toutes les 15 minutes, app fermée, et montre le dernier
-  instantané, daté, sans réseau. Un toucher ouvre l'app sur À traiter
-  (`ompconsole://inbox`).
+  instantané, daté, sans réseau. Un toucher ouvre le tri de ce qui attend
+  (`ompconsole://decisions`), ou l'accueil quand rien n'attend (`ompconsole://now`) ;
+  dans les formats moyen et grand, une feature ouvre son fil
+  (`ompconsole://threads/<id>`).
+- **Siri, Raccourcis, bouton Action (iPhone, iPad).** Quatre App Intents pilotent le
+  serveur sans ouvrir l'app, appareil déverrouillé : **Demander à l'OS** (une phrase
+  dictée ou tapée devient une Demande, `POST /v1/intake` de source `voice`), **Tout
+  suspendre** (la pause du serveur, après confirmation) et **Reprendre**
+  (`POST /v1/pause`), **Décisions en attente** (lecture : le compte et les premières
+  décisions). Chacun dit ce qu'il a fait, ou pourquoi il n'a rien fait (aucun serveur
+  relié, serveur antérieur à la fonction, jeton sans le droit). Voir « Siri » plus bas.
+- **Liens.** `ompconsole://<section>`, `ompconsole://threads/<id>` (le fil d'une
+  feature ; `runs/<id>` aussi), `ompconsole://decisions`, `ompconsole://now` et
+  `ompconsole://system/<page>` ouvrent l'app à cet endroit (`HarnessWidgetLink`).
 - **Mise à jour en direct.** L'app suit le flux SSE du serveur
   (`GET /v1/events`) à partir du curseur de la boîte ; chaque événement relit la
   boîte et, une fois un écran de catalogue ouvert, le catalogue. Une coupure
@@ -722,11 +755,13 @@ une portée de **Features**. Un serveur qui ne sert pas une fonction le dit
   désactiver (`PUT`, `If-Match`), « Déclencher maintenant » (`POST …/run`), supprimer
   (confirmé). Le serveur ne rend que la prochaine échéance : elle s'affiche dès la
   création.
-- **Autonomie** (`AutonomyViews.swift`, `server.autonomy`) : en lecture seule, les
+- **Autonomie** (`AutonomyViews.swift`, `server.autonomy`) : la page de Système lit les
   règles de chaque dépôt visible, les validations prises seules de la fenêtre
   d'apprentissage et les propositions de palier avec la modification de configuration
-  suggérée (`changes`), lues par `GET /v1/autonomy`. Un serveur qui ne sert pas la
-  route (404) retire la page du hub et de la palette. La feuille « Nouvelle feature »
+  suggérée (`changes`), par `GET /v1/autonomy` (tout lecteur). La seule écriture est une
+  règle de palier (`POST /v1/autonomy/rules`, admin) : « Appliquer » sur une proposition
+  du Savoir de l'OS agentique, offert aux seuls administrateurs. Un serveur qui ne sert
+  pas la route (404) retire la page du hub et de la palette. La feuille « Nouvelle feature »
   envoie le type de travail et les labels (`POST /v1/runs {kind?, labels?}`), et la
   carte d'une décision prise seule par l'autonomie (`decision.autonomy`) montre la
   porte franchie, la règle (rang, `match`, exigences, portes) et chaque preuve avec sa
@@ -744,6 +779,96 @@ La garde `test/console/tour-de-controle.test.ts` confronte chaque route de ces �
 au routeur du serveur (rôle compris), chaque champ décodé au JSON réel, et vérifie
 leur câblage dans les deux apps ; `test/console/autonomie-console.test.ts` fait de même
 pour l'autonomie.
+
+### OS agentique : l'interface
+
+L'app Mac s'ouvre sur l'OS agentique (préférence `ui.os`, vraie par défaut) : quatre
+objets — le **fil** (une intention, de la demande au résultat), l'**agent** (usine,
+poste, vigie, session omp locale), la **décision** (ce qui vous attend), le **savoir**
+(mémoire, consignes permanentes, paliers) — plus l'**espace** (un client : ses dépôts,
+son budget, son autonomie). Présentation ▸ « Interface classique » (⌘⇧O) rend la coque
+à barre latérale ; les sections ⌘1…⌘7, une commande de la palette vers une section
+classique et Savoir ▸ « Interface classique » y ramènent aussi. Les écrans sont écrits
+une fois dans `Sources/ConsoleUI/OS/` (Mac et iOS), leurs mots dans
+`ConsoleCore/Design/OSText.swift` et `OSWatchText.swift` ; la coque Mac est
+`Sources/OMPConsole/OS/OSRootView.swift`. Chaque partie que le serveur ne sert pas
+(404) est absente : ni erreur, ni écran vide, ni bouton mort.
+
+| Écran | Fichier | Ce qu'il montre |
+|---|---|---|
+| Radar (toujours en haut) | `OSRadar.swift` | une pastille par agent et ce qu'il fait (`OSPulse`) : features vivantes, Poste, Vigie, **Sessions locales** ; le coût du jour, et le reste du budget de l'espace retenu ; « Tout suspendre » = la pause du serveur (« Après l'étape en cours » ou « Tout de suite », confirmée) — en pause la barre devient orange, dit « En pause » et porte « Reprendre » ; sans la capacité `pause`, l'arrêt du poste et des fils |
+| Liste des fils | `OSThreadList.swift` | le composeur « Demander à l'OS… » (filtre, ⏎ = Demande) ; l'espace puis le lieu ; les entrées Maintenant, Décisions (n), Propositions (n), Automatismes, Savoir ; les fils par état — une session omp locale en est un (ordinateur portable, « machine · branche · ↳ intention ») |
+| Maintenant | `OSHomeView.swift`, `OSBriefSections.swift`, `OSScoreTiles.swift` | le brief : sa phrase, « depuis … », « Vu » ; le composeur et, dessous, la réponse de l'OS à une question d'état ; les trois chiffres (sept jours, tendance des trois derniers jours) ; les agents au travail ; les sections repliables Vous attend, Livré (« seul »), Bloqué (sa cause), Échecs, Décidé seul (Garder / Revoir), Arrêtés (le motif). Sans la capacité `brief`, l'accueil d'avant |
+| Propositions | `OSProposalsView.swift` | le travail que les agents proposent, groupé par source ; le geste porte le nom de ce qu'il fait (Lancer, Corriger, Appliquer, Confirmer, Relancer) et ouvre le fil qu'il crée ; « Écarter ». Appliquer un palier revient à l'admin, confirmer un signalement et lancer un item Jira à l'approbateur |
+| Savoir | `OSKnowledgeView.swift`, `OSSpaceViews.swift` | les consignes permanentes (interrupteur, modifier, supprimer, ajouter, dépôt ou partout, origine) ; les paliers d'autonomie par dépôt (règles en phrases, confiance, « Appliquer » pour un admin) ; les espaces (créer, modifier, supprimer pour un admin non borné) ; la mémoire et l'interface classique |
+| Page d'un espace | `OSSpaceViews.swift` | les chiffres de la semaine, le budget du jour, le rapport hebdomadaire (Markdown rendu), « Copier » et le partage natif |
+| Fil, décisions, tri, Comprendre, Automatismes | `OSThreadView.swift`, `OSDecisionCard.swift`, `OSTriageView.swift`, `OSUnderstandView.swift`, `OSAutomationsView.swift` | la page d'un fil et ses cartes, le tri des décisions en feuille, l'inspecteur « Comprendre », ce que l'OS lance seul |
+
+Raccourcis du Mac : ⌘L le composeur, ⌘T le tri, ⌘⇧P suspendre (après confirmation) ou
+reprendre, ⌥⌘I l'inspecteur « Comprendre », ⌘N une nouvelle feature, ⌘K la palette,
+⌘⇧O l'interface classique. Liens : `ompconsole://runs/<id>` ouvre le fil de la feature,
+`ompconsole://threads/<id>` un fil, `ompconsole://decisions` (comme `inbox` et
+`workstation`) le tri, `ompconsole://now` « Maintenant » ; un lien vers une section sans
+équivalent (Mémoire, Terminal, Fichiers, Système) ramène l'interface classique.
+
+Variables de recette (captures, `scripts/recette/os-shots.sh`) : `OMP_CONSOLE_OS_VIEW`
+(`now`, `proposals`, `knowledge`, `automations`, `space:<identifiant ou nom>`),
+`OMP_CONSOLE_OS_SPACE` (l'espace retenu dans la liste, par identifiant ou par nom),
+`OMP_CONSOLE_OS_THREAD` (un fil), `OMP_CONSOLE_OS_RUN` (le fil d'une feature),
+`OMP_CONSOLE_OS_TRIAGE` (le tri), `OMP_CONSOLE_OS_LEVEL` (le niveau de « Comprendre »),
+`OMP_CONSOLE_OS_NEW` (la feuille « Nouvelle feature »).
+
+Tests : `Tests/OMPConsoleTests/OSWatchTests.swift` (tri par espace et par lieu,
+regroupement des propositions et qui les accepte, règles de palier en phrases, tendance
+d'un chiffre) ; les gardes `test/console/autonomie-console.test.ts` (la seule écriture
+de l'autonomie, réservée à l'admin) et `test/console/serveur-de-pipelines.test.ts` (chaque
+route de l'OS agentique appelée par le client est servie).
+
+### OS agentique : la couche client
+
+`ConsoleClient` porte les routes de l'OS agentique d'`omp-harness` (capacités `os-loop`,
+`pause`, `os-autonomy`, `spaces`, `brief`, `scoreboard`, `proposals`, `local-sessions`,
+`push-answer`, `push-start`, `intake-context`). Aucune vue ni aucun texte n'y vit : les
+écrans lisent ces modèles. Chacun est paresseux, remis à zéro avec le serveur, relu sur
+son événement du flux une fois lu, et se dit `.absent` sur un serveur qui ne sert pas
+sa route (404) — rien ne s'affiche alors, sans échec.
+
+| Modèle (`HarnessModel`) | Routes | Événement |
+|---|---|---|
+| `server.pause` (`HarnessPauseModel`, `setPause(paused:reason:now:)`) | `GET`/`POST /v1/pause` (`now` : interrompre tout de suite) | `pause` |
+| `server.rules` (`HarnessStandingRulesModel`) | `GET`/`POST /v1/rules`, `PUT`/`DELETE /v1/rules/{id}` | `standing_rule` |
+| `server.autonomy.setRule` | `POST /v1/autonomy/rules` | `autonomy_rule` |
+| `server.spaces` (`HarnessSpacesModel`) | `GET`/`POST /v1/spaces`, `PUT` (`If-Match`)/`DELETE /v1/spaces/{id}`, `GET …/report` | `space` |
+| `server.brief` (`HarnessBriefModel`) | `GET /v1/brief`, `POST /v1/brief/seen` | `run_state`, `merged`, `decision`, `decision_auto_timeout`, `proposals` |
+| `server.scoreboard` (`HarnessScoreboardModel`) | `GET /v1/scoreboard?days=` | — |
+| `server.proposals` (`HarnessProposalsModel`) | `GET /v1/proposals`, `POST …/{id}/accept`, `POST …/{id}/dismiss` | `proposals` |
+| `server.localSessions` (`HarnessLocalSessionsModel`) | `GET /v1/local-sessions`, `POST …/{id}/handoff`, `DELETE …/{id}` | `local_session` |
+
+- **Gestes d'une feature** (`HarnessModel`, `If-Match` de la révision lue) : `cancel(runId:cause:note:)`
+  (motif `HarnessCancelCause` ; sans motif, le corps d'avant), `amend(runId:text:always:)` (corriger au
+  lieu d'annuler, rend la voie prise `HarnessAmendVia`), `setModules`, `setAutonomy` (`null` : les règles
+  du dépôt), `runTemplate(runId:)` (« refaire » : `GET /v1/runs/{id}/template`, dont `options` relance la
+  feature par `launchRun`). `answer(…, always:)`, `validate(…, always:)` et `amend(…, always:)` font de la
+  réponse, du refus ou de la correction une consigne permanente. `HarnessLaunchOptions.autonomy`,
+  `launchProject(…, autonomy:)` et `intakes.confirm(_, autonomy:)` posent le curseur au lancement.
+- **Champs lus** : `HarnessRun.autonomy`, `cancelCause`, `blockedBy` (ce qui retient une feature en
+  file), `waitUntil` ; `HarnessEscalation.autoAt` et `autoAnswer` (l'instant où la recommandation
+  s'appliquera seule) ; `HarnessStatus.paused` ; `HarnessIntake.context` (page d'origine d'une Demande,
+  envoyée par `intakes.submit(…, context:)`).
+- **Notifications** : la catégorie `omp.answer` (une seule question ouverte, avec sa recommandation)
+  offre « prendre la recommandation » et « répondre » (saisie) ; `HarnessPushAlert.question` porte
+  `omp.question {id, recommended, options}`, et `HarnessNotificationRouting.gesture` en fait la réponse à
+  l'escalade, envoyée par `HarnessModel.execute` à la révision de la notification.
+- **Live Activities** : `registerActivityStart(token:environment:)` enregistre le jeton push-to-start
+  (`POST /v1/push/activities/start`) — le serveur démarre lui-même l'activité d'une feature ; le jeton
+  suit l'app d'un serveur à l'autre, `unregisterActivityStart()` le retire.
+- **Fils** (`OSThreads`, `OSDecisions`, `OSPulse`) : une session omp locale est un fil (origine
+  `.local(hôte)`, `OSThread.localSession`) ou rejoint celui de la feature qui a repris son travail ;
+  `OSThreads.space(of:spaces:)` range un fil dans l'espace de son dépôt ; `OSDecisions.lots` regroupe
+  les décisions de même sorte ; le pouls garde l'activité d'une session locale (`.localSession(id)`).
+
+Tests : `Tests/ConsoleClientTests/` — `HarnessLoopTests`, `HarnessStandingRulesTests`,
+`HarnessSpacesTests`, `HarnessProposalsTests`, `HarnessRemoteTests`, `OSThreadsTests`.
 
 ## Lire les fichiers et les diffs d'une cible
 
@@ -1049,6 +1174,25 @@ dossier personnel et une racine de support jetables (`CFFIXED_USER_HOME`,
 `OMP_CONSOLE_SUPPORT_ROOT`, recette de préparation `succes`) : ni les préférences, ni
 le trousseau, ni le `~/.omp` de l'utilisateur ne sont touchés. Codes de sortie :
 0 image produite, 1 échec, 2 non exécuté hors macOS.
+
+### Captures de la nouvelle interface
+
+```bash
+bash scripts/recette/os-shots.sh
+```
+
+Même principe que la capture de l'onglet « Preuves », sur l'interface par défaut : le
+script construit l'app, démarre `scripts/recette/os-demo-serveur.ts` (le vrai
+gestionnaire HTTP et le vrai orchestrateur d'omp-harness sur un monde de test : une
+revue à valider, une question, une feature au travail, une feature retenue en file, un
+échec, un arrêt motivé, un audit proposé, deux espaces, des consignes permanentes, une
+règle de palier, une session omp locale), puis relance une COPIE de l'app
+(`com.omp.console.recette-os`, préférences vides : `ui.os` n'est pas posée) une fois
+par écran, ouvert par les variables `OMP_CONSOLE_OS_*`. Six images sous
+`omp-console/build/os-shots/` (dossier ignoré par git) : `maintenant.png`, `fil.png`,
+`tri.png`, `propositions.png`, `savoir.png`, `espace.png`. Codes de sortie : 0 les six
+images produites, 1 échec, 2 non exécuté hors macOS. `mac-shots.sh` pose `ui.os` à faux :
+l'onglet « Preuves » est celui de l'interface classique.
 
 ### Liste attendue des intents Siri
 
@@ -1874,7 +2018,7 @@ omp-console/
 │   ├── HarnessTransport.swift     le transport https et le lecteur SSE du serveur
 │   ├── HarnessSession.swift       le direct de la session d'une feature ou d'un audit (entrées, pages, événements)
 │   ├── HarnessMonitoring.swift    le contrat du monitoring (coût, alertes, frise, fichiers, tests, santé, modèles)
-│   ├── HarnessLiveActivity.swift  l'état d'une Live Activity, la forme exacte que pousse le serveur
+│   ├── HarnessLiveActivity.swift  l'état d'une Live Activity, la forme exacte que pousse le serveur, et le choix de celle qui démarre seule
 │   ├── WorkstationWire.swift      le contrat JSON du poste de travail (`/v1/workstation*`)
 │   ├── WorkstationModel.swift     le client du poste de travail, porté par `HarnessModel` (même transport, même flux)
 │   ├── CorporateSignals.swift     les signalements de collègues (propositions, aperçu, confirmation) et l'origine d'une feature
@@ -2251,6 +2395,24 @@ n'écrit rien : il lit le serveur de pipelines UNIQUE de l'app (`OMPConsoleIOSAp
 crée et l'enregistre pour les intents par `IOSSharedServer`), relit sa boîte, puis
 énonce « Aucun serveur relié », « Serveur relié, injoignable » ou « Relié au
 serveur, N en attente » (`IOSSiriStatus`).
+
+### Siri : la télécommande
+
+Quatre autres App Intents du même fichier, chacun avec son App Shortcut (Siri,
+Raccourcis, bouton Action), agissent sur le même serveur sans ouvrir l'app ; tous
+exigent l'appareil déverrouillé (le jeton est illisible verrouillé). Ce qu'ils font
+et répondent est décidé dans `ios/OMPConsoleIOS/IOSSiriRemote.swift` :
+
+| Intent | Phrases | Effet |
+|---|---|---|
+| **Demander à l'OS** (`IOSAskIntent`) | « Demander à OMP Console », « Nouvelle demande dans OMP Console » | Siri demande la phrase, puis la pose comme Demande (`POST /v1/intake`, source `voice`) : « Demande transmise à l'OS ». |
+| **Décisions en attente** (`IOSPendingDecisionsIntent`) | « Décisions en attente dans OMP Console », « Décisions de OMP Console » | Lecture : « 2 décisions vous attendent : une question sur « … », la revue de « … » » (trois au plus, le reste compté), ou « Rien ne vous attend ». |
+| **Tout suspendre** (`IOSSuspendAllIntent`) | « Tout suspendre dans OMP Console », « Suspendre OMP Console » | Lit la pause (`GET /v1/pause`), demande confirmation, puis la pose (`POST /v1/pause`) : « Tout est suspendu ». L'étape en cours de chaque agent finit. |
+| **Reprendre** (`IOSResumeAllIntent`) | « Reprendre OMP Console », « Reprendre le travail dans OMP Console » | Lève la pause : « Le travail reprend ». |
+
+Un serveur antérieur à la pause répond « Ce serveur ne propose pas la pause » ; un
+jeton qui n'y a pas droit, le motif du serveur. `OMPRunValidateIntent` (le bouton
+« Valider » d'une Live Activity) n'a pas de phrase et n'apparaît pas dans Raccourcis.
 
 ### Lire la mémoire du serveur depuis l'iPhone
 

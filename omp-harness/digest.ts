@@ -118,23 +118,18 @@ function scheduleLine(event: EventRow): string {
   return `${event.repo ?? "?"} · ${name} : ${scheduleStatus(event)}${detail}`;
 }
 
+/** Le corps du rapport : ses sections et son coût (sans la santé ni le commit du service), et ses comptes. */
+export type DigestParts = { parts: string[]; counts: Digest["counts"] };
+
 /**
- * Le rapport des dépôts que le lecteur voit (`repos`, `null` : tous) sur [since, until].
+ * Le corps du rapport des dépôts que le lecteur voit (`repos`, `null` : tous) sur [since, until].
  * Mergés et échoués : les runs dont la dernière écriture (la fin) tombe dans la fenêtre ;
  * décisions : celles prises seules dans la fenêtre et pas encore acceptées ni renversées, plus les validations
  * prises seules par l'autonomie (`autonomy`) créées avant sa fin, tant qu'elles n'ont été ni acceptées ni renversées ;
  * attentes : tout ce qui bloque sur l'humain à l'instant du rapport, quelle que soit la date.
- * La dernière ligne nomme le commit du service (`commit`, défaut : `OMP_HARNESS_COMMIT`).
- * `health` ajoute la section « Santé » (lecteur qui voit tous les dépôts seulement).
+ * Le rapport d'un espace (spaces.ts) s'arrête là : ni santé ni commit.
  */
-export function digestOf(
-  store: Store,
-  since: number,
-  until: number,
-  repos: RepoFilter = null,
-  commit: string | null = HARNESS_COMMIT,
-  health: DigestHealth | null = null,
-): Digest {
+export function digestParts(store: Store, since: number, until: number, repos: RepoFilter = null): DigestParts {
   const inWindow = (at: number) => at >= since && at <= until;
   const runs = store.listRuns({ repos }).sort((a, b) => a.updatedAt - b.updatedAt);
   const byId = new Map(runs.map((run) => [run.id, run]));
@@ -170,17 +165,32 @@ export function digestOf(
   const parts = sections.length > 0 ? sections : ["Rien de neuf."];
   // Le coût n'est dit que si la consommation des agents est connue sur la fenêtre.
   if (usage.length > 0) parts.push(`Coût de la fenêtre : ${sumUsage(usage).cost.toFixed(2)} $`);
+  return {
+    parts,
+    counts: { merged: merged.length, decisions: decisions.length, waiting: waiting.length, failed: failed.length },
+  };
+}
+
+/**
+ * Le rapport (`digestParts`) suivi de la santé et du commit du service. La dernière ligne nomme le
+ * commit (`commit`, défaut : `OMP_HARNESS_COMMIT`) ; `health` ajoute la section « Santé » (lecteur
+ * qui voit tous les dépôts seulement).
+ */
+export function digestOf(
+  store: Store,
+  since: number,
+  until: number,
+  repos: RepoFilter = null,
+  commit: string | null = HARNESS_COMMIT,
+  health: DigestHealth | null = null,
+): Digest {
+  const { parts, counts } = digestParts(store, since, until, repos);
   const healthy = health !== null && repos === null ? section("Santé", healthLines(health)) : null;
   if (healthy !== null) parts.push(healthy);
   parts.push(
     `Commit déployé : ${commit === null ? "inconnu (service construit sans OMP_HARNESS_COMMIT)" : commit.slice(0, 12)}`,
   );
-  return {
-    since,
-    until,
-    text: parts.join("\n\n"),
-    counts: { merged: merged.length, decisions: decisions.length, waiting: waiting.length, failed: failed.length },
-  };
+  return { since, until, text: parts.join("\n\n"), counts };
 }
 
 /**

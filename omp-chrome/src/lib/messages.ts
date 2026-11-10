@@ -94,6 +94,8 @@ export type ToBackground =
   | { to: "background"; type: "settings-changed" }
   | { to: "background"; type: "emergency-stop" }
   | { to: "background"; type: "intake-post"; text: string }
+  // Un des deux gestes du popup sur l'onglet actif ; `text: null` : « En faire un fil ».
+  | { to: "background"; type: "intake-page"; tabId: number; text: string | null }
   | { to: "background"; type: "intake-get" }
   | { to: "background"; type: "intake-confirm"; id: string }
   | { to: "background"; type: "intake-cancel"; id: string }

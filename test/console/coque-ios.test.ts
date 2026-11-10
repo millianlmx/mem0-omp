@@ -243,7 +243,9 @@ function pbxprojFaults(root: string): string[] {
   const groupPattern =
     /([0-9A-F]{24})\s*\/\*[^*]*\*\/\s*=\s*\{\s*isa = PBXFileSystemSynchronizedRootGroup;[\s\S]*?path = ([A-Za-z0-9_]+);/g;
   for (const match of syncSection.matchAll(groupPattern)) groupIds.set(match[1], match[2]);
-  for (const expected of ["OMPConsoleIOS", "OMPConsoleIOSTests", "OMPConsoleWidgets"]) {
+  // `OMPConsoleShared` : les sources compilées à la fois par l'app et par l'extension de widgets
+  // (l'intention d'une Live Activity s'exécute dans le processus de l'app).
+  for (const expected of ["OMPConsoleIOS", "OMPConsoleIOSTests", "OMPConsoleWidgets", "OMPConsoleShared"]) {
     if (![...groupIds.values()].includes(expected)) faults.push(`groupe synchronisé ${expected} absent`);
   }
 

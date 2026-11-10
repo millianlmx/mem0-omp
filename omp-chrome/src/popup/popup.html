@@ -11,19 +11,14 @@
       <span class="muted" id="version"></span>
     </header>
     <section aria-live="polite">
-      <div class="state connecting" id="state">Connexion…</div>
-      <p class="muted" id="state-detail"></p>
-      <button type="button" class="secondary" id="approve" hidden>Approuver dans OMP Console</button>
-    </section>
-    <section aria-live="polite" id="questions" hidden>
-      <h2>Questions en attente</h2>
-      <div id="questions-list"></div>
-      <p class="message" id="questions-message" role="status"></p>
-    </section>
-    <section aria-live="polite">
-      <h2>Demande</h2>
-      <textarea id="intake-text" placeholder="Corrige le bug X dans mem0-omp…" aria-label="Demande"></textarea>
-      <button type="button" id="intake-send">Envoyer la demande</button>
+      <input
+        type="text"
+        id="page-ask"
+        placeholder="Faire ça sur cette page…"
+        aria-label="Faire ça sur cette page"
+        autofocus
+      />
+      <button type="button" id="page-thread">En faire un fil</button>
       <div id="intake" hidden>
         <p id="intake-status"></p>
         <ul id="intake-lines"></ul>
@@ -37,35 +32,52 @@
       </div>
       <p class="message" id="intake-message" role="status"></p>
     </section>
-    <section>
-      <button type="button" class="danger" id="stop">Stop — arrêter l'agent</button>
-      <p class="muted">
-        Coupe tout de suite l'action en cours, met le poste en pause sur ce navigateur et sur le serveur. Seule
-        l'app approbatrice (OMP Console) relance le serveur.
-      </p>
-      <p class="message" id="stop-message" role="status"></p>
+    <section aria-live="polite" id="questions" hidden>
+      <h2>Questions en attente</h2>
+      <div id="questions-list"></div>
+      <p class="message" id="questions-message" role="status"></p>
     </section>
-    <section aria-live="polite">
-      <h2>Action en cours</h2>
-      <p class="muted" id="current">Aucune.</p>
-      <h2>Dernières actions</h2>
-      <ol class="actions" id="recent"></ol>
-      <p class="muted" id="recent-empty">Aucune action exécutée depuis l'ouverture du navigateur.</p>
-    </section>
-    <section>
-      <label class="toggle"><input type="checkbox" id="observe" /> Poste actif sur ce navigateur</label>
-      <p class="muted" id="observe-detail"></p>
-    </section>
-    <section>
-      <button type="button" id="meeting">Transcrire cet onglet</button>
-      <p class="muted" id="meeting-detail">
-        L'audio de l'onglet et votre micro sont transcrits sur ce Mac ; seul le texte part au serveur.
-      </p>
-      <p class="message" id="meeting-message" role="status"></p>
-    </section>
-    <section>
-      <button type="button" class="secondary" id="options">Réglages</button>
-    </section>
+    <details id="more">
+      <summary><span class="state connecting" id="state">Connexion…</span></summary>
+      <section aria-live="polite">
+        <p class="muted" id="state-detail"></p>
+        <button type="button" class="secondary" id="approve" hidden>Approuver dans OMP Console</button>
+      </section>
+      <section>
+        <h2>Demande</h2>
+        <textarea id="intake-text" placeholder="Corrige le bug X dans mem0-omp…" aria-label="Demande"></textarea>
+        <button type="button" id="intake-send">Envoyer la demande</button>
+      </section>
+      <section>
+        <button type="button" class="danger" id="stop">Stop — arrêter l'agent</button>
+        <p class="muted">
+          Coupe tout de suite l'action en cours, met le poste en pause sur ce navigateur et sur le serveur. Seule
+          l'app approbatrice (OMP Console) relance le serveur.
+        </p>
+        <p class="message" id="stop-message" role="status"></p>
+      </section>
+      <section aria-live="polite">
+        <h2>Action en cours</h2>
+        <p class="muted" id="current">Aucune.</p>
+        <h2>Dernières actions</h2>
+        <ol class="actions" id="recent"></ol>
+        <p class="muted" id="recent-empty">Aucune action exécutée depuis l'ouverture du navigateur.</p>
+      </section>
+      <section>
+        <label class="toggle"><input type="checkbox" id="observe" /> Poste actif sur ce navigateur</label>
+        <p class="muted" id="observe-detail"></p>
+      </section>
+      <section>
+        <button type="button" id="meeting">Transcrire cet onglet</button>
+        <p class="muted" id="meeting-detail">
+          L'audio de l'onglet et votre micro sont transcrits sur ce Mac ; seul le texte part au serveur.
+        </p>
+        <p class="message" id="meeting-message" role="status"></p>
+      </section>
+      <section>
+        <button type="button" class="secondary" id="options">Réglages</button>
+      </section>
+    </details>
     <script type="module" src="popup.js"></script>
   </body>
 </html>

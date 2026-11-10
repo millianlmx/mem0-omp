@@ -1306,8 +1306,32 @@ Sans configuration, tout reste comme aujourd'hui : un run attend l'humain aux po
 - **Jamais seul** : une attente `irreversible`, `budget`, `arbitration` ou `failure` ; un budget dépassé ; un run qui a porté une escalade `schema`, `public_api` ou `deletion` (ouverte ou close, quelle qu'en soit la réponse) ; un run lancé par la vigie (sa correction, sa descendance, son client) ; un run dont l'humain a renversé une validation prise seule ; des specs validées avec un geste irréversible, à la revue. Les gardes sont tenues par le serveur, jamais par un prompt, en échec fermé : le moindre doute ou la moindre exception laisse l'attente à l'humain.
 - **Le même geste que l'humain.** Le serveur valide par `validate` (auteur `autonomie:<dépôt>#<rang>`, `pilot: true` : `assertPilotMay` reste la seconde barrière) et inscrit une **décision prise seule** (statut `auto`, `decision.autonomy` = `{gate, rule: {rank, match, require, gates}, proofs}`) : elle apparaît dans À traiter, hors de `pendingCount`, et dans le rapport du matin tant qu'elle n'est ni acceptée ni renversée. Accepter ou renverser se fait par les gestes existants : après le merge, revert du squash et run de suite ; avant le merge, les specs validées seules reviennent à l'humain (`specs_ready`, le travail commité reste sur la branche) et plus aucune attente du run n'est levée seule.
 - **Notifications retenues.** À la pose d'une attente que l'autonomie va lever, `specs_ready` et `verdict` ne partent pas (événement `autonomy` `hold`) ; au tour suivant elle valide (`validate`), ou y renonce (`defer`, raison `why`) et publie l'événement retenu.
-- **Apprentissage borné.** Le serveur ne change jamais une règle. `GET /v1/autonomy` rend, par dépôt et par type, des propositions de monter ou de baisser une porte, avec la modification de configuration à faire (`changes`) : le taux est la part des runs du groupe corrigés dans la fenêtre (refus humain, revert, validation prise seule renversée), seules comptant les attentes que la porte pouvait lever. Aucune proposition à la porte des specs hors `review.specsGate: true`.
+- **Apprentissage borné.** Le serveur ne change jamais une règle seul. `GET /v1/autonomy` rend, par dépôt et par type, des propositions de monter ou de baisser une porte, avec la modification de configuration à faire (`changes`) : le taux est la part des runs du groupe corrigés dans la fenêtre (refus humain, revert, validation prise seule renversée), seules comptant les attentes que la porte pouvait lever. Aucune proposition à la porte des specs hors `review.specsGate: true`.
+- **Écrire une règle sans éditer le fichier.** `POST /v1/autonomy/rules` `{repo, kind, gate, mode}` (admin) applique à `repos[].autonomy.rules` la même modification qu'une proposition (`changes`). En `auto` : la première règle du type qui règle déjà cette porte y passe (une revue mise en `auto` reçoit `match.maxDiffLines` = 2 × `review.maxDiffLines` si son seuil manque ou ne dépasse pas celui du serveur) ; sinon une règle prudente est ajoutée en fin de liste (specs : `{match: {kind}, gates: {specs: "auto"}}` ; revue : `maxDiffLines` = 2 × le seuil du serveur, `reproTest`, `greenChecks` et `proofs` exigés). En `human` : TOUTES les règles du type qui pouvaient lever cette porte la rendent — labels, chemins et seuil se comparent run par run, baisser la seule première laisserait une autre règle du type valider encore (à la porte des specs, seules comptent les règles sans chemin, seuil ni exigence) ; si aucune règle ne la règle, rien ne change. La configuration est écrite, validée puis rechargée comme par `PATCH /v1/repos/{name}` : refusée, 400 et rien ne change.
 - **Rechargement.** Les règles d'un dépôt se rechargent à chaud (`POST /v1/reload`), mais ne s'appliquent qu'aux attentes posées après leur chargement ; une attente déjà posée reste à l'humain. `autonomyLearning` ne change qu'au redémarrage.
+
+### Le curseur d'autonomie d'un run
+
+Chaque run porte un curseur (`run.autonomy`), au-dessus des règles du dépôt :
+
+| Niveau | Ce qu'il change |
+|---|---|
+| `"ask"` — tout me demander | La porte des specs est toujours posée (même sous `review.specsGate: false`, et la voie directe est coupée) ; la revue attend toujours l'humain (« validation humaine : autonomie « tout me demander » »), jamais d'auto-merge ; l'autonomie par paliers ne lève rien ; ses escalades n'expirent jamais ; aucun pilote (audit, usine, client pilote) ne tranche à sa place (403). Sorti de `ask` pendant qu'il attend (curseur remis à `null` ou passé à `deliver`), un verdict que l'auto-merge acceptait — retenu par le seul curseur — part en fusion au tour suivant, par le geste de validation habituel : décision prise seule de rang 0, auteur `autonomie:<dépôt>#curseur`, `proofs.autoMerge: true` ; les gardes de « Jamais seul » valent encore. |
+| `null` — règles du dépôt | Le comportement décrit ci-dessus, inchangé. |
+| `"deliver"` — livre et préviens-moi | Le curseur tient lieu de règle `auto`, sans règle de dépôt ni type de travail : les specs sans raison de porte sont validées seules ; la revue l'est quand la SEULE raison du refus d'auto-merge est la taille du diff, jusqu'à 4 × `review.maxDiffLines`, suite complète verte et chaque critère prouvé. Toutes les gardes de « Jamais seul » restent (irréversible, budget, vigie, validation renversée, arbre changé). Auteur `autonomie:<dépôt>#curseur`, décision prise seule de rang 0 (`decision.autonomy.rule.rank: 0`). Une règle du dépôt plus large que le curseur vaut encore. |
+
+- **Le poser.** À la création (`autonomy` de `POST /v1/runs`, de `POST /v1/projects` pour toutes ses features, de `POST /v1/intake/{id}/confirm`), ou ensuite par `POST /v1/runs/{id}/autonomy` `{level}`. Sans lui, le run prend celui de l'espace de son dépôt (§ « Les espaces »), sinon `null`. Une feature découpée et un run de suite héritent de celui du run dont ils descendent.
+- **Geste d'humain.** Un pilote ne monte jamais le curseur (`ask` < `null` < `deliver`) : 403, à la création comme ensuite, par les routes comme par les outils MCP (`run_start`, `run_autonomy`). Changé pendant que le run attend l'humain, et hors de `ask`, le curseur fait réévaluer l'attente tout de suite : ce que le nouveau niveau lève (curseur `deliver`, règle du dépôt, verdict que seul `ask` retenait) est validé au tour suivant.
+- **L'irréversible reste à l'humain, texte relu.** Sous `review.specsGate: true`, la raison du run est nue (« specs à valider avant /impl ») : la garde des pilotes (`assertPilotMay`, et le pilote lui-même) relit `specs.md` et refuse (403) des specs à geste irréversible au lieu de se fier à cette raison.
+- **Échéance visible.** Chaque escalade rendue par `/v1/escalations`, `/v1/inbox` et `/v1/runs/{id}` porte `autoAt` (l'instant, en ms epoch, où l'option recommandée s'appliquera seule) et `autoAnswer` (cette option) ; `null` pour une suppression, sans recommandation, sans `review.escalationTimeoutSec`, sur un run en `ask` ou terminé, et une fois l'escalade répondue. En pause globale (`POST /v1/pause`), aucune escalade n'est tranchée à l'échéance : `autoAt` garde son instant d'origine, et une échéance passée pendant la pause s'applique au premier tour après la reprise — toutes celles qui sont échues tombent alors ensemble.
+
+### Les consignes permanentes (« toujours faire ainsi »)
+
+Une consigne permanente est une phrase de l'humain (600 caractères au plus) pour un dépôt, ou pour tous (`repo: null`), que le serveur redit à chaque run : le prompt de **chaque étape** (et celui du contradicteur) reçoit une section `## Consignes permanentes de l'humain` listant les consignes actives du dépôt et celles de tous les dépôts, les plus récentes d'abord, dans la limite de 4000 caractères, avec « Elles s'imposent : ne les rouvre pas. ». Sans consigne, pas de section.
+
+- **Les écrire.** `POST /v1/rules` (`source: "manual"` par défaut), `PUT /v1/rules/{id}` (texte, ou `enabled: false` pour la suspendre), `DELETE /v1/rules/{id}`. 40 consignes actives au plus par dépôt (et 40 pour tous les dépôts) : 400 au-delà.
+- **Les faire naître d'un geste.** `always: true` sur une réponse d'escalade (`POST /v1/runs/{id}/escalations`) crée une consigne qui dit sa provenance, car la question — et l'option, si la réponse en est une — ont été écrites par un agent : « Réponse de l'humain à la question de l'agent « … » — option proposée par l'agent, retenue : <option>. » quand la réponse est exactement une des options proposées, « … — texte de l'humain : <réponse>. » sinon (`source: "answer"`, la question coupée à 200 caractères) ; sur un refus (`POST /v1/runs/{id}/validate`) ou une correction (`POST /v1/runs/{id}/amend`), la raison devient la consigne (`source: "correction"`). Elle vaut pour le dépôt du run, sur une ligne, coupée à 600 caractères ; la même phrase déjà active n'est pas doublée ; un dépôt qui a déjà ses 40 consignes refuse le geste (400) avant d'écrire quoi que ce soit.
+- **Qui.** Un client borné à des dépôts ne lit et n'écrit que les consignes de ses dépôts, jamais celles de tous. Un pilote n'en écrit pas : 403 sur les routes, `always` ignoré sans erreur sur ses gestes.
 
 ## Les fournisseurs LLM, déclarés depuis les apps
 
@@ -1866,27 +1890,38 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
 | `issues_list` `{repo?, label?, limit?}` | viewer | Les issues ouvertes, chacune avec le run qui la porte (`run: {id, state, slug}` ou `null`). |
 | `issue_fix` `{repo?, number}` | operator | Lance un run `Issue #N : <titre>` dont la demande porte le texte de l'issue et ses dix derniers commentaires. Une issue liée à un run vivant ou mergé le rend (`already`) ; liée à un run échoué ou annulé, elle est relancée. Une issue dont le titre nomme le runner d'un run de ce harness (`omp-runner-<run>-<étape>`) est refusée (409) : c'est une trace de ce run, pas un bug du harness ; le refus est journalisé sur ce run. Un client pilote (la vigie) passe en plus les gardes de la vigie (§ « La vigie »). |
 | `issues_fix_labeled` `{repo?, label?}` | operator | Lance les issues ouvertes qui portent `label` (`issues.label` par défaut) et qu'aucun run ne porte, quel que soit son état, les plus anciennes d'abord, au plus `issues.maxLaunch` (`launched`, `skipped`, `remaining`). Une issue qui nomme le runner d'un run est sautée ; un client pilote est refusé (403). |
-| `run_start` `{repo, title, request, slug?, req?, modules?, priority?, lane?, budgetUsd?}` | operator | Lance un run libre sur un dépôt déclaré, sans passer par sa forge : il part en file (`queued`). Mêmes champs et mêmes contrôles que `POST /v1/runs`. |
+| `run_start` `{repo, title, request, slug?, req?, modules?, priority?, lane?, budgetUsd?}` | operator | Lance un run libre sur un dépôt déclaré, sans passer par sa forge : il part en file (`queued`). Mêmes champs et mêmes contrôles que `POST /v1/runs` — `autonomy` compris : un client pilote y reste un pilote, il ne monte pas le curseur (403). |
 | `run_get` `{id}` | viewer | Le run (`run.state`, `run.step`, `run.verdict`, `run.rev`), ses étapes, escalades, tests, artefacts, coûts : le corps de `GET /v1/runs/{id}`. |
 | `runs_list` `{state?, repo?}` | viewer | Les runs que le client voit, filtrés par états et par dépôt : `GET /v1/runs`. |
-| `run_cancel` `{id, rev?}` | operator | Annule un run non terminal (409 `run déjà <état>` sinon) : `POST /v1/runs/{id}/cancel`. |
+| `run_cancel` `{id, cause?, note?, rev?}` | operator | Annule un run non terminal (409 `run déjà <état>` sinon), avec son motif facultatif (`cause` : `off_target` · `too_big` · `obsolete` · `duplicate` · `too_costly` · `other` ; `note`, 500 caractères au plus) : `POST /v1/runs/{id}/cancel`. |
+| `run_amend` `{id, text, always?, rev?}` | operator | Corrige un run là où il est au lieu de l'annuler ; rend `{run, via}` (`specs` · `fix` · `retry` · `instruction`) ; un run en merge, mergé ou annulé : 409. `POST /v1/runs/{id}/amend`. |
+| `pause` `{paused?, reason?, now?}` | operator | La pause globale du serveur : sans `paused`, la lit (`GET /v1/pause`) ; avec, la pose ou la lève (`POST /v1/pause`, propriétaire seulement) ; `now: true` interrompt tout de suite ce qui tourne. Rend `{pause}`. |
 | `run_priority` `{id, priority, rev?}` | operator | Change la priorité (entier de -1000 à 1000) d'un run non terminal : `POST /v1/runs/{id}/priority`. |
 | `run_validate` `{id, approve, reason?, rev?}` | operator | Sort un run de `awaiting_human` : valide ou refuse les specs (avant /impl) ou le verdict de revue, selon l'étape du run. Un refus porte sa raison (400 `un refus porte sa raison`) ; un run qui n'attend pas de validation : 409. `POST /v1/runs/{id}/validate`. |
+| `run_autonomy` `{id, level, rev?}` | operator | Pose le curseur d'autonomie d'un run non terminal (`ask` · `deliver` · `null`, § « Le curseur d'autonomie d'un run ») : `POST /v1/runs/{id}/autonomy`. Un client pilote ne le monte pas (403). |
+| `rules` | viewer | Les consignes permanentes que le client voit (`{rules}`) : `GET /v1/rules`. |
+| `rule_set` `{id?, text?, repo?, enabled?, remove?}` | operator | Sans `id`, crée une consigne permanente (`text` requis, `repo` absent : tous les dépôts) ; avec `id`, change son texte ou l'active et la désactive, ou la retire (`remove: true`) : `POST /v1/rules`, `PUT` et `DELETE /v1/rules/{id}`. Refusé à un client pilote. |
 | `run_retry` `{id, instructions?, rev?}` | operator | Relance un run `failed` ou `awaiting_human`, même étape, tout de suite (409 sinon), avec la consigne `instructions` pour l'étape relancée : `POST /v1/runs/{id}/retry`. |
 | `run_revert` `{id}` | operator | Défait le commit d'un run `merged` sur `main` et ouvre un run de suite (409 `n'est pas mergé` sinon), sans contrôle de révision : `POST /v1/runs/{id}/revert`. |
 | `run_decisions_accept` `{id, rev?}` | operator | Accepte d'un geste les décisions `auto` et `auto_timeout` d'un run (`{accepted}`, 0 sans erreur) : `POST /v1/runs/{id}/decisions/accept`. |
 | `run_decision_accept` `{id, n, rev?}` | operator | Accepte la décision n° `n` du run (404 `décision inconnue` sinon ; 400 si `n` n'est pas un entier) : `POST /v1/runs/{id}/decisions/{n}/accept`. |
-| `run_answer_escalation` `{id, answers, rev?}` | operator | Répond aux escalades ouvertes d'un run `escalated` (`answers[{id, answer, reason?}]`) ; le run reprend son étape quand toutes sont répondues (409 s'il n'attend pas de réponse, 404 pour une escalade non ouverte) : `POST /v1/runs/{id}/escalations`. |
+| `run_answer_escalation` `{id, answers, rev?}` | operator | Répond aux escalades ouvertes d'un run `escalated` (`answers[{id, answer, reason?, always?}]`, `always: true` : la réponse devient une consigne permanente du dépôt) ; le run reprend son étape quand toutes sont répondues (409 s'il n'attend pas de réponse, 404 pour une escalade non ouverte) : `POST /v1/runs/{id}/escalations`. |
 | `inbox` | viewer | La boîte de l'humain, d'un appel : escalades groupées, verdicts à valider, décisions prises seules, features en cours, audits, alertes, coûts, `cursor` : `GET /v1/inbox`. Le premier appel à faire. |
 | `escalations_list` `{status?}` | viewer | Les escalades groupées par run, `open` (défaut) ou `answered` (400 pour un autre `status`) : `GET /v1/escalations`. |
 | `digest` `{since?}` | viewer | Le rapport du matin en Markdown (texte rendu tel quel, `structuredContent` = le corps de la route) : ce qui s'est fait seul depuis `since` (ms epoch, défaut : 24 h) : `GET /v1/digest`. |
+| `brief` `{since?}` | viewer | Le brief « pendant votre absence » du client : `GET /v1/brief` (`{brief}`), depuis `since` (ms epoch), sinon depuis son dernier « vu », sinon sur 24 h. Lecture seule : il ne marque pas le brief comme vu. |
+| `scoreboard` `{days?}` | viewer | Les chiffres sur `days` jours (7 par défaut, de 1 à 90 sans dépasser `events.retentionDays`) : `GET /v1/scoreboard` (`{scoreboard}`). |
+| `spaces` | viewer | Les espaces que le client voit, avec leurs compteurs et leur budget du jour : `GET /v1/spaces` (`{spaces}`). |
 | `run_instructions` `{id, text, rev?}` | operator | Une consigne à un run ni mergé ni annulé (409 sinon) : injectée dans la session de son agent s'il tourne (`delivered: "session"`), gardée pour son prochain prompt sinon (`"pending"`) : `POST /v1/runs/{id}/instructions`. |
 | `run_budget` `{id, budgetUsd, rev?}` | operator | Le budget propre d'un run non terminal, en dollars (`null` : celui de la configuration) ; rend `{run, budget}` : `POST /v1/runs/{id}/budget`. |
 | `schedules_list` | viewer | Les planifications des dépôts que le client voit, avec le fuseau : `GET /v1/schedules`. |
 | `schedule_create` `{name, cron, target, enabled?}` | operator | Crée une planification (§ « Les planifications ») ; `target.repo` se désigne comme pour les issues (nom, `owner/name`, ou le seul dépôt visible) ; une cible `automation` n'en a pas. Mêmes contrôles que `POST /v1/schedules`. |
 | `schedule_delete` `{id, rev?}` | operator | Supprime une planification (`{id, deleted}`) ; avec `rev`, refusée si elle a changé depuis : `DELETE /v1/schedules/{id}`. |
+| `proposals` | viewer | Le bac « Propositions » : ce que l'usine pourrait faire seule, récent d'abord, sans les écartées (`{proposals}`) : `GET /v1/proposals`. |
+| `proposal_accept` `{id}` | operator | Accepte une proposition par le geste existant de sa source, avec ses gardes (approbateur pour un signalement et pour un item du plan Atlassian, admin pour une règle de palier, gardes de la vigie pour un pilote) ; rend `{proposal, created: {kind, id}}` : `POST /v1/proposals/{id}/accept`. |
+| `proposal_dismiss` `{id}` | operator | Écarte une proposition, qui ne revient pas (`{dismissed: true}`) ; refusé à un client pilote : `POST /v1/proposals/{id}/dismiss`. |
 | `issue_create` `{repo, title, body, labels?, fingerprint}` | operator | Publie une issue sur la forge du dépôt déclaré (GitHub ou GitLab, forge.ts ; 409 sans forge), label `omp:vigie` (créé au besoin), l'empreinte en marqueur caché `<!-- omp-vigie:fingerprint=… -->`. Le serveur caviarde titre et corps avant de les confier à la forge (§ « La vigie »). Une empreinte déjà publiée — en base, ou retrouvée par son marqueur sur la forge — rend son issue (`already`) ; un client pilote hors de son mode, de ses dépôts ou de `maxIssuesPerDay` ne publie rien (`withheld`, brouillon gardé). |
-| `intake` `{id?, text?, source?, repo?}` | operator | Pose une demande en une phrase libre (`text` requis, `source` : `cli` par défaut) ou, avec `id`, la lit : `POST /v1/intake`, `GET /v1/intake/{id}`. Rend `{intake}` ; relis-la tant que `state` est `classifying`. |
+| `intake` `{id?, text?, source?, repo?, context?}` | operator | Pose une demande en une phrase libre (`text` requis, `source` : `cli` par défaut, `context` : la page d'où elle part, `{url?, title?, selection?}`) ou, avec `id`, la lit : `POST /v1/intake`, `GET /v1/intake/{id}`. Rend `{intake}` ; relis-la tant que `state` est `classifying`. |
 | `intake_confirm` `{id, plan?}` | operator | Confirme le plan d'une demande (`plan` le corrige) : crée l'objet du plan, rend `{intake}` avec `created` ; une demande déjà confirmée est une erreur (409) : `POST /v1/intake/{id}/confirm`. |
 | `intake_answer` `{id, text}` | operator | Répond à la question de clarification d'une demande ; la même demande est reclassée : `POST /v1/intake/{id}/answer`. |
 | `browser_open` `{url}` | viewer | Ouvre `url` dans un contexte neuf du navigateur ; rend `{context, page}` (`context` : `bx_` + 16 hexadécimaux ; `page` : un texte enveloppé comme contenu non fiable). |
@@ -1927,7 +1962,7 @@ claude mcp add --transport http omp-harness https://<serveur>/v1/mcp \
   non connectée, distant illisible, réseau) est journalisé au plus une fois par heure et n'arrête pas les autres ;
   le journal dit « relève : N lancée(s) » quand des runs partent. `null` : à la demande
   seulement.
-- **`rev`, la révision lue.** `run_cancel`, `run_priority`, `run_validate`, `run_retry`,
+- **`rev`, la révision lue.** `run_cancel`, `run_amend`, `run_priority`, `run_validate`, `run_retry`,
   `run_decisions_accept`, `run_decision_accept`, `run_answer_escalation`,
   `run_instructions` et `run_budget` acceptent
   `rev` : la révision `run.rev` que `run_get` a rendue. Si le run a changé depuis, le
@@ -1972,6 +2007,22 @@ et exécute après UNE confirmation. Rien n'est créé avant `POST /v1/intake/{i
   `untrusted()`. Le serveur juge le rendu : type connu, dépôt déclaré et dans la portée de
   l'auteur, cron valide, cible `run`, `audit` ou `issues` (pas `automation`) ; sinon la
   demande est en échec, lisiblement. Un `repo` fourni à la pose remplace celui du classeur.
+- **Le contexte de page.** Une demande posée depuis une page (le popup d'omp-chrome : « Faire ça
+  sur cette page », « En faire un fil ») porte un `context` `{url?, title?, selection?}` : l'adresse
+  de l'onglet (http ou https, 2000 caractères au plus), son titre (300) et le texte sélectionné
+  (4000). Le serveur le juge strictement — un objet, ces seules clés, des chaînes dans leurs
+  bornes, rien n'est tronqué ni deviné : sinon 400 et aucune demande — le garde avec la demande
+  (`intakes.context`) et la vue le rend (`context`, `null` sans page). Le classeur le reçoit dans
+  une section « Contexte de page », chaque champ dans `untrusted()` : une donnée, jamais une
+  consigne. L'adresse est gardée réduite à son origine et à son chemin — sans identifiants, query
+  ni fragment (jetons, recherches, liens signés) ; l'extension la réduit déjà avant l'envoi. La vue
+  ne rend `context` qu'à l'auteur de la demande et au propriétaire (client non borné, non
+  pilote) : tout autre lecteur reçoit `context: null`. Seul le plan est transmis à ce qui sera
+  créé : le classeur n'y recopie jamais l'adresse (la demande d'un run finit dans une branche et
+  une PR), sauf pour une tâche du poste (`workstation_request`), qui ne quitte pas le navigateur.
+- **L'état de l'usine.** Le classeur reçoit aussi, comme une donnée, l'état des dépôts que voit
+  l'auteur (§ « Les espaces, le brief et les chiffres ») ; pour une demande posée sur un dépôt,
+  l'état de ce seul dépôt : sa réponse se lit par tout client de ce dépôt.
 - **Politique de modèles.** Un dépôt imposé à la pose applique sa politique (`models`,
   `providers`, `privacy`) ; sans dépôt, le classement est `local-only` dès qu'un dépôt
   visible de l'auteur l'est ; sinon les chaînes du serveur. Un refus de politique met la
@@ -2148,6 +2199,189 @@ clones (`<racine>/repos`) lui sont montés en lecture seule.
   descendance) revient à l'humain (anti-boucle). Battement toutes les 60 s ; au-delà de
   5 min de silence, un `vigie_silent`, notifié. Le rapport du matin a sa section « Vigie ».
 
+## Les sessions omp locales
+
+Une session omp ouverte dans un terminal du poste se signale au serveur : les apps
+montrent ainsi, à côté des runs, ce qui se fait à la main. Le rapporteur vit dans le
+plugin `omp-mem0-req` (`local-session.ts`) : la session principale seulement (jamais un
+sous-agent ni un runner du harness), un battement `POST /v1/local-sessions` à chaque
+changement d'état, et au plus un toutes les 10 s pour l'intention des outils. Il se coupe
+par `OMP_HARNESS_LOCAL_SESSIONS=0` et ne fait rien sans harness configuré.
+
+- **Battement.** `{id, host, cwd, title, state, remote?, branch?, intent?, tool?, model?,
+  cost?}` : la session est créée ou mise à jour. Un champ facultatif absent garde la
+  valeur connue, `null` l'efface ; `title` est ramené sur une ligne et coupé à 200
+  caractères, `intent` coupé à 300 ;
+  hors de `working`, `tool` est vidé. Le dépôt (`repo`) n'est jamais fourni : c'est le
+  dépôt DÉCLARÉ que nomme le distant (`git@github.com:moi/mon-produit.git` →
+  `mon-produit`), sinon le dernier segment de `cwd` ; `null` si aucun ne correspond.
+- **États.** `working` (l'agent tourne), `idle` (il attend l'humain), `ended` (session
+  fermée). Le terminal fermé sans prévenir est rattrapé à la lecture : une session
+  `working` sans battement depuis 2 min est rendue `idle`, une session sans battement
+  depuis 30 min `ended` (sa fin : son dernier battement), et une session `ended` depuis
+  plus de 7 jours est purgée.
+- **Événements.** `local_session` `{id, state}` à chaque changement d'état (`removed:
+  true` quand elle est retirée, `runId` quand un run la reprend) : ni titre ni dépôt, le
+  client relit la liste par `GET /v1/local-sessions`. L'intention d'un outil part en
+  `activity` ÉPHÉMÈRE (`GET /v1/events?live=1`) `{tool, intent, localSession}`. Les deux
+  sont au propriétaire : ils partent sans run ni dépôt — jamais à un client restreint, même
+  au dépôt de la session — et le flux les refuse à un client pilote, en direct comme au rejeu.
+- **Confier à un run.** `POST /v1/local-sessions/{id}/handoff` crée un run sur le dépôt
+  de la session, dont la demande nomme la branche locale (« Reprends le travail de la
+  branche `<branche>`… » : ses commits s'ils sont poussés, sinon la branche principale),
+  puis cite le titre et la consigne donnée ; `session.runId` le désigne.
+- **Qui.** Battre, lire, confier et retirer sont au propriétaire (403 pour un client
+  restreint à des dépôts ou pilote), comme le poste : le rapporteur porte le jeton du
+  propriétaire. Un battement ne touche que les sessions de SON client (403 sur l'id d'une
+  session d'un autre client, même retirée).
+- **Ce qui vient du poste est une donnée.** `title` (souvent le premier message de la
+  session) est ramené sur une ligne ; `branch` est un nom sobre — 250 caractères au plus
+  parmi lettres, chiffres, `_`, `.`, `/`, `-`, sans `..` ni `-` initial — sinon 400 (le
+  rapporteur envoie `null` pour une branche qui en sort). La demande du run qui reprend la
+  session cite le titre et la consigne entre les délimiteurs de contenu non fiable, et ce
+  run passe toujours par /req (`lane: "full"`) : ni l'un ni l'autre ne vaut specs.
+- **Retirer.** `DELETE` retire la session de la liste sans oublier son run : si le
+  rapporteur bat encore, elle revient, neuve, toujours liée à ce run — et ne se confie pas
+  une seconde fois tant qu'il vit (409).
+
+## Les espaces, le brief et les chiffres
+
+Un **espace** est un client, ou un contexte de travail : des dépôts déclarés, le poste,
+des projets Jira, un budget journalier et un curseur d'autonomie par défaut
+(`spaces.ts`, table `spaces`). Un dépôt appartient à au plus un espace.
+
+- **Créer, modifier, retirer.** `POST /v1/spaces`, `PUT /v1/spaces/{id}` (`If-Match` :
+  la révision lue, 412 si l'espace a changé) et `DELETE /v1/spaces/{id}` sont à un admin
+  qui voit tous les dépôts. Le nom (1 à 60 caractères) est unique, sans égard à la casse
+  (409) ; un dépôt non déclaré est refusé (400), un dépôt déjà pris par un autre espace
+  aussi (409). Événement `space` `{id, action}` (`created`, `updated`, `removed`).
+- **Lire.** `GET /v1/spaces` rend chaque espace avec les scopes mémoire de ses dépôts
+  (`memoryScopes`) et ses compteurs (`stats`) : `working` (au travail), `yours` (attend
+  l'humain), `queued`, `mergedWeek`, `failedWeek`, `cancelledWeek` (finis sur 7 jours),
+  `costToday` (jour UTC), `costWeek`, et `budgetLeftToday` (ce qu'il reste du budget du
+  jour de l'espace ENTIER, `null` sans budget). Un client restreint à des dépôts ne voit
+  que les espaces qui en tiennent un, réduits à ses dépôts, sans le poste ni les projets
+  Jira, ni le budget : `dailyBudgetUsd`, `by` et `budgetLeftToday` valent `null` pour lui
+  (le reste du budget de l'espace entier dirait la dépense des dépôts qu'il ne voit pas).
+- **Budget journalier.** Quand le coût du jour (UTC) des dépôts d'un espace atteint
+  `dailyBudgetUsd`, ses runs en file ne sont plus admis (cause `space_budget`) et ses runs
+  vivants finissent leur étape puis retournent en file avant la suivante, à la même étape,
+  sans échec ni tentative comptés (comme au plafond `monitoring.dailyBudgetUsd` du serveur)
+  — jusqu'à minuit UTC ou un budget relevé ; les autres espaces continuent.
+- **Autonomie par défaut.** Un run créé sans curseur sur un dépôt d'un espace prend celui
+  de l'espace (`ask`, `deliver`, ou `null` : les règles du dépôt).
+- **Rapport.** `GET /v1/spaces/{id}/report?since=` rend le rapport du matin borné aux
+  dépôts de l'espace (7 jours par défaut), sans la santé ni le commit du service, avec ses
+  comptes et le coût de la fenêtre : de quoi rendre compte à un client.
+
+Le **brief** (`GET /v1/brief`, `brief.ts`) dit ce qui s'est passé « pendant votre
+absence » : une phrase (`headline` : « 3 livrées, 1 vous attend, 2 propositions —
+4,20 $ », ou « Rien de neuf. »), puis les runs livrés (`alone` : aucun geste humain), ce
+qui attend l'humain (`wait` : `questions`, `specs`, `irreversible`, `verdict`,
+`arbitration`, `budget`, `failure`), les échecs, les arrêts et leur motif, les décisions
+prises seules, les runs que la file retient (cause et texte), le nombre de propositions
+ouvertes et le coût. La fenêtre part de `since`, sinon de la dernière fois que CE client
+a vu le brief (`POST /v1/brief/seen`, réglage `brief-seen:<client>`), sinon de 24 heures.
+Livrés, échecs et arrêts sont ceux de la fenêtre ; attentes et file, l'état de l'instant.
+Les titres sont nettoyés (sans « Suite de « … » », « Issue #N : », préfixe de commit
+conventionnel ni nom de runner).
+
+Les **chiffres** (`GET /v1/scoreboard?days=`, `scoreboard.ts`) sont les trois indicateurs
+sur lesquels se juge l'OS, calculés sur la base seule (runs et journal). `days` vaut 7 par
+défaut et va de 1 à 90, sans jamais dépasser `events.retentionDays` (30 par défaut : 400
+au-delà) — les gestes humains se lisent dans le journal, et un run mergé avant sa purge
+compterait « seul » :
+
+- `aloneRate` : la part des runs mergés dans la fenêtre qu'aucun humain n'a touchés
+  (validation ou refus, réponse à une question, consigne, relance, décision renversée).
+- `medianDecisionMs` : le délai médian entre la pose d'une attente (`specs_ready`,
+  `verdict`, `escalations`) et le geste d'un humain qui la lève ; une attente levée par
+  l'autonomie, un pilote ou l'échéance d'une escalade ne compte pas.
+- `startedAloneRate` : la part des runs créés dans la fenêtre sans l'humain — par le
+  service (planification, relève d'issues), un pilote ou la vigie, par découpage ou en
+  suite d'un autre run (`afterRun`), ou dans le projet d'un audit.
+
+S'y ajoutent les annulations par motif (`cancelCauses`, clé `none` sans motif) et, par
+dépôt, mergés, mergés seuls, annulés, échoués, taux de succès et `suggestion` (`raise` ou
+`lower` quand une proposition de palier existe, § « L'autonomie par paliers »).
+« Humain » : un acteur qui n'est ni le service, ni l'autonomie (`autonomie:…`), ni un
+pilote (`pilote:…`), ni un client pilote (la vigie ; un geste d'un client pilote porte
+`pilot: true` dans le journal — réponse, relance, consigne, validation).
+
+Le classeur d'une Demande (§ « Les demandes en langage libre ») reçoit aussi l'**état de
+l'usine** des dépôts que voit l'auteur, en section de données de 3000 caractères au plus
+(entre les délimiteurs de contenu non fiable) : coût du jour, fils au travail et leur
+étape, ce qui attend l'humain, la file et ce qui la retient, dernières livraisons. Une
+question d'état (« où en est X ? ») est ainsi classée `question`, avec sa réponse.
+
+## Les propositions et « refaire »
+
+Le bac **Propositions** réunit en une liste ce que l'usine pourrait faire sans qu'on le lui
+demande (`proposals.ts`). Rien n'y est stocké : chaque proposition est recalculée de sa
+cause, lue dans l'existant, et sort de la liste dès que cette cause disparaît. Son `id`
+(`<source>.<16 hex>`) est le hachage stable de sa cause : la même cause rend le même id.
+
+| Source | Cause | Accepter (`action`) |
+|---|---|---|
+| `issue` | une issue ouverte du label `issues.label`, sans run lié, ni née d'un signalement, ni publiée par la vigie, ni trace d'un runner | lance sa correction, comme `issue_fix` (`fix`) |
+| `vigie` | un incident `bug` ou `reported` d'un dépôt déclaré, sans correction lancée | la correction de la vigie, inscrite sur l'incident (`fixing`, une seule génération par empreinte) : celle de son issue si elle est publiée ; sinon un run né de son tri, sans rien publier sur la forge (`fix`) |
+| `audit` | un audit `proposed` — UNE proposition par audit (`title` : « Audit — <focus ou dépôt> », `detail` : « N propositions : <titres abrégés> ») | `POST /v1/audits/{id}/launch` de TOUS ses items, en un projet (`launch`) ; en choisir une partie reste la carte de décision d'audit des apps |
+| `signal` | un signalement d'un collègue `proposed` | sa confirmation, au texte que rend `POST /v1/signals/{id}/preview` : appareil approbateur seulement (`confirm`) |
+| `jira` | un item du dernier plan Atlassian qui porte `repo` et `request`, tant qu'aucun run de ce dépôt, ni échoué ni annulé, n'a son titre ou sa demande (de quelque date qu'il soit) | crée ce run : appareil approbateur seulement — le titre du ticket devient une branche et une PR du dépôt (`launch`). Acceptée, elle est retirée du bac pour de bon (`proposal_dismissals`) : le ticket reste au plan des jours suivants, même reformulé, sans revenir |
+| `autonomy` | une proposition de palier de `GET /v1/autonomy` | écrit la règle (`POST /v1/autonomy/rules`) : rôle admin (`apply`) |
+| `retry` | un run `failed` depuis moins de sept jours, qu'aucun run plus récent du dépôt au même titre, vivant ou mergé, n'a remplacé | `POST /v1/runs/{id}/retry` (`retry`) |
+| `pr` | une PR (MR) ouverte sans activité depuis trois jours, du dépôt lui-même (jamais d'un fork), dont l'auteur a le droit d'y pousser, hors branche `harness/` d'un run vivant ; `detail` nomme l'auteur | un run « Reprendre la PR #N : … » (`launch`) |
+| `ci` | la dernière exécution terminée que le dépôt a lancée sur sa branche principale est en échec | un run « Réparer la CI de <branche> (<commit>) », dont la demande porte les lignes utiles des logs (`fix`) |
+
+- **La forge n'est jamais lue dans une requête.** `issue`, `pr` et `ci` viennent d'une
+  collecte de fond : trente secondes après le démarrage puis toutes les quinze minutes,
+  sur la forge de chaque dépôt déclaré qui a un distant (`remote`) — `gh api
+  repos/<projet>/pulls`, `gh run list --repo <projet> --branch`, `gh issue list --label`
+  sur GitHub ; les MR ouvertes et les derniers pipelines terminés par `glab api` sur
+  GitLab ; rien pour un dépôt sans forge. Le résultat est gardé en mémoire (il repart de
+  zéro au redémarrage). Une lecture en échec garde la précédente et n'écrit qu'une ligne
+  de journal par heure et par dépôt.
+- **Ce que la forge rend est écrit par des tiers** : un dépôt public laisse n'importe qui
+  ouvrir une PR, et le run qui la reprendrait exécuterait son code. La reprise n'est donc
+  proposée que pour une PR du dépôt lui-même (pas d'un fork) dont l'auteur en est
+  propriétaire, membre ou collaborateur (`author_association` sur GitHub ; sur GitLab,
+  une MR du projet lui-même dont l'auteur y a au moins l'accès Developer), à la branche
+  au nom sûr (`[\w./-]`, 250 caractères au plus, sans `..` ni `-` initial) ; une donnée
+  que la forge ne dit pas vaut refus. L'exécution d'une PR n'est pas la CI de la
+  branche : sur GitHub seules comptent les exécutions `push`, `schedule`,
+  `workflow_dispatch` et `repository_dispatch` (celle d'un fork dont la branche
+  s'appelle `main` est écartée, comme un événement absent) ; sur GitLab le pipeline
+  d'une MR est sauté. Dans la demande du run, le titre de la PR, le nom de sa branche,
+  son auteur, ce qui a lancé l'exécution et les extraits de ses journaux n'entrent
+  qu'entre les délimiteurs du contenu non fiable (`untrusted()`), jamais dans une phrase
+  de consigne. Le run né d'un incident de la vigie jamais publié prend le titre et le
+  texte de son brouillon d'issue, déjà caviardés, sinon ceux de son tri passés par le
+  même caviardage (le poste, puis les secrets) : son titre devient une branche.
+- **Visibilité.** Chacun voit les propositions de ses dépôts ; `signal` et `jira`
+  (données de la boîte) ne sont rendues qu'au propriétaire (client non borné, non pilote).
+- **Accepter** (`POST /v1/proposals/{id}/accept`) reprend les gardes du geste : 403 hors
+  appareil approbateur pour un signalement et pour un item du plan Atlassian, 403 sans
+  rôle admin pour une règle de palier, gardes de la vigie (`guardFix`) et de `retry`
+  pour un client pilote. 404 si la proposition a disparu, est écartée ou n'est pas au
+  lecteur ; 409 si un autre geste l'accepte au même instant. Un run de reprise ou de
+  correction qui n'a ni échoué ni été annulé retient sa proposition `pr` ou `ci` hors
+  de la liste.
+- **Écarter** (`POST /v1/proposals/{id}/dismiss`) est définitif (table
+  `proposal_dismissals`) : la proposition ne revient pas, même si sa cause demeure. Refusé
+  à un client pilote.
+- **L'événement `proposals`** `{count}` part quand l'ensemble des propositions ouvertes
+  change (recalculé au plus toutes les trente secondes, et après chaque geste ou collecte).
+- **Le calcul est gardé trente secondes.** Lire le bac, accepter, écarter et collecter
+  recalculent toutes les causes ; le compte que lit le brief (`proposals`) et le tour de
+  fond resservent le dernier calcul s'il a moins de trente secondes.
+
+**Refaire.** `GET /v1/runs/{id}/template` rend le corps d'un `POST /v1/runs` qui
+relancerait la même feature : la demande d'ORIGINE du fil — le parent d'une feature
+découpée et celui d'un run de suite (événement `follow_up`, posé sur le parent à chaque
+run de suite : revert, décision renversée après le merge) sont remontés jusqu'au premier
+run. Le titre est nettoyé : sans « Suite de « … » : », sans « Issue #N : », sans préfixe
+de commit conventionnel, sans ` — omp-runner-…`.
+
 ## API
 
 `Authorization: Bearer <jeton>` sur toutes les routes, sauf `GET /v1/health` (version
@@ -2165,6 +2399,24 @@ appareils iOS), `session-graph` (`GET /v1/runs/{id}/graph`,
 le graphe de session d'un run, et l'événement éphémère `graph`), `autonomy`
 (`GET /v1/autonomy`, `kind` et `labels` d'un run) et `atlassian` (`/v1/atlassian*`, le
 connecteur Jira et Confluence).
+`local-sessions` (`/v1/local-sessions*`) annonce les sessions omp locales (§ « Les
+sessions omp locales »).
+`proposals` (`/v1/proposals*`, `GET /v1/runs/{id}/template`, l'événement `proposals`)
+annonce le bac « Propositions » et le gabarit « refaire » (§ « Les propositions et
+« refaire » »).
+`os-loop` annonce les gestes de la boucle — corriger un run au lieu de l'annuler
+(`POST /v1/runs/{id}/amend`), le motif d'une annulation (`cause`, `note` de
+`POST /v1/runs/{id}/cancel`, `run.cancelCause`), les modules d'un run restreints par
+l'humain (`POST /v1/runs/{id}/modules`), et ce qui retient un run en file (`waitCause`,
+`blockedBy`, `waitUntil`) — et `pause` la pause globale (`GET /v1/pause`,
+`POST /v1/pause`, `paused` de `GET /v1/status`).
+`spaces` (`/v1/spaces*`), `brief` (`GET /v1/brief`, `POST /v1/brief/seen`) et
+`scoreboard` (`GET /v1/scoreboard`) annoncent les espaces, le brief « pendant votre
+absence » et les chiffres (§ « Les espaces, le brief et les chiffres »).
+`push-answer` annonce la réponse à une question depuis sa notification (catégorie
+`omp.answer`, charge `omp.question`), `push-start` la Live Activity démarrée par le serveur
+(`POST /v1/push/activities/start`), et `intake-context` le contexte de page d'une Demande
+(`context` de `POST /v1/intake`) — § « Les apps » et « Les demandes en langage libre ».
 
 `GET /v1/health` vérifie aussi le service : `checks.db` (une lecture de la base),
 `checks.scheduler` (`ageSec`, l'âge du dernier tour du scheduling, borné par
@@ -2182,39 +2434,46 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | Route | Rôle | Effet |
 |---|---|---|
 | `GET /v1/me` | viewer | Le client du jeton : nom, rôle, dépôts. |
-| `GET /v1/status` | viewer | Compteurs par état et par dépôt, runs vivants, slots et files d'attente, `MemAvailable`, jetons par fournisseur, `queue` : `{held, byCause, dominant}` — les runs dus retenus en file, par cause, et la cause la plus fréquente avec son texte (`null` : rien ne retient la file) —, et `oracle` : `{configured, ok, lostWrites}` (§ La mémoire du projet). |
+| `GET /v1/status` | viewer | Compteurs par état et par dépôt, runs vivants, slots et files d'attente, `MemAvailable`, jetons par fournisseur, `paused` (la pause globale tient, voir `GET /v1/pause`), `queue` : `{held, byCause, dominant}` — les runs dus retenus en file, par cause, et la cause la plus fréquente avec son texte (`null` : rien ne retient la file) —, et `oracle` : `{configured, ok, lostWrites}` (§ La mémoire du projet). |
 | `GET /v1/repos` · `POST /v1/repos` `{url, name?}` | viewer · admin | Les dépôts que le client voit (nom, scope, branche, merge, `maxParallel`, `judge` : `local` ou `ci`, le juge de la suite complète en vigueur). `POST` fait `--add-repo` par l'API (client qui voit tous les dépôts ; 403 sinon) : clé SSH du dépôt créée ou reprise, clone nu, écriture éprouvée à blanc, tests devinés, entrée écrite dans `config.json`, puis la configuration rechargée. Rend `{repo, added, message, reload}` (201 s'il sert désormais, 200 s'il était déjà là) ; si le distant refuse la clé (lecture ou écriture), 200 avec `added: false` et `deployKey: {publicKey, url}` — la clé à poser avec écriture, et sur GitHub la page où la coller (`url`, sinon `null`) — et rien n'est déclaré. `url` : un distant SSH (`git@hôte:chemin`, `ssh://…`) ou HTTPS, jamais un chemin local (400) ; nom invalide ou clone impossible : 400 ; service lancé sans `--config` : 409. |
 | `PATCH /v1/repos/{name}` `{tests: {judge?, ciTimeoutSec?}}` | admin | Le juge de la suite complète d'un dépôt déclaré (§ « La CI de la forge comme juge de la suite complète »), sans éditer `config.json` à la main (client qui voit tous les dépôts ; 403 sinon). `judge` : `local` · `ci` · `null` (le défaut) ; `ciTimeoutSec` : entier ≥ 1 ou `null`. Le fichier candidat est validé avant d'être écrit, puis la configuration rechargée ; rend `{repo, judge, ciTimeoutSec, reload}` (valeurs en vigueur, défauts compris). Autre champ que ces deux-là, valeur invalide, `ci` sans forge : 400 et rien ne change ; dépôt non déclaré : 404 ; sans `--config` : 409. |
 | `POST /v1/reload` | admin | SIGHUP par l'API (client qui voit tous les dépôts ; 403 sinon) : la configuration relue, les dépôts rechargés sans arrêter les runs ; rend `{reload: {repos, added, removed, kept}}`. Une configuration illisible ou invalide : 400 avec sa cause, la courante reste en place ; sans `--config` : 409. |
 | `GET /v1/runs?state=…&repo=…` · `POST /v1/runs` `{repo, title, request, modules?, req?, priority?, lane?, budgetUsd?}` | viewer · operator | Lister, créer. `repo` est un **nom** déclaré dans la configuration, jamais un chemin. `req` : le compte rendu de besoins établi en /req interactif (section `## Besoins`) ; le run part alors de /specs. Sans `req`, une demande qui porte `## Critères d'acceptation` part de /impl (voie directe, § « Une feature, pas à pas ») ; `lane: "full"` l'envoie quand même à /req, toute autre valeur est un 400. Sans `modules`, ils sont déduits de l'oracle avant l'admission (événement `modules`). `budgetUsd` (dollars, > 0 et ≤ 10 000) : le budget propre du run, prioritaire sur `monitoring.runBudgetUsd`. |
-| `GET /v1/runs/{id}` | viewer | Run (avec sa révision `rev`, aussi en `ETag`, `notBefore`, `mergeRetries`, `lastFailCause`, `afterRun` : le parent dont une feature découpée attend le merge), étapes, décisions, escalades (avec `recommended`, `options`, `context`, `rationale`, `impacts`), tests, artefacts, `usage`, `alerts` et `budget` : `{cost, budget, threshold, source}` — `source` vaut `run` (son propre budget), `config` (`monitoring.runBudgetUsd`) ou `null` (sans plafond). Un run `queued` que l'admission retient porte en `reason` ce qui le retient, à jour à chaque tour (« mémoire insuffisante : 2908 Mio disponibles, 3072 requis (réserve 2048 + runner 1024) », « slots runner pleins 5/5 », « plafond du dépôt demo atteint : … maxParallel 1 », modules partagés, plafond journalier, dépôt retiré), et en `waitCause` son code (`memory`, `slots`, `repo_cap`, `modules`, `daily_budget`, `unknown_repo`) ; de même dans `GET /v1/runs`, l'inbox et l'outil MCP `runs_list`. Cette raison n'est jamais écrite en base (ni `rev` ni `updatedAt` ne bougent) et repart de zéro au démarrage ; `admission_refused` n'est journalisé que lorsque la cause d'un run change. |
+| `GET /v1/runs/{id}` | viewer | Run (avec sa révision `rev`, aussi en `ETag`, `notBefore`, `mergeRetries`, `lastFailCause`, `afterRun` : le parent dont une feature découpée attend le merge), étapes, décisions, escalades (avec `recommended`, `options`, `context`, `rationale`, `impacts`), tests, artefacts, `usage`, `alerts` et `budget` : `{cost, budget, threshold, source}` — `source` vaut `run` (son propre budget), `config` (`monitoring.runBudgetUsd`) ou `null` (sans plafond). Un run `queued` que l'admission retient porte en `reason` ce qui le retient, à jour à chaque tour (« mémoire insuffisante : 2908 Mio disponibles, 3072 requis (réserve 2048 + runner 1024) », « slots runner pleins 5/5 », « plafond du dépôt demo atteint : … maxParallel 1 », modules partagés, plafond journalier, dépôt retiré), et en `waitCause` son code (`memory`, `slots`, `repo_cap`, `modules`, `daily_budget`, `unknown_repo`, `paused` : la pause globale, `space_budget` : le budget journalier de son espace) ; de même dans `GET /v1/runs`, l'inbox et l'outil MCP `runs_list`. Un run en file qui n'est pas encore dû le dit aussi : `parent` (feature découpée qui attend le merge de son parent), `backoff` (relance différée) et `inferring` (modules en cours de déduction). `blockedBy` : `[{runId, title, state, modules}]` nomme les runs qui le retiennent — pour `modules`, les runs actifs puis ceux de la file passés avant lui dont les modules recoupent les siens (8 au plus), pour `parent`, le parent ; `waitUntil` (epoch ms) : l'instant avant lequel un `backoff` ne repart pas. Cette raison n'est jamais écrite en base (ni `rev` ni `updatedAt` ne bougent) et repart de zéro au démarrage ; `admission_refused` n'est journalisé que lorsque la cause d'un run dû change (jamais pour `parent`, `backoff`, `inferring`, absents aussi de `queue` de `GET /v1/status`). |
 | `POST /v1/runs` `{…, kind?, labels?}` · `GET /v1/runs` · `GET /v1/runs/{id}` | operator · viewer | `kind` (`bug` · `feature` · `docs` · `deps` · `test`, sinon 400) et `labels` (20 au plus, de 1 à 50 caractères, rognés et dédoublonnés, sinon 400) : le type de travail et les labels que les règles d'autonomie lisent (§ « L'autonomie par paliers »). Facultatifs, rendus tels quels sur le run (`run.kind`, `run.labels`), jamais modifiables ensuite ; MCP `run_start`, les issues, projets, audits, découpages, suites et planifications ne les posent pas (`kind: null`, `labels: []`). |
 | `GET /v1/runs/{id}/session?before=…&limit=…` | viewer | Le direct de la session du runner, écrit en base (rejouable, même après un redémarrage ; rétention de `events.retentionDays`) : une page d'entrées (`entries`, les 200 dernières par défaut, celles qui précèdent `before` sinon) et `more` s'il en reste de plus anciennes, `live` (le run est conduit en ce moment) et `cursor`, le curseur du journal d'où suivre la suite par `GET /v1/events?run={id}&live=1&after={cursor}`. |
 | `GET /v1/runs/{id}/session/{seq}` | viewer | Une entrée du direct et son détail, jamais poussé dans le flux : pour un outil, `view` (son rendu lisible, comme dans le terminal d'OMP : `{headline, blocks, agents}`, chaque bloc `{kind, role, title, format, text, fields, items, agents}` — `kind` parmi `text`, `fields`, `list`, `agents`, `format` parmi `markdown`, `code`, `diff`, `command`, `plain`, `role` un code que les apps traduisent ; voir `tool-view.ts`), `args` et `result` (le JSON brut de ses arguments et de son résultat, 32 000 et 64 000 caractères au plus) et `output` (sa sortie entière, 64 000 caractères au plus, début et fin gardés) — ceux qui s'écrivent s'il tourne encore ; pour un paragraphe plus long que son entrée, son texte entier dans `output`. Secrets masqués ; 404 si l'entrée est inconnue. `GET /v1/audits/{id}/session/{seq}` : la même chose pour l'analyse d'un audit. |
 | `GET /v1/runs/{id}/graph` | viewer | Le graphe de session du run : `{runId, version, updatedAt, nodes, edges, ambiguities}`. Un nœud `{id, kind, label, step, parent, path, pattern, reads, edits, files, grouped, count, outcome}` (champ sans objet : `null`, compteur : 0) ; `kind` parmi `dir`, `file`, `search` (grep, glob… et son motif), `test` (`run_tests`, son `outcome`), `edit` (les modifications d'une étape), `decision`, `escalation`, `step`. Un arc `{from, to, kind, count}`, `kind` parmi `read`, `searched`, `edited`, `tested`, `led_to` (l'ordre de lecture), `evidence` (une décision ou une escalade vers les nœuds qui la fondent). `ambiguities` : `[{node, kind, evidence: [id de nœud]}]`, une entrée par décision ou escalade. Les fichiers sont regroupés par dossier (compteurs de lectures et de modifications) ; borné à 300 nœuds, au-delà les fichiers passent dans leur dossier, puis les recherches d'une étape sont fondues et les dossiers remontés. Chemins relatifs au dépôt, jamais de contenu de fichier ni de chemin hors dépôt, motifs masqués. Gardé dans l'artefact interne `_session-graph.json` : il survit à la rétention du direct et au redémarrage. Seul l'agent de l'étape y entre : ni le contradicteur, ni les sous-agents (`task`). Un run sans graphe rend la vue vide ; hors des dépôts du client, ou inconnu : 404 `run inconnu`. |
 | `GET /v1/runs/{id}/proofs` | viewer | Les preuves du run : `{runId, proofs: [{n, kind, title, step, mime, size, createdAt, acRef, side}]}` — `kind` parmi `screenshot`, `video`, `log`, `test_report` ; `acRef` (`AC-n`) et `side` (`before` \| `after`) valent `null` quand ils manquent. Jamais de chemin. Un dépôt hors de la portée du client : 404 `run inconnu`. Le rapport de tests d'une étape /impl ou /impl --fix (`test_report`, JSON : `criteria` par `<slug>/AC-n`, `other`, `truncated`) est écrit par le service, sans geste de l'agent. L'événement `verdict` porte `proofs`, le nombre de preuves du tour de revue courant (créées depuis le début de la dernière étape /impl ou /impl --fix). |
 | `GET /v1/runs/{id}/proofs/{n}` | viewer | Le contenu de la preuve de rang `n` : octets bruts, `Content-Type` = son `mime`, `X-Content-Type-Options: nosniff`. Le fichier se retrouve par son rang seul ; un rang hors liste (ou non entier) rend 404. |
-| `POST /v1/runs/{id}/escalations` `{answers: [{id, answer, reason?}]}` | operator | Répondre au lot, avec ta raison si tu en as une (elle part dans l'oracle). Le run reprend quand tout est répondu. |
+| `POST /v1/runs/{id}/escalations` `{answers: [{id, answer, reason?, always?}]}` | operator | Répondre au lot, avec ta raison si tu en as une (elle part dans l'oracle). Le run reprend quand tout est répondu. `always: true` sur une réponse en fait une consigne permanente du dépôt (§ « Les consignes permanentes »). |
 | `POST /v1/runs/{id}/decisions/{n}/accept` · `POST /v1/runs/{id}/decisions/accept` | operator | Accepter une décision prise seule, ou toutes celles du run d'un geste (`{accepted: n}`). |
 | `POST /v1/runs/{id}/decisions/{n}/reverse` `{option, reason}` | operator | Renverser : correction sur l'état courant, ou revert des commits de N et de ses dépendantes si des décisions en découlent (retour dur au checkpoint N seulement si ce revert entre en conflit). Run mergé : revert du squash sur `main` puis run de suite. Raison dans l'oracle. |
-| `POST /v1/runs/{id}/validate` `{approve, reason?}` | operator | Valider les specs (run en `awaiting_human` à l'étape `specs`) ou un verdict, ou les refuser avec une raison : /specs refait, ou correction. La raison part dans l'oracle. |
-| `POST /v1/runs/{id}/cancel` | operator | Annuler (la branche reste). |
+| `POST /v1/runs/{id}/validate` `{approve, reason?, always?}` | operator | Valider les specs (run en `awaiting_human` à l'étape `specs`) ou un verdict, ou les refuser avec une raison : /specs refait, ou correction. La raison part dans l'oracle ; avec `always: true`, celle d'un refus devient une consigne permanente du dépôt. |
+| `POST /v1/runs/{id}/cancel` `{cause?, note?}` | operator | Annuler (la branche reste). Le corps est facultatif ; avec lui, le motif est gardé sur le run (`run.cancelCause`) et dit dans sa raison : « annulé par l'humain : <motif>[ — <note>] ». `cause` : `off_target` (à côté de la demande) · `too_big` (trop gros) · `obsolete` (plus besoin) · `duplicate` (doublon) · `too_costly` (trop cher) · `other` (autre), sinon 400 ; `note` : 500 caractères au plus (seule, elle vaut pour `other`). `off_target` ou `too_big` avec une note, d'un humain (jamais d'un pilote), écrit une « Correction humaine » dans la mémoire du dépôt : le prochain cadrage en tient compte. |
+| `POST /v1/runs/{id}/amend` `{text, always?}` | operator | Corriger un run là où il est, d'un seul geste, au lieu de l'annuler ; rend `{run, via}`. Des specs en attente sont refusées et réécrites (`via: "specs"`) ; un verdict ou un arbitrage en attente renvoie en correction (`"fix"`) ; une autre attente (échec, budget, merge arrêté) ou un run `failed` est relancé avec la consigne (`"retry"`) ; un run `running`, `queued` ou `escalated` la reçoit comme une consigne (`"instruction"`). Un run `merging`, `merged` ou `cancelled` : 409. Mêmes gardes que le geste de chaque voie (`If-Match`, pilote). `text` : de 1 à 4000 caractères ; `always: true` en fait aussi une consigne permanente du dépôt. |
+| `POST /v1/runs/{id}/modules` `{modules}` | operator | Restreindre les modules d'un run (de 1 à 50 chemins relatifs du dépôt) : ce qu'il retenait en file peut partir au tour suivant. Un chemin vide, absolu, qui remonte (`..`) ou sous `.harness/` : 400 ; un run terminal : 409 ; geste d'humain : 403 pour un client pilote. Rend `{run}` ; événement `modules_set` (`modules`, `by`). |
 | `POST /v1/runs/{id}/instructions` `{text}` | operator | Parler à un run en cours : si son runner est en plein prompt, la consigne y est injectée (`steer` d'OMP) et l'agent la lit au prochain tour ; sinon elle est gardée et part avec le prochain prompt (même étape s'il y en a un, sinon l'étape suivante). Rend `{run, delivered}` (`session` ou `pending`). Événement `instructions` (`text`, `delivered`, `step`, `by`) et entrée `instructions` dans le direct du run. Consigne vide ou de plus de 4000 caractères : 400 ; run mergé ou annulé : 409. |
 | `POST /v1/runs/{id}/budget` `{budgetUsd}` | operator | Le budget propre du run en dollars (`null` : retour à `monitoring.runBudgetUsd`), rend `{run, budget}`. Sous le nouveau seuil, l'alerte `budget_exceeded` s'éteint ; au-delà, elle part tout de suite (et `pauseOnBudget` arrête l'étape). Événement `run_budget`. Run terminé : 409. |
 | `POST /v1/runs/{id}/retry` `{instructions?}` | operator | Relancer un run `failed` ou `awaiting_human` à son étape, tout de suite (409 sinon) ; `instructions` : la consigne que l'étape relancée reçoit. |
 | `POST /v1/runs/{id}/revert` | operator | Défaire le commit squash d'un run mergé sur `main` et ouvrir un run de suite (`{run}`) ; 409 si le run n'est pas mergé, ou s'il l'a été sans commit (déjà dans `main`). |
 | `POST /v1/runs/{id}/priority` `{priority}` | operator | Changer la priorité d'admission (et de la file des tests). |
-| `GET /v1/escalations` | viewer | Escalades ouvertes, **batchées par run** (écran iOS). |
+| `GET /v1/pause` · `POST /v1/pause` `{paused, reason?, now?}` | viewer · operator | La pause globale (« Tout suspendre ») : `{pause: {paused, by, at, reason, now}}`. En pause, plus aucun run n'est admis (`waitCause: "paused"`, « en pause : suspendu par <qui> ») ; chaque run vivant finit son étape en cours, puis retourne en file avant la suivante, comme au plafond journalier ; ni planification, ni audit, ni pilote, ni Demande, ni job du poste, ni rêve ne démarre (ce qui tourne finit). Le serveur ne décide plus rien seul non plus : aucun nouveau merge ne part (un merge déjà enfilé finit ; un run validé pendant la pause reste `merging` et fusionne à la reprise), l'autonomie ne valide aucune attente (une attente retenue le reste), aucune escalade n'est tranchée à l'échéance — une échéance (`autoAt`) passée pendant la pause s'applique au premier tour après la reprise, toutes celles qui sont échues ensemble. Les gestes de l'humain passent toujours. Rien n'est annulé ni perdu : `paused: false` relance le tour. **L'arrêt immédiat** — `now: true` avec `paused: true`, à la pose ou sur une pause déjà posée (avec `paused: false` : 400) : chaque run vivant est interrompu sur-le-champ (étape abandonnée, runner arrêté, comme une annulation) mais retourne en file à la MÊME étape, worktree et checkpoints gardés, sans échec ni tentative comptés (`attempts`, `lastFailCause` et `notBefore` inchangés) ; l'étape repart à la reprise avec la consigne de reprendre le travail en cours. Les audits et les Demandes en cours sont arrêtés aussi et repartent de zéro à la reprise (le chemin d'un redémarrage : ils n'avaient rien écrit), le pilote rend la main sans rien inscrire ; les rêves et les jobs du poste finissent (le poste a son arrêt d'urgence, `POST /v1/workstation/stop`), un merge en cours aussi. `pause.now` dit si la pause en cours a interrompu. Le réglage est gardé en base (`settings`, clé `pause`) : une pause survit à un redémarrage. `POST` est au propriétaire (un client borné à des dépôts ou un pilote : 403) ; `reason` : 200 caractères au plus. Événement `pause` (`paused`, `by`, `reason`, `now`). |
+| `GET /v1/escalations` | viewer | Escalades ouvertes, **batchées par run** (écran iOS). Chaque escalade porte son échéance : `autoAt` (ms epoch) et `autoAnswer`, ou `null` si elle ne sera jamais tranchée seule (aussi dans `GET /v1/inbox` et `GET /v1/runs/{id}`). |
 | `GET /v1/escalations` · `GET /v1/inbox` · `GET /v1/runs/{id}` — `card` | viewer | Chaque escalade posée avec sa carte porte `card` : `{headline, stake, options: [{label, impact, reversible, cost?}], recommended, confidence, reviewed, schema: {nodes, edges}}` (`cost` : `faible` · `moyen` · `fort` ; `confidence` : `faible` · `moyenne` · `forte`). `schema` (12 nœuds au plus : établi → ambiguïté → options → impacts, nœuds `{id, kind, label, recommended}` et arcs `{from, to}`) est un schéma de données, jamais une image ni du Mermaid. `question` = `headline`, `options` = les libellés, `impacts` = les impacts, `context` garde le détail : un client ancien lit toujours ces champs. `reviewed: false` : la carte part telle que l'agent l'a écrite. Les escalades antérieures n'ont pas de `card` (`null`). |
 | `GET /v1/decisions?status=auto,auto_timeout` | viewer | La relecture du matin : les décisions prises seules par l'agent, ou à l'échéance d'une escalade. |
 | `GET /v1/inbox` | viewer | La boîte de l'humain d'un appel : escalades batchées, runs à valider (specs ou verdict), décisions prises seules (à part, hors du compte bloquant `pendingCount` = escalades ouvertes + runs en attente), features en cours, audits ouverts, curseur du flux. Chaque escalade et chaque décision dit l'étape qui l'a posée (`step`). |
 | `GET /v1/runs/{id}` · `GET /v1/inbox` — `briefing` | viewer | Le run qui attend des **specs à valider** ou un **arbitrage** entre revue et correction porte `briefing` : `{feature, cards}` (`feature` : la ligne « Ce que fait cette feature » des specs, sinon le titre du run ; `cards` : les points qui demandent un regard, chacun à la forme de `card`). Specs : les décisions et escalades de /req et /specs, une carte par raison de porte et par désaccord resté ouvert avec le contradicteur (options « valider les specs » / « refaire /specs ») ; arbitrage : une carte par bloquant non levé (« valider malgré » / « corriger encore »). Les cartes écrites par le serveur sont relues par le relecteur rapide, à défaut leur texte brut part avec `reviewed: false`. Même forme dans le run (`run.briefing`) et dans l'entrée du run de l'inbox (`awaiting`, `runs`, `batches[].run`) ; vide (`{feature: "", cards: []}`) quand le run n'attend ni l'un ni l'autre. Le document complet (`specs.md`) reste dans les artefacts. |
-| `GET /v1/autonomy` | viewer | L'autonomie par paliers, en lecture seule : `{repos: [{repo, rules}], validations, proposals}` pour les dépôts que le client voit. `validations` : les décisions prises seules par l'autonomie de la fenêtre `autonomyLearning.windowDays` (100 au plus, récentes d'abord, avec `step`) ; `proposals` : `{repo, kind, gate, direction, current, rule, runs, passages, corrections, rate, changes: [{path, value}]}`. `/v1/inbox` et `/v1/decisions` portent `autonomy` sur chaque décision (`null` hors autonomie). Aucune route n'écrit une règle. |
-| `GET /v1/projects` · `POST /v1/projects` `{repo, title, priority?, features: [{title, request, modules?}]}` · `GET /v1/projects/{id}` | viewer · operator · viewer | /project. La liste porte le décompte des runs de chaque projet par état. Le projet et ses runs naissent dans la même transaction. |
+| `GET /v1/autonomy` | viewer | L'autonomie par paliers, en lecture seule : `{repos: [{repo, rules}], validations, proposals}` pour les dépôts que le client voit. `validations` : les décisions prises seules par l'autonomie de la fenêtre `autonomyLearning.windowDays` (100 au plus, récentes d'abord, avec `step`) ; `proposals` : `{repo, kind, gate, direction, current, rule, runs, passages, corrections, rate, changes: [{path, value}]}`. `/v1/inbox` et `/v1/decisions` portent `autonomy` sur chaque décision (`null` hors autonomie). Une règle s'écrit par `POST /v1/autonomy/rules`. |
+| `POST /v1/autonomy/rules` `{repo, kind, gate, mode}` | admin | « Toujours valider seul ce type » (capacité `os-autonomy`) : met la porte `gate` (`specs` · `review`) du type `kind` du dépôt en `mode` (`auto` · `human`) dans `repos[].autonomy.rules`, par la même modification qu'une proposition de palier. En `human`, toutes les règles du type qui pouvaient lever la porte la rendent (§ « L'autonomie par paliers »). Rend `{repo, rules}` (les règles rechargées). Champ invalide ou configuration refusée : 400, rien ne change ; dépôt non déclaré : 404 ; client borné à des dépôts : 403 ; service sans `--config` : 409. Événement `autonomy_rule` (`repo`, `kind`, `gate`, `mode`, `by`). |
+| `POST /v1/runs/{id}/autonomy` `{level}` | operator | Le curseur d'autonomie du run : `"ask"`, `"deliver"` ou `null` (§ « Le curseur d'autonomie d'un run »). Rend `{run}` ; 400 pour un autre niveau, 409 sur un run terminal, 403 pour un pilote qui le monterait. Événement `autonomy_level` (`level`, `by`). `POST /v1/runs`, `POST /v1/projects` et `POST /v1/intake/{id}/confirm` acceptent `autonomy` (mêmes valeurs) ; `run.autonomy` le rend. |
+| `GET /v1/rules` · `POST /v1/rules` `{text, repo?, source?, sourceRunId?}` | viewer · operator | Les consignes permanentes (§ « Les consignes permanentes ») : `{rules}`, chacune `{id, repo, text, enabled, source, sourceRunId, by, createdAt, updatedAt}` (`source` : `answer` · `correction` · `cancel` · `manual`), celles des dépôts du client — celles de tous les dépôts (`repo: null`) seulement pour un client qui les voit tous. `POST` : 201 `{rule}` ; texte vide ou de plus de 600 caractères, ou 40 consignes actives déjà : 400 ; dépôt non permis, ou `repo` absent pour un client borné : 403 ; dépôt non déclaré : 404 ; pilote : 403. Événement `standing_rule` (`id`, `repo`, `action` : `created` · `updated` · `removed`). |
+| `PUT /v1/rules/{id}` `{text?, enabled?}` · `DELETE /v1/rules/{id}` | operator | Changer le texte d'une consigne, la suspendre ou la réactiver (`{rule}`), la retirer (`{removed: true}`). Consigne inconnue ou d'un dépôt non permis : 404 ; pilote : 403. |
+| `GET /v1/projects` · `POST /v1/projects` `{repo, title, priority?, autonomy?, features: [{title, request, modules?}]}` · `GET /v1/projects/{id}` | viewer · operator · viewer | /project. La liste porte le décompte des runs de chaque projet par état. Le projet et ses runs naissent dans la même transaction ; `autonomy` pose le curseur de toutes ses features. |
 | `GET /v1/audits` · `POST /v1/audits` `{repo, focus?}` · `GET /v1/audits/{id}` | viewer · operator · viewer | /audit : `queued` → `analysing` → `proposed`. Chaque proposition rendue porte `kind`, `modules`, `rationale`, `evidence` (`fichier:ligne`, non vide pour une faiblesse), `dependsOn` (index des propositions prérequises), `impact` et `effort` (`low` · `medium` · `high`). |
 | `GET /v1/dreams` · `POST /v1/dreams` `{repo}` | viewer · operator | Le rêve de la mémoire : le dernier rêve de chaque dépôt (`state` `dreaming` · `done` · `skipped` · `failed`, `facts`, `reason`, `report` de mem0-rs) ; `POST` demande un rêve, examiné au prochain tour sans seuil de faits ni attente du repos (202 ; 409 sans oracle). |
 | `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | operator | Lancer les propositions retenues en projet (ordonnées selon `dependsOn` : une feature prend un `projectOrder` postérieur à ses prérequis retenus ; 400 si les dépendances bouclent), ou annuler. |
-| `GET /v1/intake?state=a,b&limit=` · `POST /v1/intake` `{text, source, repo?}` · `GET /v1/intake/{id}` | viewer · operator · viewer | Les Demandes (capacité `intake`, § « Les demandes en langage libre ») : une phrase libre, classée par un job en un plan (`feature`, `bug`, `audit`, `workstation_request`, `schedule`) ou une réponse directe (`question`), ou une question de clarification. `POST` : 201 `{intake}` à l'état `classifying` ; `source` ∈ `console` · `ios` · `voice` · `slack` · `cli` · `chrome` (sinon 400), `text` non vide de 4000 caractères au plus (400), `repo` facultatif qui s'impose au plan (403 hors portée du client, 404 non déclaré). La liste (200 `{intakes}`, `state` : des états parmi `classifying` · `clarifying` · `planned` · `answered` · `confirmed` · `cancelled` · `failed`, 400 sinon) et `GET /{id}` (404 pour une demande invisible) ne rendent que les demandes des dépôts du client, plus celles sans dépôt qu'il a posées. |
+| `GET /v1/intake?state=a,b&limit=` · `POST /v1/intake` `{text, source, repo?, context?}` · `GET /v1/intake/{id}` | viewer · operator · viewer | Les Demandes (capacité `intake`, § « Les demandes en langage libre ») : une phrase libre, classée par un job en un plan (`feature`, `bug`, `audit`, `workstation_request`, `schedule`) ou une réponse directe (`question`), ou une question de clarification. `POST` : 201 `{intake}` à l'état `classifying` ; `source` ∈ `console` · `ios` · `voice` · `slack` · `cli` · `chrome` (sinon 400), `text` non vide de 4000 caractères au plus (400), `repo` facultatif qui s'impose au plan (403 hors portée du client, 404 non déclaré), `context` facultatif (capacité `intake-context`) : la page d'où part la demande, `{url?: http(s) ≤ 2000, title?: ≤ 300, selection?: ≤ 4000}`, jugé strictement (400), l'adresse gardée sans identifiants, query ni fragment, rendu par la vue (`context`) à l'auteur et au propriétaire seulement (`null` sans page, et pour tout autre lecteur). La liste (200 `{intakes}`, `state` : des états parmi `classifying` · `clarifying` · `planned` · `answered` · `confirmed` · `cancelled` · `failed`, 400 sinon) et `GET /{id}` (404 pour une demande invisible) ne rendent que les demandes des dépôts du client, plus celles sans dépôt qu'il a posées. |
 | `POST /v1/intake/{id}/confirm` `{plan?}` · `POST /v1/intake/{id}/cancel` · `POST /v1/intake/{id}/answer` `{text}` | operator | `confirm` : crée l'objet du plan par le chemin existant (run, audit, planification, demande au poste) et lie la demande (201 `{intake}` avec `created {kind, id}`) ; `plan` corrige des champs (`kind`, `repo`, `title`, `statement`, `focus`, `schedule`), rejugés (400). 409 si la demande n'est pas `planned` : une seconde confirmation ne crée rien ; 403 du chemin existant (demande au poste : appareil approbateur) : rien n'est créé, la demande reste confirmable. `cancel` : 200, arrête le classement en cours ; 409 si déjà confirmée ou annulée. `answer` : 200, la même demande est reclassée ; 409 si elle n'est pas en `clarifying`, 400 si `text` est vide. 404 pour une demande invisible. |
 | `GET /v1/stats` | viewer | Les statistiques des dépôts du client, avec l'état du scheduler. Les séries des graphiques de Système › Statistiques et santé d'OMP Console : `runs.byDay` (les 14 derniers jours, chacun présent : créés, mergés, échoués), `runs.byRepo` (par dépôt : en cours, mergés, échoués, mergés sur 7 jours), `usage.byRepoLast7Days` (le coût de chaque dépôt sur 7 jours). |
 | `GET /v1/digest?since=` | viewer | Le rapport du matin des dépôts du client : `{since, until, text, counts {merged, decisions, waiting, failed}}`. `since` en ms epoch (défaut : il y a 24 h ; 400 s'il est illisible). `text` (Markdown, français) liste les runs mergés dans la fenêtre (lien de la PR ou sha court), les décisions prises seules dans la fenêtre et pas encore relues, les runs qui attendent l'humain à cet instant (`awaiting_human`, `escalated`, avec la raison), les runs échoués dans la fenêtre, les échéances des planifications de la fenêtre (lancées, sautées ou manquées), puis le coût de la fenêtre si la consommation est connue, et pour un client qui voit tous les dépôts la section « Santé » (mémoire, sauvegardes) ; une section vide est omise, « Rien de neuf. » si tout est vide. Sa dernière ligne nomme le commit déployé (`Commit déployé : <sha court>`, ou inconnu), celui de `/v1/health`. |
@@ -2225,6 +2484,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/client-errors` `{source, version, kind, message, context?}` | viewer | Une erreur d'un client (`source` : `mac` \| `ios` \| `chrome` \| `omp` \| `vigie` ; `context` : objet de 8 Kio au plus) : 202 `{id}`, événement `client_error`, ligne de journal error ; 60 par minute et par client, puis 429 avec `Retry-After`. |
 | `GET /v1/client-errors?since=&source=&limit=` | viewer | Les erreurs des clients, les plus récentes d'abord (200 par défaut, 1000 au plus) ; un client borné à des dépôts ne voit que les siennes. |
 | `POST /v1/push/devices` `{token, platform: "ios", environment: "sandbox" \| "production"}` · `DELETE /v1/push/devices/{jeton}` | viewer | Un appareil iOS et son jeton APNs, liés au client qui l'enregistre (201 nouveau, 200 déjà connu : un jeton enregistré par un autre client passe à celui-ci) ; `pushes` dit si le serveur a une clé APNs. `environment` choisit la passerelle d'Apple (`sandbox` : app installée depuis Xcode). `DELETE` ne retire que les appareils du client qui appelle, tous pour un admin (`removed`). Ce que l'appareil reçoit : § « Les alertes push des appareils ». |
+| `POST /v1/push/activities/start` `{token, environment: "development" \| "production"}` · `DELETE /v1/push/activities/start/{jeton}` | viewer | Le jeton push-to-start d'un appareil iOS (capacité `push-start`), lié au client qui l'enregistre (201 nouveau, 200 déjà connu ; 409 si un AUTRE client le tient déjà — il ne change de main que si ce client n'existe plus) → `{registered: true, pushes}`. Un client garde 5 jetons au plus : le plus anciennement enregistré est remplacé. Le serveur s'en sert pour démarrer la Live Activity d'un run que ce client voit (§ « Les Live Activities app fermée »). `environment` choisit la passerelle d'Apple (`development` : app installée depuis Xcode). `DELETE` ne retire que les jetons du client qui appelle, tous pour un admin → `{removed}`. |
 | `GET /v1/workstation` · `PUT /v1/workstation/settings` `{autonomy?, selfIdentities?, paused?, thresholdHours?, defaultBrowser?, mirrorBrowser?, allowedHosts?, exfiltrationGuard?}` | viewer · operator (approbateur) | Le statut du poste (`online`, `lastSeenAt`, `extensionVersion`, `observedSeconds`, `autonomy {setting, effective}`, `paused`, `selfIdentities`, `pending`, `profileUpdatedAt`, `lastShift`, `nextShiftAt`, `stopped {at, by}` ou `null`, `mirrorBrowser`) ; les réglages, qui priment sur la configuration (`thresholdHours: null` y revient ; `paused: false` lève l'arrêt d'urgence ; `mirrorBrowser` : l'extension dont la session est copiée dans `vps`, `null` coupe), par le seul client `approver` (403 sinon). Propriétaire seulement (403 « le poste est réservé au propriétaire »), comme toutes les routes du poste. Événement `workstation_settings`. |
 | `POST /v1/workstation/observations` `{tz, events}` · `GET /v1/workstation/observations?since=&limit=` | operator · viewer | Un lot de 500 observations au plus (`visit`, `interaction`) → `{stored}` ; 409 en pause. La lecture rend les `limit` (≤ 500) plus récentes depuis `since` (ms), dans l'ordre chronologique, avec leur `id`. |
 | `GET /v1/workstation/next?wait=` | operator | Le long-poll de l'extension (`wait` ≤ 30 s, en-têtes `X-OMP-Extension: <version>`, `X-OMP-Browser`, `X-OMP-Browser-Label` et `X-OMP-Agent-Tabs: <onglets de la fenêtre de l'agent>`) : 200 `{action}` de CE navigateur passée `running`, ou 204. 403 au client pilote : louer une action en remet les `params`. |
@@ -2260,6 +2520,18 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/atlassian/writes/{id}/approve` `{body?}` · `POST /v1/atlassian/writes/{id}/dismiss` | operator (approbateur) | Publie le commentaire proposé (le texte édité s'il est donné, 1 à 4000 caractères) : 200 `{write}` ; 502 si Atlassian refuse (l'écriture passe `failed` avec `error`). Écarte : 200 `{write}`. 409 s'il n'est plus `proposed`. Événement `atlassian_write` `{id, state, kind}`. |
 | `GET /v1/atlassian/plan` | viewer (propriétaire) | Le dernier plan du jour : `{plan}` = `{id, createdAt, trigger: "auto" \| "manual", by, summary, items: [{title, why, next, source, key, url, repo, request}]}` ou `null`. Événement `atlassian_plan` `{id}`. |
 | `POST /v1/atlassian/plan` · `POST /v1/atlassian/knowledge` | operator (approbateur) | Demande un plan du jour (job `poste-plan`) ou une passe de savoir (job `poste-savoir`) au prochain tour : 202 `{queued: true}` ; 409 si Atlassian n'est pas branché. |
+| `POST /v1/local-sessions` `{id, host, cwd, title, state, remote?, branch?, intent?, tool?, model?, cost?}` | operator (propriétaire) | Le battement d'une session omp locale (§ « Les sessions omp locales ») : 200 `{session}` = `{id, client, host, cwd, repo, remote, branch, title, intent, tool, state: "working" \| "idle" \| "ended", model, cost, runId, startedAt, updatedAt, endedAt}`. `id` : 1 à 120 caractères parmi lettres, chiffres, `.`, `_`, `-` ; `host` et `cwd` requis ; `cost` ≥ 0 ; `branch` : un nom sobre (lettres, chiffres, `_`, `.`, `/`, `-`, sans `..` ni `-` initial) ; sinon 400. `title` est ramené sur une ligne. 403 client restreint ou pilote, et sur la session d'un autre client. Événement `local_session` `{id, state}` au changement d'état ; `activity` éphémère `{tool, intent, localSession}` à chaque `intent` ; tous deux sans dépôt, et jamais à un client pilote (le propriétaire seul). Capacité `local-sessions`. |
+| `GET /v1/local-sessions?state=` | viewer (propriétaire) | `{sessions}`, le dernier battement d'abord (200 au plus), après vieillissement (`working` muette depuis 2 min → `idle`, muette depuis 30 min → `ended`) et purge (`ended` depuis plus de 7 jours) ; `state` : un ou plusieurs états séparés par des virgules (inconnu : 400). 403 client restreint ou pilote. |
+| `POST /v1/local-sessions/{id}/handoff` `{request?}` | operator (propriétaire) | Confie le travail de la session à un run de son dépôt, par la voie complète (/req) : 201 `{run, session}` (`session.runId` posé, `ETag` du run) ; `request` : la consigne (4000 caractères au plus), citée dans la demande comme une donnée, comme le titre. 404 session inconnue ; 409 si elle ne travaille aucun dépôt déclaré, ou si le run qui l'a déjà reprise n'est pas terminé (même après un retrait suivi d'un battement). |
+| `DELETE /v1/local-sessions/{id}` | operator (propriétaire) | Retire la session de la liste (son run lié reste connu) : 200 `{removed: true}` ; 404 si elle est inconnue. Événement `local_session` `{…, removed: true}`. |
+| `GET /v1/spaces` | viewer | `{spaces}` : chaque espace (`id`, `name`, `repos`, `poste`, `jiraProjects`, `dailyBudgetUsd`, `autonomy`, `by`, `createdAt`, `updatedAt`, `rev`) avec `memoryScopes` et `stats {working, yours, queued, mergedWeek, failedWeek, cancelledWeek, costToday, costWeek, budgetLeftToday}`. Un client restreint ne voit que les espaces qui tiennent un de ses dépôts, réduits à ses dépôts (sans `poste` ni `jiraProjects` ; `dailyBudgetUsd`, `by` et `budgetLeftToday` à `null`). |
+| `POST /v1/spaces` `{name, repos?, poste?, jiraProjects?, dailyBudgetUsd?, autonomy?}` | admin | Crée un espace : 201 `{space}` (`ETag` : sa révision). 400 nom vide ou de plus de 60 caractères, dépôt non déclaré, budget ou autonomie (`ask`, `deliver`, `null`) invalides ; 409 nom déjà pris, ou dépôt déjà dans un autre espace ; 403 pour un admin restreint à des dépôts. Événement `space` `{id, action: "created"}`. |
+| `PUT /v1/spaces/{id}` `{name?, repos?, poste?, jiraProjects?, dailyBudgetUsd?, autonomy?}` | admin | Modifie les champs présents : `{space}` ; `If-Match` : la révision lue (412 si l'espace a changé). Mêmes refus que la création ; 404 espace inconnu. Événement `space` `{id, action: "updated"}`. |
+| `DELETE /v1/spaces/{id}` | admin | Retire l'espace (ses dépôts et leurs runs restent) : `{removed: true}` ; `If-Match` comme la modification ; 404 espace inconnu. Événement `space` `{id, action: "removed"}`. |
+| `GET /v1/spaces/{id}/report?since=` | viewer | Le rapport de l'espace : `{space, since, until, text, counts {merged, decisions, waiting, failed}, cost}` — le rapport du matin borné à ses dépôts (ceux que voit le client), sans la santé ni le commit. `since` en ms epoch (défaut : il y a 7 jours ; 400 s'il est illisible) ; 404 espace inconnu ou sans dépôt visible. |
+| `GET /v1/brief?since=` | viewer | Le brief « pendant votre absence » : `{brief: {since, until, seenAt, headline, delivered[{runId, repo, title, prUrl, at, cost, alone}], waiting[{runId, repo, title, wait, since}], failed[{runId, repo, title, reason, at}], stopped[{runId, repo, title, cause, at}], decided[{runId, repo, title, seq, question, chosen, status}], blocked[{runId, repo, title, cause, text}], proposals, cost}}`. `since` en ms epoch (400 s'il est illisible) ; défaut : le dernier « vu » du client, sinon il y a 24 h. |
+| `POST /v1/brief/seen` | viewer | Le client a vu le brief : `{seenAt}` (maintenant) ; le prochain brief part de cet instant. |
+| `GET /v1/scoreboard?days=` | viewer | Les chiffres des dépôts du client : `{scoreboard: {since, until, merged, mergedAlone, aloneRate, decisions, medianDecisionMs, started, startedAlone, startedAloneRate, cancelled, cancelCauses, repos[{repo, merged, mergedAlone, cancelled, failed, successRate, suggestion}]}}`. `days` : entier de 1 à 90, sans dépasser `events.retentionDays` (défaut 7 ; 400 sinon) ; un taux sans dénominateur vaut `null`. |
 | `GET /v1/clients` · `POST /v1/clients` `{name, role?, repos?}` · `DELETE /v1/clients/{name}` | admin | Lister (avec le drapeau `approver`), créer (le jeton n'est rendu qu'à la création ; un champ `approver` → 400 : l'approbateur ne se crée qu'en ligne de commande), révoquer. |
 | `GET /v1/providers` | admin | Les fournisseurs (déclarés par l'API ou par la configuration, `source`), leurs modèles et limites, `hasKey` et `keyHint` (4 derniers caractères) — jamais la clé ; les chaînes de modèles en vigueur (`models`, `modelsSource`), les sortes et protocoles permis. |
 | `PUT /v1/providers/{name}` `{kind, apiKey?, baseUrl?, api?, models?, capacity?, refillPerMinute?}` · `DELETE /v1/providers/{name}` | admin | Déclarer ou modifier un fournisseur (`apiKey` absent : la clé reste ; `""` : retirée), le retirer (409 tant qu'une chaîne le nomme). Événement `providers_changed`. |
@@ -2272,7 +2544,12 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/vigie/heartbeat` `{version?}` | operator (client pilote) | Le battement de la vigie (403 à tout autre client) : rend `{settings, today}`. |
 | `GET /v1/vigie/incidents?status=&limit=` · `POST /v1/vigie/incidents` `{fingerprint, source, location, message, at?, repo?, runId?, context?}` \| `{fingerprint, triage}` \| `{fingerprint, defer}` | viewer · operator (client pilote) | Les incidents, récents d'abord (`status` : `new`, `noise`, `bug`, `reported`, `fixing`, `watching`, `resolved`, `deferred`), bornés aux dépôts du lecteur ; une occurrence (201 nouvelle, 200 connue, avec `triage` : `needed` · `skip` · `budget`), le tri d'un incident, ou son renvoi à l'humain. 409 en mode `off`. Événements `vigie_incident`, `vigie_silent`. |
 | `GET /v1/events?run=…&live=1` | viewer | SSE, filtré par les dépôts du client. `id:` = curseur du journal. Événements journalisés : `run_created`, `run_state`, `run_failed`, `priority`, `step_started`, `step_done`, `step_timeout`, `checkpoint`, `split`, `follow_up`, `decision`, `decision_auto_timeout`, `escalation`, `escalations` (le lot), `review`, `specs_ready`, `verdict`, `retried`, `instructions` (une consigne au run : `text`, `delivered`, `step`, `by`), `run_budget` (son budget propre : `budgetUsd`, `by`), `audit_state`, `intake_state` (une Demande change d'état : `intakeId`, `state`, `kind`, `repo`, `reason`, et selon la transition `by`, `answered`, `created`, `recovered` ; sans dépôt, elle va aussi à son auteur), `pilot` (le geste du pilote sur un run : `action`, `reason`, `rev` traitée, `by`, `auditId` — nul pour le pilote de l'usine), `heavy_*`, `rate_limited`, `model_failover`, `rebased`, `merge_queued`, `merged`, `push_failed`, `reverted`, `revert_failed`, `project_done` (le dernier run d'un projet est terminal : `merged`, `notMerged`), `schedule_fired` et `schedule_skipped` (l'échéance d'une planification : `scheduleId`, `name`, `kind`, `status`, `reason`, `dueAt`, `detail`, `missed`, `runIds`, `auditId`, `requestId`), `notify_failed`, `signal` (l'état d'un signalement de collègue : `id`, `state` ; dépôt nul, propriétaire seul), `progress`… (catalogue : `events.ts`). `live=1` ajoute `activity` (les outils des runners), `graph` (le graphe de session d'un run a changé : `{version, nodes, edges}`, des nombres ; le client relit `GET /v1/runs/{id}/graph` ; au plus un par 2 s et par run, jamais écrit au journal) et `session` (le direct des sessions : `payload.entry` = `{seq, at, step, kind, text, tool, status, detail, call, endedAt, hasDetails, agents}`, `kind` parmi `text`, `thinking`, `tool`, `notice`, `instructions` (une consigne de l'humain, son texte) ; un outil porte son appel en une ligne (`call` : sa commande, son chemin, ses sous-agents…) à côté de son intention (`text`), la fin de sa sortie (`detail`, mise à jour au plus toutes les 500 ms tant qu'il tourne) et `endedAt` ; un appel `task` porte ses sous-agents en une ligne chacun (`agents` : `{id, name, agent, status, task, activity}`, mis à jour en direct) ; un appel `progress` n'est pas un outil mais un paragraphe de l'agent (`kind: text`) ; `hasDetails` : le détail se lit par `GET /v1/runs/{id}/session/{seq}` ; une entrée de même `seq` remplace la précédente, un paragraphe qui s'écrit est renvoyé entier au plus toutes les 500 ms ; textes bornés, secrets masqués) : éphémères, sans `id:`, jamais rejoués. |
-| événements `autonomy`, `validation` | viewer | Événements du journal (`GET /v1/events`). `validation` `{gate, approve, liftable, by?, pilot?}` : chaque validation ou refus d'une attente humaine, par qui que ce soit ; `gate` est ce qui était attendu (`specs`, `irreversible`, `verdict`…), `liftable` dit, constaté par le serveur au moment du geste, si une règle d'autonomie aurait pu la lever. `autonomy` `{action: "hold" \| "validate" \| "defer", gate: "specs" \| "review", rev, seq?, rank?, why?}` : une attente retenue, validée seule (`seq` : la décision inscrite, `rank` : la règle) ou rendue à l'humain. |
+| événements `autonomy`, `validation` | viewer | Événements du journal (`GET /v1/events`). `validation` `{gate, approve, liftable, by?, pilot?}` : chaque validation ou refus d'une attente humaine, par qui que ce soit ; `gate` est ce qui était attendu (`specs`, `irreversible`, `verdict`…), `liftable` dit, constaté par le serveur au moment du geste, si une règle d'autonomie aurait pu la lever. `autonomy` `{action: "hold" \| "validate" \| "defer", gate: "specs" \| "review", rev, seq?, rank?, why?}` : une attente retenue, validée seule (`seq` : la décision inscrite, `rank` : la règle) ou rendue à l'humain. Les gestes `escalation_answered`, `retried` et `instructions` portent aussi `pilot: true` quand un pilote (audit, usine, client pilote) les fait : le journal ne les compte pas comme des gestes de l'humain. |
+| `GET /v1/proposals` | viewer | Le bac « Propositions » (§ « Les propositions et « refaire » ») : `{proposals}`, chacune `{id, source, repo, title, detail, url, createdAt, action}` — `source` ∈ `issue` · `vigie` · `audit` · `signal` · `jira` · `autonomy` · `retry` · `pr` · `ci` ; `action` ∈ `launch` · `fix` · `apply` · `confirm` · `retry` ; `detail` : 300 caractères au plus. Les plus récentes d'abord, sans les écartées ; celles des dépôts du client, `signal` et `jira` au propriétaire seulement. Aucun appel à la forge. Capacité `proposals`. |
+| `POST /v1/proposals/{id}/accept` | operator | Accepte la proposition par le geste existant de sa source : 200 `{proposal, created: {kind: "run" \| "project" \| "rule" \| "signal" \| "retry", id}}`. 404 si elle a disparu, est écartée ou n'est pas au lecteur ; 409 si elle est en cours d'acceptation ; les refus du geste lui-même (403 hors appareil approbateur pour un signalement ou un item du plan Atlassian, 403 sans rôle admin ou client borné et 409 sans `--config` pour une règle de palier, 403 des gardes de la vigie pour un pilote, 409 d'une issue fermée). |
+| `POST /v1/proposals/{id}/dismiss` | operator | Écarte la proposition : 200 `{dismissed: true}` ; elle ne revient pas. Déjà écartée : 200 ; 404 si elle est inconnue ou n'est pas au lecteur ; 403 pour un client pilote. |
+| `GET /v1/runs/{id}/template` | viewer | « Refaire » : `{template: {repo, title, request, kind, labels, modules, lane: "full" \| null, budgetUsd, autonomy}}`, le corps d'un `POST /v1/runs` à la demande d'origine du fil (titre nettoyé ; `lane` : `full` si le premier run est passé par /req ; `budgetUsd` : son budget propre, `null` sinon). 404 hors des dépôts du client. |
+| événement `proposals` | viewer (tous les dépôts) | `{count}` : l'ensemble des propositions ouvertes a changé (`count` : leur nombre, toutes sources) ; le client relit `GET /v1/proposals`. Sans dépôt : seuls les clients qui voient tous les dépôts le reçoivent. |
 
 Les gestes acceptent `If-Match: "<rev>"` (412 si le run a changé depuis). Un rôle
 insuffisant rend 403, un dépôt non permis 403 à la création et 404 en lecture. Une
@@ -2311,6 +2588,7 @@ chemin ou une commande) ne va qu'au journal du service, sous la même référenc
 | **Poste de travail** (ajout) | `workstation.ts`, `workstation-guards.ts`, `workstation-agent.ts`, `db/workstation.ts`, `db/workstation-meetings.ts`, `db/workstation-captures.ts`, `db/workstation-browsers.ts`, `db/workstation-requests.ts` | Le relais de l'extension Chrome : observation validée et purgée, file d'actions (bail, résultat, garde d'envoi tenue par le serveur : approbation humaine ou destinataires tous à soi, jamais à l'échéance), cantonnement à la fenêtre de l'agent et navigation gardée (approbation), contenu des pages délimité comme non fiable, arrêt d'urgence, meetings, profil versionné, captures gardées. Les attentes (long-poll, résultat) sont des promesses en mémoire, réveillées par le changement, l'échéance ou le départ du client. L'agent 24/24 et ses jobs passent par la même session de runner que les audits, sur un dépôt synthétique (§ « Le poste de travail »). |
 | **Issues GitHub** (ajout) | `issues.ts`, `mcp.ts`, `db/issues.ts` | Le serveur MCP de `POST /v1/mcp` : les issues d'un dépôt déclaré lues par `gh` dans le dépôt GitHub de son distant, lancées en runs par `createRun` ; la table `issue_runs` lie chaque issue à son dernier run et empêche un double lancement (et deux appels simultanés sur la même issue n'en font qu'un). |
 | **Statistiques** (ajout) | `stats.ts` | Calculées à la demande sur la base : runs par état, taux de merge, délai médian, étapes et durées, corrections, tests heavy (cache, relances), décisions, audits. |
+| **Espaces, brief, chiffres** (ajout) | `spaces.ts`, `db/spaces.ts`, `brief.ts`, `scoreboard.ts`, `intake.ts` | `SpaceDesk` (`orchestrator.spaces`) garde l'invariant « un dépôt, au plus un espace » dans la transaction de l'écriture, et sert l'admission (`budgetHold`, coût du jour UTC de l'espace) et la création d'un run (`autonomyOf`). Le brief, les chiffres et l'état de l'usine du classeur sont des fonctions pures sur la base ; seul ce qui retient un run en file (tenu en mémoire par l'orchestrateur) leur est passé. « Humain » se lit dans le journal : ni service, ni `autonomie:`, ni `pilote:`, ni client pilote (le client du battement de la vigie, les auteurs de validations `pilot`). |
 | **Boucle humaine** | `gestures.ts`, `http.ts` | Les gestes d'un run passent un par un, chacun dans une transaction, avec son auteur ; `If-Match` refuse un geste fait sur une vue périmée. Répondre aux escalades (avec une raison, qui part dans l'oracle avec les options et le contexte), relancer un run échoué ou en attente (`retry`, avec une consigne facultative), parler à un run en cours (`instructions` : un `steer` dans le prompt en cours de son runner, sinon une consigne gardée pour le prompt suivant, que `steps.ts` joint aussi aux relances de la même étape), changer son budget, accepter une décision ou toutes d'un geste, renverser une décision. Si rien ne découle de la décision N, il n'y a pas de retour arrière : l'étape en cours (ou une correction après la revue) applique l'option sur l'état courant, et les autres décisions tiennent. Si des décisions en découlent (`dependsOn`, transitivement), le service **reverte** les commits de N et de ses dépendantes (du checkpoint N au checkpoint de la première survivante postérieure, sinon HEAD) : le travail indépendant d'après reste dans l'arbre, les checkpoints tiennent ; si ce revert entre en conflit, retour dur au checkpoint N et les indépendantes sont réappliquées par consigne. Un run déjà mergé : revert du commit squash sur `main`, puis un run de suite qui porte l'option (si le revert ne passe pas — push refusé —, événement `revert_failed` et run de suite seul). Sans réponse humaine passé `review.escalationTimeoutSec`, chaque escalade ouverte (jamais une suppression, ni une escalade sans recommandation) reçoit l'option recommandée : décision `auto_timeout` avec son checkpoint, renversable comme les autres, événement `decision_auto_timeout`, souvenir tagué `harness,decision,auto_timeout`, et le run reprend. |
 
 ## Sécurité et écarts assumés au schéma
@@ -2437,6 +2715,22 @@ programme développeur) :
 Une activité dont le jeton est refusé par Apple est oubliée ; sans `apns`, rien ne
 part et l'activité ne bouge que l'app ouverte.
 
+**L'activité démarrée par le serveur (push-to-start).** L'app n'a pas à être ouverte pour
+qu'une activité apparaisse : chaque appareil enregistre son jeton de démarrage au nom de son
+client (`POST /v1/push/activities/start {token, environment}`, `environment` `development`
+pour une app installée depuis Xcode, `production` sinon — la passerelle est celle du jeton,
+pas `apns.sandbox`). Quand un run que ce client voit se met au travail pour la première fois
+(`running`), ou attend l'humain (`awaiting_human`, `escalated`), le serveur envoie
+`event: start` (`apns-push-type: liveactivity`) avec `attributes-type`
+`OMPRunActivityAttributes`, `attributes` `{runId, title, repo}` et le même `content-state` que
+les mises à jour (`{state, step, tool, alert, cost, updatedAt}`), plus `input-push-token: 1` :
+l'activité démarrée reçoit son jeton de mise à jour, que l'app enregistre comme d'habitude
+(`POST /v1/push/activities`). Rien ne part si une activité est déjà enregistrée pour ce run et
+ce client, ni deux fois pour le même run et le même client (mémoire de 12 h), ni plus de
+trois fois par client et par heure ; une reprise (réponse donnée, relance) n'est pas un
+premier départ. Les droits du client sont relus à chaque démarrage, le jeton d'un client
+révoqué ou refusé par Apple est oublié.
+
 ### Les alertes push des appareils (APNs)
 
 La même clé `.p8` (rien de plus à configurer côté serveur que `apns` ci-dessus) sert
@@ -2453,7 +2747,7 @@ Le serveur pousse (`apns-push-type: alert`, `push-alerts.ts`) :
 | Événement | Alerte (`omp.kind`) | Qui la reçoit | Catégorie |
 |---|---|---|---|
 | `specs_ready` · `verdict` | `specs` · `verdict` | les clients qui voient le dépôt | `omp.validate` (Valider / Refuser) pour un opérateur, sinon `omp.open` |
-| `escalations` | `escalation` | les clients qui voient le dépôt | `omp.open` |
+| `escalations` | `escalation` | les clients qui voient le dépôt | `omp.answer` (une option par bouton) pour un opérateur quand le lot n'a qu'une question ouverte, recommandée, qui n'est pas une suppression (`deletion`) ; sinon `omp.open` |
 | `run_failed` · `stalled` · `budget_exceeded` | `run_failed` · `stalled` · `budget` | les clients qui voient le dépôt | `omp.open` |
 | `workstation_approval` | `approval` | l'approbateur seul (`harness.sh approver`) | `omp.approve` (Approuver / Refuser) |
 | `daily_budget_reached` · `vigie_silent` · `backup_failed` | `daily_budget` · `vigie_silent` · `backup_failed` | les clients qui voient tous les dépôts | `omp.open` |
@@ -2467,7 +2761,16 @@ et le titre du run, et `omp` `{kind, runId?, rev?, seq?}` — jamais le contenu 
 commentaire Jira à valider et du résumé du plan du jour. Une escalade à `card` porte
 sa `headline` (titre) et son `stake` (corps), suivis de « · +N autres questions » pour un lot
 (une seule alerte par lot) : ni option, ni contexte, ni chemin ; sans `card`, l'alerte garde son
-texte générique, jamais la question brute. `rev` est
+texte générique, jamais la question brute. Exception voulue (capacité `push-answer`) : quand le
+lot d'un run n'a qu'UNE question ouverte et que l'agent y recommande une option, on y répond
+de la notification — le titre dit le dépôt et le run, le corps la question puis
+« Recommandé : <option> », et la charge d'un opérateur porte
+`omp.question` `{id, recommended, options}` (quatre options au plus, la recommandée en tête
+au-delà) : l'app répond par `POST /v1/runs/{id}/escalations` avec l'option choisie et
+`If-Match: rev`. Un lecteur reçoit la même alerte en `omp.open`, sans `omp.question`. Une
+option de plus de 120 caractères, un secret reconnu dans la question ou une option, ou une
+escalade `deletion` (une suppression s'ouvre dans l'app, elle ne se tranche pas d'un bouton)
+laissent l'alerte générique. `rev` est
 l'If-Match du geste fait depuis la notification (la révision du run, ou l'`updatedAt`
 de l'envoi du poste) : si le run ou l'envoi a bougé depuis, le serveur refuse (412) et
 rien n'est tranché. Les notifications d'un run se groupent (`thread-id` : l'id du run ;

@@ -15,12 +15,17 @@
 // Exception voulue : un commentaire Jira à valider porte sa clé et le début de son texte, le plan
 // du jour le début de son résumé (propriétaire ou approbateur seulement).
 // Une escalade à carte porte sa `headline` (titre) et son `stake` (corps) seulement : la carte
-// est écrite pour être lue d'un coup d'œil, sans chemin ni code. Le nombre de
-// preuves d'un verdict n'est pas du contenu de run : il s'ajoute au corps. La
+// est écrite pour être lue d'un coup d'œil, sans chemin ni code. Seconde exception voulue : quand
+// le lot d'un run n'a qu'UNE question ouverte et que l'agent y recommande une option, la
+// notification permet d'y répondre — son corps dit la question et « Recommandé : <option> », et
+// la charge porte `omp.question {id, recommended, options}` (quatre options au plus) pour un
+// opérateur ; une question dont le texte porte un secret reconnu reste à ouvrir dans l'app.
+// Le nombre de preuves d'un verdict n'est pas du contenu de run : il s'ajoute au corps. La
 // `category` dit le geste que l'appareil peut faire de la notification : valider ou
-// refuser (specs, verdict : opérateur au moins), approuver ou refuser (envoi du poste :
-// approbateur), sinon ouvrir. `rev` est l'If-Match du geste : la révision du run, ou
-// l'`updatedAt` de l'envoi. Les notifications d'un run se groupent (`thread-id`).
+// refuser (specs, verdict : opérateur au moins), répondre (question unique recommandée :
+// opérateur au moins), approuver ou refuser (envoi du poste : approbateur), sinon ouvrir.
+// `rev` est l'If-Match du geste : la révision du run, ou l'`updatedAt` de l'envoi. Les
+// notifications d'un run se groupent (`thread-id`).
 //
 // Une même alerte ne part qu'une fois (clé par alerte, mémoire de 12 h, aussi
 // `apns-collapse-id`) : un événement rejoué ou répété ne réveille pas l'iPhone deux fois.
@@ -30,16 +35,18 @@ import type { Client } from "./auth.ts";
 import { allows, canSeeRepo } from "./auth.ts";
 import { batchLead } from "./card.ts";
 import type { ApnsConfig } from "./config.ts";
-import type { EventRow, RunRow, Store } from "./db.ts";
+import type { EscalationRow, EventRow, RunRow, Store } from "./db.ts";
 import type { LogLine } from "./logger.ts";
-import type { ApnsClient } from "./push.ts";
+import type { ApnsClient, ClientList } from "./push.ts";
 import { tokenGone } from "./push.ts";
 import { proofCountText } from "./proofs.ts";
+import { redact } from "./session-feed.ts";
 
 /** Les catégories de notification de l'app : les gestes qu'elle offre sur la notification. */
 export const ALERT_CATEGORIES = {
   validate: "omp.validate",
   approve: "omp.approve",
+  answer: "omp.answer",
   open: "omp.open",
 } as const;
 
@@ -63,6 +70,9 @@ export const ALERT_KINDS = [
 
 export type AlertKind = (typeof ALERT_KINDS)[number];
 
+/** La question à laquelle la notification permet de répondre : `POST /v1/runs/{id}/escalations` avec une de ses options. */
+export type AlertQuestion = { id: number; recommended: string; options: string[] };
+
 /** Une alerte, avant de savoir à qui elle part. */
 export type Alert = {
   kind: AlertKind;
@@ -83,6 +93,8 @@ export type Alert = {
   audience: "repo" | "owner" | "approver";
   /** Le geste que permet la notification, selon les droits du client. */
   gesture: "validate" | "approve" | null;
+  /** Présente : le lot n'a que cette question ouverte, recommandée, et un opérateur y répond de la notification. */
+  question?: AlertQuestion;
 };
 
 /** Une alerte n'est pas renvoyée avant ce délai. */
@@ -129,6 +141,31 @@ function opening(text: string): string {
   return line.length > 120 ? `${line.slice(0, 119)}…` : line;
 }
 
+/** Une notification offre quatre réponses au plus. */
+const ANSWER_OPTIONS_MAX = 4;
+/** Une option plus longue ne se lit pas sur un bouton (et la charge APNs est bornée à 4 Ko). */
+const ANSWER_OPTION_CHARS_MAX = 120;
+
+/**
+ * La question à laquelle on répond de la notification : le lot du run n'a qu'UNE question ouverte
+ * (celle de l'événement) et l'agent y recommande une option. Les options gardent leur ordre ; au-delà de
+ * quatre, la recommandée passe en tête. `null` sinon — ou si une option est trop longue pour un bouton, ou
+ * si la question ou une option porte un secret reconnu : ces textes quittent le serveur. `null` aussi pour
+ * une suppression (`deletion`) : elle ne se tranche jamais d'un bouton de notification, elle s'ouvre.
+ */
+function answerable(store: Store, run: RunRow, id: number): { text: string; question: AlertQuestion } | null {
+  const open: EscalationRow[] = store.listEscalations({ runId: run.id, status: "open" });
+  const [item] = open;
+  if (open.length !== 1 || item === undefined || item.id !== id) return null;
+  const recommended = item.recommended?.trim() ?? "";
+  if (recommended === "" || item.category === "deletion") return null;
+  const kept = item.options.slice(0, ANSWER_OPTIONS_MAX);
+  const options = kept.includes(recommended) ? kept : [recommended, ...kept.slice(0, ANSWER_OPTIONS_MAX - 1)];
+  if (options.some((option) => option.length > ANSWER_OPTION_CHARS_MAX)) return null;
+  if ([item.question, ...options].some((text) => redact(text) !== text)) return null;
+  return { text: item.question, question: { id: item.id, recommended, options } };
+}
+
 /** L'alerte d'un événement du journal, ou `null` s'il n'en mérite pas (ou que son sujet a déjà bougé). */
 export function alertFor(event: EventRow, store: Store): Alert | null {
   const payload = event.payload;
@@ -150,6 +187,15 @@ export function alertFor(event: EventRow, store: Store): Alert | null {
         .sort((a, b) => a - b);
       if (ids.length === 0) return null;
       const alert = runAlert(run, "escalation", "", `escalation:${run.id}:${ids.join(",")}`);
+      // Une seule question ouverte, recommandée : on y répond de la notification.
+      const single = ids.length === 1 ? answerable(store, run, ids[0] as number) : null;
+      if (single)
+        return {
+          ...alert,
+          title: `${run.repo} · ${run.title}`,
+          body: `${opening(single.text)}\nRecommandé : ${single.question.recommended}`,
+          question: single.question,
+        };
       // Une escalade à carte : la headline et le stake de la première, rien d'autre (jamais option ni contexte).
       const lead = batchLead(Array.isArray(payload.items) ? payload.items : []);
       if (lead) return { ...alert, title: lead.headline, body: lead.body };
@@ -249,10 +295,14 @@ export function receives(alert: Alert, client: Client): boolean {
 export function categoryFor(alert: Alert, client: Client): AlertCategory {
   if (alert.gesture === "approve" && client.approver) return ALERT_CATEGORIES.approve;
   if (alert.gesture === "validate" && allows(client.role, "operator")) return ALERT_CATEGORIES.validate;
+  if (alert.question !== undefined && allows(client.role, "operator")) return ALERT_CATEGORIES.answer;
   return ALERT_CATEGORIES.open;
 }
 
-/** Le corps APNs : le texte, le regroupement, la catégorie, et les seuls identifiants du geste. */
+/**
+ * Le corps APNs : le texte, le regroupement, la catégorie, et les seuls identifiants du geste — la
+ * question et ses options seulement pour qui peut y répondre (`omp.answer`).
+ */
 export function alertPayload(alert: Alert, category: AlertCategory): Record<string, unknown> {
   return {
     aps: {
@@ -266,6 +316,7 @@ export function alertPayload(alert: Alert, category: AlertCategory): Record<stri
       ...(alert.runId !== null ? { runId: alert.runId } : {}),
       ...(alert.rev !== null ? { rev: alert.rev } : {}),
       ...(alert.seq !== null ? { seq: alert.seq } : {}),
+      ...(category === ALERT_CATEGORIES.answer && alert.question !== undefined ? { question: alert.question } : {}),
     },
   };
 }
@@ -282,7 +333,7 @@ export class AlertPusher {
   readonly #deps: AlertDeps;
   readonly #now: () => number;
   /** Les clients du serveur (auth.ts) ; sans eux, rien ne part (échec fermé). */
-  #clients: { list(): Client[] } | null = null;
+  #clients: ClientList | null = null;
   /** Clé d'alerte → instant de son envoi. */
   readonly #sent = new Map<string, number>();
   readonly #inFlight = new Set<Promise<void>>();
@@ -293,8 +344,13 @@ export class AlertPusher {
   }
 
   /** Le registre des clients de l'API : les droits de chaque appareil y sont relus à chaque envoi. */
-  useClients(clients: { list(): Client[] }): void {
+  useClients(clients: ClientList): void {
     this.#clients = clients;
+  }
+
+  /** Le registre donné par `useClients` (`null` : pas encore) : le démarrage des Live Activities (push.ts) y relit les mêmes droits. */
+  get clients(): ClientList | null {
+    return this.#clients;
   }
 
   subscribe(): () => void {

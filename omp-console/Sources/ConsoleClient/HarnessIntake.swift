@@ -78,6 +78,41 @@ public struct HarnessIntakeCreated: Codable, Equatable, Sendable {
     public var id: String
 }
 
+/// Le contexte de page d'une demande (popup Chrome, partage) : d'où elle vient. Une
+/// DONNÉE pour le classeur du serveur, jamais une consigne.
+public struct HarnessIntakeContext: Codable, Equatable, Sendable {
+    /// Les bornes du serveur.
+    public static let maxURLLength = 2000
+    public static let maxTitleLength = 300
+    public static let maxSelectionLength = 4000
+
+    /// L'adresse de la page (http ou https).
+    public var url: String?
+    public var title: String?
+    /// Le texte sélectionné dans la page.
+    public var selection: String?
+
+    public init(url: String? = nil, title: String? = nil, selection: String? = nil) {
+        self.url = url
+        self.title = title
+        self.selection = selection
+    }
+
+    /// Le contexte tel qu'il peut partir : champs rognés et bornés, adresse http(s) seulement ;
+    /// `nil` s'il ne reste rien.
+    public var sendable: HarnessIntakeContext? {
+        func kept(_ value: String?, _ limit: Int) -> String? {
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : String(trimmed.prefix(limit))
+        }
+        let address = url?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let scheme = URL(string: address)?.scheme?.lowercased()
+        let page = (scheme == "http" || scheme == "https") && address.count <= Self.maxURLLength ? address : nil
+        let cleaned = HarnessIntakeContext(url: page, title: kept(title, Self.maxTitleLength), selection: kept(selection, Self.maxSelectionLength))
+        return cleaned == HarnessIntakeContext() ? nil : cleaned
+    }
+}
+
 /// Une demande telle que `/v1/intake` la rend.
 public struct HarnessIntake: Codable, Equatable, Sendable, Identifiable {
     public var id: String
@@ -85,6 +120,8 @@ public struct HarnessIntake: Codable, Equatable, Sendable, Identifiable {
     public var source: String
     public var repo: String?
     public var requestedRepo: String?
+    /// Le contexte de page posé avec la demande ; `nil` sans contexte, ou d'un serveur antérieur.
+    public var context: HarnessIntakeContext?
     /// `classifying`, `clarifying`, `planned`, `answered`, `confirmed`, `cancelled` ou `failed`.
     public var state: String
     public var kind: String?
@@ -208,22 +245,27 @@ public final class HarnessIntakes: ObservableObject {
     // MARK: Gestes de l'humain
 
     /// Pose une demande. `source` : `console` (Mac) ou `ios` ; `repo` vide : le serveur le déduit.
+    /// `context` : la page d'où vient la demande (adresse, titre, sélection), s'il y en a une.
     @discardableResult
-    public func submit(text: String, source: String, repo: String? = nil) async throws -> HarnessIntake {
+    public func submit(text: String, source: String, repo: String? = nil, context: HarnessIntakeContext? = nil) async throws -> HarnessIntake {
         let trimmed = repo?.trimmingCharacters(in: .whitespaces) ?? ""
         let reply: HarnessIntakeReply = try await post(
-            "/v1/intake", body: SubmitBody(text: text.trimmingCharacters(in: .whitespacesAndNewlines), source: source, repo: trimmed.isEmpty ? nil : trimmed)
+            "/v1/intake", body: SubmitBody(
+                text: text.trimmingCharacters(in: .whitespacesAndNewlines), source: source, repo: trimmed.isEmpty ? nil : trimmed,
+                context: context?.sendable
+            )
         )
         upsert(reply.intake)
         return reply.intake
     }
 
     /// Confirme le plan, corrigé par `plan` s'il est donné : le serveur crée l'objet.
+    /// `autonomy` : le curseur de la feature créée ; `nil` : celui de l'espace, sinon les règles du dépôt.
     @discardableResult
-    public func confirm(_ intake: HarnessIntake, plan: HarnessIntakePlan? = nil) async throws -> HarnessIntake {
+    public func confirm(_ intake: HarnessIntake, plan: HarnessIntakePlan? = nil, autonomy: HarnessRunAutonomy? = nil) async throws -> HarnessIntake {
         var patch = plan
         patch?.creates = nil
-        return try await gesture(on: intake, path: "confirm", body: ConfirmBody(plan: patch))
+        return try await gesture(on: intake, path: "confirm", body: ConfirmBody(plan: patch, autonomy: autonomy?.rawValue))
     }
 
     /// Annule une demande (ou écarte une réponse directe, un échec).
@@ -291,10 +333,12 @@ private struct SubmitBody: Encodable {
     var text: String
     var source: String
     var repo: String?
+    var context: HarnessIntakeContext?
 }
 
 private struct ConfirmBody: Encodable {
     var plan: HarnessIntakePlan?
+    var autonomy: String?
 }
 
 private struct AnswerIntakeBody: Encodable {

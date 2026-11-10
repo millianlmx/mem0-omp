@@ -76,7 +76,7 @@ public final class HarnessNotificationCenter: NSObject, ObservableObject {
         }
         return UNTextInputNotificationAction(
             identifier: spec.action.rawValue, title: spec.title, options: options,
-            textInputButtonTitle: spec.title, textInputPlaceholder: NotificationText.refusePlaceholder
+            textInputButtonTitle: spec.submitTitle ?? spec.title, textInputPlaceholder: spec.placeholder ?? ""
         )
     }
 
@@ -116,7 +116,14 @@ public final class HarnessNotificationCenter: NSObject, ObservableObject {
             return
         }
         guard await !server.execute(gesture), let alert else { return }
-        // Refusé (révision périmée, droits) : rien n'est tranché, et l'humain le sait.
+        await Self.notifyGestureFailed(alert)
+    }
+
+    /// Un geste fait hors de l'app (action d'une notification, bouton d'une Live Activity)
+    /// que le serveur a refusé (révision périmée, droits) : rien n'est tranché, et l'humain
+    /// le sait par une notification locale, qui ouvre l'app là où le geste se fait.
+    public static func notifyGestureFailed(_ alert: HarnessPushAlert) async {
+        guard isAvailable else { return }
         let content = UNMutableNotificationContent()
         content.title = NotificationText.gestureFailed
         content.body = NotificationText.gestureFailedBody

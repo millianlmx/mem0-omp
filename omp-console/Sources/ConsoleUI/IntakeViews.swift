@@ -11,8 +11,8 @@ import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-/// La source déclarée au serveur : l'app Mac ou l'app iOS.
-private var intakeSource: String {
+/// La source déclarée au serveur : l'app Mac ou l'app iOS (aussi lue par les écrans `OS/`).
+var intakeSource: String {
     #if os(iOS)
     "ios"
     #else

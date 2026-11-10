@@ -13,11 +13,16 @@ import SwiftUI
 
 // MARK: - Page du Poste
 
-struct AtlassianSections: View {
+public struct AtlassianSections: View {
     let server: HarnessModel
     @ObservedObject var atlassian: AtlassianModel
 
-    var body: some View {
+    public init(server: HarnessModel, atlassian: AtlassianModel) {
+        self.server = server
+        self.atlassian = atlassian
+    }
+
+    public var body: some View {
         if let failure = atlassian.failure {
             ConsoleFailureBanner(failure: failure)
         }

@@ -6,10 +6,12 @@
 import type { RepoConfig } from "./config.ts";
 import { HarnessError } from "./errors.ts";
 import type {
+  AuthorLink,
   ChangeRequest,
   ChangeState,
   CheckConclusion,
   CheckStatus,
+  FailedCi,
   FailedLog,
   Forge,
   ForgeAuth,
@@ -19,6 +21,7 @@ import type {
   IssueComment,
   IssueDetail,
   IssueQuery,
+  OpenChange,
   SquashMessage,
 } from "./forge.ts";
 import {
@@ -44,6 +47,13 @@ const LOG_MAX_BYTES = 4 * 1024 * 1024;
 const JSON_MAX_BYTES = 8 * 1024 * 1024;
 /** Les champs d'une issue listée, et ceux d'une issue lue en entier. */
 const ISSUE_FIELDS = "number,title,url,labels,author,createdAt";
+/** L'API REST de GitHub pagine à 100 au plus. */
+const PAGE_MAX = 100;
+/**
+ * Les événements par lesquels le dépôt lance sa CI sur sa propre branche. Une exécution `pull_request*`
+ * (ou `workflow_run`, qui en hérite la branche et le commit) peut venir d'un fork : jamais la CI de la branche.
+ */
+const CI_EVENTS: readonly string[] = ["push", "schedule", "workflow_dispatch", "repository_dispatch"];
 
 function login(value: unknown): string | null {
   const name = record(value).login;
@@ -67,6 +77,26 @@ function issueOf(raw: unknown): Issue {
     author: login(value.author),
     createdAt: textOf(value.createdAt),
   };
+}
+
+/** Le lien de l'auteur d'une PR au dépôt (`author_association` de l'API REST), dans les mots communs aux forges. */
+function authorLink(association: unknown): AuthorLink | null {
+  switch (association) {
+    case "OWNER":
+      return "owner";
+    case "MEMBER":
+      return "member";
+    case "COLLABORATOR":
+      return "collaborator";
+    case "CONTRIBUTOR":
+    case "FIRST_TIME_CONTRIBUTOR":
+    case "FIRST_TIMER":
+    case "MANNEQUIN":
+    case "NONE":
+      return "outsider";
+    default:
+      return null;
+  }
 }
 
 /** L'état d'une PR dans la sortie de `gh pr view --json state,mergedAt` ; `null` si illisible. */
@@ -314,6 +344,83 @@ export class GitHubForge implements Forge {
       const own = all.split("\n").filter((line) => line.startsWith(`${check.name}\t`));
       const log = usefulLogLines(own.length > 0 ? own.join("\n") : all, limit);
       failed.push({ name: check.name, url: check.url, log });
+    }
+    return failed;
+  }
+
+  /**
+   * Par l'API REST : `gh pr list` ne rend pas le lien de l'auteur au dépôt (`author_association`). Fork : le
+   * dépôt de la branche n'est pas celui de la PR ; un dépôt de tête disparu ne dit pas d'où elle vient.
+   */
+  async openChanges(limit: number): Promise<OpenChange[]> {
+    const size = Math.min(Math.max(limit, 1), PAGE_MAX);
+    const raw = await this.#json([
+      "api",
+      `repos/${this.#slug()}/pulls?state=open&sort=updated&direction=asc&per_page=${size}`,
+    ]);
+    if (!Array.isArray(raw)) throw new HarnessError(502, "gh api pulls : une liste est attendue");
+    return raw.flatMap((entry) => {
+      const value = record(entry);
+      if (!Number.isInteger(value.number)) return [];
+      const head = record(value.head);
+      const from = record(head.repo).id;
+      const into = record(record(value.base).repo).id;
+      return [
+        {
+          number: value.number as number,
+          title: textOf(value.title),
+          url: textOf(value.html_url),
+          head: textOf(head.ref),
+          author: login(value.user),
+          fork: Number.isInteger(from) && Number.isInteger(into) ? from !== into : null,
+          authorLink: authorLink(value.author_association),
+          draft: value.draft === true,
+          updatedAt: textOf(value.updated_at),
+        },
+      ];
+    });
+  }
+
+  /**
+   * `gh run list` rend les exécutions les plus récentes d'abord : la première TERMINÉE de chaque workflow fait
+   * foi. `--branch` filtre sur le NOM de la branche de tête : l'exécution `pull_request` d'un fork dont la
+   * branche s'appelle comme la nôtre y figure aussi. Seules comptent celles que le dépôt lance sur sa propre
+   * branche (CI_EVENTS) ; un événement absent ou autre est écarté.
+   */
+  async failedCi(branch: string): Promise<FailedCi | null> {
+    const raw = await this.#json([
+      "run",
+      "list",
+      "--repo",
+      this.#slug(),
+      "--branch",
+      branch,
+      "--limit",
+      "30",
+      "--json",
+      "databaseId,workflowName,displayTitle,event,status,conclusion,url,headSha,updatedAt",
+    ]);
+    if (!Array.isArray(raw)) throw new HarnessError(502, "gh run list : une liste est attendue");
+    const seen = new Set<string>();
+    let failed: FailedCi | null = null;
+    for (const entry of raw) {
+      const value = record(entry);
+      const name = textOf(value.workflowName);
+      if (!CI_EVENTS.includes(textOf(value.event))) continue;
+      if (value.status !== "completed" || seen.has(name)) continue;
+      seen.add(name);
+      if (checkConclusion(value.conclusion) !== "failure") continue;
+      const at = textOf(value.updatedAt);
+      // Plusieurs workflows rouges : le plus récent (une date ISO 8601 se compare comme un texte).
+      if (failed === null || at > failed.at)
+        failed = {
+          id: String(value.databaseId ?? ""),
+          name,
+          title: textOf(value.displayTitle),
+          url: textOf(value.url) || null,
+          sha: textOf(value.headSha),
+          at,
+        };
     }
     return failed;
   }

@@ -430,6 +430,7 @@ export class StepExecutor {
         previousBlockers: run.verdict?.blockers ?? [],
         sinceSha: step === "review" && run.fixes > 0 ? run.lastReviewSha : null,
         resume: store.instructions(run.id),
+        standing: store.activeStandingRules(repo.name).map((rule) => rule.text),
         decisions: this.#decisionLines(run.id),
         conflicts: live.conflicts,
         specsDrift: step === "review" ? this.#specsDrift(run.id) : [],
@@ -669,7 +670,13 @@ export class StepExecutor {
       await critic.setHostTools(hostToolsFor("challenge"));
       const memories = renderMemories(await oracle.recall(repo.scope, `${run.title}\n${run.request}`));
       let result = await critic.prompt(
-        challengePrompt({ step, title: run.title, request: run.request, memories }),
+        challengePrompt({
+          step,
+          title: run.title,
+          request: run.request,
+          memories,
+          standing: this.#ctx.store.activeStandingRules(repo.name).map((rule) => rule.text),
+        }),
         live.abort.signal,
         deadlineAt,
       );

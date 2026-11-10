@@ -476,6 +476,12 @@ public enum NotificationText {
     public static let approve = L10n.text("Approuver")
     public static let open = L10n.text("Ouvrir")
     public static let refusePlaceholder = L10n.text("La raison du refus")
+    /// Une question unique, avec sa recommandation (`omp.answer`) : la prendre telle quelle…
+    public static let takeRecommended = L10n.text("Prendre la recommandation")
+    /// … ou répondre autre chose : l’action ouvre un champ, dont le bouton d’envoi est `answerSend`.
+    public static let answer = L10n.text("Répondre…")
+    public static let answerSend = L10n.text("Répondre")
+    public static let answerPlaceholder = L10n.text("Votre réponse")
 
     // MARK: - Alertes
 

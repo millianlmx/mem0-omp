@@ -7,14 +7,25 @@
 // partent. Sans `apns`, rien ne part : l'app met son activité à jour elle-même tant
 // qu'elle est ouverte.
 //
+// Le serveur démarre aussi l'activité lui-même (push-to-start) : chaque appareil enregistre son
+// jeton de démarrage au nom de son client (`POST /v1/push/activities/start`), et quand un run que
+// ce client voit se met au travail pour la première fois, ou attend l'humain (`awaiting_human`,
+// `escalated`), APNs reçoit `event: start` avec les attributs de l'activité (`runId`, `title`,
+// `repo`) et le même `content-state` que les mises à jour — jamais si une activité est déjà
+// enregistrée pour ce run et ce client, une seule fois par run et par client
+// (PUSH_START_MEMORY_MS), PUSH_START_MAX_PER_HOUR par client et par heure. Les droits du client
+// sont relus à chaque démarrage ; le jeton d'un client révoqué est oublié.
+//
 // Le jeton d'authentification APNs est un JWT ES256 signé par la clé `.p8` d'Apple,
 // renouvelé toutes les 50 minutes, partagé avec les alertes des appareils (`ApnsClient`,
-// push-alerts.ts). Un jeton d'activité refusé (410, BadDeviceToken) est oublié.
+// push-alerts.ts). Un jeton refusé (410, BadDeviceToken) est oublié.
 import { createPrivateKey, sign } from "node:crypto";
 import * as fs from "node:fs";
 import * as http2 from "node:http2";
+import type { Client } from "./auth.ts";
+import { canSeeRepo } from "./auth.ts";
 import type { ApnsConfig } from "./config.ts";
-import type { EventRow, RunRow, Store } from "./db.ts";
+import type { EventRow, PushStartTokenRow, RunRow, Store } from "./db.ts";
 import type { LogLine } from "./logger.ts";
 import { isTerminal } from "./machine.ts";
 
@@ -24,6 +35,17 @@ export const PUSH_TOOL_EVERY_MS = 30_000;
 const JWT_TTL_MS = 50 * 60 * 1000;
 /** Une activité finie reste sur l'écran verrouillé pendant ce temps. */
 const DISMISS_AFTER_SEC = 3600;
+/** Le serveur démarre au plus tant de Live Activities par client et par heure. */
+export const PUSH_START_MAX_PER_HOUR = 3;
+const HOUR_MS = 60 * 60 * 1000;
+/** Un run ne démarre qu'une activité par client pendant ce temps. */
+export const PUSH_START_MEMORY_MS = 12 * HOUR_MS;
+/** Au-delà de ce nombre de démarrages retenus, les expirés sont oubliés. */
+const START_PRUNE_AT = 512;
+/** Le type des attributs de l'activité côté iOS (`OMPRunActivityAttributes`, HarnessLiveActivity.swift). */
+export const ACTIVITY_ATTRIBUTES_TYPE = "OMPRunActivityAttributes";
+/** Les états d'un run qui démarrent une activité : il se met au travail, ou il attend l'humain. */
+const START_STATES: ReadonlySet<string> = new Set(["running", "awaiting_human", "escalated"]);
 
 /** Les événements qui changent ce que montre une activité. */
 const STATE_EVENTS: ReadonlySet<string> = new Set([
@@ -49,6 +71,9 @@ export type ActivityContent = {
   cost: number;
   updatedAt: number;
 };
+
+/** Le registre des clients de l'API (auth.ts) : les droits y sont relus à chaque envoi. */
+export type ClientList = { list(): Client[] };
 
 export type ApnsReply = { status: number; reason: string | null };
 
@@ -190,6 +215,8 @@ export type PushDeps = ApnsDeps & {
   content: (run: RunRow) => ActivityContent;
   /** Le client APNs partagé du service ; à défaut, un client propre bâti sur ces dépendances. */
   apns?: ApnsClient;
+  /** Le registre des clients, ou `null` tant qu'il n'est pas donné : sans lui, le serveur ne démarre aucune activité (échec fermé). */
+  clients?: () => ClientList | null;
 };
 
 export class ActivityPusher {
@@ -198,6 +225,8 @@ export class ActivityPusher {
   readonly #apns: ApnsClient;
   readonly #lastToolPush = new Map<string, number>();
   readonly #inFlight = new Set<Promise<void>>();
+  /** « client\nrun » → instant du démarrage de l'activité par le serveur. */
+  readonly #started = new Map<string, number>();
 
   constructor(deps: PushDeps) {
     this.#deps = deps;
@@ -215,11 +244,15 @@ export class ActivityPusher {
     await Promise.allSettled([...this.#inFlight]);
   }
 
-  /** Un événement du journal (ou éphémère) : une mise à jour des activités du run, si elle est due. */
+  /**
+   * Un événement du journal (ou éphémère) : le démarrage d'une activité sur les appareils qui n'en ont
+   * pas pour ce run, puis une mise à jour des activités du run, si elle est due.
+   */
   handle(event: EventRow): void {
     if (event.runId === null || this.#deps.config() === null) return;
     const toolOnly = event.type === "activity";
     if (!toolOnly && !STATE_EVENTS.has(event.type)) return;
+    if (event.type === "run_state") this.#start(event, event.runId);
     const tokens = this.#deps.store.listPushTokens({ kind: "activity", runId: event.runId });
     if (tokens.length === 0) return;
     if (toolOnly) {
@@ -239,6 +272,101 @@ export class ActivityPusher {
     ).finally(() => this.#inFlight.delete(send));
     this.#inFlight.add(send);
     if (ended) this.#lastToolPush.delete(event.runId);
+  }
+
+  /**
+   * Un run qui se met au travail pour la première fois, ou qui attend l'humain : une activité démarre
+   * sur les appareils des clients qui le voient et n'en ont pas déjà une pour lui.
+   */
+  #start(event: EventRow, runId: string): void {
+    const state = event.payload.state;
+    if (typeof state !== "string" || !START_STATES.has(state)) return;
+    const clients = this.#deps.clients?.() ?? null;
+    if (clients === null) return;
+    const { store } = this.#deps;
+    const tokens = store.listPushStartTokens();
+    if (tokens.length === 0) return;
+    const run = store.getRun(runId);
+    const send = this.#apns.sender();
+    if (!run || send === null) return;
+    // Une reprise (réponse donnée, relance) n'est pas un démarrage : le journal dit si le run a déjà travaillé.
+    if (
+      state === "running" &&
+      store
+        .eventsSince(0, runId)
+        .some((earlier) => earlier.id < event.id && earlier.type === "run_state" && earlier.payload.state === "running")
+    )
+      return;
+    const known = new Map(clients.list().map((client) => [client.name, client]));
+    const served = new Set(store.listPushTokens({ kind: "activity", runId }).map((token) => token.client));
+    const now = this.#now();
+    const due = new Map<string, boolean>();
+    const targets: PushStartTokenRow[] = [];
+    for (const token of tokens) {
+      const client = known.get(token.client);
+      if (!client) {
+        store.deletePushStartToken(token.token);
+        continue;
+      }
+      if (!canSeeRepo(client, run.repo) || served.has(client.name)) continue;
+      const admitted = due.get(client.name) ?? this.#admitStart(client.name, runId, now);
+      due.set(client.name, admitted);
+      if (admitted) targets.push(token);
+    }
+    if (targets.length === 0) return;
+    const sending = this.#sendStart(send, run, targets).finally(() => this.#inFlight.delete(sending));
+    this.#inFlight.add(sending);
+  }
+
+  /** Ce client reçoit-il un démarrage pour ce run ? Une fois par run, PUSH_START_MAX_PER_HOUR par heure ; un oui est retenu. */
+  #admitStart(client: string, runId: string, now: number): boolean {
+    const key = `${client}\n${runId}`;
+    const last = this.#started.get(key);
+    if (last !== undefined && now - last < PUSH_START_MEMORY_MS) return false;
+    if (this.#started.size >= START_PRUNE_AT)
+      for (const [known, at] of this.#started) if (now - at >= PUSH_START_MEMORY_MS) this.#started.delete(known);
+    let recent = 0;
+    for (const [known, at] of this.#started) if (now - at < HOUR_MS && known.startsWith(`${client}\n`)) recent += 1;
+    if (recent >= PUSH_START_MAX_PER_HOUR) return false;
+    this.#started.set(key, now);
+    return true;
+  }
+
+  async #sendStart(send: ApnsSend, run: RunRow, targets: PushStartTokenRow[]): Promise<void> {
+    const config = this.#deps.config();
+    if (!config) return;
+    const nowSec = Math.floor(this.#now() / 1000);
+    const body = JSON.stringify({
+      aps: {
+        timestamp: nowSec,
+        event: "start",
+        "content-state": this.#deps.content(run),
+        "attributes-type": ACTIVITY_ATTRIBUTES_TYPE,
+        attributes: { runId: run.id, title: run.title, repo: run.repo },
+        // Apple exige une alerte avec un démarrage ; sans `sound`, elle ne sonne pas (l'alerte push s'en charge).
+        alert: { title: run.title, body: run.repo },
+        "stale-date": nowSec + 4 * 3600,
+        // L'activité démarrée reçoit son jeton de mise à jour, que l'app enregistre (`POST /v1/push/activities`).
+        "input-push-token": 1,
+      },
+    });
+    for (const target of targets) {
+      const reply = await send({
+        token: target.token,
+        // La passerelle du jeton, pas celle de la configuration : une app installée depuis Xcode est en `development`.
+        sandbox: target.environment === "development",
+        headers: {
+          "apns-topic": `${config.topic}.push-type.liveactivity`,
+          "apns-push-type": "liveactivity",
+          "apns-priority": "10",
+          "content-type": "application/json",
+        },
+        body,
+      });
+      if (tokenGone(reply)) this.#deps.store.deletePushStartToken(target.token);
+      else if (reply.status !== 200)
+        this.#deps.log?.(`apns (démarrage) : ${reply.status} ${reply.reason ?? ""}`.trim(), { level: "warn" });
+    }
   }
 
   async #send(tokens: string[], content: ActivityContent, ended: boolean): Promise<void> {

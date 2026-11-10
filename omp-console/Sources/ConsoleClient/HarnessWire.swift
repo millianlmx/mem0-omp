@@ -45,6 +45,24 @@ public struct HarnessVerdict: Codable, Equatable, Sendable {
     public var isWeak: Bool { confidence == "weak" || !unverified.isEmpty }
 }
 
+/// Une feature qui en retient une autre en file (`blockedBy`) : son parent non fusionné, ou
+/// une feature dont les modules recoupent les siens.
+public struct HarnessRunBlocker: Codable, Equatable, Sendable, Identifiable {
+    public var runId: String
+    public var title: String
+    public var state: String
+    public var modules: [String]
+
+    public var id: String { runId }
+
+    public init(runId: String, title: String, state: String, modules: [String] = []) {
+        self.runId = runId
+        self.title = title
+        self.state = state
+        self.modules = modules
+    }
+}
+
 /// Une feature conduite par le serveur.
 public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
     public var id: String
@@ -86,10 +104,24 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
     public var kind: String?
     /// Les labels déclarés au lancement (vides avec un serveur antérieur).
     public var labels: [String]
+    /// Le curseur d'autonomie de la feature ; `nil` : les règles du dépôt (et un serveur antérieur).
+    public var autonomy: HarnessRunAutonomy?
+    /// Le motif d'une annulation par l'humain (`off_target`, `too_big`, `obsolete`, `duplicate`,
+    /// `too_costly`, `other`) ; `nil` sans motif, ou d'un serveur antérieur.
+    public var cancelCause: String?
     /// La carte en tête des specs à valider ou d'un arbitrage (session en graphe), servie par `GET /v1/runs/{id}`
     /// et `GET /v1/inbox` seulement : `nil` ailleurs et d'un serveur antérieur ; vide (`feature` vide, aucune carte)
     /// quand le run n'attend ni specs ni arbitrage.
     public var briefing: HarnessBriefing? = nil
+    /// La feature dont celle-ci est la suite (découpage, correction) ; `nil` sinon ou d'un serveur antérieur.
+    public var afterRun: String? = nil
+    /// La branche git de la feature (`harness/<slug>`) ; `nil` d'un serveur qui ne la sert pas.
+    public var branch: String? = nil
+    /// En file seulement : les features qui retiennent celle-ci (cause `parent` ou `modules`) ;
+    /// vide ailleurs et d'un serveur antérieur.
+    public var blockedBy: [HarnessRunBlocker] = []
+    /// En file seulement : l'instant où le serveur la reprendra (cause `backoff`) ; `nil` ailleurs.
+    public var waitUntil: Date? = nil
     public var createdAt: Double
     public var updatedAt: Double
 
@@ -99,7 +131,8 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         prUrl: String? = nil, reason: String? = nil, model: String? = nil, rev: Int? = nil, priority: Int? = nil,
         createdBy: String? = nil, mergeRetries: Int = 0, notBefore: Date? = nil, lastFailCause: String? = nil,
         projectId: String? = nil, createdAt: Double = 0, updatedAt: Double = 0, waitCause: String? = nil,
-        kind: String? = nil, labels: [String] = [], briefing: HarnessBriefing? = nil
+        kind: String? = nil, labels: [String] = [], briefing: HarnessBriefing? = nil, afterRun: String? = nil,
+        autonomy: HarnessRunAutonomy? = nil, cancelCause: String? = nil, blockedBy: [HarnessRunBlocker] = [], waitUntil: Date? = nil
     ) {
         self.id = id
         self.repo = repo
@@ -128,11 +161,17 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         self.kind = kind
         self.labels = labels
         self.briefing = briefing
+        self.afterRun = afterRun
+        self.autonomy = autonomy
+        self.cancelCause = cancelCause
+        self.blockedBy = blockedBy
+        self.waitUntil = waitUntil
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, repo, slug, title, request, state, step, fixes, modules, verdict, mergeSha, prUrl, reason, model
-        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, projectId, createdAt, updatedAt, waitCause, kind, labels, briefing
+        case rev, priority, createdBy, mergeRetries, notBefore, lastFailCause, projectId, createdAt, updatedAt, waitCause, kind, labels, briefing, afterRun, branch
+        case autonomy, cancelCause, blockedBy, waitUntil
     }
 
     /// Un serveur antérieur n'écrit ni `mergeRetries`, ni `notBefore`, ni `lastFailCause`,
@@ -166,6 +205,13 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         kind = try container.decodeIfPresent(String.self, forKey: .kind)
         labels = try container.decodeIfPresent([String].self, forKey: .labels) ?? []
         briefing = try container.decodeIfPresent(HarnessBriefing.self, forKey: .briefing)
+        afterRun = try container.decodeIfPresent(String.self, forKey: .afterRun)
+        branch = try container.decodeIfPresent(String.self, forKey: .branch)
+        // Un niveau que cette version ne connaît pas se lit comme « les règles du dépôt ».
+        autonomy = try container.decodeIfPresent(String.self, forKey: .autonomy).flatMap(HarnessRunAutonomy.init(rawValue:))
+        cancelCause = try container.decodeIfPresent(String.self, forKey: .cancelCause)
+        blockedBy = try container.decodeIfPresent([HarnessRunBlocker].self, forKey: .blockedBy) ?? []
+        waitUntil = try container.decodeIfPresent(Double.self, forKey: .waitUntil).map { Date(timeIntervalSince1970: $0 / 1000) }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -197,6 +243,12 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
         try container.encodeIfPresent(kind, forKey: .kind)
         try container.encode(labels, forKey: .labels)
         try container.encodeIfPresent(briefing, forKey: .briefing)
+        try container.encodeIfPresent(afterRun, forKey: .afterRun)
+        try container.encodeIfPresent(branch, forKey: .branch)
+        try container.encodeIfPresent(autonomy?.rawValue, forKey: .autonomy)
+        try container.encodeIfPresent(cancelCause, forKey: .cancelCause)
+        if !blockedBy.isEmpty { try container.encode(blockedBy, forKey: .blockedBy) }
+        try container.encodeIfPresent(waitUntil.map { ($0.timeIntervalSince1970 * 1000).rounded() }, forKey: .waitUntil)
     }
 
     /// L'état connu, ou `nil` pour un état apparu après cette version de l'app.
@@ -210,6 +262,9 @@ public struct HarnessRun: Codable, Equatable, Sendable, Identifiable {
 
     /// Le run est fusionné : sa feature peut être annulée (commit inverse sur la branche principale).
     public var canRevert: Bool { phase == .merged }
+
+    /// Le motif connu de l'annulation, ou `nil` (aucun, ou apparu après cette version de l'app).
+    public var cancelReason: HarnessCancelCause? { cancelCause.flatMap(HarnessCancelCause.init(rawValue:)) }
 }
 
 /// Une décision prise seule par un runner : un point de reprise.
@@ -311,8 +366,13 @@ public struct HarnessEscalation: Codable, Equatable, Sendable, Identifiable {
     /// La carte de la question (session en graphe) : ce que l'humain lit en 30 secondes ; `nil` d'un serveur
     /// antérieur ou d'une escalade posée sans carte (l'affichage historique s'applique alors).
     public var card: HarnessCard?
+    /// L'instant (millisecondes) où l'option recommandée s'appliquera seule ; `nil` : la question
+    /// n'expire pas (irréversible, sans recommandation, feature en « tout demander ») ou serveur antérieur.
+    public var autoAt: Double?
+    /// L'option qui s'appliquera à `autoAt`.
+    public var autoAnswer: String?
 
-    public init(id: Int, runId: String, category: String, question: String, options: [String], recommended: String? = nil, context: String? = nil, rationale: String? = nil, impacts: [String] = [], step: String? = nil, status: String = "open", card: HarnessCard? = nil) {
+    public init(id: Int, runId: String, category: String, question: String, options: [String], recommended: String? = nil, context: String? = nil, rationale: String? = nil, impacts: [String] = [], step: String? = nil, status: String = "open", card: HarnessCard? = nil, autoAt: Double? = nil, autoAnswer: String? = nil) {
         self.id = id
         self.runId = runId
         self.category = category
@@ -325,10 +385,12 @@ public struct HarnessEscalation: Codable, Equatable, Sendable, Identifiable {
         self.step = step
         self.status = status
         self.card = card
+        self.autoAt = autoAt
+        self.autoAnswer = autoAnswer
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runId, category, question, options, recommended, context, rationale, impacts, step, status, card
+        case id, runId, category, question, options, recommended, context, rationale, impacts, step, status, card, autoAt, autoAnswer
     }
 
     /// Un serveur antérieur n'écrit ni `recommended`, ni `options`, ni `context`, ni
@@ -347,10 +409,15 @@ public struct HarnessEscalation: Codable, Equatable, Sendable, Identifiable {
         step = try container.decodeIfPresent(String.self, forKey: .step)
         status = try container.decode(String.self, forKey: .status)
         card = try container.decodeIfPresent(HarnessCard.self, forKey: .card)
+        autoAt = try container.decodeIfPresent(Double.self, forKey: .autoAt)
+        autoAnswer = try container.decodeIfPresent(String.self, forKey: .autoAnswer)
     }
 
     /// Le contexte donné par l'agent, s'il en a donné un.
     public var shownContext: String? { HarnessQuestion.shown(context) }
+
+    /// L'instant où la recommandation s'appliquera seule, ou `nil`.
+    public var autoDate: Date? { autoAt.map { Date(timeIntervalSince1970: $0 / 1000) } }
 
     /// La raison de la recommandation, si l'agent l'a séparée du contexte.
     public var shownRationale: String? { HarnessQuestion.shown(rationale) }
