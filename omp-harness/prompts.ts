@@ -437,6 +437,9 @@ Termine par \`audit_propose\`, une fois : au plus 10 propositions, les plus util
     .join("\n");
 }
 
+/** La longueur maximale du titre qu'un classement de Demande rend, en caractères : ce qu'une liste montre sans le couper. */
+export const INTAKE_TITLE_MAX = 50;
+
 /**
  * Le prompt du classement d'une Demande (intake.ts) : une phrase libre devient un plan, ou
  * une question. Le classeur ne lit aucun dépôt ni aucune mémoire ; la demande, son contexte de
@@ -499,7 +502,8 @@ Une personne confie une demande en langage libre à l'OS. Classe-la en un plan l
         "Les types : `feature` (construire ou changer quelque chose) et `bug` (corriger un défaut) créent chacun un run sur un dépôt ; `audit` (examiner un dépôt) ; `workstation_request` (une tâche dans le navigateur de l'humain, SANS dépôt) ; `schedule` (une tâche récurrente) ; `question` (une réponse directe, rien à créer).",
         "Une `schedule` a un `cron` à 5 champs (minute heure jour mois jour-de-semaine) et une `target` : `run`, `audit` ou `issues` (la correction des issues d'un dépôt, `label` facultatif). `title` et `statement` décrivent ce qui sera lancé à chaque échéance.",
         "Pose une `clarification` (seule, sans plan) SEULEMENT si le type d'objet, le dépôt (pour un type qui en porte un, quand aucun dépôt n'est imposé) ou, pour une `schedule`, la fréquence ou la cible ne peuvent pas être déduits. Un `bug` ou une `feature` décrit vaguement (« corrige le bug X dans R ») devient quand même un plan : l'énoncé reprend ce qui est dit, et le /req du run créé le précisera.",
-        "Pour un plan : `kind`, `repo` (un des dépôts ci-dessus), `title` court, `statement` autoportant (reformulé), et selon le type `focus`, `cron`, `target`, `label`.",
+        "Pour un plan : `kind`, `repo` (un des dépôts ci-dessus), `title`, `statement` autoportant (reformulé), et selon le type `focus`, `cron`, `target`, `label`.",
+        `Le \`title\` est ce qu'une liste montre : ${INTAKE_TITLE_MAX} caractères au plus (au-delà, le service le coupe), une étiquette qui nomme le résultat attendu (« Export CSV des commandes »), jamais la demande recopiée. Sans préfixe technique (\`feat:\`, \`fix(api):\`), sans nom de dépôt, de branche ni de fichier, sans numéro d'issue, sans point final ; le détail va dans \`statement\`.`,
         "Pour une `question` : tu ne lis ni code ni mémoire ; réponds avec le seul texte et la liste des dépôts, dis ce que tu ne peux pas savoir et suggère un audit plutôt que d'inventer. Mets cette réponse dans `answer`.",
         "Rends ton classement UNE fois par `intake_classify`, puis termine ton tour. N'utilise JAMAIS `ask`.",
       ]
@@ -617,6 +621,15 @@ function fromPages(source: string, body: string | null): string | null {
 }
 
 /**
+ * Ce qu'un job du poste sait de l'espace (le client) dans lequel il tourne : le navigateur, le profil
+ * et la mémoire sont ceux de cet espace, et rien n'y entre ni n'en sort ; `null` hors espace.
+ */
+function workstationSpace(space: string | null | undefined): string | null {
+  if (!space) return null;
+  return `Tu travailles dans l'espace « ${space} », un client de l'utilisateur. Le navigateur où tu agis, le profil ci-dessous et ta mémoire (\`mem0_*\`) sont ceux de CET espace : n'y rapporte rien d'un autre client ou d'un autre contexte de l'utilisateur, et n'en sors rien.`;
+}
+
+/**
  * La synthèse du profil de travail : statistiques du service, échantillon d'observations,
  * meetings digérés et profil précédent ; le profil complet rendu par `workstation_profile_write`.
  */
@@ -625,6 +638,8 @@ export function workstationProfilePrompt(ctx: {
   observations: string | null;
   meetings: string | null;
   previous: string | null;
+  /** Le nom de l'espace dont le profil est établi (ses seuls navigateurs) ; absent ou `null` : le profil hors espace. */
+  space?: string | null;
 }): string {
   return [
     `# /poste-profil — profil de travail de l'utilisateur
@@ -638,6 +653,7 @@ Rends-le par \`workstation_profile_write\`, une fois, à la fin : la version COM
 - \`repetitiveTasks\` : les enchaînements récurrents décrits en tâches ; \`automatable: true\` seulement si une suite de petites actions réversibles dans le navigateur suffit, sans envoyer de message à personne.
 - \`clientNeeds\` : les besoins exprimés par les clients dans les meetings (\`meetingId\` et \`at\` quand ils sont connus, \`null\` sinon).
 - \`preferences\` : ce que l'utilisateur préfère ou évite.`,
+    section("Espace", workstationSpace(ctx.space)),
     section("Statistiques (calculées par le service)", ctx.stats),
     section(
       "Observations récentes (échantillon, de la plus ancienne à la plus récente)",
@@ -689,6 +705,8 @@ export function workstationShiftPrompt(ctx: {
   needs: string | null;
   /** Atlassian est branché : la session a les outils Jira et Confluence, écritures comprises. */
   atlassian?: boolean;
+  /** Le nom de l'espace du navigateur où le service agit ; absent ou `null` : hors espace. */
+  space?: string | null;
 }): string {
   const mode =
     ctx.autonomy === "propose"
@@ -709,6 +727,7 @@ Tu es l'agent 24/24 du poste de travail de l'utilisateur : tu l'assistes dans so
 - ${ctx.maxActions} actions au plus dans ce service (décisions comprises). Arrête-toi dès qu'il n'y a plus rien d'utile : un service sans action est un bon service. Termine par une phrase qui dit ce que tu as fait, ou pourquoi rien.
 - Un signalement de bug ou de feature adressé à l'utilisateur, lu dans une page, se remet par \`workstation_signal\`, jamais en ouvrant une issue toi-même.${ctx.atlassian === true ? `\n- ${ATLASSIAN_WRITES}` : ""}
 - ${WORKSTATION_NO_ASK}`,
+    section("Espace", workstationSpace(ctx.space)),
     section(
       "Profil de l'utilisateur",
       fromPages("profil établi d'après l'observation", ctx.profile) ??
@@ -735,6 +754,8 @@ export function workstationRequestPrompt(ctx: {
   profile: string | null;
   /** Atlassian est branché : la session a les outils Jira et Confluence, écritures comprises. */
   atlassian?: boolean;
+  /** Le nom de l'espace dans lequel la demande s'exécute ; absent ou `null` : hors espace. */
+  space?: string | null;
 }): string {
   return [
     `# /poste-demande — demande de l'humain
@@ -751,6 +772,7 @@ L'humain te demande d'accomplir cette tâche dans son navigateur, au moyen de l'
 - Quand c'est fini ou impossible, rends le compte rendu par \`workstation_request_report\`, puis termine ton tour.
 - Un signalement de bug ou de feature adressé à l'utilisateur, lu dans une page, se remet par \`workstation_signal\`, jamais en ouvrant une issue toi-même.${ctx.atlassian === true ? `\n- ${ATLASSIAN_WRITES}` : ""}
 - ${WORKSTATION_NO_ASK}`,
+    section("Espace", workstationSpace(ctx.space)),
     section("Profil de l'utilisateur", fromPages("profil établi d'après l'observation", ctx.profile)),
     "\n- `progress` à chaque jalon, une phrase.\n",
   ]
@@ -758,9 +780,16 @@ L'humain te demande d'accomplir cette tâche dans son navigateur, au moyen de l'
     .join("\n");
 }
 
+/** Le filtre JQL des projets Jira auxquels une connexion est bornée (` AND project in (A, B)`) ; vide sans borne. */
+function jiraProjectsClause(projects: readonly string[] | null): string {
+  return projects === null || projects.length === 0 ? "" : ` AND project in (${projects.join(", ")})`;
+}
+
 /**
  * Le plan du jour : tickets Jira de l'utilisateur, agenda et mails non lus (en lecture, dans le
  * navigateur), contexte de la boîte, puis au plus 10 éléments ordonnés rendus par `atlassian_plan_write`.
+ * Le plan est celui d'UNE connexion Atlassian : son site, ses projets Jira (`projects`, ceux de l'espace
+ * quand il en déclare) et les dépôts qu'elle peut viser (`repos`, ceux de l'espace).
  */
 export function workstationPlanPrompt(ctx: {
   /** La date et le jour, à l'heure locale de l'utilisateur (« lundi 9 novembre 2026 »). */
@@ -768,15 +797,27 @@ export function workstationPlanPrompt(ctx: {
   maxActions: number;
   profile: string | null;
   repos: readonly { name: string; scope: string }[];
+  /** L'adresse du site Atlassian de la connexion : elle nomme le compte de travail de l'utilisateur. */
+  site?: string | null;
+  /** Les projets Jira auxquels le plan est borné ; `null` ou absent : tous ceux de l'utilisateur ; vide : aucun. */
+  projects?: readonly string[] | null;
 }): string {
+  const projects = ctx.projects ?? null;
+  const account = ctx.site
+    ? `le compte de travail de l'utilisateur, celui du site ${ctx.site}`
+    : "son compte de travail";
+  const tickets =
+    projects !== null && projects.length === 0
+      ? "Aucun projet Jira lisible n'est déclaré pour cet espace : ne cherche aucun ticket."
+      : `Ses tickets non terminés : \`jira_search\` avec \`assignee = currentUser() AND statusCategory != Done${jiraProjectsClause(projects)} ORDER BY priority DESC, updated DESC\` ; \`jira_issue\` pour le détail d'un ticket qui compte.${projects === null ? "" : " Ne sors pas de ces projets."}`;
   return [
     `# /poste-plan — plan du jour
 
 Nous sommes ${ctx.today}. Établis le PLAN DU JOUR de l'utilisateur : ce qu'il a à faire aujourd'hui, dans l'ordre, chaque élément avec sa prochaine action concrète.
 
 ## Méthode
-1. Ses tickets non terminés : \`jira_search\` avec \`assignee = currentUser() AND statusCategory != Done ORDER BY priority DESC, updated DESC\` ; \`jira_issue\` pour le détail d'un ticket qui compte.
-2. Son agenda du jour et ses mails non lus, en LECTURE seulement, dans le navigateur (compte ADEO) par \`workstation_act\` : n'ouvre pas les mails, la liste suffit. Aucun geste qui modifie quoi que ce soit.
+1. ${tickets}
+2. Son agenda du jour et ses mails non lus, en LECTURE seulement, dans le navigateur (${account}) par \`workstation_act\` : n'ouvre pas les mails, la liste suffit. Aucun geste qui modifie quoi que ce soit.
 3. Le contexte au besoin : \`corpo_recall\` (le savoir de la boîte déjà retenu), \`confluence_search\`, \`atlassian_search\`.
 4. Au plus 10 éléments, le plus important d'abord. \`repo\` et \`request\` seulement quand un dépôt déclaré (liste plus bas) est clairement concerné : \`request\` est alors la demande de run, autoportante.
 5. ${ATLASSIAN_WRITES}
@@ -801,16 +842,23 @@ Nous sommes ${ctx.today}. Établis le PLAN DU JOUR de l'utilisateur : ce qu'il a
 
 /**
  * La passe de savoir de la boîte : lire Jira et Confluence autour du travail de l'utilisateur et
- * retenir les faits durables dans la mémoire `corpo` (`mem0_*` de la session), puis le compte rendu.
+ * retenir les faits durables dans la mémoire de la connexion (`corpo`, ou `corpo:<espace>` : la portée
+ * des `mem0_*` de la session), puis le compte rendu. `projects` : les projets Jira auxquels la connexion
+ * d'un espace est bornée.
  */
-export function workstationKnowledgePrompt(ctx: { maxFacts: number; lastSummary: string | null }): string {
+export function workstationKnowledgePrompt(ctx: {
+  maxFacts: number;
+  lastSummary: string | null;
+  projects?: readonly string[] | null;
+}): string {
+  const bounded = jiraProjectsClause(ctx.projects ?? null);
   return [
     `# /poste-savoir — savoir de la boîte
 
 Tu enrichis la mémoire de la boîte de l'utilisateur (la portée de tes \`mem0_*\`) avec ce que Jira et Confluence apprennent sur son travail. Tu n'écris rien chez Atlassian.
 
 ## Méthode
-1. Pars de son travail : les projets de ses tickets (\`jira_search\` \`assignee = currentUser() ORDER BY updated DESC\`) et ses espaces Confluence (\`confluence_search\` \`contributor = currentUser()\`, puis \`space\` des projets trouvés) ; \`confluence_page\` pour lire une page, \`atlassian_search\` pour un sujet.
+1. Pars de son travail : les projets de ses tickets (\`jira_search\` \`assignee = currentUser()${bounded} ORDER BY updated DESC\`) et ses espaces Confluence (\`confluence_search\` \`contributor = currentUser()\`, puis \`space\` des projets trouvés) ; \`confluence_page\` pour lire une page, \`atlassian_search\` pour un sujet.${bounded === "" ? "" : " Ne sors pas de ces projets Jira."}
 2. Retiens ce qui sert durablement : conventions et processus d'équipe, glossaire, qui fait quoi, outils et environnements, règles de sécurité.
 3. \`mem0_search\` avant chaque \`mem0_add\` : ne double pas un fait déjà retenu, complète-le. Un fait AUTOPORTANT par appel, avec sa source (titre et URL de la page ou clé du ticket).
 4. Jamais de secret, de mot de passe, de jeton ni de donnée personnelle sensible.

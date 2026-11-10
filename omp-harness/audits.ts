@@ -16,6 +16,8 @@ import type { HostToolResult } from "./rpc.ts";
 import { forceStop, hostToolsFor, runnerUnit } from "./runner.ts";
 import { RunnerSession } from "./runner-session.ts";
 import { auditOwner } from "./session-feed.ts";
+import { NO_SPACE_HOLDS } from "./spaces.ts";
+import type { SpaceHolds } from "./spaces.ts";
 
 export type AuditorHooks = {
   createProject: (
@@ -183,10 +185,13 @@ export class Auditor {
     });
   }
 
-  /** Les audits en file que le scheduler admet. */
-  tick(): void {
+  /**
+   * Les audits en file que le scheduler admet. `holds` : un audit d'un dépôt dont l'espace est en
+   * pause, ou au budget du jour atteint, reste en file ; ceux des autres dépôts partent.
+   */
+  tick(holds: SpaceHolds = NO_SPACE_HOLDS): void {
     for (const audit of this.#ctx.store.listAudits(["queued"])) {
-      if (this.#live.has(audit.id)) continue;
+      if (this.#live.has(audit.id) || holds.ofRepo(audit.repo) !== null) continue;
       // Le plafond journalier du serveur atteint : l'analyse attend en file (minuit UTC, ou plafond relevé).
       if (this.#ctx.monitor.dailyBudgetDue()) return;
       const slot = this.#ctx.scheduler.tryAcquire("runner", audit.id);

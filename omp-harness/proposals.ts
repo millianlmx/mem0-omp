@@ -44,8 +44,8 @@ import type { RepoFilter, RunAutonomy, RunRow, Store, VigieIncident } from "./db
 import { HarnessError } from "./errors.ts";
 import type { AuthorLink, FailedCi, FailedLog, Issue, OpenChange } from "./forge.ts";
 import type { IssueDesk } from "./issues.ts";
-import { isTerminal } from "./machine.ts";
-import type { RunState } from "./machine.ts";
+import { failureOf, isTerminal } from "./machine.ts";
+import type { FailCause, RunState, StepKind } from "./machine.ts";
 import type { NewRunInput } from "./orchestrator.ts";
 import type { ConfigAdmin } from "./repos.ts";
 import { runnerTraceOf, runnerUnitOf } from "./vigie/attribution.ts";
@@ -61,14 +61,42 @@ export type ProposalSource = (typeof PROPOSAL_SOURCES)[number];
 /** Ce qu'accepter fait : lancer un travail, corriger, appliquer une règle, confirmer un signalement, relancer. */
 export type ProposalAction = "launch" | "fix" | "apply" | "confirm" | "retry";
 
+/**
+ * Les faits d'une proposition, selon sa source : ce que `detail` dit en texte, en DONNÉES — les apps en
+ * écrivent leur phrase. `pr.idleDays` : les jours sans activité ; `audit.titles` : le titre de chaque item
+ * (60 caractères au plus) ; `autonomy.corrected` sur `runs` features en `windowDays` jours ; `retry` : l'étape
+ * en échec et sa cause (`failure` du run) ; `vigie.count` : les occurrences de l'incident.
+ */
+export type ProposalFacts = {
+  issue: { number: number };
+  vigie: { fingerprint: string; count: number; issueNumber: number | null };
+  audit: { count: number; titles: string[] };
+  signal: { signalId: string; channel: string; kind: string | null };
+  jira: { key: string | null };
+  autonomy: {
+    kind: WorkKind;
+    gate: AutonomyGate;
+    direction: "raise" | "lower";
+    corrected: number;
+    runs: number;
+    windowDays: number;
+  };
+  retry: { runId: string; step: StepKind | null; cause: FailCause | null };
+  pr: { number: number; author: string | null; branch: string; idleDays: number; draft: boolean };
+  ci: { branch: string; sha: string };
+};
+
 export type Proposal = {
   /** `<source>.<16 hex>` : le hachage stable de la clé de sa cause (la même cause rend le même id). */
   id: string;
   source: ProposalSource;
   repo: string | null;
+  /** Sans préfixe de commit conventionnel ni nom de branche (`cleanTitle`) : le numéro d'une PR, la branche d'une CI sont dans `facts`. */
   title: string;
   /** Au plus `DETAIL_MAX` caractères. */
   detail: string;
+  /** Les faits de la source (`ProposalFacts[source]`). */
+  facts: ProposalFacts[ProposalSource];
   url: string | null;
   createdAt: number;
   action: ProposalAction;
@@ -206,6 +234,24 @@ export function cleanTitle(title: string): string {
   return text === "" ? raw : text;
 }
 
+/** Ce qui ne finit pas un titre coupé : espaces, ponctuation de liaison, guillemet ou parenthèse restés ouverts. */
+const DANGLING = /[\s,;:.«(—–-]+$/u;
+
+/**
+ * Un titre court : sans préfixe technique (`cleanTitle`), sur une ligne, d'au plus `max` caractères.
+ * Au-delà il est coupé à la fin d'un mot et finit par « … » (compté dans `max`) ; un seul mot plus
+ * long que la borne est coupé net.
+ */
+export function shortTitle(title: string, max: number): string {
+  const line = cleanTitle(title).replace(/\s+/g, " ").trim();
+  if (line.length <= max) return line;
+  const head = line.slice(0, max - 1);
+  // La coupe tombe au milieu d'un mot : on revient à la fin du mot précédent.
+  const cut = /\s/.test(line.charAt(max - 1)) ? head.length : head.lastIndexOf(" ");
+  const kept = (cut > 0 ? head.slice(0, cut) : head).replace(DANGLING, "");
+  return `${kept === "" ? head : kept}…`;
+}
+
 /** Le lecteur du bac qu'est un client de l'API. */
 export function readerOf(client: Client): ProposalReader {
   const repos = repoFilter(client);
@@ -278,14 +324,18 @@ function ciRequest(cause: Extract<Cause, { source: "ci" }>): string {
   return lines.join("\n");
 }
 
-/** Les textes du poste (`workstationTexts`), lus au plus une fois et seulement s'il faut caviarder. */
-type PosteTexts = () => readonly string[];
+/**
+ * Ce qu'un texte né d'un incident ne doit pas porter en sortant vers le dépôt `repo` : les textes du poste
+ * (`workstationTexts`, lus au plus une fois et seulement s'il faut caviarder) et les titres et demandes
+ * des AUTRES espaces que celui de ce dépôt (`foreignSpaceTexts`), comme `VigieDesk.publish`.
+ */
+type PosteTexts = (repo: string | null) => readonly string[];
 
 function posteTextsOf(store: Store): PosteTexts {
   let texts: string[] | null = null;
-  return () => {
+  return (repo) => {
     texts ??= store.workstationTexts(0);
-    return texts;
+    return [...texts, ...store.foreignSpaceTexts(repo)];
   };
 }
 
@@ -296,7 +346,7 @@ function posteTextsOf(store: Store): PosteTexts {
  */
 function incidentTitle(incident: VigieIncident, poste: PosteTexts): string {
   const draft = incident.draft?.title.trim() ?? "";
-  const title = draft !== "" ? draft : redactForIssue(incident.triage?.title || incident.message, poste());
+  const title = draft !== "" ? draft : redactForIssue(incident.triage?.title || incident.message, poste(incident.repo));
   return oneLine(title, TITLE_MAX);
 }
 
@@ -321,7 +371,7 @@ function incidentRequest(incident: VigieIncident, poste: PosteTexts): string {
             ...(triage && triage.files.length > 0 ? [`Fichiers cités : ${triage.files.join(", ")}`] : []),
             ...(triage && triage.criteria.length > 0 ? ["", "## Critères d'acceptation", ...triage.criteria] : []),
           ].join("\n"),
-          poste(),
+          poste(incident.repo),
         );
   return [
     `Corriger le bug relevé par la vigie (empreinte ${incident.fingerprint}) : « ${incidentTitle(incident, poste)} »`,
@@ -371,10 +421,11 @@ export class ProposalDesk {
   /**
    * Le nombre de propositions ouvertes de ces dépôts ; `null` : toutes, celles du propriétaire comprises.
    * Lu par le brief à chaque requête : il sert le dernier calcul s'il a moins de ANNOUNCE_EVERY_MS — une
-   * lecture du bac, un geste (accepter, écarter) et une collecte le refont tous.
+   * lecture du bac, un geste (accepter, écarter) et une collecte le refont tous. `owner` : le lecteur
+   * voit tous les dépôts — borné à un espace (`?space=`), il compte aussi les siennes de cet espace.
    */
-  count(repos: RepoFilter): number {
-    return this.#open({ repos, owner: repos === null }, this.#recent(Date.now())).length;
+  count(repos: RepoFilter, owner = repos === null): number {
+    return this.#open({ repos, owner }, this.#recent(Date.now())).length;
   }
 
   #open(reader: ProposalReader, entries: Entry[]): Entry[] {
@@ -397,10 +448,14 @@ export class ProposalDesk {
     return last !== null && now >= last.at && now - last.at < ANNOUNCE_EVERY_MS ? last.entries : this.#fresh(now);
   }
 
-  /** Les signalements et le plan Atlassian sont des données de la boîte : au propriétaire seulement. */
+  /**
+   * Les signalements et le plan Atlassian sont des données de la boîte : au propriétaire seulement — et,
+   * quand sa lecture est bornée à un espace (`?space=`), ceux des dépôts de cet espace seulement.
+   */
   #visible(proposal: Proposal, reader: ProposalReader): boolean {
-    if (proposal.source === "signal" || proposal.source === "jira") return reader.owner;
-    return reader.repos === null || (proposal.repo !== null && reader.repos.includes(proposal.repo));
+    const scoped = reader.repos === null || (proposal.repo !== null && reader.repos.includes(proposal.repo));
+    if (proposal.source === "signal" || proposal.source === "jira") return reader.owner && scoped;
+    return scoped;
   }
 
   /** La proposition ouverte `id` telle que le lecteur la voit ; 404 si elle a disparu, est écartée, ou n'est pas à lui. */
@@ -427,14 +482,18 @@ export class ProposalDesk {
     const taken = (repo: string, matches: (run: RunRow) => boolean): boolean =>
       runsOf(repo).some((run) => matches(run) && !RELAUNCHABLE.includes(run.state));
     const entries: Entry[] = [];
-    const add = (cause: Cause, key: string, fields: Omit<Proposal, "id" | "source" | "detail"> & { detail: string }) =>
+    const add = <S extends ProposalSource>(
+      cause: Cause & { source: S },
+      key: string,
+      fields: Omit<Proposal, "id" | "source" | "facts"> & { facts: ProposalFacts[S] },
+    ) =>
       entries.push({
         cause,
         proposal: {
           id: proposalId(cause.source, key),
           source: cause.source,
           ...fields,
-          title: oneLine(fields.title, TITLE_MAX),
+          title: oneLine(cleanTitle(fields.title), TITLE_MAX),
           detail: oneLine(fields.detail, DETAIL_MAX),
         },
       });
@@ -452,6 +511,7 @@ export class ProposalDesk {
           repo,
           title: issue.title,
           detail: `Issue #${issue.number} ouverte, label « ${config.issues.label} »${issue.author ? `, par ${issue.author}` : ""}`,
+          facts: { number: issue.number },
           url: issue.url || null,
           createdAt: Date.parse(issue.createdAt) || now,
           action: "fix",
@@ -472,8 +532,15 @@ export class ProposalDesk {
         const idle = `sans activité depuis ${idleDays} jour${idleDays > 1 ? "s" : ""}`;
         add({ source: "pr", repo, change }, `${repo}#${change.number}`, {
           repo,
-          title: `PR #${change.number} : ${change.title}`,
+          title: change.title,
           detail: `${change.author ? `Ouverte par ${change.author}, ${idle}` : `Ouverte ${idle}`}, branche ${change.head}${change.draft ? " (brouillon)" : ""}`,
+          facts: {
+            number: change.number,
+            author: change.author || null,
+            branch: change.head,
+            idleDays,
+            draft: change.draft === true,
+          },
           url: change.url || null,
           createdAt: updatedAt,
           action: "launch",
@@ -484,8 +551,9 @@ export class ProposalDesk {
       if (ci !== null && !taken(repo, (run) => run.title === ciRunTitle(branch, ci.failed)))
         add({ source: "ci", repo, branch, ...ci }, `${repo}\u0000${ci.failed.sha || ci.failed.id}`, {
           repo,
-          title: `CI de ${branch} en échec`,
+          title: "CI en échec",
           detail: `${ci.failed.name}${ci.failed.title ? ` — ${ci.failed.title}` : ""} (${ci.failed.sha.slice(0, 7) || ci.failed.id})`,
+          facts: { branch, sha: ci.failed.sha },
           url: ci.failed.url,
           createdAt: Date.parse(ci.failed.at) || now,
           action: "fix",
@@ -510,6 +578,7 @@ export class ProposalDesk {
         repo: incident.repo,
         title,
         detail: incident.triage?.symptom || incident.message,
+        facts: { fingerprint: incident.fingerprint, count: incident.count, issueNumber: incident.issueNumber },
         url: incident.issueUrl,
         createdAt: incident.publishedAt ?? incident.triagedAt ?? incident.firstAt,
         action: "fix",
@@ -526,6 +595,7 @@ export class ProposalDesk {
         repo: audit.repo,
         title: `Audit — ${audit.focus || audit.repo}`,
         detail: `${titles.length} proposition${titles.length > 1 ? "s" : ""} : ${titles.join(" · ")}`,
+        facts: { count: titles.length, titles },
         url: null,
         createdAt: audit.updatedAt,
         action: "launch",
@@ -537,30 +607,40 @@ export class ProposalDesk {
         repo: signal.repo,
         title: signal.title ?? signal.excerpt,
         detail: signal.body ?? signal.excerpt,
+        facts: { signalId: signal.id, channel: signal.channel, kind: signal.kind },
         url: signal.url || null,
         createdAt: signal.createdAt,
         action: "confirm",
       });
 
-    const plan = this.#hooks.atlassian.enabled() ? this.#hooks.atlassian.latestPlan() : null;
-    for (const item of plan?.items ?? []) {
-      const repo = item.repo;
-      const request = item.request?.trim() ?? "";
-      if (plan === null || !declared(repo) || request === "") continue;
-      const title = item.title.trim();
-      // Lancé depuis l'app : un run du dépôt, ni échoué ni annulé, porte ce titre ou cette demande, de quelque
-      // date qu'il soit. Accepté depuis le bac : son id y est retenu (`accept`), le plan du lendemain ne le
-      // ramène pas, même reformulé.
-      if (taken(repo, (run) => run.title === title || run.request === request)) continue;
-      add({ source: "jira", repo, title, request }, `${repo}\u0000${item.key ?? title}`, {
-        repo,
-        title: item.key ? `${item.key} — ${title}` : title,
-        detail: item.why || item.next,
-        url: item.url,
-        createdAt: plan.createdAt,
-        action: "launch",
-      });
-    }
+    // Le dernier plan de CHAQUE connexion Atlassian (celle par défaut, puis celle de chaque espace) : un item
+    // ne propose qu'un dépôt que SA connexion peut viser — ceux de l'espace de son plan (`AtlassianDesk.repos`).
+    const plans = this.#hooks.atlassian.enabled()
+      ? this.#hooks.atlassian.all().flatMap((desk) => {
+          const plan = desk.latestPlan();
+          return plan === null ? [] : [{ plan, allowed: desk.repos() }];
+        })
+      : [];
+    for (const { plan, allowed } of plans)
+      for (const item of plan.items) {
+        const repo = item.repo;
+        const request = item.request?.trim() ?? "";
+        if (!declared(repo) || !allowed.includes(repo) || request === "") continue;
+        const title = item.title.trim();
+        // Lancé depuis l'app : un run du dépôt, ni échoué ni annulé, porte ce titre ou cette demande, de quelque
+        // date qu'il soit. Accepté depuis le bac : son id y est retenu (`accept`), le plan du lendemain ne le
+        // ramène pas, même reformulé.
+        if (taken(repo, (run) => run.title === title || run.request === request)) continue;
+        add({ source: "jira", repo, title, request }, `${repo}\u0000${item.key ?? title}`, {
+          repo,
+          title: item.key ? `${item.key} — ${title}` : title,
+          detail: item.why || item.next,
+          facts: { key: item.key ?? null },
+          url: item.url,
+          createdAt: plan.createdAt,
+          action: "launch",
+        });
+      }
 
     const { windowDays } = config.autonomyLearning;
     const seen = new Set<string>();
@@ -582,6 +662,14 @@ export class ProposalDesk {
             ? `Valider seul ${GATE_NAMES[proposed.gate]} des « ${proposed.kind} » de ${proposed.repo}`
             : `Redemander ${GATE_NAMES[proposed.gate]} des « ${proposed.kind} » de ${proposed.repo}`,
           detail: `${proposed.corrections} feature${proposed.corrections > 1 ? "s corrigées" : " corrigée"} sur ${proposed.runs} en ${windowDays} jours (${Math.round(proposed.rate * 100)} %)`,
+          facts: {
+            kind: proposed.kind,
+            gate: proposed.gate,
+            direction: proposed.direction,
+            corrected: proposed.corrections,
+            runs: proposed.runs,
+            windowDays,
+          },
           url: null,
           createdAt: this.#firstSeen.get(id) ?? now,
           action: "apply",
@@ -602,6 +690,7 @@ export class ProposalDesk {
         repo: run.repo,
         title: cleanTitle(run.title),
         detail: run.reason ?? "en échec",
+        facts: { runId: run.id, step: run.step, cause: failureOf(run)?.cause ?? null },
         url: run.prUrl,
         createdAt: run.updatedAt,
         action: "retry",

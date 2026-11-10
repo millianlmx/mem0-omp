@@ -8,8 +8,9 @@
 //     agents sur le serveur oMLX de l'hôte, ou chez Anthropic (local-model.ts).
 //   … --local-model omlx/<modèle> --omlx-url <url> [--omlx-context <n>] : le modèle oMLX
 //     déclaré aux runners sans toucher aux chaînes du serveur (dépôts `local-only`).
-//   … --add-client <nom> [--role viewer|operator|admin] [--repos a,b|*] [--approver] [--pilot] :
-//     un client de plus (son jeton s'affiche une fois ; --approver : l'approbateur du poste,
+//   … --add-client <nom> [--role viewer|operator|admin] [--repos a,b|*] [--space <id|nom>]… [--approver]
+//     [--pilot] : un client de plus (son jeton s'affiche une fois ; --space, répétable : borné aux dépôts
+//     de ces espaces, quels qu'ils deviennent, à la place de --repos ; --approver : l'approbateur du poste,
 //     admin sur tous les dépôts ; --pilot : un agent, la vigie, à qui les gestes réservés à
 //     l'humain sont refusés) ; --revoke-client <nom> ; --list-clients.
 //
@@ -24,6 +25,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import * as http from "node:http";
 import * as path from "node:path";
 import type { Role } from "./auth.ts";
@@ -177,20 +179,66 @@ function argValue(argv: string[], flag: string): string | null {
 
 export type CommandOutput = { status: number; stdout: string; stderr: string };
 
+/** Un espace tel que la ligne de commande le lit dans la base : de quoi borner un client à lui. */
+export type StoredSpace = { id: string; name: string; repos: string[] };
+
+/**
+ * Les espaces de la base, lus sans l'ouvrir en écriture ni la migrer (la ligne de commande n'est pas le
+ * service, qui tourne peut-être) ; aucun sans base, ou d'une base d'avant les espaces.
+ */
+function storedSpaces(config: HarnessConfig): StoredSpace[] {
+  const file = path.join(config.dataDir, "harness.sqlite");
+  if (!fs.existsSync(file)) return [];
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    return db
+      .prepare("SELECT id, name, repos FROM spaces ORDER BY created_at, rowid")
+      .all()
+      .map((row) => ({ id: String(row.id), name: String(row.name), repos: JSON.parse(String(row.repos)) as string[] }));
+  } catch {
+    return [];
+  } finally {
+    db.close();
+  }
+}
+
 /**
  * `--add-client` / `--revoke-client` / `--list-clients` sur le registre. Le jeton d'un
  * client ajouté sort seul sur stdout (scriptable : harness.sh en fait un code
  * d'appairage), le reste sur stderr. `--approver` est la SEULE façon de créer
- * l'approbateur du poste : l'API ne le peut pas.
+ * l'approbateur du poste : l'API ne le peut pas. `spaces` : les espaces de la base, pour
+ * `--space <id|nom>` (un client borné à des espaces) et les dépôts qu'il en voit.
  */
-export function clientCommand(argv: string[], registry: ClientRegistry): CommandOutput {
+export function clientCommand(
+  argv: string[],
+  registry: ClientRegistry,
+  spaces: () => StoredSpace[] = () => [],
+): CommandOutput {
   try {
+    // Un client borné à des espaces voit leurs dépôts : ceux de la base, relus à chaque commande.
+    registry.useSpaces((ids) =>
+      spaces()
+        .filter((space) => ids.includes(space.id))
+        .flatMap((space) => space.repos),
+    );
     const clientName = argValue(argv, "--add-client");
     if (clientName !== null) {
       const approver = argv.includes("--approver");
       const pilot = argv.includes("--pilot");
       const role = argValue(argv, "--role") ?? (approver ? "admin" : "operator");
       const repos = argValue(argv, "--repos") ?? "*";
+      // `--space <id|nom>`, répétable : chaque espace doit exister (son identifiant est gardé, pas son nom).
+      const known = spaces();
+      const bound = argv.flatMap((flag, index) => {
+        if (flag !== "--space") return [];
+        const ref = (argv[index + 1] ?? "").trim();
+        const space =
+          known.find((candidate) => candidate.id === ref) ??
+          known.find((candidate) => candidate.name.toLowerCase() === ref.toLowerCase());
+        if (ref === "" || space === undefined)
+          throw new Error(`espace inconnu : ${ref || "(vide)"} — crée-le d'abord (POST /v1/spaces)`);
+        return [space];
+      });
       const { client, token } = registry.add(
         clientName,
         role as Role,
@@ -202,12 +250,16 @@ export function clientCommand(argv: string[], registry: ClientRegistry): Command
               .filter(Boolean),
         approver,
         pilot,
+        bound.length > 0 ? bound.map((space) => space.id) : null,
       );
-      const scope = client.repos === "*" ? "tous" : client.repos.join(", ");
+      const scope =
+        bound.length > 0
+          ? `espaces : ${bound.map((space) => space.name).join(", ")}`
+          : `dépôts : ${client.repos === "*" ? "tous" : client.repos.join(", ")}`;
       return {
         status: 0,
         stdout: `${token}\n`,
-        stderr: `✓ client ${client.name} (${client.role}, dépôts : ${scope}${client.approver ? ", approbateur du poste" : ""}${client.pilot ? ", pilote" : ""}) — son jeton ne sera plus affiché :\n`,
+        stderr: `✓ client ${client.name} (${client.role}, ${scope}${client.approver ? ", approbateur du poste" : ""}${client.pilot ? ", pilote" : ""}) — son jeton ne sera plus affiché :\n`,
       };
     }
     if (argv.includes("--revoke-client")) {
@@ -223,7 +275,7 @@ export function clientCommand(argv: string[], registry: ClientRegistry): Command
       .list()
       .map(
         (client) =>
-          `${client.name}\t${client.role}\t${client.repos === "*" ? "*" : client.repos.join(",")}${client.approver ? "\tapprobateur" : ""}${client.pilot ? "\tpilote" : ""}\n`,
+          `${client.name}\t${client.role}\t${client.repos === "*" ? "*" : client.repos.join(",")}${client.approver ? "\tapprobateur" : ""}${client.pilot ? "\tpilote" : ""}${client.spaces ? `\tespaces:${client.spaces.join(",")}` : ""}\n`,
       );
     return { status: 0, stdout: lines.join(""), stderr: "" };
   } catch (err) {
@@ -270,7 +322,7 @@ if (isMain) {
     process.exit(0);
   }
   if (["--add-client", "--revoke-client", "--list-clients"].some((flag) => process.argv.includes(flag))) {
-    const output = clientCommand(process.argv, new ClientRegistry(config.clientsFile));
+    const output = clientCommand(process.argv, new ClientRegistry(config.clientsFile), () => storedSpaces(config));
     process.stderr.write(output.stderr);
     process.stdout.write(output.stdout);
     process.exit(output.status);

@@ -11,7 +11,9 @@ import { approverFor } from "./workstation.ts";
 
 /**
  * Crée l'objet du plan : `bug` et `feature` un run (`autonomy` : son curseur, s'il est demandé), `audit`,
- * `schedule` et `workstation_request` le leur.
+ * `schedule` et `workstation_request` le leur. `spaceId` : l'espace de la demande — une tâche du poste
+ * s'exécute dans un navigateur de cet espace (`Workstation.createRequest` refuse s'il n'en a pas) ; le
+ * dépôt d'un plan d'espace est déjà vérifié par `Intaker.confirm`.
  */
 export function createFromPlan(
   orchestrator: Orchestrator,
@@ -19,6 +21,7 @@ export function createFromPlan(
   actor: Actor,
   plan: IntakePlan,
   autonomy?: RunAutonomy | null,
+  spaceId: string | null = null,
 ): Created {
   const repo = plan.repo ?? "";
   switch (plan.kind) {
@@ -54,7 +57,8 @@ export function createFromPlan(
     }
     case "workstation_request": {
       const workstation = approverFor(orchestrator.workstation, client);
-      return { kind: "workstation_request", id: workstation.createRequest({ instruction: plan.statement }, actor).id };
+      const request = { instruction: plan.statement, ...(spaceId === null ? {} : { space: spaceId }) };
+      return { kind: "workstation_request", id: workstation.createRequest(request, actor).id };
     }
   }
 }

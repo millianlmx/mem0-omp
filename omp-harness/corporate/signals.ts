@@ -58,6 +58,8 @@ export type SignalInput = {
   /** Une référence opaque de la personne, telle que l'appelant la donne (adresse, pseudo, identifiant). */
   personRef?: string | null;
   text: string;
+  /** L'espace d'où vient le signalement : celui du job du poste qui le remet ; absent ou `null` : hors espace. */
+  space?: string | null;
 };
 
 /** Un signal tel que l'API le montre : ni la demande du run, ni les tentatives, ni la politique appliquée. */
@@ -81,6 +83,8 @@ export type Signal = {
   runId: string | null;
   confirmedBy: string | null;
   confirmedAt: number | null;
+  /** L'espace d'où il vient : il ne se propose et ne se confirme que vers un dépôt de cet espace ; `null` : hors espace. */
+  space: string | null;
 };
 
 export type ReportResult = {
@@ -155,6 +159,7 @@ export function signalView(row: SignalRow): Signal {
     runId: row.runId,
     confirmedBy: row.confirmedBy,
     confirmedAt: row.confirmedAt,
+    space: row.space,
   };
 }
 
@@ -217,11 +222,14 @@ export class SignalDesk {
     const clean = redactSecrets(input.text).trim();
     if (clean === "") return refused("text : texte non vide attendu");
     if (channel !== "manual" && personRef !== null) {
-      const self = this.#workstation.settings().selfIdentities.map(identity);
+      const self = this.#workstation.identitiesIn(input.space ?? null).map(identity);
       if (self.includes(identity(personRef))) return refused("signal envoyé par l'utilisateur lui-même");
     }
     const { store } = this.#ctx;
+    const space = input.space ?? null;
     const known = store.signalOfThread(channel, threadRef);
+    // Un fil appartient à l'espace qui l'a remis le premier : un autre espace n'y ajoute rien.
+    if (known !== null && known.space !== space) return refused("ce fil est déjà suivi ailleurs");
     if (known === null) {
       const row = store.insertSignal({
         id: newId("sg"),
@@ -230,6 +238,7 @@ export class SignalDesk {
         url,
         personRef,
         excerpt: excerptOf(clean),
+        space,
       });
       this.#emit(row);
       return { status: "received", signal: signalView(row) };
@@ -259,9 +268,15 @@ export class SignalDesk {
 
   // -- la détection (job `poste-signal`) -------------------------------------------------
 
-  /** Le plus ancien signal qui attend sa détection. */
-  nextReceived(): SignalRow | null {
-    return this.#ctx.store.oldestReceivedSignal();
+  /**
+   * Le plus ancien signal qui attend sa détection. `held` : ceux d'un espace retenu (sa pause, son
+   * budget du jour) sont passés — le plus ancien d'un autre espace, ou hors espace, est jugé.
+   */
+  nextReceived(held: (space: string | null) => boolean = () => false): SignalRow | null {
+    const { store } = this.#ctx;
+    const oldest = store.oldestReceivedSignal();
+    if (oldest === null || !held(oldest.space)) return oldest;
+    return store.listSignals({ states: ["received"], limit: 200 }).findLast((row) => !held(row.space)) ?? null;
   }
 
   /** Pour chaque dépôt déclaré : `null` s'il peut recevoir une proposition, sinon pourquoi non. */
@@ -280,9 +295,22 @@ export class SignalDesk {
 
   /** Les dépôts candidats d'une proposition, et le préféré (le dernier confirmé pour cette personne). */
   async candidates(signal: SignalRow): Promise<Candidate[]> {
-    const names = [...(await this.#repoStates())].filter(([, why]) => why === null).map(([name]) => name);
+    const allowed = this.#within(signal);
+    const names = [...(await this.#repoStates())]
+      .filter(([name, why]) => why === null && allowed(name))
+      .map(([name]) => name);
     const preferred = signal.personRef === null ? null : this.#ctx.store.preferredSignalRepo(signal.personRef);
     return names.map((name) => ({ name, preferred: name === preferred }));
+  }
+
+  /**
+   * Les dépôts où ce signalement peut aller : ceux de l'espace d'où il vient, quand il en a un (un espace
+   * disparu n'en a plus aucun) ; un signalement hors espace n'est pas borné.
+   */
+  #within(signal: SignalRow): (repo: string) => boolean {
+    if (signal.space === null) return () => true;
+    const repos = this.#ctx.store.getSpace(signal.space)?.repos ?? [];
+    return (repo) => repos.includes(repo);
   }
 
   /** Aucun dépôt candidat : le signal est jugé sans objet, sans runner. */
@@ -317,7 +345,7 @@ export class SignalDesk {
 
   /** Les textes que le serveur retire d'une issue de ce signalement. */
   #needles(signal: SignalRow): string[] {
-    return needlesOf(signal, this.#workstation.settings().selfIdentities, this.#ctx.store.workstationTexts(0));
+    return needlesOf(signal, this.#workstation.identitiesIn(signal.space), this.#ctx.store.workstationTexts(0));
   }
 
   /**
@@ -331,7 +359,9 @@ export class SignalDesk {
     const asked = toolText(args, "repo");
     const states = await this.#repoStates();
     const preferred = signal.personRef === null ? null : this.#ctx.store.preferredSignalRepo(signal.personRef);
-    const repo = preferred !== null && states.get(preferred) === null ? preferred : asked;
+    const allowed = this.#within(signal);
+    const repo = preferred !== null && states.get(preferred) === null && allowed(preferred) ? preferred : asked;
+    if (!allowed(repo)) throw new HarnessError(400, `dépôt non candidat : ${repo} (hors de l'espace du signalement)`);
     if (states.get(repo) !== null)
       throw new HarnessError(400, `dépôt non candidat : ${repo} (${states.get(repo) ?? "non déclaré"})`);
     const needles = this.#needles(signal);
@@ -355,17 +385,23 @@ export class SignalDesk {
 
   // -- lectures ------------------------------------------------------------------------
 
-  list(options: { states: readonly SignalState[]; limit: number }): Signal[] {
+  /** `space` : sous `?space=`, les seuls signalements venus de cet espace (`signal.space`). */
+  list(options: { states: readonly SignalState[]; limit: number; space?: string }): Signal[] {
     return this.#ctx.store.listSignals(options).map(signalView);
   }
 
-  get(id: string): Signal {
-    return signalView(this.#row(id));
+  get(id: string, within?: string): Signal {
+    return signalView(this.#row(id, within));
   }
 
-  #row(id: string): SignalRow {
+  /**
+   * `within` : l'espace de la requête (`?space=`) — un signalement venu d'un autre espace, ou hors
+   * espace, y est inconnu (404, comme s'il n'existait pas) ; absent : aucune borne.
+   */
+  #row(id: string, within?: string): SignalRow {
     const row = this.#ctx.store.getSignal(id);
-    if (row === null) throw new HarnessError(404, `signalement inconnu : ${id}`);
+    if (row === null || (within !== undefined && row.space !== within))
+      throw new HarnessError(404, `signalement inconnu : ${id}`);
     return row;
   }
 
@@ -389,10 +425,18 @@ export class SignalDesk {
 
   // -- les gestes de l'humain ---------------------------------------------------------------
 
-  /** Le dépôt visé d'une confirmation ou d'un aperçu : déclaré, ouvert aux issues d'origine corpo, avec une forge. */
-  async #target(name: string): Promise<{ repo: RepoConfig; forge: Forge }> {
+  /**
+   * Le dépôt visé d'une confirmation ou d'un aperçu : déclaré, dans l'espace d'où vient le signalement
+   * quand il en a un, ouvert aux issues d'origine corpo, avec une forge.
+   */
+  async #target(name: string, signal: SignalRow): Promise<{ repo: RepoConfig; forge: Forge }> {
     const repo = this.#ctx.config.repos.find((entry) => entry.name === name);
     if (!repo) throw new HarnessError(404, `dépôt inconnu : ${name}`);
+    if (!this.#within(signal)(name))
+      throw new HarnessError(
+        409,
+        `le dépôt ${name} n'est pas dans l'espace d'où vient ce signalement : il ne se confirme que vers un dépôt de cet espace`,
+      );
     if (corporatePolicy(repo) === "forbid")
       throw new HarnessError(409, `le dépôt ${name} refuse les issues d'origine corpo (issues.corporate: forbid)`);
     const forge = await this.#issues.forge(repo);
@@ -419,18 +463,18 @@ export class SignalDesk {
     };
   }
 
-  #proposed(id: string): SignalRow {
-    const signal = this.#row(id);
+  #proposed(id: string, within?: string): SignalRow {
+    const signal = this.#row(id, within);
     if (signal.state !== "proposed") throw new HarnessError(409, `le signalement est déjà ${signal.state}`);
     return signal;
   }
 
   /** Le texte EXACT que `confirm` enverrait avec les mêmes entrées ; ne change rien. */
-  async preview(id: string, input: Record<string, unknown>): Promise<SignalPreview> {
-    const signal = this.#proposed(id);
+  async preview(id: string, input: Record<string, unknown>, within?: string): Promise<SignalPreview> {
+    const signal = this.#proposed(id, within);
     const name = input.repo === undefined ? signal.repo : text(input, "repo");
     if (name === null) throw new HarnessError(400, "repo : chaîne attendue");
-    const { repo, forge } = await this.#target(name);
+    const { repo, forge } = await this.#target(name, signal);
     const issue = issueOf(signal);
     if (issue !== null && issue.repo !== name)
       throw new HarnessError(409, `l'issue est déjà créée dans ${issue.repo} : confirmer sans changer de dépôt`);
@@ -445,10 +489,10 @@ export class SignalDesk {
   }
 
   /** Écarte la proposition ; elle n'est plus reproposée pour ce fil. */
-  dismiss(id: string, input: Record<string, unknown>, client: Client): Signal {
-    this.#row(id);
+  dismiss(id: string, input: Record<string, unknown>, client: Client, within?: string): Signal {
+    this.#row(id, within);
     if (!client.approver) throw new HarnessError(403, APPROVER_ONLY);
-    this.#proposed(id);
+    this.#proposed(id, within);
     const reason = text(input, "reason", false).trim();
     if (reason.length > REASON_MAX) throw new HarnessError(400, `reason : ${REASON_MAX} caractères au plus`);
     return signalView(this.#update(id, { state: "dismissed", reason: reason === "" ? null : redactSecrets(reason) }));
@@ -458,23 +502,43 @@ export class SignalDesk {
    * Crée l'issue sur la forge puis le run lié, au geste de l'approbateur. Rejouable : l'issue créée
    * est écrite dès la réponse de la forge, une nouvelle confirmation ne la recrée pas.
    */
-  confirm(id: string, input: Record<string, unknown>, client: Client, actor: Actor): Promise<ConfirmResult> {
+  confirm(
+    id: string,
+    input: Record<string, unknown>,
+    client: Client,
+    actor: Actor,
+    within?: string,
+  ): Promise<ConfirmResult> {
     const pending = this.#confirming.get(id);
-    if (pending) return pending;
-    const run = this.#confirm(id, input, client, actor).finally(() => this.#confirming.delete(id));
+    if (pending) {
+      // Une confirmation en cours ne se rejoint que depuis une portée qui voit le signalement (404 sinon).
+      try {
+        this.#row(id, within);
+      } catch (err) {
+        return Promise.reject(err);
+      }
+      return pending;
+    }
+    const run = this.#confirm(id, input, client, actor, within).finally(() => this.#confirming.delete(id));
     this.#confirming.set(id, run);
     return run;
   }
 
-  async #confirm(id: string, input: Record<string, unknown>, client: Client, actor: Actor): Promise<ConfirmResult> {
-    this.#row(id);
+  async #confirm(
+    id: string,
+    input: Record<string, unknown>,
+    client: Client,
+    actor: Actor,
+    within?: string,
+  ): Promise<ConfirmResult> {
+    this.#row(id, within);
     if (!client.approver) throw new HarnessError(403, APPROVER_ONLY);
-    const signal = this.#proposed(id);
+    const signal = this.#proposed(id, within);
     const name = text(input, "repo");
     const title = text(input, "title");
     const body = text(input, "body");
     if (title.trim() === "" || body.trim() === "") throw new HarnessError(400, "title et body sont requis");
-    const { repo, forge } = await this.#target(name);
+    const { repo, forge } = await this.#target(name, signal);
     const declared = corporatePolicy(repo);
     let current = signal;
     let policy: PolicyView;

@@ -211,7 +211,7 @@ env_value() {
 #
 #   --wait --pipe --collect --service-type=exec --unit=omp-runner-ID --quiet --slice=…
 #   --working-directory=WORKTREES_ROOT/<dépôt>/<feature> -p MemoryMax=X -p OOMScoreAdjust=N
-#   [-p BindReadOnlyPaths=<clone>] [--setenv=MEM0_PROJECT_ID|MEM0_AUTOSETUP|MEM0_NUDGE|MEM0_MODE|OMP_HARNESS_LOCAL_ONLY=…]…
+#   [-p BindReadOnlyPaths=<clone>] [--setenv=MEM0_PROJECT_ID|MEM0_AUTOSETUP|MEM0_NUDGE|MEM0_MODE|MEM0_NO_GLOBAL|OMP_HARNESS_LOCAL_ONLY=…]…
 #   -- OMP_BIN …
 #
 # Les clés (runner.env, puis les *_API_KEY de l'API, puis le jeton mémoire du dépôt, puis
@@ -265,15 +265,16 @@ launch_runner() {
     fi
     shift 2
   fi
-  # La mémoire du projet du runner : cinq variables, liste FERMÉE, valeurs simples.
+  # La mémoire du projet du runner : six variables, liste FERMÉE, valeurs simples (« : » : la scope
+  # du poste ou du savoir d'un espace, `workstation:<espace>`, `corpo:<espace>`).
   memory_env=()
   local_only=0
   while [ "$#" -gt 0 ] && [[ "$1" == --setenv=* ]]; do
     assignment="${1#--setenv=}"
     name="${assignment%%=*}"
     value="${assignment#*=}"
-    case "$name" in MEM0_PROJECT_ID | MEM0_AUTOSETUP | MEM0_NUDGE | MEM0_MODE | OMP_HARNESS_LOCAL_ONLY) ;; *) refuse "variable de runner non permise : $name" ;; esac
-    [[ "$value" =~ ^[A-Za-z0-9@._/-]{1,128}$ ]] || refuse "valeur invalide pour $name"
+    case "$name" in MEM0_PROJECT_ID | MEM0_AUTOSETUP | MEM0_NUDGE | MEM0_MODE | MEM0_NO_GLOBAL | OMP_HARNESS_LOCAL_ONLY) ;; *) refuse "variable de runner non permise : $name" ;; esac
+    [[ "$value" =~ ^[A-Za-z0-9@._/:-]{1,128}$ ]] || refuse "valeur invalide pour $name"
     if [ "$name" = OMP_HARNESS_LOCAL_ONLY ]; then
       [ "$value" = 1 ] || refuse "OMP_HARNESS_LOCAL_ONLY vaut 1"
       local_only=1

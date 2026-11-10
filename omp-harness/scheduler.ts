@@ -88,7 +88,10 @@ export type Slot = { kind: SlotKind; label: string; release: () => void };
 
 export type SlotSnapshot = { used: number; capacity: number; labels: string[]; waiting: number };
 
-export type Refusal = { refused: "slots" | "memory"; detail: string };
+/** Un slot refusé : le texte (`detail`) et ses chiffres — slots tenus et capacité, ou mémoire disponible et requise. */
+export type Refusal =
+  | { refused: "slots"; detail: string; used: number; slots: number }
+  | { refused: "memory"; detail: string; availableMiB: number; requiredMiB: number };
 
 /** Une attente de slot : servie dans l'ordre (priorité, puis arrivée). */
 type Waiter = { kind: SlotKind; label: string; priority: number; seq: number; resolve: (slot: Slot) => void };
@@ -140,7 +143,12 @@ export class Scheduler {
   tryAcquire(kind: SlotKind, label: string): Slot | Refusal {
     const held = this.#held[kind];
     if (held.size >= this.#capacity[kind])
-      return { refused: "slots", detail: `slots ${kind} pleins ${held.size}/${this.#capacity[kind]}` };
+      return {
+        refused: "slots",
+        detail: `slots ${kind} pleins ${held.size}/${this.#capacity[kind]}`,
+        used: held.size,
+        slots: this.#capacity[kind],
+      };
     const available = this.#mem();
     const need = this.#need(kind);
     const reserve = this.#admission.reserveMiB;
@@ -148,6 +156,8 @@ export class Scheduler {
       return {
         refused: "memory",
         detail: `mémoire insuffisante : ${available} Mio disponibles, ${reserve + need} requis (réserve ${reserve} + ${kind} ${need})`,
+        availableMiB: available,
+        requiredMiB: reserve + need,
       };
     }
     const id = this.#nextId++;

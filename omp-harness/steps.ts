@@ -30,7 +30,7 @@ import {
 } from "./challenge.ts";
 import type { ChallengeStep } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
-import type { RunRow, StepRow } from "./db.ts";
+import type { RunRow, StepRow, Store } from "./db.ts";
 import type { AtlassianDesk } from "./atlassian/desk.ts";
 import { featureLine } from "./card.ts";
 import { detectIrreversible } from "./decisions.ts";
@@ -39,7 +39,7 @@ import type { HeavyResult } from "./heavy.ts";
 import { matchesGlob } from "./heavy.ts";
 import type { StepState } from "./host-tools.ts";
 import { runHostTool } from "./host-tools.ts";
-import type { FailCause, StepKind, StepOutcome } from "./machine.ts";
+import type { FailCause, GateFact, StepKind, StepOutcome } from "./machine.ts";
 import { IRREVERSIBLE_GATE, isRunnerOom, stepTier } from "./machine.ts";
 import { broadModules, parseModulesSection } from "./planner.ts";
 import {
@@ -216,17 +216,53 @@ export function specsCoverageGap(reqMd: string, specsMd: string): string | null 
 }
 
 /**
- * Pourquoi les specs ont besoin d'un regard humain avant /impl (porte « auto ») : un
+ * Pourquoi les specs ont besoin d'un regard humain avant /impl (porte « auto »), en DONNÉES : un
  * découpage proposé, des modules absents, une décision irréversible dans le texte, ou la
  * première feature d'un projet (elle fixe le cadre des suivantes). Vide : aucune raison.
  */
-export function gateReasons(run: Pick<RunRow, "projectId" | "projectOrder">, specsMd: string): string[] {
+export function gateFacts(run: Pick<RunRow, "projectId" | "projectOrder">, specsMd: string): GateFact[] {
   const irreversible = detectIrreversible(specsMd);
   return [
-    ...(parseSplitSection(specsMd).length > 0 ? ["découpage proposé"] : []),
-    ...(parseModulesSection(specsMd).length === 0 ? ["modules vides"] : []),
-    ...(irreversible !== null ? [`${IRREVERSIBLE_GATE} (${irreversible})`] : []),
-    ...(run.projectId !== null && run.projectOrder === 0 ? ["première feature d'un projet"] : []),
+    ...(parseSplitSection(specsMd).length > 0 ? [{ code: "split_proposed" } as const] : []),
+    ...(parseModulesSection(specsMd).length === 0 ? [{ code: "empty_modules" } as const] : []),
+    ...(irreversible !== null ? [{ code: "irreversible", category: irreversible } as const] : []),
+    ...(run.projectId !== null && run.projectOrder === 0 ? [{ code: "first_of_project" } as const] : []),
+  ];
+}
+
+/** Le texte d'une raison de porte, tel que la raison du run le garde. */
+function gateText(fact: GateFact): string {
+  switch (fact.code) {
+    case "split_proposed":
+      return "découpage proposé";
+    case "empty_modules":
+      return "modules vides";
+    case "irreversible":
+      return `${IRREVERSIBLE_GATE} (${fact.category})`;
+    case "first_of_project":
+      return "première feature d'un projet";
+    case "dispute":
+      return `désaccord avec le contradicteur (${fact.ids.join(", ")})`;
+  }
+}
+
+/** Les raisons de porte des specs, en texte (`gateFacts`) : ce que la raison du run et la carte de specs disent. */
+export function gateReasons(run: Pick<RunRow, "projectId" | "projectOrder">, specsMd: string): string[] {
+  return gateFacts(run, specsMd).map(gateText);
+}
+
+/**
+ * Toutes les raisons de la porte des specs d'un run, relues de ce qu'il a en base : celles de son
+ * `specs.md` (`gateFacts`), puis ses désaccords restés ouverts avec le contradicteur.
+ */
+export function specsGateFacts(
+  store: Pick<Store, "getArtifact">,
+  run: Pick<RunRow, "id" | "projectId" | "projectOrder">,
+): GateFact[] {
+  const disputed = openDisputes(readRecords(store.getArtifact(run.id, CHALLENGE_STATE)));
+  return [
+    ...gateFacts(run, store.getArtifact(run.id, "specs.md") ?? ""),
+    ...(disputed.length > 0 ? [{ code: "dispute", ids: disputed } as const] : []),
   ];
 }
 
@@ -325,11 +361,12 @@ export class StepExecutor {
 
   /**
    * Les lectures Atlassian offertes aux étapes du run : le dépôt les déclare (`atlassian: true`,
-   * jamais sur un dépôt public) ET le connecteur est branché. La visibilité de la forge ne se lit
+   * jamais sur un dépôt public) ET la connexion de SON espace est branchée (la connexion par défaut
+   * pour un dépôt hors espace ; un espace sans connexion n'a rien). La visibilité de la forge ne se lit
    * qu'en asynchrone (`Forge.visibility()`) : la déclaration du dépôt fait foi.
    */
   #atlassianFor(run: RunRow): boolean {
-    return this.#ctx.repo(run.repo).atlassian === true && this.#hooks.atlassian.connected();
+    return this.#ctx.repo(run.repo).atlassian === true && this.#hooks.atlassian.forRepo(run.repo).connected();
   }
 
   /** Le worktree du run, sur une branche neuve à partir de `main`. */
@@ -1044,11 +1081,7 @@ export class StepExecutor {
         this.#ctx.event("modules", run.id, { modules });
       });
     }
-    const disputed = openDisputes(readRecords(store.getArtifact(run.id, CHALLENGE_STATE)));
-    return [
-      ...gateReasons(run, specs),
-      ...(disputed.length > 0 ? [`désaccord avec le contradicteur (${disputed.join(", ")})`] : []),
-    ];
+    return specsGateFacts(store, run).map(gateText);
   }
 
   /**

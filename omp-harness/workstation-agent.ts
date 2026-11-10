@@ -24,6 +24,12 @@
 // Confluence et font avancer les tickets de l'utilisateur (commentaires seulement proposés) ;
 // `poste-savoir` lit seulement. Ces outils sont interceptés une fois, dans `#open`.
 //
+// Une connexion Atlassian PAR ESPACE, plus la connexion par défaut (atlassian/desk.ts) : un job ne lit
+// que la connexion de SON espace (`#atlassianOf` : aucune → aucun outil, jamais celle par défaut) ;
+// `poste-plan` et `poste-savoir` tournent pour chaque connexion vivante, une à la fois, chacune avec sa
+// dernière tentative, son plan, ses projets Jira, ses dépôts et sa mémoire (`corpo:<espace>`). Un
+// signalement remis par un job d'un espace en garde l'espace : il n'ira que vers un de ses dépôts.
+//
 // Un seul job de chaque sorte à la fois. La garde d'envoi n'est pas ici : elle est dans la
 // file (workstation.ts) et dans l'extension, et aucun outil de l'agent n'approuve.
 //
@@ -37,17 +43,33 @@
 // - la scope mémoire est `workstation` (`corpo` pour `poste-savoir`) : l'agent ne lit ni n'écrit la mémoire d'un projet ;
 // - sa politique de modèles est `workstation.policy` (models, providers, privacy : policy.ts),
 //   appliquée comme celle d'un dépôt — les données du poste peuvent ne jamais quitter la machine.
+//
+// Un job peut tourner DANS UN ESPACE (un client) : celui du navigateur où il agit (`poste-service` :
+// le navigateur par défaut), de sa demande (`poste-demande`), du navigateur de son meeting
+// (`poste-digest`), ou l'espace dont il établit le profil (`poste-profil`, un par espace qui a un
+// navigateur, sur ses SEULES observations et réunions). Il a alors le répertoire de travail
+// `_poste-<espace>`, la scope mémoire `workstation:<espace>`, la politique du poste croisée au plus
+// strict avec celle de l'espace, le profil de l'espace dans son prompt, et sa consommation lui est
+// imputée (`usage.space_id`). Hors espace, rien de tout cela ne change.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { HarnessConfig, RepoConfig, Tier } from "./config.ts";
 import { isRecord, repoDefaults } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { AtlassianDesk, PlanTrigger } from "./atlassian/desk.ts";
-import { CORPO_SCOPE, isAtlassianTool } from "./atlassian/desk.ts";
+import { corpoScopeOf, isAtlassianTool } from "./atlassian/desk.ts";
 import { wallClock } from "./cron.ts";
 import type { SignalDesk, SignalInput } from "./corporate/signals.ts";
-import type { Meeting, StoredObservation, WorkstationAction, WorkstationProfile, WorkstationRequest } from "./db.ts";
+import type {
+  Meeting,
+  Space,
+  StoredObservation,
+  WorkstationAction,
+  WorkstationProfile,
+  WorkstationRequest,
+} from "./db.ts";
 import { HarnessError } from "./errors.ts";
+import { strictest } from "./policy.ts";
 import {
   nudgePrompt,
   workstationDigestPrompt,
@@ -67,16 +89,23 @@ import type { EffectiveAutonomy, ProfileStats, Workstation } from "./workstation
 import {
   MAX_WAIT_SEC,
   REQUEST_CANCELLED,
+  REQUEST_OUT_OF_SPACE,
   clip,
   parseActionInput,
   parseDigest,
   parseProfile,
+  posteDir,
   uploadDir,
 } from "./workstation.ts";
 import { untrusted } from "./workstation-guards.ts";
 
-/** La scope mémoire des jobs du poste. */
+/** La scope mémoire des jobs du poste hors espace ; celle d'un espace : `workstationScope`. */
 export const WORKSTATION_SCOPE = "workstation";
+
+/** La scope mémoire des jobs du poste d'une portée : `workstation` hors espace, `workstation:<espace>` dans un espace. */
+export function workstationScope(space: string | null): string {
+  return space === null ? WORKSTATION_SCOPE : `${WORKSTATION_SCOPE}:${space}`;
+}
 
 const JOBS: readonly WorkstationJob[] = [
   "poste-profil",
@@ -118,23 +147,39 @@ const TOOL_TEXT_MAX = 8000;
 const SNAPSHOT_TEXT_MAX = 32_000;
 /** Les faits que la passe de savoir retient au plus. */
 const KNOWLEDGE_MAX_FACTS = 30;
-/** La dernière tentative du plan automatique et de la passe de savoir (réglages) : un échec n'est pas relancé avant l'échéance suivante, même après un redémarrage. */
+/**
+ * La dernière tentative du plan automatique et de la passe de savoir (réglages) : un échec n'est pas relancé avant
+ * l'échéance suivante, même après un redémarrage. Une par connexion Atlassian (`connectionKey`).
+ */
 const PLAN_ATTEMPT_KEY = "workstation.plan.attempt";
 const KNOWLEDGE_ATTEMPT_KEY = "workstation.knowledge.attempt";
+
+/** La clé d'un réglage tenu par connexion Atlassian : telle quelle pour la connexion par défaut, suffixée `:<espaceId>` pour un espace. */
+function connectionKey(key: string, space: string | null): string {
+  return space === null ? key : `${key}:${space}`;
+}
+
 const DAY_MS = 24 * 3_600_000;
 
-/** Le dépôt synthétique et le répertoire de travail des jobs du poste (voir l'en-tête). */
-export function workstationTarget(config: HarnessConfig): { repo: RepoConfig; cwd: string } {
+/**
+ * Le dépôt synthétique et le répertoire de travail des jobs du poste (voir l'en-tête). Dans un espace
+ * (`space`) : SA scope mémoire, SON répertoire de travail, et la politique du poste croisée au plus
+ * strict avec celle de l'espace (policy.ts `strictest`).
+ */
+export function workstationTarget(
+  config: HarnessConfig,
+  space: Pick<Space, "id" | "policy"> | null = null,
+): { repo: RepoConfig; cwd: string } {
   return {
     repo: {
       ...repoDefaults({
         name: "workstation",
         path: path.join(config.dataDir, "workstation"),
-        scope: WORKSTATION_SCOPE,
+        scope: workstationScope(space?.id ?? null),
       }),
-      ...config.workstation.policy,
+      ...strictest(config.workstation.policy ?? {}, space?.policy ?? null),
     },
-    cwd: path.join(config.worktreesDir, "workstation", "_poste"),
+    cwd: posteDir(config, space?.id ?? null),
   };
 }
 
@@ -259,6 +304,14 @@ function actResult(
 type LiveJob = {
   abort: AbortController;
   session: RunnerSession | null;
+  /**
+   * L'espace (son id) dans lequel le job tourne — celui du navigateur où il agit, de sa demande, du
+   * meeting qu'il résume — ; `null` : hors espace. Sa mémoire, son répertoire de travail, sa politique
+   * de modèles et l'imputation de sa consommation en découlent (`#open`).
+   */
+  space: string | null;
+  /** Le navigateur où `#deposit` dépose les actions du job ; `null` : celui de sa demande, sinon le navigateur par défaut. */
+  browser: string | null;
   /** Pourquoi le job a été arrêté avant sa fin (pause, autonomie, arrêt du service). */
   stopReason: string | null;
   done: Promise<void>;
@@ -268,12 +321,20 @@ export class WorkstationAgent {
   readonly #ctx: HarnessContext;
   readonly #ws: Workstation;
   readonly #live = new Map<WorkstationJob, LiveJob>();
-  /** La dernière synthèse du profil tentée : un échec n'est pas relancé avant `profileEveryHours`. */
-  #profileAttemptAt = 0;
+  /** La dernière synthèse du profil tentée, par portée (un espace, ou `null` : hors espace) : un échec n'est pas relancé avant `profileEveryHours`. */
+  readonly #profileAttempts = new Map<string | null, number>();
   /** La demande que mène le job `poste-demande` vivant ; `null` sinon. */
   #requestId: string | null = null;
   /** La pause globale du serveur (`POST /v1/pause`), donnée à chaque tour : sa raison, `null` hors pause. */
   #hold: string | null = null;
+  /** Ce qui retient les jobs d'un espace (sa pause, son budget du jour), donné à chaque tour ; `null` : rien. */
+  #spaceHold: (space: string | null) => string | null = () => null;
+  /**
+   * Le dernier lancement de chaque job depuis le démarrage : son espace, et la dernière entrée de son
+   * direct écrite AVANT lui — le direct d'un job est un seul fil, où se suivent des lancements
+   * d'espaces différents (`sessionScope`).
+   */
+  readonly #launched = new Map<WorkstationJob, { space: string | null; since: number }>();
   readonly #signals: SignalDesk;
   readonly #atlassian: AtlassianDesk;
 
@@ -287,9 +348,16 @@ export class WorkstationAgent {
   /**
    * Un tour : les échéances de la file, puis les jobs dus. `hold` : la pause globale du serveur —
    * les gardes passent et ce qui tourne finit, mais aucun job ne part (sa raison le dit).
+   * `spaceHold` : ce qui retient les jobs d'UN espace (sa pause, son budget du jour atteint), `null`
+   * sinon et toujours hors espace — ses jobs ne partent pas, ceux des autres espaces continuent.
    */
-  tick(now = Date.now(), hold: string | null = null): void {
+  tick(
+    now = Date.now(),
+    hold: string | null = null,
+    spaceHold: (space: string | null) => string | null = () => null,
+  ): void {
     this.#hold = hold;
+    this.#spaceHold = spaceHold;
     this.#ws.maintain(now);
     if (!this.#ws.enabled) return;
     this.#guardShift();
@@ -305,9 +373,16 @@ export class WorkstationAgent {
     this.#knowledgeIfDue(now);
   }
 
-  /** Atlassian est activé et branché : ses outils sont offerts, le plan et le savoir peuvent partir. */
-  #atlassianOn(): boolean {
-    return this.#atlassian.enabled() && this.#atlassian.connected();
+  /**
+   * La connexion Atlassian d'un job : celle de SON espace (`null` : la connexion par défaut, hors espace), si
+   * Atlassian est activé et qu'elle est branchée ; sinon `null` — un job d'un espace sans connexion n'a
+   * aucun outil Atlassian, jamais ceux de la connexion par défaut.
+   */
+  #atlassianOf(space: string | null): AtlassianDesk | null {
+    if (!this.#atlassian.enabled()) return null;
+    if (space !== null && this.#ctx.store.getSpace(space) === null) return null;
+    const desk = space === null ? this.#atlassian : this.#atlassian.forSpace(space);
+    return desk.connected() ? desk : null;
   }
 
   /** Le job tourne en ce moment. */
@@ -316,25 +391,58 @@ export class WorkstationAgent {
   }
 
   /**
+   * La portée du direct d'un job (`GET /v1/workstation/session?job=&space=`) : l'espace de son dernier
+   * lancement (`null` : hors espace) et la `seq` après laquelle ses entrées commencent ; `null` s'il
+   * n'a pas tourné depuis le démarrage — sous `?space=`, son direct est alors vide.
+   */
+  sessionScope(job: WorkstationJob): { space: string | null; since: number } | null {
+    return this.#launched.get(job) ?? null;
+  }
+
+  /**
    * Un job lancé s'il n'en tourne pas déjà un de sa sorte, sous le plafond journalier, avec
    * un slot runner : `null` s'il part, sinon pourquoi il ne part pas (lisible par l'humain).
+   * `space` : l'espace dans lequel il tourne (`null` : hors espace) — sa consommation lui est
+   * imputée ; `browser` : le navigateur où il dépose ses actions (`null` : le défaut).
    */
-  #launch(job: WorkstationJob, drive: (live: LiveJob) => Promise<void>): string | null {
+  #launch(
+    job: WorkstationJob,
+    drive: (live: LiveJob) => Promise<void>,
+    space: string | null = null,
+    browser: string | null = null,
+  ): string | null {
     if (this.#live.has(job)) return "une demande plus ancienne est en cours";
     if (this.#hold !== null) return this.#hold;
+    // La pause ou le budget du jour de l'espace du job : lui seul attend, les autres espaces partent.
+    const held = this.#spaceHold(space);
+    if (held !== null) return held;
     const daily = this.#ctx.monitor.dailyBudgetDue();
     if (daily)
       return `plafond journalier atteint : ${daily.spent.toFixed(2)} $ / ${daily.ceiling.toFixed(2)} $ — reprise à ${new Date(daily.resetsAt).toISOString()}`;
     const slot = this.#ctx.scheduler.tryAcquire("runner", unitOf(job));
     if ("refused" in slot) return `aucun runner libre : ${slot.detail}`;
-    const live: LiveJob = { abort: new AbortController(), session: null, stopReason: null, done: Promise.resolve() };
+    const live: LiveJob = {
+      abort: new AbortController(),
+      session: null,
+      space,
+      browser,
+      stopReason: null,
+      done: Promise.resolve(),
+    };
     this.#live.set(job, live);
+    this.#launched.set(job, {
+      space,
+      since: this.#ctx.sessions.snapshot(workstationOwner(job)).at(-1)?.seq ?? 0,
+    });
+    // Les lignes `usage` de ce job portent l'espace (`usage.space_id`) ; hors espace : aucun.
+    this.#ctx.monitor.usageSpace(workstationOwner(job), space);
     live.done = drive(live)
       .catch((err: unknown) =>
         this.#ctx.log(`poste ${job} : ${err instanceof Error ? err.message : String(err)}`, { level: "error", err }),
       )
       .finally(async () => {
         await live.session?.stop();
+        this.#ctx.monitor.usageSpace(workstationOwner(job), null);
         slot.release();
         this.#live.delete(job);
       });
@@ -347,19 +455,26 @@ export class WorkstationAgent {
     live: LiveJob,
     onHostTool: (name: string, args: Record<string, unknown>) => Promise<HostToolResult>,
   ): Promise<RunnerSession> {
-    const workstation = workstationTarget(this.#ctx.config);
-    // La passe de savoir écrit dans la mémoire de la boîte : ses `mem0_*` visent `corpo`.
+    // Dans un espace : sa mémoire, son répertoire de travail et sa politique. Un espace retiré depuis le lancement : rien ne part.
+    const space = live.space === null ? null : this.#ctx.store.getSpace(live.space);
+    if (live.space !== null && space === null) throw new Error(`espace ${live.space} retiré : le job ne part pas`);
+    const workstation = workstationTarget(this.#ctx.config, space);
+    // La passe de savoir écrit dans la mémoire de la boîte : ses `mem0_*` visent `corpo` (`corpo:<espace>` pour un espace).
     const target =
-      job === "poste-savoir" ? { ...workstation, repo: { ...workstation.repo, scope: CORPO_SCOPE } } : workstation;
+      job === "poste-savoir"
+        ? { ...workstation, repo: { ...workstation.repo, scope: corpoScopeOf(live.space) } }
+        : workstation;
     fs.mkdirSync(target.repo.path, { recursive: true });
     // Le dossier d'envoi (`upload`) vit dans le répertoire de travail, seul dossier où le runner écrit.
-    fs.mkdirSync(uploadDir(this.#ctx.config), { recursive: true });
+    fs.mkdirSync(uploadDir(this.#ctx.config, live.space), { recursive: true });
     // Le job muet (`poste-signal`) lit des messages de collègues : rien de ce qu'il fait ne sort
     // vers un journal. Ni direct (aucune trame transmise), ni `intent` des outils, ni
     // `progress`. `workstation_signal` des autres jobs ne montre pas non plus son `intent` (le direct,
     // lui, est réservé au propriétaire, comme les pages que ces jobs lisent).
     const silent = MUTED_JOBS[job] === true;
-    const tools = hostToolsFor(job, { atlassian: this.#atlassianOn() });
+    // La connexion Atlassian du job est celle de son espace : sans elle, aucun de ces outils.
+    const atlassian = this.#atlassianOf(live.space);
+    const tools = hostToolsFor(job, { atlassian: atlassian !== null });
     // Les outils Atlassian, un seul aiguillage pour tous les jobs : seulement ceux que la session a reçus,
     // écritures permises si elle a reçu une écriture (service, demande, plan ; jamais le savoir).
     const offered = new Set(tools.map((tool) => tool.name));
@@ -368,8 +483,9 @@ export class WorkstationAgent {
       onHostTool: (name, args) => {
         if (name === "progress") return Promise.resolve(this.#progress(job, args, silent));
         if (!isAtlassianTool(name)) return onHostTool(name, args);
-        if (!offered.has(name)) return Promise.resolve({ text: `outil inconnu : ${name}`, isError: true });
-        return this.#atlassian.runTool(name, args, { by: `poste:${job}`, writes }, live.abort.signal);
+        if (!offered.has(name) || atlassian === null)
+          return Promise.resolve({ text: `outil inconnu : ${name}`, isError: true });
+        return atlassian.runTool(name, args, { by: `poste:${job}`, writes }, live.abort.signal);
       },
       event: (type, payload) =>
         this.#ctx.event(
@@ -403,14 +519,20 @@ export class WorkstationAgent {
 
   #digestNext(): void {
     if (this.#live.has("poste-digest")) return;
-    const meeting = this.#ctx.store.listWorkstationMeetings({ states: ["ended"], limit: 50 }).at(-1);
+    // Le plus ancien meeting fini d'un espace que rien ne retient (pause, budget) : les autres espaces continuent.
+    // Son espace est celui où il a été OUVERT (écrit sur la ligne), pas celui de son navigateur aujourd'hui.
+    const meeting = this.#ctx.store
+      .listWorkstationMeetings({ states: ["ended"], limit: 50 })
+      .findLast((ended) => this.#spaceHold(ended.space ?? null) === null);
     if (!meeting) return;
     // Rien de transcrit : rien à résumer, aucun runner.
     if (meeting.segments === 0) {
       this.#ws.finishDigest(meeting.id, { summary: "Aucun échange transcrit.", needs: [] });
       return;
     }
-    this.#launch("poste-digest", (live) => this.#digest(meeting, live));
+    // Le digest tourne dans l'espace où le meeting a été ouvert (sa mémoire, son imputation) ; un espace
+    // retiré depuis : le digest échoue (`#open`), le transcript ne part dans aucune autre portée.
+    this.#launch("poste-digest", (live) => this.#digest(meeting, live), meeting.space ?? null);
   }
 
   async #digest(meeting: Meeting, live: LiveJob): Promise<void> {
@@ -470,25 +592,39 @@ export class WorkstationAgent {
   // -- profil -------------------------------------------------------------------------
 
   /**
-   * La synthèse est due à la demande d'une app, ou quand `profileEveryHours` ont passé
-   * depuis le dernier profil (le premier : depuis la première observation) ET que de
-   * nouvelles observations sont arrivées depuis.
+   * Un profil par PORTÉE : hors espace (les navigateurs sans espace), puis chaque espace qui a un
+   * navigateur. La synthèse d'une portée est due à la demande d'une app, ou quand
+   * `profileEveryHours` ont passé depuis son dernier profil (le premier : depuis sa première
+   * observation) ET que de nouvelles observations de SES navigateurs sont arrivées depuis. Un job
+   * à la fois : la première portée due part, les autres aux tours suivants.
    */
   #profileIfDue(now: number): void {
     if (this.#live.has("poste-profil")) return;
     const { store } = this.#ctx;
-    const last = store.latestWorkstationProfile();
-    const reference = last?.updatedAt ?? this.#ws.observed().since;
     const every = this.#ctx.config.workstation.profileEveryHours * 3_600_000;
-    const due =
-      this.#ws.profileRequested ||
-      (reference !== null &&
-        now - Math.max(reference, this.#profileAttemptAt) >= every &&
-        store.countWorkstationObservationsSince(last?.updatedAt ?? 0) > 0);
-    if (!due) return;
-    if (this.#launch("poste-profil", (live) => this.#profile(live)) !== null) return;
-    this.#ws.profileRequested = false;
-    this.#profileAttemptAt = now;
+    const spaces = new Set(store.listWorkstationBrowsers().flatMap((browser) => browser.spaceId ?? []));
+    for (const space of [null, ...spaces]) {
+      if (this.#spaceHold(space) !== null) continue;
+      const last = store.latestWorkstationProfile(space);
+      const reference = last?.updatedAt ?? this.#ws.observed(space).since;
+      const requested = space === null ? this.#ws.profileRequested : this.#ws.spaceProfilesRequested.has(space);
+      const due =
+        requested ||
+        (reference !== null &&
+          now - Math.max(reference, this.#profileAttempts.get(space) ?? 0) >= every &&
+          store.countWorkstationObservationsSince(last?.updatedAt ?? 0, space) > 0);
+      if (!due) continue;
+      if (this.#launch("poste-profil", (live) => this.#profile(live), space) !== null) return;
+      if (space === null) this.#ws.profileRequested = false;
+      else this.#ws.spaceProfilesRequested.delete(space);
+      this.#profileAttempts.set(space, now);
+      return;
+    }
+  }
+
+  /** Le nom de l'espace d'un job, dit dans son prompt ; `null` hors espace. */
+  #spaceName(live: LiveJob): string | null {
+    return live.space === null ? null : (this.#ctx.store.getSpace(live.space)?.name ?? null);
   }
 
   async #profile(live: LiveJob): Promise<void> {
@@ -501,17 +637,21 @@ export class WorkstationAgent {
         if (out.version !== null) return { text: `profil v${out.version} déjà enregistré. Termine ton tour.` };
         const parsed = parseProfile(args);
         if (!parsed.ok) return { text: `profil refusé : ${parsed.error}`, isError: true };
-        out.version = this.#ws.writeProfile(parsed.profile).version;
+        out.version = this.#ws.writeProfile(parsed.profile, live.space).version;
         return { text: `profil v${out.version} enregistré. Termine ton tour.` };
       });
       const deadlineAt = Date.now() + this.#ctx.config.runner.stepTimeoutSec * 1000;
-      const observations = store.listWorkstationObservations({ limit: OBSERVATIONS_SAMPLE });
+      // Les SEULES observations, statistiques et réunions de la portée du job (un espace, ou hors espace).
+      const observations = store.listWorkstationObservations({ limit: OBSERVATIONS_SAMPLE, space: live.space });
       let result = await session.prompt(
         workstationProfilePrompt({
-          stats: statsText(this.#ws.stats()),
+          stats: statsText(this.#ws.stats(live.space)),
           observations: observations.length > 0 ? observations.map(observationLine).join("\n") : null,
-          meetings: meetingLines(store.listWorkstationMeetings({ states: ["digested"], limit: MEETINGS_SHOWN })),
-          previous: profileText(store.latestWorkstationProfile()),
+          meetings: meetingLines(
+            store.listWorkstationMeetings({ states: ["digested"], limit: MEETINGS_SHOWN, space: live.space }),
+          ),
+          previous: profileText(this.#ws.profileOf(live.space)),
+          space: this.#spaceName(live),
         }),
         live.abort.signal,
         deadlineAt,
@@ -565,8 +705,9 @@ export class WorkstationAgent {
    */
   #signalNext(): void {
     if (this.#live.has("poste-signal") || this.#ws.settings().paused) return;
-    const signal = this.#signals.nextReceived();
-    if (signal) this.#launch("poste-signal", (live) => this.#signal(signal.id, live));
+    const signal = this.#signals.nextReceived((space) => this.#spaceHold(space) !== null);
+    // Le tri tourne dans l'espace d'où vient le signalement (sa mémoire, sa politique) ; hors espace sinon.
+    if (signal) this.#launch("poste-signal", (live) => this.#signal(signal.id, live), signal.space);
   }
 
   /**
@@ -634,8 +775,9 @@ export class WorkstationAgent {
    * `workstation_signal` d'un job du poste : le signalement lu dans une page (`chrome`, le fil est
    * l'URL) ou, sans URL, dans une demande de l'humain (`manual`, le fil est la demande et le texte sa
    * consigne, lue par le serveur). `requestId` : la demande que mène le job (`null` : le service).
+   * `space` : l'espace du job — le signalement en vient, et n'ira que vers un dépôt de cet espace.
    */
-  #reportSignal(args: Record<string, unknown>, requestId: string | null): HostToolResult {
+  #reportSignal(args: Record<string, unknown>, requestId: string | null, space: string | null): HostToolResult {
     const url = typeof args.url === "string" ? args.url.trim() : "";
     const personRef = typeof args.personRef === "string" ? args.personRef : null;
     let input: SignalInput;
@@ -649,7 +791,7 @@ export class WorkstationAgent {
         return { text: "url et excerpt : texte non vide attendu", isError: true };
       input = { channel: "chrome", threadRef: url, url, personRef, text: excerpt };
     }
-    const result = this.#signals.reportSignal(input);
+    const result = this.#signals.reportSignal({ ...input, space });
     if (result.status === "refused") return { text: `signalement refusé : ${result.reason}`, isError: true };
     return {
       text:
@@ -668,7 +810,10 @@ export class WorkstationAgent {
     if (effective === "observe" || settings.paused || !this.#ws.online(now)) return;
     const next = this.#ws.nextShiftAt(settings, effective, this.#ctx.store.lastWorkstationShift(), now);
     if (next === null || now < next) return;
-    this.#launch("poste-service", (live) => this.#shift(live, effective));
+    // Le service agit dans le navigateur par défaut, épinglé pour sa durée : il tourne dans l'espace de ce
+    // navigateur (son profil, sa mémoire, son journal), hors espace s'il n'en a pas.
+    const browser = this.#ws.defaultBrowserId();
+    this.#launch("poste-service", (live) => this.#shift(live, effective), this.#ws.spaceOfBrowser(browser), browser);
   }
 
   async #shift(live: LiveJob, autonomy: Exclude<EffectiveAutonomy, "observe">): Promise<void> {
@@ -683,19 +828,22 @@ export class WorkstationAgent {
       // Un service ne déborde jamais sur le suivant.
       const deadlineAt =
         Date.now() + Math.min(config.runner.stepTimeoutSec * 1000, config.workstation.shiftEveryMin * 60_000);
-      const awaiting = store.listWorkstationActions({ states: ["awaiting_approval"], limit: JOURNAL_SHOWN });
-      const journal = store.listWorkstationActions({ limit: JOURNAL_SHOWN });
-      const recent = store.listWorkstationObservations({ since: Date.now() - 2 * 3_600_000, limit: 100 });
+      // Le journal, l'activité et les besoins de la portée du service : l'espace de son navigateur, ou hors espace.
+      const { space } = live;
+      const awaiting = store.listWorkstationActions({ states: ["awaiting_approval"], limit: JOURNAL_SHOWN, space });
+      const journal = store.listWorkstationActions({ limit: JOURNAL_SHOWN, space });
+      const recent = store.listWorkstationObservations({ since: Date.now() - 2 * 3_600_000, limit: 100, space });
       const result = await session.prompt(
         workstationShiftPrompt({
           autonomy,
           maxActions: config.workstation.shiftMaxActions,
-          profile: profileText(store.latestWorkstationProfile()),
+          profile: profileText(this.#ws.profileOf(space)),
           activity: recent.length > 0 ? recent.map(observationLine).join("\n") : null,
           pending: awaiting.length > 0 ? awaiting.map(actionLine).join("\n") : null,
           journal: journal.length > 0 ? journal.map(actionLine).join("\n") : null,
-          needs: meetingLines(store.listWorkstationMeetings({ states: ["digested"], limit: MEETINGS_SHOWN })),
-          atlassian: this.#atlassianOn(),
+          needs: meetingLines(store.listWorkstationMeetings({ states: ["digested"], limit: MEETINGS_SHOWN, space })),
+          atlassian: this.#atlassianOf(live.space) !== null,
+          space: this.#spaceName(live),
         }),
         live.abort.signal,
         deadlineAt,
@@ -719,7 +867,10 @@ export class WorkstationAgent {
   /**
    * Un dépôt de `workstation_act` ou `workstation_decision` par un job de l'agent : sous le
    * plafond `shiftMaxActions` (au-delà, `capText` et aucune action), rattaché à la demande
-   * `requestId` (`null` pour le service 24/24), puis l'attente de son résultat.
+   * `requestId` (`null` pour le service 24/24), puis l'attente de son résultat. Hors demande,
+   * l'action part dans le navigateur du job (`live.browser`, sinon le défaut), qui doit être dans
+   * l'espace du job : un job d'espace ne dépose jamais ailleurs (la demande, elle, est tenue par
+   * `createAction`).
    */
   async #deposit(
     name: string,
@@ -735,12 +886,18 @@ export class WorkstationAgent {
     }
     let action: WorkstationAction;
     try {
-      const input =
+      const parsed =
         name === "workstation_decision"
           ? parseActionInput({ kind: "decision", params: { summary: args.summary }, rationale: args.rationale })
           : parseActionInput({ kind: args.kind, params: args.params ?? {}, rationale: args.rationale });
-      if (name === "workstation_act" && input.kind === "decision")
+      if (name === "workstation_act" && parsed.kind === "decision")
         return { text: "une décision sans geste passe par `workstation_decision`.", isError: true };
+      if (requestId === null && this.#ws.spaceOfBrowser(live.browser ?? this.#ws.defaultBrowserId()) !== live.space)
+        return {
+          text: "action refusée : ce job n'a pas (ou plus) de navigateur dans son espace — il n'agit pas ailleurs.",
+          isError: true,
+        };
+      const input = requestId === null && live.browser !== null ? { ...parsed, browserId: live.browser } : parsed;
       action = this.#ws.createAction(input, "agent", "agent", requestId);
     } catch (err) {
       return { text: `action refusée : ${err instanceof Error ? err.message : String(err)}`, isError: true };
@@ -776,7 +933,11 @@ export class WorkstationAgent {
           typeof args.sinceMin === "number" && Number.isFinite(args.sinceMin)
             ? Math.min(Math.max(Math.round(args.sinceMin), 1), 10_080)
             : 60;
-        const entries = store.listWorkstationObservations({ since: Date.now() - sinceMin * 60_000, limit: 200 });
+        const entries = store.listWorkstationObservations({
+          since: Date.now() - sinceMin * 60_000,
+          limit: 200,
+          space: live.space,
+        });
         return {
           text:
             entries.length > 0
@@ -785,13 +946,13 @@ export class WorkstationAgent {
         };
       }
       case "workstation_meetings": {
-        const lines = meetingLines(store.listWorkstationMeetings({ limit: MEETINGS_SHOWN }));
+        const lines = meetingLines(store.listWorkstationMeetings({ limit: MEETINGS_SHOWN, space: live.space }));
         return {
           text: lines === null ? "aucun meeting transcrit." : untrusted("résumés de meetings transcrits", lines),
         };
       }
       case "workstation_signal":
-        return this.#reportSignal(args, null);
+        return this.#reportSignal(args, null, live.space);
       default:
         return { text: `outil inconnu : ${name}`, isError: true };
     }
@@ -808,41 +969,50 @@ export class WorkstationAgent {
   }
 
   /**
-   * Le plan est dû, Atlassian branché et le poste hors pause, à la demande d'une app, ou une fois
-   * par jour (ouvré si `planWeekdaysOnly`) dès `planHour` dans `schedules.timezone`, s'il n'a été ni
-   * rendu ni tenté depuis. Une demande que le lancement refuse (runner, plafond) est reposée.
+   * Un plan PAR connexion Atlassian vivante (celle par défaut, puis celle de chaque espace), un à la fois :
+   * le plan d'une connexion est dû, poste hors pause, à la demande d'une app, ou une fois par jour (ouvré
+   * si `planWeekdaysOnly`) dès `planHour` dans `schedules.timezone`, s'il n'a été ni rendu ni tenté depuis.
+   * Une demande que le lancement refuse (runner, plafond) est reposée. Le plan d'un espace tourne DANS
+   * l'espace : son navigateur, sa mémoire, son profil.
    */
   #planIfDue(now: number): void {
-    if (this.#live.has("poste-plan") || !this.#atlassianOn() || this.#ws.settings().paused) return;
+    if (this.#live.has("poste-plan") || this.#ws.settings().paused) return;
     const { config, store } = this.#ctx;
-    const requested = this.#atlassian.takePlanRequest();
-    if (!requested) {
-      const { planHour, planWeekdaysOnly } = config.atlassian;
-      if (planHour === null) return;
-      const slot = planSlot(now, planHour, planWeekdaysOnly, config.schedules.timezone);
-      if (slot === null || now < slot) return;
-      const attempt = store.getSetting<number>(PLAN_ATTEMPT_KEY) ?? 0;
-      if (Math.max(this.#atlassian.lastPlanAt() ?? 0, attempt) >= slot) return;
-    }
-    const trigger: PlanTrigger = requested ? "manual" : "auto";
-    if (this.#launch("poste-plan", (live) => this.#plan(live, trigger, now)) !== null) {
-      if (requested) this.#atlassian.requestPlan("poste");
+    for (const desk of this.#atlassian.connections()) {
+      // La connexion d'un espace retenu (pause, budget) attend, sa demande gardée ; les autres passent.
+      if (this.#spaceHold(desk.space) !== null) continue;
+      const attemptKey = connectionKey(PLAN_ATTEMPT_KEY, desk.space);
+      const requested = desk.takePlanRequest();
+      if (!requested) {
+        const { planHour, planWeekdaysOnly } = config.atlassian;
+        if (planHour === null) continue;
+        const slot = planSlot(now, planHour, planWeekdaysOnly, config.schedules.timezone);
+        if (slot === null || now < slot) continue;
+        const attempt = store.getSetting<number>(attemptKey) ?? 0;
+        if (Math.max(desk.lastPlanAt() ?? 0, attempt) >= slot) continue;
+      }
+      const trigger: PlanTrigger = requested ? "manual" : "auto";
+      const browser = desk.space === null ? null : this.#ws.browserOfSpace(desk.space, now);
+      const refused = this.#launch("poste-plan", (live) => this.#plan(live, trigger, now, desk), desk.space, browser);
+      if (refused === null) store.setSetting(attemptKey, now, null);
+      else if (requested) desk.requestPlan("poste");
       return;
     }
-    store.setSetting(PLAN_ATTEMPT_KEY, now, null);
   }
 
-  async #plan(live: LiveJob, trigger: PlanTrigger, now: number): Promise<void> {
-    const { config, store } = this.#ctx;
+  async #plan(live: LiveJob, trigger: PlanTrigger, now: number, desk: AtlassianDesk): Promise<void> {
+    const { config } = this.#ctx;
     const counter: Counter = { actions: 0, capped: false };
     const out: { planId: string | null } = { planId: null };
     const missing = "le plan n'a pas été rendu par `atlassian_plan_write`";
     let failure: string | null = null;
     try {
       const session = await this.#open("poste-plan", live, (name, args) =>
-        this.#planTool(name, args, counter, live, trigger, out),
+        this.#planTool(name, args, counter, live, trigger, out, desk),
       );
       const deadlineAt = Date.now() + config.runner.stepTimeoutSec * 1000;
+      // Le plan ne propose que les dépôts que SA connexion peut viser : ceux de son espace.
+      const repos = desk.repos();
       let result = await session.prompt(
         workstationPlanPrompt({
           today: new Intl.DateTimeFormat("fr-FR", {
@@ -853,8 +1023,12 @@ export class WorkstationAgent {
             year: "numeric",
           }).format(now),
           maxActions: config.workstation.shiftMaxActions,
-          profile: profileText(store.latestWorkstationProfile()),
-          repos: config.repos.map((repo) => ({ name: repo.name, scope: repo.scope })),
+          profile: profileText(this.#ws.profileOf(live.space)),
+          repos: config.repos
+            .filter((repo) => repos.includes(repo.name))
+            .map((repo) => ({ name: repo.name, scope: repo.scope })),
+          site: desk.status().site?.url ?? null,
+          projects: desk.projects(),
         }),
         live.abort.signal,
         deadlineAt,
@@ -867,7 +1041,10 @@ export class WorkstationAgent {
       failure = err instanceof Error ? err.message : String(err);
     }
     if (failure !== null && !live.abort.signal.aborted)
-      this.#ctx.log(`poste : plan du jour en échec : ${failure}`, { level: "warn" });
+      this.#ctx.log(
+        `poste : plan du jour${desk.space === null ? "" : ` (espace ${desk.space})`} en échec : ${failure}`,
+        { level: "warn" },
+      );
   }
 
   async #planTool(
@@ -877,10 +1054,17 @@ export class WorkstationAgent {
     live: LiveJob,
     trigger: PlanTrigger,
     out: { planId: string | null },
+    desk: AtlassianDesk,
   ): Promise<HostToolResult> {
     switch (name) {
       case "workstation_act":
       case "workstation_decision":
+        // Le plan d'un espace n'agit que dans un navigateur de cet espace : sans lui, jamais dans un autre.
+        if (live.space !== null && live.browser === null)
+          return {
+            text: "cet espace n'a pas de navigateur : établis le plan sans l'agenda ni les mails.",
+            isError: true,
+          };
         return this.#deposit(
           name,
           args,
@@ -894,10 +1078,7 @@ export class WorkstationAgent {
       case "atlassian_plan_write": {
         if (out.planId !== null) return { text: `plan ${out.planId} déjà enregistré. Termine ton tour.` };
         try {
-          const plan = this.#atlassian.savePlan(
-            { summary: args.summary, items: args.items, trigger },
-            "poste:poste-plan",
-          );
+          const plan = desk.savePlan({ summary: args.summary, items: args.items, trigger }, "poste:poste-plan");
           out.planId = plan.id;
           return { text: `plan ${plan.id} enregistré (${plan.items.length} éléments). Termine ton tour.` };
         } catch (err) {
@@ -910,27 +1091,31 @@ export class WorkstationAgent {
   }
 
   /**
-   * La passe de savoir est due, Atlassian branché, à la demande d'une app ou quand
-   * `knowledgeEveryHours` ont passé depuis la dernière passe rendue ou tentée.
+   * Une passe de savoir PAR connexion Atlassian vivante, une à la fois : celle d'une connexion est due à
+   * la demande d'une app, ou quand `knowledgeEveryHours` ont passé depuis sa dernière passe rendue ou
+   * tentée. Elle écrit dans la mémoire de SA connexion (`corpo`, `corpo:<espace>`).
    */
   #knowledgeIfDue(now: number): void {
-    if (this.#live.has("poste-savoir") || !this.#atlassianOn()) return;
+    if (this.#live.has("poste-savoir")) return;
     const { config, store } = this.#ctx;
-    const requested = this.#atlassian.takeKnowledgeRequest();
-    if (!requested) {
-      const every = config.atlassian.knowledgeEveryHours;
-      if (every === null) return;
-      const attempt = store.getSetting<number>(KNOWLEDGE_ATTEMPT_KEY) ?? 0;
-      if (now - Math.max(this.#atlassian.lastKnowledgeAt() ?? 0, attempt) < every * 3_600_000) return;
-    }
-    if (this.#launch("poste-savoir", (live) => this.#knowledge(live)) !== null) {
-      if (requested) this.#atlassian.requestKnowledge("poste");
+    for (const desk of this.#atlassian.connections()) {
+      if (this.#spaceHold(desk.space) !== null) continue;
+      const attemptKey = connectionKey(KNOWLEDGE_ATTEMPT_KEY, desk.space);
+      const requested = desk.takeKnowledgeRequest();
+      if (!requested) {
+        const every = config.atlassian.knowledgeEveryHours;
+        if (every === null) continue;
+        const attempt = store.getSetting<number>(attemptKey) ?? 0;
+        if (now - Math.max(desk.lastKnowledgeAt() ?? 0, attempt) < every * 3_600_000) continue;
+      }
+      const refused = this.#launch("poste-savoir", (live) => this.#knowledge(live, desk), desk.space);
+      if (refused === null) store.setSetting(attemptKey, now, null);
+      else if (requested) desk.requestKnowledge("poste");
       return;
     }
-    store.setSetting(KNOWLEDGE_ATTEMPT_KEY, now, null);
   }
 
-  async #knowledge(live: LiveJob): Promise<void> {
+  async #knowledge(live: LiveJob, desk: AtlassianDesk): Promise<void> {
     const out: { reported: boolean } = { reported: false };
     const missing = "le compte rendu n'a pas été rendu par `atlassian_knowledge_report`";
     let failure: string | null = null;
@@ -939,7 +1124,7 @@ export class WorkstationAgent {
         if (name !== "atlassian_knowledge_report") return { text: `outil inconnu : ${name}`, isError: true };
         if (typeof args.summary !== "string" || args.summary.trim() === "")
           return { text: "summary : compte rendu non vide attendu", isError: true };
-        this.#atlassian.recordKnowledge({ summary: clip(args.summary.trim(), 4000), at: Date.now() });
+        desk.recordKnowledge({ summary: clip(args.summary.trim(), 4000), at: Date.now() });
         out.reported = true;
         return { text: "compte rendu enregistré. Termine ton tour." };
       });
@@ -947,7 +1132,8 @@ export class WorkstationAgent {
       let result = await session.prompt(
         workstationKnowledgePrompt({
           maxFacts: KNOWLEDGE_MAX_FACTS,
-          lastSummary: this.#atlassian.status().knowledge.lastSummary,
+          lastSummary: desk.status().knowledge.lastSummary,
+          projects: desk.projects(),
         }),
         live.abort.signal,
         deadlineAt,
@@ -960,7 +1146,10 @@ export class WorkstationAgent {
       failure = err instanceof Error ? err.message : String(err);
     }
     if (failure !== null && !live.abort.signal.aborted)
-      this.#ctx.log(`poste : passe de savoir en échec : ${failure}`, { level: "warn" });
+      this.#ctx.log(
+        `poste : passe de savoir${desk.space === null ? "" : ` (espace ${desk.space})`} en échec : ${failure}`,
+        { level: "warn" },
+      );
   }
 
   // -- demandes de l'humain ---------------------------------------------------------------
@@ -987,24 +1176,49 @@ export class WorkstationAgent {
    * La plus ancienne demande en file part si rien ne la retient ; sinon sa raison d'attente
    * est écrite (une fois par sorte). Aucune automatisation ne pose de demande d'elle-même ici :
    * c'est le geste de l'humain, ou le planificateur, par `Workstation.runAutomation`.
+   * Une demande ne part que dans un navigateur de SON espace (hors espace : un navigateur hors
+   * espace) : si son navigateur en est sorti depuis qu'elle a été posée, elle échoue au lieu de
+   * partir ailleurs, et la suivante prend la tête. Son job tourne dans cet espace.
    */
   #requestNext(now: number): void {
-    const head = this.#ctx.store.oldestQueuedWorkstationRequest();
+    const { store } = this.#ctx;
+    let head = store.oldestQueuedWorkstationRequest();
+    while (head && this.#ws.spaceOfBrowser(head.browserId ?? this.#ws.defaultBrowserId()) !== (head.space ?? null)) {
+      this.#ws.rejectRequest(head.id, REQUEST_OUT_OF_SPACE);
+      this.#ctx.log(`poste : demande ${head.id} en échec : ${REQUEST_OUT_OF_SPACE}`);
+      head = store.oldestQueuedWorkstationRequest();
+    }
+    // La demande d'un espace retenu (sa pause, son budget du jour) attend, sa cause écrite ; la plus
+    // ancienne demande d'un espace libre, encore dans son navigateur, prend la tête : les autres continuent.
+    const held = head ? this.#spaceHold(head.space ?? null) : null;
+    if (head && held !== null) {
+      this.#ws.waitRequest(head.id, held);
+      head =
+        store
+          .listWorkstationRequests({ states: ["queued"], limit: 1000 })
+          .reverse()
+          .find(
+            (queued) =>
+              this.#spaceHold(queued.space ?? null) === null &&
+              this.#ws.spaceOfBrowser(queued.browserId ?? this.#ws.defaultBrowserId()) === (queued.space ?? null),
+          ) ?? null;
+    }
     if (!head) return;
+    const request = head;
     const reason = this.#ws.settings().paused
       ? "le poste est en pause"
-      : !this.#ws.online(now, head.browserId ?? this.#ws.defaultBrowserId())
+      : !this.#ws.online(now, request.browserId ?? this.#ws.defaultBrowserId())
         ? "l'extension du poste est hors ligne"
         : this.#live.has("poste-demande")
           ? "une demande plus ancienne est en cours"
-          : this.#launch("poste-demande", (live) => this.#request(head, live));
-    if (reason !== null) this.#ws.waitRequest(head.id, reason);
+          : this.#launch("poste-demande", (live) => this.#request(request, live), request.space ?? null);
+    if (reason !== null) this.#ws.waitRequest(request.id, reason);
   }
 
   async #request(request: WorkstationRequest, live: LiveJob): Promise<void> {
     if (this.#ws.startRequest(request.id) === null) return;
     this.#requestId = request.id;
-    const { config, store } = this.#ctx;
+    const { config } = this.#ctx;
     const counter: Counter = { actions: 0, capped: false };
     const out: { report: string | null } = { report: null };
     let failure: string | null = null;
@@ -1017,8 +1231,9 @@ export class WorkstationAgent {
         workstationRequestPrompt({
           instruction: request.instruction,
           maxActions: config.workstation.shiftMaxActions,
-          profile: profileText(store.latestWorkstationProfile()),
-          atlassian: this.#atlassianOn(),
+          profile: profileText(this.#ws.profileOf(live.space)),
+          atlassian: this.#atlassianOf(live.space) !== null,
+          space: this.#spaceName(live),
         }),
         live.abort.signal,
         deadlineAt,
@@ -1077,7 +1292,7 @@ export class WorkstationAgent {
         return { text: "compte rendu enregistré. Termine ton tour." };
       }
       case "workstation_signal":
-        return this.#reportSignal(args, requestId);
+        return this.#reportSignal(args, requestId, live.space);
       default:
         return { text: `outil inconnu : ${name}`, isError: true };
     }

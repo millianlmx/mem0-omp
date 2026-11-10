@@ -727,10 +727,11 @@ test("demande/AC-13 : un classement qui échoue, un type inconnu, un dépôt non
     assert.equal(world.store.getIntake(row.id)?.updatedAt, removed?.updatedAt, "la demande n'est pas reclassée");
 
     // L'unique slot runner a été rendu : la demande suivante est classée. Son titre de planification, plus long
-    // que le nom permis, est borné : la confirmation ne rend pas 400.
+    // que le titre court d'un classement (50 caractères, bien sous le nom permis), est borné : la confirmation
+    // ne rend pas 400.
     const long = await classified(api, "valide");
     assert.equal(long.state, "planned");
-    assert.equal(long.plan?.title.length, 120);
+    assert.equal(long.plan?.title, `${"T".repeat(49)}…`);
     assert.equal((await api.call("POST", `/v1/intake/${long.id}/confirm`, {})).status, 201);
   } finally {
     await done();

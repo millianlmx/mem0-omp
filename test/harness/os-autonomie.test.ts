@@ -582,7 +582,7 @@ test("os-autonomie/AC-6 : le curseur vient de l'espace du dépôt à défaut d'�
   const first = idle.orchestrator.createRun({ repo: "demo", title: "Avant l'espace", request: "x", modules: ["a"] });
   assert.equal(first.autonomy, null);
   idle.orchestrator.spaces.create(
-    { name: "Client", repos: ["demo"], poste: false, jiraProjects: [], dailyBudgetUsd: null, autonomy: "ask" },
+    { name: "Client", repos: ["demo"], jiraProjects: [], dailyBudgetUsd: null, autonomy: "ask" },
     HUMAN,
   );
   const create = (title: string, extra: { autonomy?: "ask" | "deliver" | null } = {}, actor = HUMAN) =>
@@ -1252,7 +1252,7 @@ test("os-autonomie/AC-15 : l'outil MCP `run_start` garde le drapeau pilote — u
     assert.match(JSON.stringify(delivered.content), /geste réservé à l'humain — un pilote ne monte pas l'autonomie/);
 
     world.orchestrator.spaces.create(
-      { name: "Client", repos: ["demo"], poste: false, jiraProjects: [], dailyBudgetUsd: null, autonomy: "ask" },
+      { name: "Client", repos: ["demo"], jiraProjects: [], dailyBudgetUsd: null, autonomy: "ask" },
       HUMAN,
     );
     const raised = await api.tool("run_start", { ...args, autonomy: null }, api.tokens.pilot);

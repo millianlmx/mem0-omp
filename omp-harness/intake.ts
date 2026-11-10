@@ -4,7 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Client } from "./auth.ts";
-import { canSeeRepo } from "./auth.ts";
+import { canSeeRepo, repoFilter } from "./auth.ts";
 import { isRecord, repoByName, repoDefaults } from "./config.ts";
 import type { HarnessConfig, ModelPolicy, RepoConfig } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
@@ -18,15 +18,21 @@ import type {
   IntakeRow,
   IntakeState,
   RunAutonomy,
+  Space,
   Store,
 } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import { newId } from "./ids.ts";
 import { MAX_INSTRUCTIONS, autonomyField, requireRepo, text } from "./input.ts";
-import { intakePrompt } from "./prompts.ts";
+import { spaceRule, strictest } from "./policy.ts";
+import { INTAKE_TITLE_MAX, intakePrompt } from "./prompts.ts";
+import { shortTitle } from "./proposals.ts";
 import type { HostToolResult } from "./rpc.ts";
 import { forceStop, hostToolsFor, runnerUnit } from "./runner.ts";
 import { RunnerSession } from "./runner-session.ts";
+import { DEMANDE_STEP } from "./space-usage.ts";
+import { NO_SPACE_HOLDS } from "./spaces.ts";
+import type { SpaceHolds } from "./spaces.ts";
 import { NAME_MAX } from "./schedules.ts";
 import { MAX_INSTRUCTION, stripUrl } from "./workstation.ts";
 
@@ -75,12 +81,42 @@ export type Created = { kind: "run" | "audit" | "workstation_request" | "schedul
  * `state` : la section de données « État de l'usine » (brief.ts `factoryStatePrompt`) des dépôts de
  * la portée donnée (`stateScope` : celle de l'auteur, ou le seul dépôt de la demande), ajoutée au
  * prompt du classeur ; absente : le classeur ne connaît pas l'état.
+ * `spaces` : la lecture des espaces (`orchestrator.spaces`) ; absente, aucune demande ne porte d'espace.
  */
 export type IntakeHooks = {
-  /** `autonomy` : le curseur d'autonomie demandé à la confirmation, pour le run d'un plan `feature` ou `bug`. */
-  create: (plan: IntakePlan, client: Client, actor: Actor, autonomy?: RunAutonomy | null) => Created;
+  /**
+   * `autonomy` : le curseur d'autonomie demandé à la confirmation, pour le run d'un plan `feature` ou `bug`.
+   * `spaceId` : l'espace de la demande (`null` : hors espace) — une tâche du poste s'y exécute.
+   */
+  create: (
+    plan: IntakePlan,
+    client: Client,
+    actor: Actor,
+    autonomy: RunAutonomy | null | undefined,
+    spaceId: string | null,
+  ) => Created;
   state?: (scope: IntakeRow["scope"]) => string;
+  spaces?: SpaceLookup;
 };
+
+/** Ce que les Demandes lisent des espaces : `SpaceDesk.get` et `SpaceDesk.resolve`. */
+export type SpaceLookup = {
+  get: (id: string) => Space | null;
+  resolve: (idOrName: string, repos: readonly string[] | null) => Space;
+};
+
+/** Le propriétaire des consommations d'une Demande (monitor.ts `usageSpace`, `recordUsage`). */
+function intakeOwner(id: string): string {
+  return `intake:${id}`;
+}
+
+/** Ce que le classeur apprend de l'espace où la demande est posée : ses dépôts sont les seuls permis, et s'il a un poste. */
+function spaceNote(space: Space): string {
+  const poste = space.poste
+    ? ""
+    : " Cet espace n'a pas de poste de travail : ne classe jamais la demande en `workstation_request`.";
+  return `\n\nCette demande est posée dans l'espace « ${space.name} » : seuls les dépôts listés plus haut sont les siens.${poste}`;
+}
 
 type LiveIntake = {
   abort: AbortController;
@@ -131,6 +167,8 @@ export type IntakeView = {
   statement: string;
   /** La page d'où part la demande (`url`, `title`, `selection`) ; `null` sans page, ou pour un lecteur qui n'en est ni l'auteur ni le propriétaire. */
   context: IntakeContext | null;
+  /** L'espace où la demande a été posée ; `null` hors espace, ou si l'espace n'existe plus. */
+  space: { id: string; name: string } | null;
   created: Created | null;
   reason: string | null;
   by: string | null;
@@ -142,9 +180,11 @@ export type IntakeView = {
  * La Demande telle que `reader` la lit (contrat public : jamais la portée de l'auteur). Le contexte
  * de page — l'adresse, le titre et la sélection d'un onglet du poste — n'est rendu qu'à l'auteur de
  * la demande et au propriétaire (client non borné, non pilote) ; tout autre lecteur reçoit `null`.
+ * `spaces` : d'où lire le nom de son espace (`orchestrator.spaces`) ; absent, `space` vaut `null`.
  */
-export function intakeView(row: IntakeRow, reader: Client): IntakeView {
+export function intakeView(row: IntakeRow, reader: Client, spaces?: Pick<SpaceLookup, "get">): IntakeView {
   const readsContext = row.createdBy === reader.name || (reader.repos === "*" && !reader.pilot);
+  const space = row.spaceId === null ? null : (spaces?.get(row.spaceId) ?? null);
   return {
     id: row.id,
     text: row.text,
@@ -159,6 +199,7 @@ export function intakeView(row: IntakeRow, reader: Client): IntakeView {
     exchanges: row.exchanges,
     statement: [row.text, ...row.exchanges.map((exchange) => exchange.answer)].join("\n\n"),
     context: readsContext ? row.context : null,
+    space: space === null ? null : { id: space.id, name: space.name },
     created: row.targetKind && row.targetId ? { kind: row.targetKind as Created["kind"], id: row.targetId } : null,
     reason: row.reason,
     by: row.createdBy,
@@ -167,15 +208,20 @@ export function intakeView(row: IntakeRow, reader: Client): IntakeView {
   };
 }
 
-/** La règle de lecture : le dépôt de la demande, sinon son auteur ou un client qui voit tous les dépôts. */
-function visible(client: Client, row: IntakeRow): boolean {
+/**
+ * La règle de lecture : le dépôt de la demande, sinon son auteur ou un client qui voit tous les dépôts.
+ * `space` : la lecture est bornée à cet espace (`?space=`) — la demande doit en être, par son dépôt ou,
+ * sans dépôt, par l'espace où elle a été posée.
+ */
+function visible(client: Client, row: IntakeRow, space: Space | null): boolean {
+  if (space !== null && !(row.repo !== "" ? space.repos.includes(row.repo) : row.spaceId === space.id)) return false;
   return row.repo !== "" ? canSeeRepo(client, row.repo) : client.repos === "*" || row.createdBy === client.name;
 }
 
-/** Une demande lisible par `client` ; 404 sinon (absente ou invisible : on ne dit pas laquelle). */
-export function visibleIntake(store: Store, client: Client, id: string): IntakeRow {
+/** Une demande lisible par `client` (dans `space` s'il est donné) ; 404 sinon (absente ou invisible : on ne dit pas laquelle). */
+export function visibleIntake(store: Store, client: Client, id: string, space: Space | null = null): IntakeRow {
   const row = store.getIntake(id);
-  if (!row || !visible(client, row)) throw new HarnessError(404, `demande inconnue : ${id}`);
+  if (!row || !visible(client, row, space)) throw new HarnessError(404, `demande inconnue : ${id}`);
   return row;
 }
 
@@ -206,33 +252,50 @@ function visibleRepos(config: HarnessConfig, scope: IntakeRow["scope"]): string[
 /**
  * La politique de modèles du classement : celle du dépôt imposé à la pose ; sinon `local-only`
  * dès qu'un dépôt visible de l'auteur l'est (le texte libre peut le nommer) ; sinon les
- * chaînes du serveur. Jamais `memory`, `gh` ni `git` du dépôt.
+ * chaînes du serveur. Jamais `memory`, `gh` ni `git` du dépôt. Chaque dépôt compte avec la
+ * politique de son espace, et la Demande suit aussi — au plus strict (policy.ts `strictest` :
+ * `local-only`, liste blanche `providers`, chaînes `models`) — la politique de l'espace où elle est
+ * posée (`spaceId`) et de CHAQUE espace dont l'auteur voit un dépôt : l'« État de l'usine » de son
+ * prompt cite leurs runs. Deux espaces aux listes blanches disjointes ne laissent aucun fournisseur :
+ * le classement est refusé (échec fermé) — la Demande se pose alors dans un espace. Sans espace
+ * (`spaces` vide), rien ne change.
  */
-export function intakePolicy(config: HarnessConfig, row: IntakeRow): ModelPolicy {
+export function intakePolicy(config: HarnessConfig, row: IntakeRow, spaces: readonly Space[] = []): ModelPolicy {
+  const bound = (repo: RepoConfig) => strictest(repo, spaceRule(spaces, repo.name)?.policy ?? null);
   if (row.requestedRepo !== null) {
     const repo = repoByName(config, row.requestedRepo);
     if (!repo) throw new HarnessError(404, `dépôt inconnu : ${row.requestedRepo}`);
+    const { models, providers, privacy } = bound(repo);
     return {
-      ...(repo.models ? { models: repo.models } : {}),
-      ...(repo.providers ? { providers: repo.providers } : {}),
-      ...(repo.privacy ? { privacy: repo.privacy } : {}),
+      ...(models ? { models } : {}),
+      ...(providers ? { providers } : {}),
+      ...(privacy ? { privacy } : {}),
     };
   }
   const names = visibleRepos(config, row.scope);
-  return config.repos.some((repo) => names.includes(repo.name) && repo.privacy === "local-only")
+  const own: ModelPolicy = config.repos.some(
+    (repo) => names.includes(repo.name) && bound(repo).privacy === "local-only",
+  )
     ? { privacy: "local-only" }
     : {};
+  return spaces
+    .filter((space) => space.id === row.spaceId || space.repos.some((repo) => names.includes(repo)))
+    .reduce((policy, space) => strictest(policy, space.policy), own);
 }
 
 /**
  * Le dépôt synthétique du classeur : aucun clone, aucun worktree, aucune mémoire. Sa scope
  * est propre à la demande (jamais relue), son cwd a la forme `<dépôt>/<_x>` du lanceur root.
  */
-export function intakeTarget(config: HarnessConfig, row: IntakeRow): { repo: RepoConfig; cwd: string; memory: false } {
+export function intakeTarget(
+  config: HarnessConfig,
+  row: IntakeRow,
+  spaces: readonly Space[] = [],
+): { repo: RepoConfig; cwd: string; memory: false } {
   return {
     repo: {
       ...repoDefaults({ name: "intake", path: path.join(config.dataDir, "intake"), scope: `intake-${row.id}` }),
-      ...intakePolicy(config, row),
+      ...intakePolicy(config, row, spaces),
     },
     cwd: path.join(config.worktreesDir, "intake", "_demande"),
     memory: false,
@@ -284,10 +347,13 @@ function judge(fields: Fields, scope: IntakeRow["scope"], declared: string[]): J
   return { plan };
 }
 
-/** Juge le rendu de `intake_classify` : un `IntakePatch` (clarification, réponse, plan ou échec). Pure. */
+/**
+ * Juge le rendu de `intake_classify` : un `IntakePatch` (clarification, réponse, plan ou échec). Pure.
+ * `poste: false` : la demande est posée dans un espace sans poste de travail, une tâche du poste y est refusée.
+ */
 export function interpretClassification(
   raw: Record<string, unknown>,
-  ctx: { declared: string[]; scope: IntakeRow["scope"]; requestedRepo: string | null },
+  ctx: { declared: string[]; scope: IntakeRow["scope"]; requestedRepo: string | null; poste?: boolean },
 ): IntakePatch {
   const field = (key: string): string => (typeof raw[key] === "string" ? (raw[key] as string).trim() : "");
   const failed = (reason: string): IntakePatch => ({ state: "failed", reason });
@@ -302,10 +368,13 @@ export function interpretClassification(
     if (answer === "") return failed("la réponse directe est vide");
     return { state: "answered", kind: "question", answer: answer.slice(0, 4000), plan: null };
   }
+  if (kind === "workstation_request" && ctx.poste === false) return failed(NO_POSTE);
   const judged = judge(
     {
       kind,
-      title: field("title"),
+      // Le titre du classeur est borné à la source (une liste le montre entier) ; celui que l'humain
+      // corrige à la confirmation reste le sien.
+      title: shortTitle(field("title"), INTAKE_TITLE_MAX),
       statement: field("statement"),
       repo: ctx.requestedRepo ?? field("repo"),
       focus: field("focus"),
@@ -330,6 +399,9 @@ function correction(source: Record<string, unknown>, key: string, current: strin
   throw new HarnessError(400, `plan.${key} : chaîne attendue`);
 }
 
+/** Le refus d'une tâche du poste dans un espace qui n'a pas de poste de travail. */
+const NO_POSTE = "cet espace n'a pas de poste de travail : la demande ne peut pas devenir une tâche du poste";
+
 /** Les états d'où une demande s'annule : tout sauf `confirmed` et `cancelled`. */
 const CANCELLABLE: readonly IntakeState[] = ["classifying", "clarifying", "planned", "answered", "failed"];
 
@@ -337,6 +409,8 @@ export class Intaker {
   readonly #ctx: HarnessContext;
   readonly #hooks: IntakeHooks;
   readonly #live = new Map<string, LiveIntake>();
+  /** Les demandes dont `reason` dit ce qui retient leur espace (pause, budget) : effacée quand elles partent. */
+  readonly #held = new Set<string>();
 
   constructor(ctx: HarnessContext, hooks: IntakeHooks) {
     this.#ctx = ctx;
@@ -361,16 +435,53 @@ export class Intaker {
     return value;
   }
 
-  create(body: Record<string, unknown>, client: Client, actor: Actor): IntakeRow {
+  /**
+   * L'espace où une demande est posée : `body.space` (identifiant ou nom), sinon celui de la requête
+   * (`?space=`), sinon le seul espace d'un client borné à UN espace ; `null` : hors espace. 404 pour un
+   * espace inconnu ou dont le client ne voit aucun dépôt.
+   */
+  #spaceAt(body: Record<string, unknown>, client: Client, requested: Space | null): Space | null {
+    const { spaces } = this.#hooks;
+    const ref = body.space;
+    if (ref !== undefined && ref !== null) {
+      if (typeof ref !== "string") throw new HarnessError(400, "space : identifiant ou nom d'espace attendu");
+      if (!spaces) throw new HarnessError(404, `espace inconnu : ${ref}`);
+      const named = spaces.resolve(ref, repoFilter(client));
+      if (requested !== null && requested.id !== named.id)
+        throw new HarnessError(400, "space : le corps et `?space=` désignent deux espaces différents");
+      return named;
+    }
+    if (requested !== null) return requested;
+    const own = client.spaces?.length === 1 ? client.spaces[0] : undefined;
+    if (own === undefined || !spaces || client.repos === "*" || client.repos.length === 0) return null;
+    return spaces.get(own) === null ? null : spaces.resolve(own, client.repos);
+  }
+
+  /**
+   * L'espace d'une demande déjà posée, tel que `client` le voit (ses dépôts : ceux de l'espace que le
+   * client voit) ; `null` hors espace. Un espace disparu depuis la pose : 409, rien n'est créé hors de lui.
+   */
+  #spaceOf(row: IntakeRow, client: Client): Space | null {
+    if (row.spaceId === null) return null;
+    const space = this.#hooks.spaces?.get(row.spaceId) ?? null;
+    if (space === null) throw new HarnessError(409, "l'espace de cette demande n'existe plus : rien n'est créé");
+    return { ...space, repos: space.repos.filter((repo) => canSeeRepo(client, repo)) };
+  }
+
+  /** `requested` : l'espace de la requête (`?space=`, `call.space`). */
+  create(body: Record<string, unknown>, client: Client, actor: Actor, requested: Space | null = null): IntakeRow {
     const { store } = this.#ctx;
     const demande = this.#text(body);
     const source = typeof body.source === "string" ? body.source : "";
     if (!(INTAKE_SOURCES as readonly string[]).includes(source))
       throw new HarnessError(400, "source : console, ios, voice, slack, cli ou chrome attendu");
+    const space = this.#spaceAt(body, client, requested);
     const repo = text(body, "repo", false).trim();
     if (repo !== "") {
       requireRepo(client, repo);
       this.#ctx.repo(repo);
+      if (space !== null && !space.repos.includes(repo))
+        throw new HarnessError(400, `repo : le dépôt ${repo} n'est pas dans l'espace « ${space.name} »`);
     }
     const context = pageContext(body.context);
     return store.transaction(() => {
@@ -380,8 +491,10 @@ export class Intaker {
         source,
         repo,
         requestedRepo: repo || null,
-        scope: client.repos,
+        // Dans un espace, la portée du classeur est celle de l'espace que voit l'auteur (`resolve` l'a déjà réduit).
+        scope: space === null ? client.repos : [...space.repos],
         context,
+        spaceId: space?.id ?? null,
         createdBy: actor.by,
       });
       this.#event(row, actor.by ? { by: actor.by } : {});
@@ -389,13 +502,32 @@ export class Intaker {
     });
   }
 
-  /** Les demandes en classement que le scheduler admet. */
-  tick(): void {
-    for (const row of this.#ctx.store.listIntakes({ states: ["classifying"] })) {
+  /**
+   * Les demandes en classement que le scheduler admet. `holds` : la Demande d'un espace en pause, ou
+   * au budget du jour atteint — celui où elle a été posée, sinon celui du dépôt qu'elle impose —,
+   * attend en classement, sa cause écrite dans `reason` (une fois) ; les autres partent.
+   */
+  tick(holds: SpaceHolds = NO_SPACE_HOLDS): void {
+    const { store } = this.#ctx;
+    for (const row of store.listIntakes({ states: ["classifying"] })) {
       if (this.#live.has(row.id)) continue;
+      const hold = row.spaceId !== null ? holds.ofSpace(row.spaceId) : row.repo !== "" ? holds.ofRepo(row.repo) : null;
+      if (hold !== null) {
+        if (row.reason !== hold.text) {
+          const waiting = store.updateIntakeIf(row.id, ["classifying"], { reason: hold.text });
+          if (waiting) this.#event(waiting, { held: hold.cause });
+        }
+        this.#held.add(row.id);
+        continue;
+      }
       if (this.#ctx.monitor.dailyBudgetDue()) return;
       const slot = this.#ctx.scheduler.tryAcquire("runner", row.id);
       if ("refused" in slot) return;
+      // Plus rien ne la retient : la cause d'attente s'efface avant le classement.
+      if (this.#held.delete(row.id)) {
+        const freed = store.updateIntakeIf(row.id, ["classifying"], { reason: null });
+        if (freed) this.#event(freed);
+      }
       const live: LiveIntake = { abort: new AbortController(), session: null, raw: null, done: Promise.resolve() };
       this.#live.set(row.id, live);
       live.done = this.#drive(row, live).finally(async () => {
@@ -411,12 +543,23 @@ export class Intaker {
     let patch: IntakePatch;
     try {
       const { config } = this.#ctx;
-      const target = intakeTarget(config, row);
+      // L'espace de la demande, relu : disparu depuis la pose, le classement échoue plutôt que de sortir de lui.
+      const space = row.spaceId === null ? null : (this.#hooks.spaces?.get(row.spaceId) ?? null);
+      if (row.spaceId !== null && space === null) throw new Error("l'espace de la demande n'existe plus");
+      const target = intakeTarget(config, row, this.#ctx.store.listSpaces());
       fs.mkdirSync(target.repo.path, { recursive: true });
       fs.mkdirSync(target.cwd, { recursive: true });
+      // Hors espace, rien n'est relevé, comme avant ; dans un espace, chaque message lui est imputé (`usage.space_id`).
+      if (space !== null) this.#ctx.monitor.usageSpace(intakeOwner(row.id), space.id);
       const session = new RunnerSession(this.#ctx, target, {
         onHostTool: (name, args) => this.#hostTool(row, live, name, args),
         event: (type, payload) => this.#ctx.event(type, null, { intakeId: row.id, ...payload }, row.repo || null),
+        ...(space === null
+          ? {}
+          : {
+              frame: (frame: Record<string, unknown>) =>
+                this.#ctx.monitor.recordFrame(intakeOwner(row.id), DEMANDE_STEP, frame),
+            }),
       });
       live.session = session;
       const deadlineAt = Date.now() + config.runner.stepTimeoutSec * 1000;
@@ -430,7 +573,7 @@ export class Intaker {
           requestedRepo: row.requestedRepo,
           exchanges: row.exchanges,
           context: row.context,
-        })}${this.#hooks.state?.(stateScope(row)) ?? ""}`,
+        })}${space === null ? "" : spaceNote(space)}${this.#hooks.state?.(stateScope(row)) ?? ""}`,
         live.abort.signal,
         deadlineAt,
       );
@@ -449,12 +592,15 @@ export class Intaker {
               declared: config.repos.map((repo) => repo.name),
               scope: row.scope,
               requestedRepo: row.requestedRepo,
+              ...(space === null ? {} : { poste: space.poste }),
             });
     } catch (err) {
       patch = {
         state: "failed",
         reason: `le classement a échoué : ${err instanceof Error ? err.message : String(err)}`,
       };
+    } finally {
+      this.#ctx.monitor.usageSpace(intakeOwner(row.id), null);
     }
     if (live.abort.signal.aborted) return;
     const { store } = this.#ctx;
@@ -493,9 +639,10 @@ export class Intaker {
 
   /**
    * Corrige le plan prêt (champ à champ) et le rejuge avec les règles du classement, contre la
-   * portée de celui qui confirme ; chaque refus est un 400.
+   * portée de celui qui confirme (`scope` : ses dépôts, ceux de l'espace de la demande qu'il voit
+   * quand elle en porte un) ; chaque refus est un 400.
    */
-  #corrected(plan: IntakePlan, raw: unknown, client: Client): IntakePlan {
+  #corrected(plan: IntakePlan, raw: unknown, scope: IntakeRow["scope"]): IntakePlan {
     if (!isRecord(raw)) throw new HarnessError(400, "plan : objet attendu");
     const schedule = raw.schedule === undefined ? {} : raw.schedule;
     if (!isRecord(schedule)) throw new HarnessError(400, "plan.schedule : objet attendu");
@@ -516,7 +663,7 @@ export class Intaker {
         target: correction(schedule, "target", plan.schedule?.target ?? ""),
         label: correction(schedule, "label", plan.schedule?.label ?? ""),
       },
-      client.repos,
+      scope,
       this.#ctx.config.repos.map((repo) => repo.name),
     );
     if ("reason" in judged) throw new HarnessError(400, judged.reason);
@@ -534,7 +681,13 @@ export class Intaker {
     const notPlanned = (state: string): HarnessError =>
       new HarnessError(409, `la demande n'a pas de plan à confirmer (état ${state})`);
     if (row.state !== "planned" || row.plan === null) throw notPlanned(row.state);
-    const plan = body.plan === undefined ? row.plan : this.#corrected(row.plan, body.plan, client);
+    const space = this.#spaceOf(row, client);
+    const plan =
+      body.plan === undefined ? row.plan : this.#corrected(row.plan, body.plan, space?.repos ?? client.repos);
+    // Le plan d'une demande posée dans un espace n'en sort pas : son dépôt en est encore, une tâche du poste y a son poste.
+    if (space !== null && plan.repo !== null && !space.repos.includes(plan.repo))
+      throw new HarnessError(400, `le dépôt « ${plan.repo} » n'est pas dans l'espace « ${space.name} » de la demande`);
+    if (space !== null && plan.kind === "workstation_request" && !space.poste) throw new HarnessError(400, NO_POSTE);
     const autonomy = autonomyField(body);
     return store.transaction(() => {
       const reserved = store.updateIntakeIf(id, ["planned"], {
@@ -544,7 +697,7 @@ export class Intaker {
         repo: plan.repo ?? "",
       });
       if (!reserved) throw notPlanned(store.getIntake(id)?.state ?? "inconnu");
-      const created = this.#hooks.create(plan, client, actor, autonomy);
+      const created = this.#hooks.create(plan, client, actor, autonomy, row.spaceId);
       const done = store.updateIntakeIf(id, ["confirmed"], {
         targetKind: created.kind,
         targetId: created.id,

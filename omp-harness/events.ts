@@ -125,7 +125,8 @@ export const EVENT_TYPES = [
   // le pont corpo ↔ usine : l'état d'un signalement d'un collègue (`{id, state}` seulement ; repo null : poste réservé au propriétaire)
   "signal",
   // le connecteur Atlassian (repo null : réservé au propriétaire) : branchement, débranchement ou
-  // jeton refusé (`{connected}`), une écriture Jira qui bouge (`{id, state, kind}`), un plan du jour (`{id}`)
+  // jeton refusé (`{connected}`), une écriture Jira qui bouge (`{id, state, kind}`), un plan du jour (`{id}`) ;
+  // celui de la connexion d'un espace porte en plus `space` (son identifiant), celui de la connexion par défaut non
   "atlassian",
   "atlassian_write",
   "atlassian_plan",

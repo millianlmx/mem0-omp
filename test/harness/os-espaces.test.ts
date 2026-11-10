@@ -36,6 +36,9 @@ type Body = {
   space: Space;
   spaces: SpaceView[];
   removed: boolean;
+  // ce que rend le retrait d'un espace : ses dépôts, et ceux qui lisent désormais la connexion Atlassian par défaut
+  repos: string[];
+  defaultAtlassian: string[];
   brief: Brief;
   seenAt: number;
   scoreboard: Scoreboard;
@@ -170,9 +173,10 @@ test("os-espaces/AC-1 : un espace se crée avec ses dépôts déclarés ; un nom
     });
     assert.equal(created.status, 201);
     const space = created.json.space;
+    // `poste` donné est ignoré : il se déduit des navigateurs du poste rattachés à l'espace (aucun ici).
     assert.deepEqual(
       [space.name, space.repos, space.poste, space.jiraProjects, space.dailyBudgetUsd, space.autonomy, space.by],
-      ["Client A", ["demo"], true, ["ACME"], 12.5, "deliver", "mac"],
+      ["Client A", ["demo"], false, ["ACME"], 12.5, "deliver", "mac"],
     );
     assert.equal(created.etag, `"${space.rev}"`);
     const journal = world.store.eventsOfType("space");
@@ -242,7 +246,10 @@ test("os-espaces/AC-2 : une modification ne change que les champs donnés et fai
     const kept = await call("DELETE", `/v1/spaces/${b.id}`, undefined, undefined, { "If-Match": `"${b.rev + 1}"` });
     assert.equal(kept.status, 412);
     const removed = await call("DELETE", `/v1/spaces/${b.id}`);
-    assert.deepEqual([removed.status, removed.json], [200, { removed: true }]);
+    assert.equal(removed.status, 200);
+    assert.equal(removed.json.removed, true);
+    assert.deepEqual(removed.json.repos, b.repos, "la réponse nomme les dépôts rendus hors espace");
+    assert.deepEqual(removed.json.defaultAtlassian, [], "aucun dépôt branché sur Atlassian : rien ne bascule");
     assert.deepEqual(
       (await call("GET", "/v1/spaces")).json.spaces.map((space) => space.name),
       ["A2"],
@@ -355,6 +362,7 @@ test("os-espaces/AC-5 : les compteurs d'un espace comptent ses runs par état et
       cancelledWeek: 2,
       costToday: 3.75,
       costWeek: 3.75,
+      costMonth: 3.75,
       budgetLeftToday: 6.25,
     });
     assert.deepEqual(
@@ -551,6 +559,7 @@ test("os-espaces/AC-9 : chaque section du brief dit ce qui lui revient — livr�
       repos: ["demo"],
       heldBy: (queued) =>
         queued.id === "file" ? { cause: "modules", text: "ses modules recoupent ceux d'un run" } : null,
+      humanWait: () => null,
       proposals: 2,
     });
     assert.deepEqual(brief.delivered, [
@@ -571,6 +580,8 @@ test("os-espaces/AC-9 : chaque section du brief dit ce qui lui revient — livr�
     ]);
     assert.deepEqual(brief.failed, [
       {
+        // Un run posé sans étape garde celle de sa création ; sa raison n'est pas celle d'un échec d'étape.
+        failure: { step: "req", cause: null },
         runId: "rate",
         repo: "demo",
         title: "Recherche",
@@ -594,8 +605,24 @@ test("os-espaces/AC-9 : chaque section du brief dit ce qui lui revient — livr�
       },
     ]);
     assert.deepEqual(brief.blocked, [
-      { runId: "file", repo: "demo", title: "Ménage", cause: "modules", text: "ses modules recoupent ceux d'un run" },
+      {
+        runId: "file",
+        repo: "demo",
+        title: "Ménage",
+        cause: "modules",
+        text: "ses modules recoupent ceux d'un run",
+        waitCause: "modules",
+      },
     ]);
+    assert.deepEqual(brief.counts, {
+      yours: 2,
+      working: 0,
+      waiting: 1,
+      delivered: 2,
+      failed: 1,
+      stopped: 2,
+      decided: 1,
+    });
     assert.deepEqual([brief.proposals, brief.cost, brief.seenAt], [2, 4.2, since]);
     assert.equal(
       brief.headline,
@@ -610,6 +637,7 @@ test("os-espaces/AC-9 : chaque section du brief dit ce qui lui revient — livr�
       seenAt: null,
       repos: ["demo"],
       heldBy: () => null,
+      humanWait: () => null,
       proposals: 0,
     });
     assert.equal(quiet.headline, "Rien de neuf.");
@@ -621,6 +649,7 @@ test("os-espaces/AC-9 : chaque section du brief dit ce qui lui revient — livr�
       seenAt: null,
       repos: ["other"],
       heldBy: () => null,
+      humanWait: () => null,
       proposals: 1,
     });
     assert.equal(one.headline, "1 proposition");
@@ -696,7 +725,17 @@ test("os-espaces/AC-11 : un run mergé sans aucun geste humain compte « seul »
     const score = board(store, now);
     assert.deepEqual([score.merged, score.mergedAlone, score.aloneRate], [13, 8, 8 / 13]);
     assert.deepEqual(score.repos, [
-      { repo: "demo", merged: 13, mergedAlone: 8, cancelled: 0, failed: 0, successRate: 1, suggestion: null },
+      {
+        repo: "demo",
+        merged: 13,
+        mergedAlone: 8,
+        cancelled: 0,
+        failed: 0,
+        stopped: 0,
+        sample: 13,
+        successRate: 1,
+        suggestion: null,
+      },
     ]);
     assert.deepEqual([score.since, score.until], [now - 7 * DAY, now]);
   } finally {
@@ -792,7 +831,7 @@ test("os-espaces/AC-14 : les annulations de la fenêtre sont comptées par motif
     ended(store, "c1", "Trop gros", { state: "cancelled", cancelCause: "too_big" });
     ended(store, "c2", "Trop gros aussi", { state: "cancelled", cancelCause: "too_big" });
     ended(store, "c3", "À côté", { state: "cancelled", cancelCause: "off_target" }, { repo: "other" });
-    ended(store, "c4", "Sans motif", { state: "cancelled" });
+    ended(store, "c4", "Sans motif", { state: "cancelled", reason: "annulé par l'humain" });
     ended(store, "m1", "Livré", { state: "merged" }, { kind: "bug" });
     ended(store, "f1", "Raté", { state: "failed" });
     ended(store, "f2", "Raté ailleurs", { state: "failed" }, { repo: "other" });
@@ -804,9 +843,40 @@ test("os-espaces/AC-14 : les annulations de la fenêtre sont comptées par motif
     const score = reply.json.scoreboard;
     assert.deepEqual([score.cancelled, score.cancelCauses], [4, { too_big: 2, off_target: 1, none: 1 }]);
     assert.deepEqual(score.repos, [
-      { repo: "demo", merged: 1, mergedAlone: 0, cancelled: 3, failed: 1, successRate: 0.5, suggestion: "raise" },
-      { repo: "other", merged: 0, mergedAlone: 0, cancelled: 1, failed: 1, successRate: 0, suggestion: null },
-      { repo: "third", merged: 0, mergedAlone: 0, cancelled: 0, failed: 0, successRate: null, suggestion: null },
+      // Les arrêts par l'humain comptent dans la réussite : 1 fusion, 1 échec, 3 arrêts.
+      {
+        repo: "demo",
+        merged: 1,
+        mergedAlone: 0,
+        cancelled: 3,
+        failed: 1,
+        stopped: 3,
+        sample: 5,
+        successRate: 0.2,
+        suggestion: "raise",
+      },
+      {
+        repo: "other",
+        merged: 0,
+        mergedAlone: 0,
+        cancelled: 1,
+        failed: 1,
+        stopped: 1,
+        sample: 2,
+        successRate: 0,
+        suggestion: null,
+      },
+      {
+        repo: "third",
+        merged: 0,
+        mergedAlone: 0,
+        cancelled: 0,
+        failed: 0,
+        stopped: 0,
+        sample: 0,
+        successRate: null,
+        suggestion: null,
+      },
     ]);
     assert.ok(Math.abs(score.until - score.since - 7 * DAY) < 5, "7 jours par défaut");
 

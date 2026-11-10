@@ -7,14 +7,14 @@
 // de changer de tier entre deux étapes et de BORNER un prompt dans le temps : au-delà
 // de l'échéance de l'étape, le runner est arrêté et le prompt rend une erreur
 // relançable, jamais une attente infinie.
-import type { ModelChoice, RepoConfig, Tier } from "./config.ts";
+import type { ModelChoice, ModelPolicy, RepoConfig, Tier } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { EventType } from "./events.ts";
-import { policyChain, policySecretVars, repoMemoryToken, syncMemoryTokenFile } from "./policy.ts";
+import { policyChain, policySecretVars, repoMemoryToken, spaceRule, strictest, syncMemoryTokenFile } from "./policy.ts";
 import { FAILOVER_PROMPT } from "./prompts.ts";
 import type { HostToolDefinition, HostToolHandler, PromptError, PromptErrorCause, PromptResult } from "./rpc.ts";
 import { RpcRunner, classifyPromptError, parseRetryAfter } from "./rpc.ts";
-import { runnerArgv, runnerEnv, stopRunner } from "./runner.ts";
+import { runnerArgv, runnerEnv, spaceScope, stopRunner } from "./runner.ts";
 import { DEFAULT_COOLDOWN_MS } from "./scheduler.ts";
 
 export { classifyPromptError };
@@ -80,6 +80,20 @@ function annotate(error: PromptError): PromptError & { cause: PromptErrorCause; 
   return { ...error, cause: error.cause ?? classifyPromptError(error), retryAfterMs: parseRetryAfter(error) };
 }
 
+/** Le message d'un prompt refusé parce que la politique de modèles a changé sous un runner vivant. */
+export const POLICY_CHANGED =
+  "politique de modèles changée pendant la session : runner arrêté, l'étape repart sur un modèle permis";
+
+/** Même fournisseur ET même modèle (jamais l'index : la chaîne change avec la politique). */
+function sameModel(a: ModelChoice, b: ModelChoice | null): boolean {
+  return b !== null && a.provider === b.provider && a.model === b.model;
+}
+
+/** La politique borne-t-elle les fournisseurs (liste blanche, ou « local-only ») ? */
+function restricts(policy: ModelPolicy): boolean {
+  return policy.providers !== undefined || policy.privacy === "local-only";
+}
+
 /** Un délai interrompu par `signal` (rejette alors). */
 function realSleep(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.reject(new Error("attente annulée : run arrêté"));
@@ -108,6 +122,8 @@ export class RunnerSession {
   #modelIndex = 0;
   /** Le jeton du fournisseur déjà pris au lancement (le premier prompt ne repaie pas). */
   #prepaid = false;
+  /** Le runner vivant a été lancé en « local-only » : sans les clés des fournisseurs distants. */
+  #sealed = false;
 
   readonly #memory: false | undefined;
 
@@ -136,11 +152,25 @@ export class RunnerSession {
   }
 
   /**
-   * La chaîne de bascule d'un tier sous la politique du dépôt (policy.ts) : jamais un
-   * fournisseur hors de sa liste blanche ; aucun modèle permis lève `PolicyRefusal`.
+   * La politique de modèles de la session : celle du dépôt croisée, au plus strict, avec celle de son
+   * espace (policy.ts `strictest`) — relue à chaque lancement, à chaque changement de tier et à chaque
+   * prompt : un espace durci compte dès le prompt suivant d'un runner vivant (`prompt`). Un dépôt hors
+   * espace garde la sienne, telle quelle.
    */
-  #chain(tier: Tier): ModelChoice[] {
-    return policyChain(this.#ctx.config, this.#repo, tier, `le dépôt ${this.#repo.name}`);
+  #policy(): { policy: ModelPolicy; owner: string } {
+    const rule = spaceRule(this.#ctx.store.listSpaces(), this.#repo.name);
+    return {
+      policy: strictest(this.#repo, rule?.policy ?? null),
+      owner: `le dépôt ${this.#repo.name}${rule ? ` (espace « ${rule.space} »)` : ""}`,
+    };
+  }
+
+  /**
+   * La chaîne de bascule d'un tier sous la politique du dépôt et de son espace (policy.ts) : jamais un
+   * fournisseur hors de la liste blanche ; aucun modèle permis lève `PolicyRefusal`.
+   */
+  #chain(tier: Tier, { policy, owner } = this.#policy()): ModelChoice[] {
+    return policyChain(this.#ctx.config, policy, tier, owner);
   }
 
   /**
@@ -156,27 +186,35 @@ export class RunnerSession {
     options: { avoidProvider?: string | null } = {},
   ): Promise<boolean> {
     const { config, scheduler } = this.#ctx;
+    // Un espace passé (ou sorti de) « local-only » pendant que le runner vit : il a été lancé avec (ou
+    // sans) les clés des fournisseurs distants, il ne se réutilise pas — un runner neuf repart, permis.
+    if (this.#runner?.alive && this.#sealed !== (this.#policy().policy.privacy === "local-only")) await this.stop();
     if (this.#runner?.alive) {
       if (this.#tier !== tier) {
         const pick = await scheduler.waitModel(tier, this.#chain(tier), 0, signal);
         this.#tier = tier;
         this.#prepaid = pick !== null;
-        if (pick && (pick.choice.provider !== this.#model?.provider || pick.choice.model !== this.#model?.model)) {
-          await this.#switch(pick.choice, pick.index, "model_tier");
-        } else if (pick) this.#modelIndex = pick.index;
+        if (pick && !sameModel(pick.choice, this.#model)) await this.#switch(pick.choice, pick.index, "model_tier");
+        else if (pick) this.#modelIndex = pick.index;
       }
       return true;
     }
-    const chain = this.#chain(tier);
+    const policy = this.#policy();
+    const chain = this.#chain(tier, policy);
     // Le jeton mémoire du dépôt (policy.ts) : déclaré mais absent, aucun runner (jamais le jeton global).
     const memoryToken = repoMemoryToken(this.#repo);
-    const localOnly = this.#repo.privacy === "local-only";
+    const localOnly = policy.policy.privacy === "local-only";
+    this.#sealed = localOnly;
     const pick = await scheduler.waitModel(tier, chain, chainStart(chain, options.avoidProvider ?? null), signal);
     this.#tier = tier;
     this.#model = pick?.choice ?? null;
     this.#modelIndex = pick?.index ?? 0;
     this.#prepaid = pick !== null;
     const scope = this.#repo.scope;
+    // Un runner qui tourne POUR un espace — le dépôt d'un client, le poste ou le savoir d'un espace — n'a
+    // pas la portée mémoire `_global`, partagée entre tous les clients. Hors espace : rien ne change.
+    const noGlobal =
+      spaceScope(scope) || this.#ctx.store.listSpaces().some((space) => space.repos.includes(this.#repo.name));
     const argv = runnerArgv(config, {
       unit,
       cwd: this.#cwd,
@@ -187,6 +225,7 @@ export class RunnerSession {
       oracleUrl: config.oracle?.url ?? null,
       memoryEnvFile: syncMemoryTokenFile(config, this.#repo.name, memoryToken),
       localOnly,
+      noGlobal,
       memory: this.#memory,
     });
     // Sans lanceur ni conteneur, les clés déclarées par l'API passent par l'environnement du runner.
@@ -200,6 +239,7 @@ export class RunnerSession {
         memoryToken,
         hidden: policySecretVars(config),
         localOnly,
+        noGlobal,
       }),
     });
     const runner = new RpcRunner(proc, {
@@ -285,11 +325,29 @@ export class RunnerSession {
   async prompt(message: string, signal: AbortSignal, deadlineAt: number): Promise<PromptResult> {
     const { config, scheduler } = this.#ctx;
     const tier = this.#tier ?? "heavy";
-    const chain = this.#chain(tier);
-    if (this.#prepaid) this.#prepaid = false;
-    else if (chain.length > 0 && this.#model) {
-      const pick = await scheduler.waitModel(tier, chain, this.#modelIndex, signal);
-      if (pick && pick.index !== this.#modelIndex) await this.#switch(pick.choice, pick.index, "model_failover");
+    // La politique est relue à CHAQUE prompt : un espace durci pendant qu'un runner vit (review ⇄ fix,
+    // une relance) compte tout de suite — aucun modèle permis lève `PolicyRefusal`, rien n'est envoyé.
+    const policy = this.#policy();
+    const chain = this.#chain(tier, policy);
+    if (this.alive && this.#sealed !== (policy.policy.privacy === "local-only")) {
+      // Le runner vivant a été lancé sous l'autre régime (avec ou sans les clés des fournisseurs distants) :
+      // changer son modèle ne suffit pas. Il s'arrête ; l'étape relancée repart sur un runner neuf.
+      await this.stop();
+      return {
+        status: "error",
+        error: { message: POLICY_CHANGED, retryable: true, cause: "other", retryAfterMs: null },
+      };
+    }
+    const at = chain.findIndex((choice) => sameModel(choice, this.#model));
+    // Le modèle de la session n'est plus dans la chaîne permise (ou c'était le défaut d'omp, que
+    // la politique ne connaît pas) : le prompt part sur le premier modèle permis, jamais sur l'ancien.
+    const stale = chain.length > 0 && at < 0 && (this.#model !== null || restricts(policy.policy));
+    if (this.#prepaid && !stale) this.#prepaid = false;
+    else if (chain.length > 0 && (this.#model || stale)) {
+      this.#prepaid = false;
+      const pick = await scheduler.waitModel(tier, chain, Math.max(at, 0), signal);
+      if (pick && !sameModel(pick.choice, this.#model)) await this.#switch(pick.choice, pick.index, "model_failover");
+      else if (pick) this.#modelIndex = pick.index;
     }
     let text = message;
     let failovers = 0;

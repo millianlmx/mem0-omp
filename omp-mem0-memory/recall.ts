@@ -8,6 +8,7 @@ import type {
 import { checkBrief, SYSTEM_DIRECTIVE } from "./brief.ts";
 import {
   GLOBAL_SCOPE,
+  globalScopeAllowed,
   MEM0_HTTP_URL,
   RECALL_DISPLAY,
   RECALL_GLOBAL_LIMIT,
@@ -332,7 +333,11 @@ export async function handleRecall(
           console.warn(`[mem0] recall projet indisponible : ${recallError}`);
           return null;
         }),
-        mem0.search(prompt.slice(0, 400), GLOBAL_SCOPE, RECALL_GLOBAL_POOL, RECALL_THRESHOLD, true, budget).catch(() => null),
+        // Une session qui tourne pour un espace (MEM0_NO_GLOBAL) ne lit rien de `_global` :
+        // seule la recherche projet compte, pour le rappel comme pour le disjoncteur.
+        globalScopeAllowed()
+          ? mem0.search(prompt.slice(0, 400), GLOBAL_SCOPE, RECALL_GLOBAL_POOL, RECALL_THRESHOLD, true, budget).catch(() => null)
+          : Promise.resolve(null),
       ])
     : null;
 

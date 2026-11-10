@@ -122,11 +122,25 @@ export async function stopRunner(
  * PR), pas de relance de fin de session (le knowledge-updater tient la mémoire), et
  * le mode runner (`config.memory.runnerMode`) : ni rappel par tour ni épinglage —
  * la section Oracle du prompt est la seule source ; les outils mem0_* restent.
+ * `noGlobal` : le runner tourne POUR un espace (le dépôt d'un client, le poste ou le savoir d'un
+ * espace) — la portée `_global`, partagée entre tous les clients, lui est fermée (`MEM0_NO_GLOBAL`).
  */
-export function runnerMemoryEnv(scope: string, runnerMode: boolean): Record<string, string> {
+export function runnerMemoryEnv(scope: string, runnerMode: boolean, noGlobal = false): Record<string, string> {
   const env: Record<string, string> = { MEM0_PROJECT_ID: scope, MEM0_AUTOSETUP: "0", MEM0_NUDGE: "0" };
   if (runnerMode) env.MEM0_MODE = "runner";
+  if (noGlobal) env[NO_GLOBAL_ENV] = "1";
   return env;
+}
+
+/**
+ * Le drapeau d'un runner qui tourne pour un espace : le plugin mémoire lui refuse `scope: "global"`
+ * (lecture et écriture) et ne lui rappelle rien de `_global`. Hors espace : jamais posé.
+ */
+export const NO_GLOBAL_ENV = "MEM0_NO_GLOBAL";
+
+/** La portée mémoire du poste ou du savoir d'UN espace (`workstation:<espace>`, `corpo:<espace>`). */
+export function spaceScope(scope: string): boolean {
+  return /^(workstation|corpo):./.test(scope);
 }
 
 /**
@@ -149,6 +163,8 @@ export type RunnerSpec = {
   memoryEnvFile?: string | null;
   /** Le dépôt est `local-only` : aucune clé de fournisseur distant chez le runner. */
   localOnly?: boolean;
+  /** Le runner tourne pour un espace : la portée mémoire `_global` lui est fermée (`NO_GLOBAL_ENV`). */
+  noGlobal?: boolean;
   /** `false` : aucun plugin mémoire — le classement des Demandes (intake.ts). */
   memory?: false;
 };
@@ -164,7 +180,7 @@ function containerRunnerArgv(
   const env = {
     HOME: "/home/runner",
     PI_PY: "0",
-    ...runnerMemoryEnv(spec.scope, config.memory.runnerMode),
+    ...runnerMemoryEnv(spec.scope, config.memory.runnerMode, spec.noGlobal),
     ...(spec.oracleUrl ? { MEM0_HTTP_URL: spec.oracleUrl } : {}),
     ...(spec.localOnly ? { [LOCAL_ONLY_ENV]: "1" } : {}),
   };
@@ -252,7 +268,7 @@ export function runnerArgv(config: HarnessConfig, spec: RunnerSpec): { command: 
     // sudo remet l'environnement à zéro : la scope mémoire passe par la ligne (liste fermée côté lanceur).
     // Le jeton mémoire du dépôt, lui, est lu par le lanceur dans le dossier des jetons (jamais sur la ligne).
     ...Object.entries({
-      ...runnerMemoryEnv(spec.scope, config.memory.runnerMode),
+      ...runnerMemoryEnv(spec.scope, config.memory.runnerMode, spec.noGlobal),
       ...(spec.localOnly ? { [LOCAL_ONLY_ENV]: "1" } : {}),
     }).map(([key, value]) => `--setenv=${key}=${value}`),
     "--",
@@ -281,6 +297,8 @@ export type RunnerEnvPolicy = {
   hidden?: readonly string[];
   /** `local-only` : toute clé `*_API_KEY` retirée. */
   localOnly?: boolean;
+  /** Le runner tourne pour un espace : `MEM0_NO_GLOBAL=1` (voir `runnerMemoryEnv`). */
+  noGlobal?: boolean;
 };
 
 /**
@@ -296,7 +314,11 @@ export function runnerEnv(
   runnerMode = true,
   policy: RunnerEnvPolicy = {},
 ): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...base, ...runnerMemoryEnv(scope, runnerMode), PI_PY: "0" };
+  const env: Record<string, string | undefined> = {
+    ...base,
+    ...runnerMemoryEnv(scope, runnerMode, policy.noGlobal),
+    PI_PY: "0",
+  };
   if (oracle) {
     env.MEM0_HTTP_URL = oracle.url;
     if (oracle.token) env.MEM0_HTTP_TOKEN = oracle.token;

@@ -1,6 +1,9 @@
 // Le connecteur Atlassian (atlassian/desk.ts) : les écritures Jira des agents — une transition
 // faite seule sur un ticket de l'utilisateur, un commentaire proposé qui attend l'approbateur —
 // et les plans du jour. Données de la boîte : jamais dans une issue publique (VigieStore.workstationTexts).
+//
+// Chaque ligne appartient à UNE connexion (`space_id`) : celle d'un espace, ou la connexion par défaut
+// (`NULL`, hors espace). Une lecture dit toujours de laquelle elle parle : rien ne passe de l'une à l'autre.
 import { IntakeStore } from "./intakes.ts";
 import { json, num, str, strOrNull } from "./sql.ts";
 import type { Row, SqlValue } from "./sql.ts";
@@ -12,6 +15,8 @@ export type AtlassianWriteState = (typeof ATLASSIAN_WRITE_STATES)[number];
 
 export type AtlassianWrite = {
   id: string;
+  /** L'espace de la connexion qui l'a écrite ; `null` : la connexion par défaut. */
+  space: string | null;
   kind: AtlassianWriteKind;
   issueKey: string;
   /** Le texte du commentaire, ou le nom de la transition. */
@@ -28,6 +33,7 @@ export type AtlassianWrite = {
 
 export type NewAtlassianWrite = Pick<AtlassianWrite, "id" | "kind" | "issueKey" | "body" | "why" | "state" | "by"> & {
   error?: string | null;
+  space?: string | null;
 };
 
 export type AtlassianWritePatch = Partial<Pick<AtlassianWrite, "body" | "state" | "error" | "decidedBy">>;
@@ -55,6 +61,8 @@ export type PlanItem = {
 
 export type AtlassianPlan = {
   id: string;
+  /** L'espace de la connexion dont il est le plan ; `null` : la connexion par défaut. */
+  space: string | null;
   createdAt: number;
   trigger: PlanTrigger;
   by: string;
@@ -69,9 +77,15 @@ const COLUMNS: Record<keyof AtlassianWritePatch, string> = {
   decidedBy: "decided_by",
 };
 
+/** Le filtre d'une connexion : celle d'un espace, ou la connexion par défaut (`space_id` nul). */
+function ofSpace(space: string | null): [string, SqlValue[]] {
+  return space === null ? ["space_id IS NULL", []] : ["space_id = ?", [space]];
+}
+
 function writeOf(row: Row): AtlassianWrite {
   return {
     id: str(row, "id"),
+    space: strOrNull(row, "space_id"),
     kind: str(row, "kind") as AtlassianWriteKind,
     issueKey: str(row, "issue_key"),
     body: str(row, "body"),
@@ -88,6 +102,7 @@ function writeOf(row: Row): AtlassianWrite {
 function planOf(row: Row): AtlassianPlan {
   return {
     id: str(row, "id"),
+    space: strOrNull(row, "space_id"),
     createdAt: num(row, "created_at"),
     trigger: str(row, "plan_trigger") as PlanTrigger,
     by: str(row, "created_by"),
@@ -100,9 +115,10 @@ export class AtlassianStore extends IntakeStore {
   insertAtlassianWrite(input: NewAtlassianWrite): AtlassianWrite {
     const at = this.now();
     this.execute(
-      `INSERT INTO atlassian_writes (id, kind, issue_key, body, why, state, created_by, error, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO atlassian_writes (id, space_id, kind, issue_key, body, why, state, created_by, error, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.id,
+      input.space ?? null,
       input.kind,
       input.issueKey,
       input.body,
@@ -121,29 +137,54 @@ export class AtlassianStore extends IntakeStore {
     return row ? writeOf(row) : null;
   }
 
-  /** Les écritures d'un état (toutes si absent), les plus récentes d'abord. */
-  listAtlassianWrites(options: { state?: AtlassianWriteState; limit?: number } = {}): AtlassianWrite[] {
-    const where = options.state === undefined ? "" : "WHERE state = ?";
-    const params: SqlValue[] = options.state === undefined ? [] : [options.state];
+  /**
+   * Les écritures d'un état (toutes si absent), les plus récentes d'abord. `space` : celles de la connexion
+   * de cet espace (`null` : la connexion par défaut) ; absent : toutes connexions confondues.
+   */
+  listAtlassianWrites(
+    options: { state?: AtlassianWriteState; limit?: number; space?: string | null } = {},
+  ): AtlassianWrite[] {
+    const where: string[] = [];
+    const params: SqlValue[] = [];
+    if (options.state !== undefined) {
+      where.push("state = ?");
+      params.push(options.state);
+    }
+    if (options.space !== undefined) {
+      const [clause, values] = ofSpace(options.space);
+      where.push(clause);
+      params.push(...values);
+    }
     return this.selectAll(
-      `SELECT * FROM atlassian_writes ${where} ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+      `SELECT * FROM atlassian_writes ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC, rowid DESC LIMIT ?`,
       ...params,
       options.limit ?? 50,
     ).map(writeOf);
   }
 
-  /** Le commentaire déjà proposé sur ce ticket avec ce texte, s'il y en a un. */
-  proposedAtlassianComment(issueKey: string, body: string): AtlassianWrite | null {
+  /** Le commentaire déjà proposé sur ce ticket avec ce texte par cette connexion, s'il y en a un. */
+  proposedAtlassianComment(issueKey: string, body: string, space: string | null = null): AtlassianWrite | null {
+    const [clause, values] = ofSpace(space);
     const row = this.selectOne(
-      "SELECT * FROM atlassian_writes WHERE kind = 'comment' AND state = 'proposed' AND issue_key = ? AND body = ? LIMIT 1",
+      `SELECT * FROM atlassian_writes WHERE kind = 'comment' AND state = 'proposed' AND issue_key = ? AND body = ? AND ${clause} LIMIT 1`,
       issueKey,
       body,
+      ...values,
     );
     return row ? writeOf(row) : null;
   }
 
-  countAtlassianWrites(state: AtlassianWriteState): number {
-    return num(this.selectOne("SELECT COUNT(*) AS n FROM atlassian_writes WHERE state = ?", state) as Row, "n");
+  /** Les écritures de cet état d'une connexion (`null` : la connexion par défaut). */
+  countAtlassianWrites(state: AtlassianWriteState, space: string | null = null): number {
+    const [clause, values] = ofSpace(space);
+    return num(
+      this.selectOne(
+        `SELECT COUNT(*) AS n FROM atlassian_writes WHERE state = ? AND ${clause}`,
+        state,
+        ...values,
+      ) as Row,
+      "n",
+    );
   }
 
   /** Compare-and-swap, comme `updateIntakeIf` : `null` si l'écriture a changé d'état entre-temps. */
@@ -164,11 +205,12 @@ export class AtlassianStore extends IntakeStore {
     return Number(result.changes) === 0 ? null : this.getAtlassianWrite(id);
   }
 
-  insertAtlassianPlan(plan: Omit<AtlassianPlan, "createdAt">): AtlassianPlan {
+  insertAtlassianPlan(plan: Omit<AtlassianPlan, "createdAt" | "space"> & { space?: string | null }): AtlassianPlan {
     this.execute(
-      `INSERT INTO atlassian_plans (id, created_at, plan_trigger, created_by, summary, items)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO atlassian_plans (id, space_id, created_at, plan_trigger, created_by, summary, items)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       plan.id,
+      plan.space ?? null,
       this.now(),
       plan.trigger,
       plan.by,
@@ -183,8 +225,13 @@ export class AtlassianStore extends IntakeStore {
     return row ? planOf(row) : null;
   }
 
-  latestAtlassianPlan(): AtlassianPlan | null {
-    const row = this.selectOne("SELECT * FROM atlassian_plans ORDER BY created_at DESC, rowid DESC LIMIT 1");
+  /** Le dernier plan d'une connexion (`null` : la connexion par défaut). */
+  latestAtlassianPlan(space: string | null = null): AtlassianPlan | null {
+    const [clause, values] = ofSpace(space);
+    const row = this.selectOne(
+      `SELECT * FROM atlassian_plans WHERE ${clause} ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      ...values,
+    );
     return row ? planOf(row) : null;
   }
 }

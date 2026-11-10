@@ -4,7 +4,11 @@ import { SessionStore } from "./sessions.ts";
 import { str, strOrNull, num } from "./sql.ts";
 import type { SqlValue, Row, RepoFilter } from "./sql.ts";
 
-/** Une ligne de consommation : un message d'agent d'un run ou d'un audit. */
+/**
+ * Une ligne de consommation : un message d'agent d'un run, d'un audit ou d'un job sans dépôt.
+ * `spaceId` : l'espace auquel un job SANS dépôt est imputé (Demande, poste) ; celui d'une ligne qui a
+ * un dépôt se déduit de ce dépôt, il n'est pas écrit ici.
+ */
 export type UsageRow = {
   runId: string | null;
   auditId: string | null;
@@ -17,6 +21,7 @@ export type UsageRow = {
   cacheRead: number;
   cacheWrite: number;
   cost: number;
+  spaceId: string | null;
   at: number;
 };
 
@@ -43,6 +48,7 @@ function usageOf(row: Row): UsageRow {
     cacheRead: num(row, "cache_read"),
     cacheWrite: num(row, "cache_write"),
     cost: num(row, "cost"),
+    spaceId: strOrNull(row, "space_id"),
     at: num(row, "at"),
   };
 }
@@ -79,10 +85,10 @@ export function groupUsage(rows: readonly UsageRow[], key: (row: UsageRow) => st
 }
 
 export class UsageStore extends SessionStore {
-  addUsage(row: Omit<UsageRow, "at">): void {
+  addUsage(row: Omit<UsageRow, "at" | "spaceId"> & { spaceId?: string | null }): void {
     this.execute(
-      `INSERT INTO usage (run_id, audit_id, repo, step, provider, model, input, output, cache_read, cache_write, cost, at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO usage (run_id, audit_id, repo, step, provider, model, input, output, cache_read, cache_write, cost, space_id, at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       row.runId,
       row.auditId,
       row.repo,
@@ -94,6 +100,7 @@ export class UsageStore extends SessionStore {
       row.cacheRead,
       row.cacheWrite,
       row.cost,
+      row.spaceId ?? null,
       this.now(),
     );
   }
@@ -145,5 +152,27 @@ export class UsageStore extends SessionStore {
       params.push(...repos);
     }
     return this.selectAll(`SELECT * FROM usage WHERE ${where.join(" AND ")} ORDER BY id`, ...params).map(usageOf);
+  }
+
+  /**
+   * Les consommations d'un espace sur [since, until[ : celles de ses dépôts et, quand `spaceId` est donné,
+   * celles sans dépôt qui lui sont imputées (`space_id` : Demande, poste).
+   */
+  spaceUsage(repos: readonly string[], spaceId: string | null, since: number, until: number): UsageRow[] {
+    const scopes: string[] = [];
+    const params: SqlValue[] = [since, until];
+    if (repos.length > 0) {
+      scopes.push(`repo IN (${repos.map(() => "?").join(", ")})`);
+      params.push(...repos);
+    }
+    if (spaceId !== null) {
+      scopes.push("(repo IS NULL AND space_id = ?)");
+      params.push(spaceId);
+    }
+    if (scopes.length === 0) return [];
+    return this.selectAll(
+      `SELECT * FROM usage WHERE at >= ? AND at < ? AND (${scopes.join(" OR ")}) ORDER BY id`,
+      ...params,
+    ).map(usageOf);
   }
 }

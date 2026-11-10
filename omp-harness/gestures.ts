@@ -351,9 +351,10 @@ export class HumanLoop {
    * L'humain ne répond pas : passé `review.escalationTimeoutSec`, chaque escalade ouverte
    * (sauf une suppression, jamais tranchée seule) reçoit l'option recommandée par l'agent,
    * devient une décision `auto_timeout` — renversable comme les autres — et le run reprend.
-   * `null` : jamais d'auto-décision. Appelé par l'orchestrateur à chaque tour.
+   * `null` : jamais d'auto-décision. Appelé par l'orchestrateur à chaque tour. `held` : les dépôts
+   * dont l'espace est en pause — leurs échéances attendent la reprise, comme sous la pause globale.
    */
-  async autoDecideExpired(now: number): Promise<void> {
+  async autoDecideExpired(now: number, held?: (repo: string) => boolean): Promise<void> {
     const { store } = this.#ctx;
     const timeoutSec = this.#ctx.config.review.escalationTimeoutSec;
     if (timeoutSec === null) return;
@@ -361,6 +362,8 @@ export class HumanLoop {
     const byRun = new Map<string, EscalationRow[]>();
     for (const item of store.listEscalations({ status: "open" })) {
       if (!runs.has(item.runId)) runs.set(item.runId, store.getRun(item.runId));
+      const repo = runs.get(item.runId)?.repo;
+      if (repo !== undefined && held?.(repo)) continue;
       const { autoAt } = autoAnswerOf(item, runs.get(item.runId) ?? null, timeoutSec);
       if (autoAt === null || autoAt > now) continue;
       byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);

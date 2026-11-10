@@ -74,17 +74,26 @@ export function inboxOf(
   };
 }
 
-/** Les escalades d'un statut, batchées par run (l'écran iOS les traite d'un geste). */
+/**
+ * Les escalades d'un statut, batchées par run (l'écran iOS les traite d'un geste). `shown` : le run tel
+ * que l'API le rend (`Orchestrator.withWait` : pourquoi il attend, ce qui le retient).
+ */
 export function escalationBatches(
   store: Store,
   status: "open" | "answered",
   repos: RepoFilter = null,
   timeoutSec: number | null = null,
+  shown: (run: RunRow) => RunRow = (run) => run,
 ): Record<string, unknown> {
   const byRun = new Map<string, unknown[]>();
   for (const item of withStep(store, withDeadline(store, store.listEscalations({ status, repos }), timeoutSec)))
     byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
-  return { batches: [...byRun].map(([runId, items]) => ({ run: store.getRun(runId), items })) };
+  return {
+    batches: [...byRun].map(([runId, items]) => {
+      const run = store.getRun(runId);
+      return { run: run === null ? null : shown(run), items };
+    }),
+  };
 }
 
 /** La vue complète d'un run : étapes, décisions, escalades (avec leur échéance, `timeoutSec`), tests, artefacts. */

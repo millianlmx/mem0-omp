@@ -1,10 +1,14 @@
-// Le poste de travail : l'observation du navigateur et la file des actions de l'extension
-// (le journal des décisions). Les règles (validation, garde d'envoi, échéances) vivent
-// dans workstation.ts ; cette couche ne fait que lire et écrire. Meetings, profil et
-// services de l'agent : la couche du dessus (workstation-meetings.ts).
-import { PushDeviceStore } from "./push-devices.ts";
+// Le poste de travail : la file des actions de l'extension (le journal des décisions). Les
+// règles (validation, garde d'envoi, échéances) vivent dans workstation.ts ; cette couche ne
+// fait que lire et écrire. L'observation du navigateur : la couche du dessous
+// (workstation-observations.ts). Meetings, profil et services de l'agent : la couche du
+// dessus (workstation-meetings.ts).
+import { BROWSER_SPACE, WorkstationObservationStore, scopeClause } from "./workstation-observations.ts";
 import { str, strOrNull, num, json } from "./sql.ts";
 import type { Row, SqlValue } from "./sql.ts";
+
+// La portée d'une lecture du poste, et l'espace qu'une ligne garde, servent aussi à la couche du dessus, qui n'importe que sa parente.
+export { BROWSER_SPACE, scopeClause };
 
 export const ACTION_KINDS = [
   "tabs",
@@ -78,27 +82,19 @@ export type WorkstationAction = {
   requestId: string | null;
   /** Le navigateur qui l'exécute ; `null` : le navigateur par défaut au moment de la location. */
   browserId: string | null;
+  /**
+   * L'espace (son id) où elle a été déposée : celui de son navigateur À CE MOMENT — elle ne s'exécute
+   * jamais ailleurs. Absente hors espace : une action sans espace garde exactement sa forme d'avant.
+   */
+  space?: string;
 };
 
 export type ActionPatch = Partial<
   Pick<WorkstationAction, "state" | "approved" | "approval" | "result" | "error"> & { leasedAt: number | null }
 >;
 
-export type Observation =
-  | { kind: "visit"; at: number; url: string; title: string; durationMs: number }
-  | {
-      kind: "interaction";
-      at: number;
-      url: string;
-      title: string;
-      action: "click" | "input" | "submit" | "key";
-      target: { role: string; label: string };
-    };
-
-/** Une observation en base : son id, le décalage horaire (`getTimezoneOffset`, minutes) de son lot et son navigateur. */
-export type StoredObservation = Observation & { id: number; tz: number; browserId: string | null };
-
 function actionOf(row: Row): WorkstationAction {
+  const space = strOrNull(row, "space_id");
   return {
     seq: num(row, "seq"),
     createdAt: num(row, "created_at"),
@@ -115,6 +111,7 @@ function actionOf(row: Row): WorkstationAction {
     error: strOrNull(row, "error"),
     requestId: strOrNull(row, "request_id"),
     browserId: strOrNull(row, "browser_id"),
+    ...(space === null ? {} : { space }),
   };
 }
 
@@ -124,97 +121,7 @@ function approvalOf(approval: Approval | null): Approval | null {
   return { ...approval, fingerprint: typeof approval.fingerprint === "string" ? approval.fingerprint : null };
 }
 
-function observationOf(row: Row): StoredObservation {
-  const base = {
-    id: num(row, "id"),
-    tz: num(row, "tz"),
-    browserId: strOrNull(row, "browser_id"),
-    at: num(row, "at"),
-    url: str(row, "url"),
-    title: str(row, "title"),
-  };
-  if (str(row, "kind") === "interaction")
-    return {
-      ...base,
-      kind: "interaction",
-      action: str(row, "action") as "click" | "input" | "submit" | "key",
-      target: json<{ role: string; label: string }>(row, "target", { role: "", label: "" }),
-    };
-  return { ...base, kind: "visit", durationMs: num(row, "duration_ms") };
-}
-
-export class WorkstationStore extends PushDeviceStore {
-  // -- observation --------------------------------------------------------------
-
-  /** Écrit un lot d'observations déjà validées, venues du navigateur `browserId` ; rend le nombre de lignes écrites. */
-  addWorkstationObservations(tz: number, events: readonly Observation[], browserId: string | null = null): number {
-    const at = this.now();
-    return this.transaction(() => {
-      for (const event of events)
-        this.execute(
-          `INSERT INTO workstation_observations (at, kind, url, title, duration_ms, action, target, tz, received_at, browser_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          event.at,
-          event.kind,
-          event.url,
-          event.title,
-          event.kind === "visit" ? Math.round(event.durationMs) : 0,
-          event.kind === "interaction" ? event.action : null,
-          event.kind === "interaction" ? JSON.stringify(event.target) : null,
-          tz,
-          at,
-          browserId,
-        );
-      return events.length;
-    });
-  }
-
-  /** Les `limit` observations les plus récentes à partir de `since` (ms), dans l'ordre chronologique. */
-  listWorkstationObservations(filter: { since?: number; limit?: number } = {}): StoredObservation[] {
-    const rows = this.selectAll(
-      "SELECT * FROM workstation_observations WHERE at >= ? ORDER BY at DESC, id DESC LIMIT ?",
-      filter.since ?? 0,
-      filter.limit ?? 500,
-    );
-    return rows.map(observationOf).reverse();
-  }
-
-  /** Toutes les observations gardées (la rétention les borne), dans l'ordre chronologique : la base des statistiques. */
-  allWorkstationObservations(): StoredObservation[] {
-    return this.selectAll("SELECT * FROM workstation_observations ORDER BY at, id").map(observationOf);
-  }
-
-  /** Les observations reçues après `after` (ms) : de quoi justifier une nouvelle synthèse du profil. */
-  countWorkstationObservationsSince(after: number): number {
-    return num(
-      this.selectOne("SELECT COUNT(*) AS n FROM workstation_observations WHERE received_at > ?", after) as Row,
-      "n",
-    );
-  }
-
-  /** La rétention de l'observation : plus vieille que `before` (ms), purgée. Rend le nombre de lignes parties. */
-  pruneWorkstationObservations(before: number): number {
-    return Number(this.execute("DELETE FROM workstation_observations WHERE at < ?", before).changes);
-  }
-
-  /**
-   * Un hôte déjà observé (visite ou interaction), avec ou sans `www.` : la garde
-   * anti-exfiltration de la navigation de l'agent. Les adresses gardées sont origine + chemin.
-   */
-  workstationHostSeen(host: string): boolean {
-    const bare = host.toLowerCase().replace(/^www\./, "");
-    const escaped = (value: string) => value.replace(/[\\%_]/g, (char) => `\\${char}`);
-    const patterns = [bare, `www.${bare}`].flatMap((name) =>
-      ["http", "https"].flatMap((scheme) => [`${scheme}://${escaped(name)}/%`, `${scheme}://${escaped(name)}:%`]),
-    );
-    const where = patterns.map(() => "url LIKE ? ESCAPE '\\'").join(" OR ");
-    return (
-      this.selectOne(`SELECT 1 AS hit FROM workstation_observations WHERE ${where} LIMIT 1`, ...patterns) !== undefined
-    );
-  }
-
-  // -- actions ------------------------------------------------------------------
-
+export class WorkstationStore extends WorkstationObservationStore {
   createWorkstationAction(input: {
     origin: ActionOrigin;
     by: string | null;
@@ -229,8 +136,8 @@ export class WorkstationStore extends PushDeviceStore {
   }): WorkstationAction {
     const at = this.now();
     const result = this.execute(
-      `INSERT INTO workstation_actions (created_at, updated_at, origin, by, kind, params, rationale, state, approved, approval, request_id, browser_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO workstation_actions (created_at, updated_at, origin, by, kind, params, rationale, state, approved, approval, request_id, browser_id, space_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${BROWSER_SPACE})`,
       at,
       at,
       input.origin,
@@ -242,6 +149,7 @@ export class WorkstationStore extends PushDeviceStore {
       input.approved ? 1 : 0,
       input.approval ? JSON.stringify(input.approval) : null,
       input.requestId ?? null,
+      input.browserId ?? null,
       input.browserId ?? null,
     );
     return this.getWorkstationAction(Number(result.lastInsertRowid)) as WorkstationAction;
@@ -294,7 +202,10 @@ export class WorkstationStore extends PushDeviceStore {
     );
   }
 
-  /** Le journal : les plus récentes d'abord (`order: "asc"` : les plus anciennes), filtrées par état, demande, avant `before` (seq). */
+  /**
+   * Le journal : les plus récentes d'abord (`order: "asc"` : les plus anciennes), filtrées par état,
+   * demande, avant `before` (seq), et par portée (`space` : les actions de ses navigateurs).
+   */
   listWorkstationActions(
     filter: {
       states?: readonly ActionState[];
@@ -302,6 +213,7 @@ export class WorkstationStore extends PushDeviceStore {
       before?: number;
       requestId?: string;
       order?: "asc" | "desc";
+      space?: string | null;
     } = {},
   ): WorkstationAction[] {
     const where: string[] = [];
@@ -318,7 +230,9 @@ export class WorkstationStore extends PushDeviceStore {
       where.push("request_id = ?");
       params.push(filter.requestId);
     }
-    const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    const scope = scopeClause(filter.space);
+    params.push(...scope.params);
+    const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}${scope.and}` : `WHERE 1 = 1${scope.and}`;
     return this.selectAll(
       `SELECT * FROM workstation_actions ${clause} ORDER BY seq ${filter.order === "asc" ? "ASC" : "DESC"} LIMIT ?`,
       ...params,
@@ -356,7 +270,16 @@ export class WorkstationStore extends PushDeviceStore {
     ).map(actionOf);
   }
 
-  countWorkstationActions(state: ActionState): number {
-    return num(this.selectOne("SELECT COUNT(*) AS n FROM workstation_actions WHERE state = ?", state) as Row, "n");
+  /** Les actions dans cet état ; `space` : celles des navigateurs de cette portée. */
+  countWorkstationActions(state: ActionState, space?: string | null): number {
+    const scope = scopeClause(space);
+    return num(
+      this.selectOne(
+        `SELECT COUNT(*) AS n FROM workstation_actions WHERE state = ?${scope.and}`,
+        state,
+        ...scope.params,
+      ) as Row,
+      "n",
+    );
   }
 }

@@ -19,11 +19,21 @@ import { readFileSync, statfsSync } from "node:fs";
 import * as path from "node:path";
 import type * as http from "node:http";
 import type { Client, Role } from "./auth.ts";
-import { ClientRegistry, ROLES, allows, canSeeRepo, repoFilter } from "./auth.ts";
+import { ClientRegistry, ROLES, allows, repoFilter } from "./auth.ts";
+import { policyBounds } from "./policy.ts";
 import type { Actor } from "./context.ts";
 import type { TestJudge } from "./config.ts";
 import { TEST_JUDGES, testsJudge } from "./config.ts";
-import type { ActionState, ClientSource, DecisionStatus, EventRow, RepoFilter, SignalState } from "./db.ts";
+import type {
+  ActionState,
+  ClientSource,
+  DecisionStatus,
+  EventRow,
+  IntakeRow,
+  RepoFilter,
+  SignalState,
+  Space,
+} from "./db.ts";
 import { ACTION_STATES, CLIENT_SOURCES, SIGNAL_STATES } from "./db.ts";
 import { HarnessError } from "./errors.ts";
 import { IdempotencyGuard, fingerprintOf, idempotencyKey } from "./idempotency.ts";
@@ -49,6 +59,7 @@ import {
   text,
 } from "./input.ts";
 import { intakeView, parseIntakeStates, visibleIntake } from "./intake.ts";
+import type { IntakeView } from "./intake.ts";
 import type { RunState } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import type { ModelChains, ProviderInput } from "./providers.ts";
@@ -65,7 +76,8 @@ import { renderMetrics } from "./prometheus.ts";
 import { scheduleEdit, scheduleInput } from "./schedules.ts";
 import { PairingDesk } from "./pairing.ts";
 import { scoreboardDays, scoreboardOf } from "./scoreboard.ts";
-import { SPACE_REPORT_WINDOW_MS, spaceEdit, spaceInput } from "./spaces.ts";
+import { spaceUsageOf, usageCsv, usageFormat, usageWindow } from "./space-usage.ts";
+import { SPACES_OWNER_ONLY, SPACE_REPORT_WINDOW_MS, onboardInput, spaceEdit, spaceInput } from "./spaces.ts";
 import type { BrowserHello, SessionJob, Workstation } from "./workstation.ts";
 import type { VigieStatus } from "./db.ts";
 import { VIGIE_STATUSES } from "./db.ts";
@@ -77,6 +89,7 @@ import {
   SESSION_JOBS,
   approverFor,
   parseActionInput,
+  NO_SPACE_BROWSER,
   parseBrowserHello,
   parseRequestStates,
   workstationFor,
@@ -151,6 +164,11 @@ export const API_FEATURES = [
   "idempotency",
   "schedule-payload",
   "pairing-ticket",
+  "space-scope",
+  "space-knowledge",
+  "space-policy",
+  "space-workstation",
+  "run-facts",
 ] as const;
 
 /** La route publique qui échange un ticket d'appairage contre le jeton d'un appareil. */
@@ -170,8 +188,9 @@ function memoryInput(raw: unknown): { url: string; token: string } {
 
 /** Le refus d'un geste du poste (ou d'un signalement de collègue) à un client restreint à des dépôts. */
 const OWNER_ONLY = "le poste est réservé au propriétaire";
-/** Le refus d'administrer les espaces à un admin restreint à des dépôts. */
-const SPACES_OWNER_ONLY = "les espaces sont administrés par un client qui voit tous les dépôts";
+/** Le refus de l'administration du serveur à un admin borné à des dépôts ou à des espaces (`serverOwnerOf`). */
+const SERVER_OWNER_ONLY =
+  "l'administration du serveur (clients, fournisseurs, connexions, modèles, vigie) est réservée à un client qui voit tous les dépôts";
 /** Les refus d'Atlassian à un client pilote, ou à un autre appareil que l'approbateur. */
 const READS_ATLASSIAN = "réservé à l'humain — un client pilote ne lit pas Atlassian";
 const ACTS_ON_ATLASSIAN = "geste réservé à l'humain — un client pilote ne touche pas à Atlassian";
@@ -360,8 +379,16 @@ type Call = {
   res: http.ServerResponse;
   url: URL;
   client: Client;
-  /** Les dépôts que le client voit (`null` : tous). */
+  /**
+   * Les dépôts que la requête voit (`null` : tous) : ceux du client, croisés avec ceux de l'espace de
+   * `?space=` quand il est donné. Le client, lui, garde ses droits : `call.client.repos === "*"` dit qui voit tout.
+   */
   repos: RepoFilter;
+  /**
+   * L'espace de `?space=<id|nom>`, tel que le client le voit (ses dépôts : `repos`) ; `null` sans le
+   * paramètre. Inconnu, ou sans aucun dépôt visible du client : la requête a déjà rendu 404.
+   */
+  space: Space | null;
   /** L'auteur du geste et la révision qu'il a lue. */
   actor: Actor;
 };
@@ -402,7 +429,7 @@ export function apiRoutes(
     const reply = await idempotency.run(
       call.client.name,
       idempotencyKey(call.req),
-      fingerprintOf(call.req.method ?? "POST", call.url.pathname, body),
+      fingerprintOf(call.req.method ?? "POST", call.url.pathname + call.url.search, body),
       make,
     );
     send(call.res, reply.status, reply.body, {
@@ -410,9 +437,26 @@ export function apiRoutes(
       ...(reply.replayed ? { "Idempotent-Replay": "true" } : {}),
     });
   };
+  /** Le dépôt est-il dans la portée de la requête (les dépôts du client, bornés à l'espace de `?space=`) ? */
+  const sees = (call: Call, repo: string): boolean => call.repos === null || call.repos.includes(repo);
+  /** Une création sous `?space=` : son dépôt, que le client voit déjà, doit être de l'espace (400 sinon). */
+  const repoInSpace = (call: Call, repo: string): void => {
+    if (call.space !== null && !call.space.repos.includes(repo))
+      throw new HarnessError(400, `repo : le dépôt ${repo} n'est pas dans l'espace « ${call.space.name} »`);
+  };
+  /** L'espace d'une route `/v1/spaces/{id}/…` : sous `?space=`, ce ne peut être que celui-là (404 sinon, comme s'il n'existait pas). */
+  const spaceId = (call: Call): string => {
+    const id = call.match[1] as string;
+    if (call.space !== null && call.space.id !== id) throw new HarnessError(404, `espace inconnu : ${id}`);
+    return id;
+  };
+  /** Une Demande telle que le client la lit, avec le nom de son espace. */
+  const demande = (call: Call, row: IntakeRow): IntakeView => intakeView(row, call.client, orchestrator.spaces);
+  /** La Demande d'une route `/v1/intake/{id}…` : visible du client et, sous `?space=`, de cet espace (404 sinon). */
+  const intakeId = (call: Call): string => visibleIntake(store, call.client, call.match[1] as string, call.space).id;
   const visibleAudit = (call: Call, id: string) => {
     const audit = store.getAudit(id);
-    if (!audit || !canSeeRepo(call.client, audit.repo)) throw new HarnessError(404, `audit inconnu : ${id}`);
+    if (!audit || !sees(call, audit.repo)) throw new HarnessError(404, `audit inconnu : ${id}`);
     return audit;
   };
   const runId = (call: Call): string => orchestrator.visibleRun(call.match[1] as string, call.repos).id;
@@ -443,13 +487,28 @@ export function apiRoutes(
    * désactivé » : ils restent lisibles et confirmables quand le poste est coupé.
    */
   const ownerOf = (call: Call, pilotRefusal: string): void => {
-    if (call.repos !== null) throw new HarnessError(403, OWNER_ONLY);
+    // Les droits du CLIENT, pas la portée de la requête : le propriétaire le reste sous `?space=`.
+    if (call.client.repos !== "*") throw new HarnessError(403, OWNER_ONLY);
     if (call.client.pilot) throw new HarnessError(403, pilotRefusal);
   };
   const READS_SIGNALS = "réservé à l'humain — un client pilote ne lit pas les signalements";
   const ACTS_ON_SIGNALS = "geste réservé à l'humain — un client pilote ne confirme pas de signalement";
   /** Approuver, refuser ou régler le poste : l'appareil approbateur seulement (`approverFor`). */
   const approverOf = (call: Call): Workstation => approverFor(orchestrator.workstation, call.client);
+  /** La portée d'une lecture du poste : l'espace de `?space=` (ce qui vient de ses navigateurs), ou tout. */
+  const posteScope = (call: Call): { space?: string } => (call.space ? { space: call.space.id } : {});
+  /**
+   * Le corps d'une écriture du poste, dans son espace : `body.space` (id ou nom ; inconnu : 404) devient
+   * l'identifiant de l'espace, sinon celui de `?space=` ; `null` ou absent sans `?space=` : hors espace.
+   * Un `body.space` qui dit autre chose que `?space=` (un autre espace, ou `null`) est refusé (400),
+   * comme pour les consignes et les Demandes : jamais l'un des deux en silence.
+   */
+  const inSpace = (call: Call, body: Record<string, unknown>): Record<string, unknown> => {
+    const named = typeof body.space === "string" ? orchestrator.spaces.resolve(body.space, null).id : body.space;
+    if (call.space !== null && named !== undefined && named !== call.space.id)
+      throw new HarnessError(400, "space : un autre espace que celui de `?space=`");
+    return named === undefined && call.space ? { ...body, space: call.space.id } : { ...body, space: named };
+  };
   /** La présentation de l'extension appelante : son navigateur (`X-OMP-Browser`), son libellé et sa version. */
   const helloOf = (call: Call): BrowserHello =>
     parseBrowserHello(
@@ -479,20 +538,35 @@ export function apiRoutes(
   };
   /** La configuration du serveur est au propriétaire : un client restreint à des dépôts n'y touche pas. */
   const adminOf = (call: Call): ConfigAdmin => {
-    if (call.repos !== null) throw new HarnessError(403, "la configuration du serveur est réservée au propriétaire");
+    if (call.client.repos !== "*")
+      throw new HarnessError(403, "la configuration du serveur est réservée au propriétaire");
     if (admin === null)
       throw new HarnessError(409, "service lancé sans fichier de configuration (--config) : rien à relire ni à écrire");
     return admin;
   };
   /**
+   * L'administration du serveur — ses clients, ses fournisseurs et leurs connexions, ses chaînes de
+   * modèles, les réglages de la vigie — est à un client qui voit TOUS les dépôts : un admin borné à des
+   * dépôts ou à des espaces (403) se donnerait sinon un client non borné, ou lirait et réglerait ce qui
+   * sert tous les espaces. Le rôle `admin` reste exigé par la route.
+   */
+  const serverOwnerOf = (call: Call): void => {
+    if (call.client.repos !== "*") throw new HarnessError(403, SERVER_OWNER_ONLY);
+  };
+  /** Qui retire un jeton push : `null` (tous) pour un admin qui voit tous les dépôts ; sinon le client, et les siens seuls. */
+  const pushOwnerOf = (call: Call): string | null =>
+    allows(call.client.role, "admin") && call.client.repos === "*" ? null : call.client.name;
+  /**
    * Atlassian est au propriétaire, comme le poste (403 restreint ou pilote), puis 404 s'il est
    * désactivé ; ses gestes (`gesture`) sont à l'appareil approbateur. Indépendant du poste.
+   * `?space=` : la connexion de CET espace (ses jetons, son site, ses écritures, son plan, son savoir) ;
+   * sans lui, la connexion par défaut (hors espace), comme sur un serveur sans espace.
    */
   const atlassianOf = (call: Call, gesture: boolean): AtlassianDesk => {
     ownerOf(call, gesture ? ACTS_ON_ATLASSIAN : READS_ATLASSIAN);
     if (!orchestrator.atlassian.enabled()) throw new HarnessError(404, "Atlassian désactivé (atlassian.enabled)");
     if (gesture && !call.client.approver) throw new HarnessError(403, ATLASSIAN_APPROVER_ONLY);
-    return orchestrator.atlassian;
+    return call.space === null ? orchestrator.atlassian : orchestrator.atlassian.forSpace(call.space.id);
   };
 
   return [
@@ -509,20 +583,30 @@ export function apiRoutes(
         backups: orchestrator.observability.backupStatus(),
       });
     }),
-    route("GET", "/v1/repos", "viewer", (call) =>
+    // `policy` : ce que borne la politique de modèles en vigueur du dépôt (la sienne croisée avec celle de
+    // son espace) — absent quand elle ne borne rien. La vigie y lit ce qu'elle ne doit pas envoyer à son
+    // modèle : rendu au client qui voit tous les dépôts et au client pilote, pas à un autre client borné
+    // (la politique d'un espace ne lui est pas montrée).
+    route("GET", "/v1/repos", "viewer", (call) => {
+      const spaces = store.listSpaces();
+      const bounds = call.client.repos === "*" || call.client.pilot === true;
       send(call.res, 200, {
         repos: orchestrator.config.repos
-          .filter((repo) => canSeeRepo(call.client, repo.name))
-          .map((repo) => ({
-            name: repo.name,
-            scope: repo.scope,
-            mainBranch: repo.mainBranch,
-            merge: repo.merge,
-            maxParallel: repo.maxParallel,
-            judge: testsJudge(repo),
-          })),
-      }),
-    ),
+          .filter((repo) => sees(call, repo.name))
+          .map((repo) => {
+            const policy = bounds ? policyBounds(repo, spaces) : null;
+            return {
+              name: repo.name,
+              scope: repo.scope,
+              mainBranch: repo.mainBranch,
+              merge: repo.merge,
+              maxParallel: repo.maxParallel,
+              judge: testsJudge(repo),
+              ...(policy === null ? {} : { policy }),
+            };
+          }),
+      });
+    }),
     // `--add-repo` par l'API : clé du dépôt, clone, écriture éprouvée, configuration écrite et rechargée.
     route("POST", "/v1/repos", "admin", async (call) => {
       const target = adminOf(call);
@@ -576,8 +660,10 @@ export function apiRoutes(
     }),
     route("POST", "/v1/runs", "operator", async (call) => {
       const body = await readBody(call.req);
+      const input = newRunInput(body, call.client, { typed: true });
+      repoInSpace(call, input.repo);
       await once(call, body, () => {
-        const run = orchestrator.createRun(newRunInput(body, call.client, { typed: true }), call.actor);
+        const run = orchestrator.createRun(input, call.actor);
         return { status: 201, body: { run }, headers: { ETag: `"${run.rev}"` } };
       });
     }),
@@ -594,15 +680,19 @@ export function apiRoutes(
         (SIGNAL_STATES as readonly string[]).includes(state),
       );
       if (states.length !== asked.length) throw new HarnessError(400, `state : ${SIGNAL_STATES.join(" | ")}`);
-      send(call.res, 200, { signals: orchestrator.signals.list({ states, limit: limitOf(call.url, 50, 200) }) });
+      // Sous `?space=` : les seuls signalements VENUS de cet espace (`signal.space`), comme leurs lectures unitaires.
+      const signals = orchestrator.signals.list({ states, limit: limitOf(call.url, 50, 200), ...posteScope(call) });
+      send(call.res, 200, { signals });
     }),
+    // Sous `?space=`, un signalement venu d'ailleurs (un autre espace, ou hors espace) est inconnu : 404.
     route("GET", "/v1/signals/{id}", "viewer", (call) => {
       ownerOf(call, READS_SIGNALS);
-      send(call.res, 200, { signal: orchestrator.signals.get(call.match[1] as string) });
+      send(call.res, 200, { signal: orchestrator.signals.get(call.match[1] as string, call.space?.id) });
     }),
     route("POST", "/v1/signals/{id}/preview", "viewer", async (call) => {
       ownerOf(call, READS_SIGNALS);
-      send(call.res, 200, await orchestrator.signals.preview(call.match[1] as string, await readBody(call.req)));
+      const body = await readBody(call.req);
+      send(call.res, 200, await orchestrator.signals.preview(call.match[1] as string, body, call.space?.id));
     }),
     route("POST", "/v1/signals/{id}/confirm", "operator", async (call) => {
       ownerOf(call, ACTS_ON_SIGNALS);
@@ -611,14 +701,16 @@ export function apiRoutes(
         await readBody(call.req),
         call.client,
         call.actor,
+        call.space?.id,
       );
       send(call.res, 201, result);
       void orchestrator.tick();
     }),
     route("POST", "/v1/signals/{id}/dismiss", "operator", async (call) => {
       ownerOf(call, ACTS_ON_SIGNALS);
+      const body = await readBody(call.req);
       send(call.res, 200, {
-        signal: orchestrator.signals.dismiss(call.match[1] as string, await readBody(call.req), call.client),
+        signal: orchestrator.signals.dismiss(call.match[1] as string, body, call.client, call.space?.id),
       });
     }),
     route("GET", "/v1/runs/{id}/origin", "viewer", (call) => {
@@ -628,7 +720,10 @@ export function apiRoutes(
     }),
     // Le connecteur Atlassian (atlassian/desk.ts) : lire au propriétaire ; brancher, débrancher, publier ou
     // écarter un commentaire, demander un plan ou une passe de savoir : l'appareil approbateur. Le retour
-    // du consentement par le navigateur est une route publique, plus bas (`createHandler`).
+    // du consentement par le navigateur est une route publique, plus bas (`createHandler`). Chaque route
+    // accepte `?space=` : la connexion de cet espace (`atlassianOf`) ; le retour du consentement, lui, est
+    // rendu à la connexion que désigne son `state` ; une écriture se tranche par son identifiant, dans la
+    // connexion qui l'a écrite (`ofWrite`).
     route("GET", "/v1/atlassian", "viewer", (call) =>
       send(call.res, 200, { atlassian: atlassianOf(call, false).status() }),
     ),
@@ -649,12 +744,12 @@ export function apiRoutes(
       send(call.res, 200, { writes: desk.listWrites(state, limitOf(call.url, 50, 200)) });
     }),
     route("POST", "/v1/atlassian/writes/{id}/approve", "operator", async (call) => {
-      const desk = atlassianOf(call, true);
+      const desk = atlassianOf(call, true).ofWrite(call.match[1] as string);
       const body = await readBody(call.req);
       send(call.res, 200, { write: await desk.approve(call.match[1] as string, body, call.client.name) });
     }),
     route("POST", "/v1/atlassian/writes/{id}/dismiss", "operator", async (call) => {
-      const desk = atlassianOf(call, true);
+      const desk = atlassianOf(call, true).ofWrite(call.match[1] as string);
       await readBody(call.req);
       send(call.res, 200, { write: desk.dismiss(call.match[1] as string, call.client.name) });
     }),
@@ -787,6 +882,7 @@ export function apiRoutes(
           call.url.searchParams.get("status") === "answered" ? "answered" : "open",
           call.repos,
           orchestrator.config.review.escalationTimeoutSec,
+          (run) => orchestrator.withWait(run),
         ),
       ),
     ),
@@ -817,6 +913,7 @@ export function apiRoutes(
       });
       const repo = text(body, "repo");
       requireRepo(call.client, repo);
+      repoInSpace(call, repo);
       const priority = integer(body.priority, "priority");
       const autonomy = autonomyField(body);
       send(
@@ -836,8 +933,7 @@ export function apiRoutes(
     }),
     route("GET", "/v1/projects/{id}", "viewer", (call) => {
       const project = store.getProject(call.match[1] as string);
-      if (!project || !canSeeRepo(call.client, project.repo))
-        throw new HarnessError(404, `projet inconnu : ${call.match[1]}`);
+      if (!project || !sees(call, project.repo)) throw new HarnessError(404, `projet inconnu : ${call.match[1]}`);
       send(call.res, 200, { project, runs: store.listRuns({ projectId: project.id }) });
     }),
     route("GET", "/v1/dreams", "viewer", (call) =>
@@ -848,6 +944,7 @@ export function apiRoutes(
       const body = await readBody(call.req);
       const repo = text(body, "repo");
       requireRepo(call.client, repo);
+      repoInSpace(call, repo);
       orchestrator.dreams.request(repo, call.actor);
       void orchestrator.tick();
       send(call.res, 202, { repo, requested: true });
@@ -857,6 +954,7 @@ export function apiRoutes(
       const body = await readBody(call.req);
       const repo = text(body, "repo");
       requireRepo(call.client, repo);
+      repoInSpace(call, repo);
       const audit = orchestrator.audits.create(repo, text(body, "focus", false), call.actor);
       void orchestrator.tick();
       send(call.res, 201, { audit });
@@ -901,44 +999,45 @@ export function apiRoutes(
         intakes: store
           .listIntakes({
             states: parseIntakeStates(call.url.searchParams.get("state")),
-            viewer: { repos: call.repos, name: call.client.name },
+            viewer: {
+              repos: call.repos,
+              name: call.client.name,
+              ...(call.space === null ? {} : { space: { id: call.space.id, everyone: call.client.repos === "*" } }),
+            },
             limit: limitOf(call.url, 50, 200),
           })
-          .map((intake) => intakeView(intake, call.client)),
+          .map((intake) => demande(call, intake)),
       }),
     ),
     route("POST", "/v1/intake", "operator", async (call) => {
       const body = await readBody(call.req);
       await once(call, body, () => {
-        const intake = orchestrator.intake.create(body, call.client, call.actor);
+        const intake = orchestrator.intake.create(body, call.client, call.actor, call.space);
         void orchestrator.tick();
-        return { status: 201, body: { intake: intakeView(intake, call.client) } };
+        return { status: 201, body: { intake: demande(call, intake) } };
       });
     }),
     route("GET", "/v1/intake/{id}", "viewer", (call) =>
       send(call.res, 200, {
-        intake: intakeView(visibleIntake(store, call.client, call.match[1] as string), call.client),
+        intake: demande(call, visibleIntake(store, call.client, call.match[1] as string, call.space)),
       }),
     ),
     route("POST", "/v1/intake/{id}/confirm", "operator", async (call) => {
       const body = await readBody(call.req);
-      const intake = orchestrator.intake.confirm(call.match[1] as string, call.client, call.actor, body);
+      const intake = orchestrator.intake.confirm(intakeId(call), call.client, call.actor, body);
       void orchestrator.tick();
-      send(call.res, 201, { intake: intakeView(intake, call.client) });
+      send(call.res, 201, { intake: demande(call, intake) });
     }),
     route("POST", "/v1/intake/{id}/cancel", "operator", async (call) =>
       send(call.res, 200, {
-        intake: intakeView(
-          await orchestrator.intake.cancel(call.match[1] as string, call.client, call.actor),
-          call.client,
-        ),
+        intake: demande(call, await orchestrator.intake.cancel(intakeId(call), call.client, call.actor)),
       }),
     ),
     route("POST", "/v1/intake/{id}/answer", "operator", async (call) => {
       const body = await readBody(call.req);
-      const intake = orchestrator.intake.answer(call.match[1] as string, call.client, call.actor, body);
+      const intake = orchestrator.intake.answer(intakeId(call), call.client, call.actor, body);
       void orchestrator.tick();
-      send(call.res, 200, { intake: intakeView(intake, call.client) });
+      send(call.res, 200, { intake: demande(call, intake) });
     }),
     // Le jeton push d'une Live Activity de l'app iOS, pour un run que le client voit.
     route("POST", "/v1/push/activities", "viewer", async (call) => {
@@ -950,9 +1049,10 @@ export function apiRoutes(
       store.putPushToken({ token, kind: "activity", runId: run.id, client: call.client.name });
       send(call.res, 201, { registered: true, pushes: orchestrator.config.apns !== null });
     }),
-    // Un client ne retire que SES jetons (un admin, tous) ; un jeton d'un autre est laissé sans le dire.
+    // Un client ne retire que SES jetons (un admin qui voit tous les dépôts, tous — `pushOwnerOf`) ; un
+    // jeton d'un autre est laissé sans le dire.
     route("DELETE", "/v1/push/activities/{name}", "viewer", (call) => {
-      const owner = allows(call.client.role, "admin") ? null : call.client.name;
+      const owner = pushOwnerOf(call);
       send(call.res, 200, { removed: store.deletePushToken(call.match[1] as string, owner) });
     }),
     // Un appareil iOS et ses alertes push : il reçoit ce que voit le client qui l'enregistre.
@@ -969,7 +1069,7 @@ export function apiRoutes(
     }),
     // Comme les jetons d'activité : un client n'oublie que SES appareils (un admin, tous).
     route("DELETE", "/v1/push/devices/{name}", "viewer", (call) => {
-      const owner = allows(call.client.role, "admin") ? null : call.client.name;
+      const owner = pushOwnerOf(call);
       send(call.res, 200, { removed: store.deletePushDevice(call.match[1] as string, owner) });
     }),
     // La santé au fil du temps : `?since=` (ms) rend les points depuis cet instant (gardés
@@ -984,7 +1084,7 @@ export function apiRoutes(
     // L'exposition Prometheus (deploy/monitoring/prometheus.yml la scrute avec le jeton d'un
     // viewer) : coûts et runs de tous les dépôts, donc un client qui les voit tous.
     route("GET", "/metrics", "viewer", (call) => {
-      if (call.repos !== null)
+      if (call.client.repos !== "*")
         throw new HarnessError(403, "/metrics est réservé aux clients qui voient tous les dépôts");
       const body = renderMetrics(orchestrator, HARNESS_VERSION);
       call.res.writeHead(200, {
@@ -1010,7 +1110,7 @@ export function apiRoutes(
         errors: store.listClientErrors({
           since,
           ...(source !== null ? { source: source as ClientSource } : {}),
-          ...(call.repos !== null ? { client: call.client.name } : {}),
+          ...(call.client.repos !== "*" ? { client: call.client.name } : {}),
           limit: limitOf(call.url, 200, 1000),
         }),
       });
@@ -1049,7 +1149,9 @@ export function apiRoutes(
     // Les planifications récurrentes (schedules.ts) : celles des dépôts que le client voit.
     route("GET", "/v1/schedules", "viewer", (call) => send(call.res, 200, orchestrator.schedules.view(call.repos))),
     route("POST", "/v1/schedules", "operator", async (call) => {
-      const schedule = orchestrator.schedules.create(scheduleInput(await readBody(call.req), call.client), call.actor);
+      const input = scheduleInput(await readBody(call.req), call.client);
+      if (input.target.kind !== "automation") repoInSpace(call, input.target.repo);
+      const schedule = orchestrator.schedules.create(input, call.actor);
       send(call.res, 201, { schedule }, { ETag: `"${schedule.rev}"` });
     }),
     route("PUT", "/v1/schedules/{id}", "operator", async (call) => {
@@ -1084,7 +1186,10 @@ export function apiRoutes(
       });
     }),
     // Le poste de travail (extension Chrome, outils OMP, apps) : propriétaire seulement.
-    route("GET", "/v1/workstation", "viewer", (call) => send(call.res, 200, workstationOf(call).status())),
+    // Avec `?space=` : les lectures ne rendent que ce qui vient des navigateurs de cet espace.
+    route("GET", "/v1/workstation", "viewer", (call) =>
+      send(call.res, 200, workstationOf(call).status(Date.now(), call.space?.id)),
+    ),
     route("PUT", "/v1/workstation/settings", "operator", async (call) => {
       const workstation = approverOf(call);
       send(call.res, 200, workstation.updateSettings(await readBody(call.req), call.actor));
@@ -1100,6 +1205,7 @@ export function apiRoutes(
         observations: workstation.listObservations({
           since: Number.isFinite(since) && since > 0 ? since : 0,
           limit: limitOf(call.url, 500, 500),
+          ...posteScope(call),
         }),
       });
     }),
@@ -1129,7 +1235,14 @@ export function apiRoutes(
       if (call.client.pilot)
         throw new HarnessError(403, "geste réservé à l'humain — un client pilote n'agit pas sur le poste");
       const input = parseActionInput(await readBody(call.req));
-      send(call.res, 201, { action: workstation.createAction(input, "session", call.actor.by) });
+      // Avec `?space=` : dans un navigateur de CET espace (409 s'il n'en a pas, ou si celui qu'on désigne est
+      // ailleurs). Sans : dans un navigateur HORS espace seulement — le navigateur par défaut, ou celui qu'on
+      // désigne, qui appartient à un espace est refusé (409) : on n'agit chez aucun client sans le dire.
+      if (call.space === null) workstation.outsideSpaces(input.browserId ?? null);
+      const placed = call.space
+        ? { ...input, browserId: workstation.browserIn(call.space.id, input.browserId ?? null) }
+        : input;
+      send(call.res, 201, { action: workstation.createAction(placed, "session", call.actor.by) });
     }),
     route("GET", "/v1/workstation/actions", "viewer", (call) => {
       const workstation = workstationOf(call);
@@ -1142,6 +1255,7 @@ export function apiRoutes(
           states: states as ActionState[],
           limit: limitOf(call.url, 50, 200),
           ...(Number.isInteger(before) && before > 0 ? { before } : {}),
+          ...posteScope(call),
         }),
       });
     }),
@@ -1150,7 +1264,7 @@ export function apiRoutes(
       const workstation = workstationOf(call);
       const seq = Number(call.match[1]);
       const signal = departure(call.res);
-      const view = await workstation.waitAction(seq, waitOf(call.url), signal);
+      const view = await workstation.waitAction(seq, waitOf(call.url), signal, call.space?.id);
       if (!signal.aborted) send(call.res, 200, view);
     }),
     route("POST", "/v1/workstation/actions/{n}/result", "operator", async (call) => {
@@ -1162,7 +1276,7 @@ export function apiRoutes(
     route("GET", "/v1/workstation/actions/{n}/capture", "viewer", (call) => {
       const workstation = workstationOf(call);
       const seq = Number(call.match[1]);
-      send(call.res, 200, workstation.capture(seq));
+      send(call.res, 200, workstation.capture(seq, call.space?.id));
     }),
     // Le fichier d'un `upload` en cours, lu dans le dossier d'envoi du poste : pour l'extension qui l'exécute.
     route("GET", "/v1/workstation/actions/{n}/file", "operator", (call) =>
@@ -1219,8 +1333,15 @@ export function apiRoutes(
       const since = sinceRaw === null ? null : Number(sinceRaw);
       if (since !== null && !(Number.isInteger(since) && since >= 0))
         throw new HarnessError(400, "since : le numéro (seq) de la dernière entrée lue attendu");
-      const live = orchestrator.workstationAgent.isLive(SESSION_JOBS[job as SessionJob]);
-      send(call.res, 200, workstation.sessionView(job as SessionJob, live, { ...pageOf(call.url), since }));
+      // Le direct d'un job est un seul fil où se suivent des lancements d'espaces différents : sous `?space=`,
+      // seulement les entrées de son DERNIER lancement s'il tourne (ou a tourné) dans cet espace, sinon rien.
+      const scope =
+        call.space === null ? null : orchestrator.workstationAgent.sessionScope(SESSION_JOBS[job as SessionJob]);
+      const mine = call.space === null || scope?.space === call.space.id;
+      const floor =
+        call.space === null ? since : mine ? Math.max(since ?? 0, scope?.since ?? 0) : Number.MAX_SAFE_INTEGER;
+      const live = mine && orchestrator.workstationAgent.isLive(SESSION_JOBS[job as SessionJob]);
+      send(call.res, 200, workstation.sessionView(job as SessionJob, live, { ...pageOf(call.url), since: floor }));
     }),
     route("POST", "/v1/workstation/actions/{n}/approve", "operator", (call) =>
       send(call.res, 200, { action: approverOf(call).approve(Number(call.match[1]), call.actor) }),
@@ -1232,9 +1353,15 @@ export function apiRoutes(
         action: workstation.refuse(Number(call.match[1]), text(body, "reason", false), call.actor),
       });
     }),
-    route("GET", "/v1/workstation/profile", "viewer", (call) => send(call.res, 200, workstationOf(call).profileView())),
+    // Le profil : hors espace (les navigateurs sans espace), ou celui de l'espace de `?space=` (ses seuls navigateurs).
+    route("GET", "/v1/workstation/profile", "viewer", (call) =>
+      send(call.res, 200, workstationOf(call).profileView(call.space?.id ?? null)),
+    ),
     route("POST", "/v1/workstation/profile/rebuild", "operator", (call) => {
-      workstationOf(call).profileRequested = true;
+      const workstation = workstationOf(call);
+      if (call.space === null) workstation.profileRequested = true;
+      else if (workstation.browserOfSpace(call.space.id) === null) throw new HarnessError(409, NO_SPACE_BROWSER);
+      else workstation.spaceProfilesRequested.add(call.space.id);
       void orchestrator.tick();
       send(call.res, 202, { queued: true });
     }),
@@ -1254,28 +1381,30 @@ export function apiRoutes(
       send(call.res, 200, { meeting });
     }),
     route("GET", "/v1/workstation/meetings", "viewer", (call) =>
-      send(call.res, 200, { meetings: workstationOf(call).listMeetings(limitOf(call.url, 50, 200)) }),
+      send(call.res, 200, {
+        meetings: workstationOf(call).listMeetings(limitOf(call.url, 50, 200), call.space?.id),
+      }),
     ),
     route("GET", "/v1/workstation/meetings/{id}", "viewer", (call) =>
-      send(call.res, 200, workstationOf(call).meetingView(call.match[1] as string)),
+      send(call.res, 200, workstationOf(call).meetingView(call.match[1] as string, call.space?.id)),
     ),
     // Les demandes de l'humain au poste (une consigne exécutée par le job `poste-demande`, sans
     // run ni pipeline) et les automatisations : lectures au propriétaire, gestes à l'approbateur.
     route("POST", "/v1/workstation/requests", "operator", async (call) => {
       const workstation = approverOf(call);
-      const request = workstation.createRequest(await readBody(call.req), call.actor);
+      const request = workstation.createRequest(inSpace(call, await readBody(call.req)), call.actor);
       send(call.res, 201, { request });
       void orchestrator.tick();
     }),
     route("GET", "/v1/workstation/requests", "viewer", (call) => {
       const workstation = workstationOf(call);
       const states = parseRequestStates(call.url.searchParams.get("state"));
-      const requests = workstation.listRequests({ states, limit: limitOf(call.url, 50, 200) });
+      const requests = workstation.listRequests({ states, limit: limitOf(call.url, 50, 200), ...posteScope(call) });
       send(call.res, 200, { requests });
     }),
     route("GET", "/v1/workstation/requests/{id}", "viewer", (call) => {
       const workstation = workstationOf(call);
-      send(call.res, 200, workstation.requestView(call.match[1] as string));
+      send(call.res, 200, workstation.requestView(call.match[1] as string, call.space?.id));
     }),
     route("POST", "/v1/workstation/requests/{id}/cancel", "operator", (call) => {
       const request = approverOf(call).cancelRequest(call.match[1] as string, call.actor);
@@ -1283,11 +1412,12 @@ export function apiRoutes(
       void orchestrator.tick();
     }),
     route("GET", "/v1/workstation/automations", "viewer", (call) =>
-      send(call.res, 200, { automations: workstationOf(call).listAutomations() }),
+      send(call.res, 200, { automations: workstationOf(call).listAutomations(call.space?.id) }),
     ),
     route("POST", "/v1/workstation/automations", "operator", async (call) => {
       const workstation = approverOf(call);
-      const { automation, created } = workstation.createAutomation(await readBody(call.req), call.actor);
+      const body = inSpace(call, await readBody(call.req));
+      const { automation, created } = workstation.createAutomation(body, call.actor);
       // Son `schedule` devient une planification liée, déclenchée par le planificateur.
       if (created) orchestrator.schedules.linkAutomation(automation, call.actor);
       send(call.res, created ? 201 : 200, { automation });
@@ -1304,9 +1434,10 @@ export function apiRoutes(
     }),
     // La vigie (vigie/) : ses réglages (admin), son battement de cœur et ses incidents (son client pilote).
     route("GET", "/v1/vigie", "viewer", (call) => send(call.res, 200, orchestrator.vigie.view(call.repos, Date.now()))),
-    route("PUT", "/v1/vigie", "admin", async (call) =>
-      send(call.res, 200, { settings: orchestrator.vigie.updateSettings(await readBody(call.req), call.actor) }),
-    ),
+    route("PUT", "/v1/vigie", "admin", async (call) => {
+      serverOwnerOf(call);
+      send(call.res, 200, { settings: orchestrator.vigie.updateSettings(await readBody(call.req), call.actor) });
+    }),
     route("POST", "/v1/vigie/heartbeat", "operator", async (call) => {
       pilotOf(call);
       send(call.res, 200, orchestrator.vigie.heartbeat(await readBody(call.req), call.client, Date.now()));
@@ -1327,9 +1458,14 @@ export function apiRoutes(
       const outcome = await orchestrator.vigie.report(await readBody(call.req), Date.now());
       send(call.res, outcome.known ? 200 : 201, outcome);
     }),
-    // La gestion des clients : admin seulement. Le jeton n'est montré qu'à la création.
-    route("GET", "/v1/clients", "admin", (call) => send(call.res, 200, { clients: clients.list() })),
+    // La gestion des clients : admin qui voit tous les dépôts seulement (`serverOwnerOf`) — un admin borné
+    // se créerait sinon un client non borné. Le jeton n'est montré qu'à la création.
+    route("GET", "/v1/clients", "admin", (call) => {
+      serverOwnerOf(call);
+      send(call.res, 200, { clients: clients.list() });
+    }),
     route("POST", "/v1/clients", "admin", async (call) => {
+      serverOwnerOf(call);
       const body = await readBody(call.req);
       // L'approbateur du poste ne se frappe qu'en ligne de commande sur le serveur.
       if ("approver" in body)
@@ -1341,6 +1477,11 @@ export function apiRoutes(
       const role = text(body, "role", false) || "operator";
       if (!(ROLES as readonly string[]).includes(role)) throw new HarnessError(400, `role : ${ROLES.join(" | ")}`);
       const repos = body.repos === undefined || body.repos === "*" ? "*" : stringList(body.repos, "repos");
+      // `spaces` : le client est borné à ces espaces (identifiants ou noms que l'admin voit ; 404 sinon), à la
+      // place d'une liste de dépôts. Gardés par identifiant, résolus en dépôts à chaque appel du client.
+      const spaces = stringList(body.spaces, "spaces")?.map(
+        (ref) => orchestrator.spaces.resolve(ref, repoFilter(call.client)).id,
+      );
       try {
         const { client, token } = clients.add(
           text(body, "name"),
@@ -1348,6 +1489,7 @@ export function apiRoutes(
           repos ?? "*",
           false,
           body.pilot === true,
+          spaces ?? null,
         );
         send(call.res, 201, { client, token });
       } catch (err) {
@@ -1355,6 +1497,7 @@ export function apiRoutes(
       }
     }),
     route("DELETE", "/v1/clients/{name}", "admin", (call) => {
+      serverOwnerOf(call);
       if (!clients.revoke(call.match[1] as string)) throw new HarnessError(404, `client inconnu : ${call.match[1]}`);
       send(call.res, 200, { revoked: call.match[1] });
     }),
@@ -1373,8 +1516,12 @@ export function apiRoutes(
       send(call.res, 201, ticket);
     }),
     // Les fournisseurs LLM et les chaînes de modèles : admin seulement. Une clé entre, jamais ne sort.
-    route("GET", "/v1/providers", "admin", (call) => send(call.res, 200, providersView())),
+    route("GET", "/v1/providers", "admin", (call) => {
+      serverOwnerOf(call);
+      send(call.res, 200, providersView());
+    }),
     route("PUT", "/v1/providers/{name}", "admin", async (call) => {
+      serverOwnerOf(call);
       const provider = orchestrator.providers.put(
         call.match[1] as string,
         providerInput(await readBody(call.req)),
@@ -1383,31 +1530,38 @@ export function apiRoutes(
       send(call.res, 200, { provider });
     }),
     route("DELETE", "/v1/providers/{name}", "admin", (call) => {
+      serverOwnerOf(call);
       orchestrator.providers.remove(call.match[1] as string, call.actor.by);
       send(call.res, 200, { removed: call.match[1] });
     }),
     // Les connexions OAuth (abonnements) : omp les mène chez les runners, l'app relaie le lien
     // et le code. Les identifiants ne passent jamais par ici.
-    route("GET", "/v1/oauth", "admin", async (call) =>
+    route("GET", "/v1/oauth", "admin", async (call) => {
+      serverOwnerOf(call);
       send(call.res, 200, {
         providers: await orchestrator.logins.providers(),
         login: orchestrator.logins.active(),
-      }),
-    ),
-    route("POST", "/v1/oauth/{name}/login", "admin", (call) =>
-      send(call.res, 201, { login: orchestrator.logins.start(call.match[1] as string, call.actor.by) }),
-    ),
-    route("GET", "/v1/oauth/logins/{id}", "admin", (call) =>
-      send(call.res, 200, { login: orchestrator.logins.view(call.match[1] as string) }),
-    ),
+      });
+    }),
+    route("POST", "/v1/oauth/{name}/login", "admin", (call) => {
+      serverOwnerOf(call);
+      send(call.res, 201, { login: orchestrator.logins.start(call.match[1] as string, call.actor.by) });
+    }),
+    route("GET", "/v1/oauth/logins/{id}", "admin", (call) => {
+      serverOwnerOf(call);
+      send(call.res, 200, { login: orchestrator.logins.view(call.match[1] as string) });
+    }),
     route("POST", "/v1/oauth/logins/{id}/answer", "admin", async (call) => {
+      serverOwnerOf(call);
       const body = await readBody(call.req);
       send(call.res, 200, { login: orchestrator.logins.answer(call.match[1] as string, text(body, "value")) });
     }),
-    route("DELETE", "/v1/oauth/logins/{id}", "admin", async (call) =>
-      send(call.res, 200, { login: await orchestrator.logins.cancel(call.match[1] as string) }),
-    ),
+    route("DELETE", "/v1/oauth/logins/{id}", "admin", async (call) => {
+      serverOwnerOf(call);
+      send(call.res, 200, { login: await orchestrator.logins.cancel(call.match[1] as string) });
+    }),
     route("PUT", "/v1/models", "admin", async (call) => {
+      serverOwnerOf(call);
       const body = await readBody(call.req);
       if (body.models !== null && (typeof body.models !== "object" || Array.isArray(body.models)))
         throw new HarnessError(400, "models : { fast, standard, heavy } attendu, ou null (retour à la configuration)");
@@ -1426,11 +1580,18 @@ export function apiRoutes(
       const modules = modulesInput(await readBody(call.req));
       send(call.res, 200, { run: await orchestrator.setModules(runId(call), modules, call.actor) });
     }),
-    // La pause globale (« Tout suspendre ») : la lire est ouvert à tous, la poser ou la lever au propriétaire.
-    route("GET", "/v1/pause", "viewer", (call) => send(call.res, 200, { pause: orchestrator.pause })),
+    // La pause (« Tout suspendre ») : la lire est ouvert à tous, la poser ou la lever au propriétaire. `space`
+    // (corps, identifiant ou nom) ou `?space=` : la pause de CET espace seulement — les autres continuent.
+    route("GET", "/v1/pause", "viewer", (call) => send(call.res, 200, { pause: orchestrator.pauseView(call.repos) })),
     route("POST", "/v1/pause", "operator", async (call) => {
-      const { paused, reason, now } = pauseInput(await readBody(call.req));
-      send(call.res, 200, { pause: orchestrator.setPause(paused, reason, call.actor, call.repos, now) });
+      const body = await readBody(call.req);
+      const { paused, reason, now } = pauseInput(body);
+      if (body.space !== undefined && body.space !== null && typeof body.space !== "string")
+        throw new HarnessError(400, "space : identifiant ou nom d'espace attendu");
+      // Les droits du client (propriétaire ou non), pas la portée de la requête : `?space=` dit QUOI suspendre.
+      const owned = repoFilter(call.client);
+      orchestrator.setPause(paused, reason, call.actor, owned, now, body.space ?? call.space?.id ?? null);
+      send(call.res, 200, { pause: orchestrator.pauseView(call.repos) });
     }),
     // ── OS agentique : l'autonomie (règles, consignes permanentes, curseur) ──
     // Le curseur d'autonomie d'un run : « tout me demander » (`ask`), les règles du dépôt (`null`), « livre et
@@ -1446,44 +1607,69 @@ export function apiRoutes(
       const input = autonomyRuleInput(await readBody(call.req));
       send(call.res, 200, await orchestrator.applyAutonomyRule(target, input, call.actor));
     }),
-    // Les consignes permanentes de l'humain (« toujours faire ainsi »), dites dans le prompt de chaque étape :
-    // un client borné ne lit et n'écrit que celles de ses dépôts, jamais celles de tous ; un pilote n'en écrit pas.
-    route("GET", "/v1/rules", "viewer", (call) => send(call.res, 200, { rules: store.listStandingRules(call.repos) })),
+    // Les consignes permanentes de l'humain (« toujours faire ainsi »), dites dans le prompt de chaque étape,
+    // à trois niveaux : un dépôt, un espace (`space`), tous les dépôts. Un client borné lit celles de ses dépôts
+    // et des espaces où il en voit ; il n'écrit que pour ses dépôts, ou pour un espace qu'il voit en entier,
+    // jamais pour tous ; un pilote n'en écrit pas. `?space=` : celles de l'espace et de ses dépôts seulement.
+    route("GET", "/v1/rules", "viewer", (call) =>
+      send(call.res, 200, { rules: store.listStandingRules(call.repos, call.space?.id ?? null) }),
+    ),
     route("POST", "/v1/rules", "operator", async (call) => {
-      const input = standingRuleInput(await readBody(call.req));
-      send(call.res, 201, { rule: orchestrator.standing.create(input, call.actor, call.repos) });
+      const body = standingRuleInput(await readBody(call.req));
+      const within = call.space;
+      const named = body.space?.trim().toLowerCase() ?? null;
+      if (within !== null && body.repo !== null && !within.repos.includes(body.repo))
+        throw new HarnessError(400, `repo : le dépôt ${body.repo} n'est pas dans l'espace « ${within.name} »`);
+      if (within !== null && named !== null && named !== within.id && named !== within.name.toLowerCase())
+        throw new HarnessError(400, "space : un autre espace que celui de `?space=`");
+      // Sous `?space=`, une consigne sans dépôt est celle de l'espace.
+      const input = within !== null && body.repo === null ? { ...body, space: within.id } : body;
+      send(call.res, 201, { rule: orchestrator.standing.create(input, call.actor, repoFilter(call.client)) });
     }),
     route("PUT", "/v1/rules/{id}", "operator", async (call) => {
       const patch = standingRulePatch(await readBody(call.req));
       send(call.res, 200, {
-        rule: orchestrator.standing.update(call.match[1] as string, patch, call.actor, call.repos),
+        rule: orchestrator.standing.update(
+          call.match[1] as string,
+          patch,
+          call.actor,
+          repoFilter(call.client),
+          call.space,
+        ),
       });
     }),
     route("DELETE", "/v1/rules/{id}", "operator", (call) => {
-      orchestrator.standing.remove(call.match[1] as string, call.actor, call.repos);
+      orchestrator.standing.remove(call.match[1] as string, call.actor, repoFilter(call.client), call.space);
       send(call.res, 200, { removed: true });
     }),
     // ── OS agentique : les espaces, le brief et les chiffres ──
     // Les espaces (spaces.ts) : un client voit ceux qui tiennent un de ses dépôts, réduits à ses dépôts ;
     // créer, modifier et retirer reviennent à un admin qui voit tous les dépôts.
-    route("GET", "/v1/spaces", "viewer", (call) =>
-      send(call.res, 200, { spaces: orchestrator.spaces.list(call.repos, Date.now()) }),
-    ),
+    // Les espaces se lisent avec les droits du CLIENT (le propriétaire les voit entiers, même sous `?space=`,
+    // qui n'en garde alors qu'un).
+    route("GET", "/v1/spaces", "viewer", (call) => {
+      const spaces = orchestrator.spaces.list(repoFilter(call.client), Date.now());
+      send(call.res, 200, {
+        spaces: call.space === null ? spaces : spaces.filter((space) => space.id === call.space?.id),
+      });
+    }),
     route("POST", "/v1/spaces", "admin", async (call) => {
-      if (call.repos !== null) throw new HarnessError(403, SPACES_OWNER_ONLY);
+      if (call.client.repos !== "*") throw new HarnessError(403, SPACES_OWNER_ONLY);
       const space = orchestrator.spaces.create(spaceInput(await readBody(call.req)), call.actor);
       send(call.res, 201, { space }, { ETag: `"${space.rev}"` });
     }),
     route("PUT", "/v1/spaces/{id}", "admin", async (call) => {
-      if (call.repos !== null) throw new HarnessError(403, SPACES_OWNER_ONLY);
+      if (call.client.repos !== "*") throw new HarnessError(403, SPACES_OWNER_ONLY);
       const edit = spaceEdit(await readBody(call.req));
       const space = orchestrator.spaces.update(call.match[1] as string, edit, call.actor);
       send(call.res, 200, { space }, { ETag: `"${space.rev}"` });
     }),
+    // `?confirm=1` : exigé quand ses dépôts retrouveraient la connexion Atlassian par défaut (409 sinon, qui le dit).
     route("DELETE", "/v1/spaces/{id}", "admin", (call) => {
-      if (call.repos !== null) throw new HarnessError(403, SPACES_OWNER_ONLY);
-      orchestrator.spaces.delete(call.match[1] as string, call.actor);
-      send(call.res, 200, { removed: true });
+      if (call.client.repos !== "*") throw new HarnessError(403, SPACES_OWNER_ONLY);
+      const confirmed = call.url.searchParams.get("confirm") === "1";
+      const removal = orchestrator.spaces.delete(call.match[1] as string, call.actor, confirmed);
+      send(call.res, 200, { removed: true, ...removal });
     }),
     // Le rapport d'un espace : `digestOf` borné à ses dépôts depuis `since` (epoch ms ; défaut : 7 jours).
     route("GET", "/v1/spaces/{id}/report", "viewer", (call) => {
@@ -1491,7 +1677,7 @@ export function apiRoutes(
       const raw = call.url.searchParams.get("since");
       const since = raw === null ? now - SPACE_REPORT_WINDOW_MS : Number(raw);
       if (!Number.isInteger(since) || since < 0) throw new HarnessError(400, "since : instant en ms (epoch) attendu");
-      send(call.res, 200, orchestrator.spaces.report(call.match[1] as string, since, now, call.repos));
+      send(call.res, 200, orchestrator.spaces.report(spaceId(call), since, now, repoFilter(call.client)));
     }),
     // Le brief « pendant votre absence » (brief.ts) : depuis `since` (epoch ms), sinon depuis la dernière
     // fois que CE client l'a vu (`POST /v1/brief/seen`), sinon sur 24 heures.
@@ -1500,7 +1686,8 @@ export function apiRoutes(
       const since = raw === null ? null : Number(raw);
       if (since !== null && (!Number.isInteger(since) || since < 0))
         throw new HarnessError(400, "since : instant en ms (epoch) attendu");
-      send(call.res, 200, { brief: orchestrator.briefView(call.client.name, since, call.repos) });
+      const owner = call.client.repos === "*";
+      send(call.res, 200, { brief: orchestrator.briefView(call.client.name, since, call.repos, Date.now(), owner) });
     }),
     route("POST", "/v1/brief/seen", "viewer", (call) =>
       send(call.res, 200, { seenAt: orchestrator.briefSeen(call.client.name) }),
@@ -1515,12 +1702,64 @@ export function apiRoutes(
         scoreboard: scoreboardOf(store, orchestrator.config, days, Date.now(), call.repos),
       });
     }),
+    // ── Multi-client : la portée d'un espace (usage, pause, clients d'API) ──
+    // La consommation d'un espace, pour la facturation (space-usage.ts) : ce que ses dépôts et ce qui lui est
+    // imputé sans dépôt (Demandes, jobs du poste) ont coûté sur [since, until[ (epoch ms ; défaut : le mois UTC
+    // en cours). `format=csv` : une ligne par jour, dépôt et modèle. Un client borné n'y lit que ses dépôts.
+    route("GET", "/v1/spaces/{id}/usage", "viewer", (call) => {
+      const { since, until } = usageWindow(call.url.searchParams, Date.now());
+      const format = usageFormat(call.url.searchParams.get("format"));
+      const { space, rows } = orchestrator.spaces.usage(spaceId(call), since, until, repoFilter(call.client));
+      if (format === "json") {
+        send(call.res, 200, { usage: spaceUsageOf(rows, since, until) });
+        return;
+      }
+      const body = usageCsv(space.name, rows);
+      call.res.writeHead(200, {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Length": Buffer.byteLength(body),
+        "Cache-Control": "no-store",
+        "Content-Disposition": `attachment; filename="consommation-${space.id}.csv"`,
+      });
+      call.res.end(body);
+    }),
+    // ── Multi-client : le savoir d'un espace (consignes, Atlassian) ──
+    // Aucune route nouvelle : les consignes (`/v1/rules`, plus haut) gagnent le niveau « espace » (`space`), et
+    // chaque route `/v1/atlassian*` (plus haut) prend `?space=` — la connexion de cet espace, étanche des
+    // autres et de la connexion par défaut (jetons, site, portée mémoire `corpo:<espace>`, écritures, plan).
+    // ── Multi-client : le poste d'un espace ──
+    // Un navigateur du poste appartient à un espace (`space` : son id ou son nom ; `null` : hors espace) : tout
+    // ce qui en vient — observations, meetings, actions, captures — hérite de cet espace. Approbateur seulement.
+    route("PUT", "/v1/workstation/browsers/{id}", "operator", async (call) => {
+      const workstation = approverOf(call);
+      const body = await readBody(call.req);
+      const space = typeof body.space === "string" ? orchestrator.spaces.resolve(body.space, null).id : body.space;
+      send(call.res, 200, { browser: workstation.assignBrowser(call.match[1] as string, space, call.actor) });
+      void orchestrator.tick();
+    }),
+    // ── Multi-client : la politique et l'étanchéité d'un espace ──
+    // Un espace seul, tel que le client le voit (comme dans la liste) : avec son étanchéité — ce qui le
+    // laisse encore lire, écrire ou parler hors de sa frontière (isolation.ts), calculé à chaque lecture.
+    // Sous `?space=`, ce ne peut être que cet espace-là ; le propriétaire le lit toujours entier.
+    route("GET", "/v1/spaces/{id}", "viewer", (call) => {
+      const space = orchestrator.spaces.view(spaceId(call), repoFilter(call.client), Date.now());
+      send(call.res, 200, { space }, { ETag: `"${space.rev}"` });
+    }),
+    // L'accueil d'un client en un geste : son espace, son étanchéité et ce qu'il reste à faire. À un admin
+    // qui voit tous les dépôts, comme la création d'un espace ; jamais à un pilote (spaces.ts `onboard`).
+    route("POST", "/v1/spaces/onboard", "admin", async (call) => {
+      if (call.client.repos !== "*") throw new HarnessError(403, SPACES_OWNER_ONLY);
+      const onboarding = orchestrator.spaces.onboard(onboardInput(await readBody(call.req)), call.actor, Date.now());
+      send(call.res, 201, onboarding, { ETag: `"${onboarding.space.rev}"` });
+    }),
     // ── OS agentique : les propositions et « refaire » ──
     // Le bac « Propositions » (proposals.ts) : ce que l'usine pourrait faire seule, recalculé de ses causes.
     // Lire : les dépôts visibles, les signalements et le plan Atlassian au propriétaire. Accepter passe par
     // le geste existant de la source, avec ses gardes ; écarter est définitif.
     route("GET", "/v1/proposals", "viewer", (call) =>
-      send(call.res, 200, { proposals: orchestrator.proposals.list(readerOf(call.client)) }),
+      send(call.res, 200, {
+        proposals: orchestrator.proposals.list({ ...readerOf(call.client), repos: call.repos }),
+      }),
     ),
     route("POST", "/v1/proposals/{id}/accept", "operator", async (call) =>
       send(
@@ -1555,7 +1794,13 @@ export function apiRoutes(
     route("GET", "/v1/local-sessions", "viewer", (call) => {
       ownerOf(call, READS_LOCAL_SESSIONS);
       const states = localSessionStates(call.url.searchParams.get("state"));
-      send(call.res, 200, { sessions: orchestrator.localSessions.list(states) });
+      // Sous `?space=` : les seules sessions dont le dépôt est de l'espace.
+      const sessions = orchestrator.localSessions.list(states);
+      send(call.res, 200, {
+        sessions: sessions.filter(
+          (session) => call.space === null || (session.repo !== null && sees(call, session.repo)),
+        ),
+      });
     }),
     route("POST", "/v1/local-sessions/{id}/handoff", "operator", async (call) => {
       ownerOf(call, ACTS_ON_LOCAL_SESSIONS);
@@ -1588,7 +1833,7 @@ export function apiRoutes(
     }),
     // Comme les jetons d'activité : un client ne retire que SES jetons de démarrage (un admin, tous).
     route("DELETE", "/v1/push/activities/start/{name}", "viewer", (call) => {
-      const owner = allows(call.client.role, "admin") ? null : call.client.name;
+      const owner = pushOwnerOf(call);
       send(call.res, 200, { removed: store.deletePushStartToken(call.match[1] as string, owner) });
     }),
     // MCP (« Streamable HTTP », réponses JSON) : un message ou un lot JSON-RPC ; sans requête
@@ -1609,6 +1854,7 @@ export function apiRoutes(
         repos: () => orchestrator.config.repos,
         orchestrator,
         visible: call.repos,
+        space: call.space,
         version: HARNESS_VERSION,
         admin: () => adminOf(call),
       };
@@ -1639,6 +1885,7 @@ async function atlassianCallback(
   let status = 200;
   let message = "Atlassian est branché, tu peux fermer cet onglet.";
   try {
+    // Le `state` porte l'espace : la connexion par défaut rend le retour à celle qui a demandé ce consentement.
     await orchestrator.atlassian.complete({ code: url.searchParams.get("code"), state: url.searchParams.get("state") });
   } catch (error) {
     status = error instanceof HarnessError && error.status === 400 ? 400 : 502;
@@ -1663,6 +1910,8 @@ export function createHandler(options: HttpOptions): http.RequestListener {
   const { orchestrator } = options;
   const store = orchestrator.store;
   const clients = options.clients ?? new ClientRegistry(null, options.token ?? null);
+  // Un client borné à des espaces voit leurs dépôts du moment : relus ici à chaque lecture du registre.
+  clients.useSpaces((ids) => orchestrator.spaces.reposOf(ids));
   const pairing = new PairingDesk(clients);
   const routes = apiRoutes(orchestrator, clients, options.admin ?? null, pairing);
   const log: LogLine = options.log ?? ((line: string) => console.error(`[omp-harness] ${line}`));
@@ -1671,6 +1920,18 @@ export function createHandler(options: HttpOptions): http.RequestListener {
   const routeLabel = (pathname: string): string => {
     if (pathname === "/v1/health" || pathname === "/v1/events" || pathname === REDEEM_PATH) return pathname;
     return routes.find((candidate) => candidate.pattern.test(pathname))?.path ?? "inconnue";
+  };
+
+  /**
+   * La portée d'une requête : les dépôts du client, croisés avec ceux de l'espace de `?space=<id|nom>`
+   * quand il est donné (`resolve` rend l'espace déjà réduit aux dépôts du client ; 404 s'il est inconnu ou
+   * si le client n'y voit aucun dépôt). Sans le paramètre : la portée du client, comme avant les espaces.
+   */
+  const scopeOf = (client: Client, url: URL): { repos: RepoFilter; space: Space | null } => {
+    const wanted = url.searchParams.get("space");
+    if (wanted === null) return { repos: repoFilter(client), space: null };
+    const space = orchestrator.spaces.resolve(wanted, repoFilter(client));
+    return { repos: space.repos, space };
   };
 
   const pingMs = options.pingMs ?? PING_MS;
@@ -1689,8 +1950,11 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     url: URL,
     token: string,
     client: Client,
+    scope: { repos: RepoFilter; space: Space | null },
   ): Promise<void> {
-    const repos = repoFilter(client);
+    const { repos, space } = scope;
+    /** Le client voit tous les dépôts : ce qui n'a pas de dépôt lui revient (dans un espace : ce qui est de l'espace). */
+    const whole = client.repos === "*";
     const runId = url.searchParams.get("run");
     const auditId = url.searchParams.get("audit");
     const live = url.searchParams.get("live") === "1";
@@ -1702,22 +1966,34 @@ export function createHandler(options: HttpOptions): http.RequestListener {
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
     });
-    // Les en-têtes partent tout de suite : le client sait son flux ouvert avant le premier événement.
+    // Les en-têtes partent tout de suite, suivis d'un commentaire : un relais qui retient les en-têtes
+    // jusqu'au premier octet du corps les rend aussi, et le client sait son flux ouvert avant le premier événement.
     res.flushHeaders();
+    res.write(": ok\n\n");
     stats.sseClients++;
     // Un `intake_state` sans dépôt (demande pas encore classée sur un dépôt) va aussi à son
-    // auteur : la règle de lecture de `GET /v1/intake`, au direct comme au rejeu.
-    const authorOf = (event: EventRow): boolean =>
-      event.type === "intake_state" &&
+    // auteur : la règle de lecture de `GET /v1/intake`, au direct comme au rejeu. Dans un espace
+    // (`?space=`), seulement si la demande est de cet espace.
+    const authorOf = (event: EventRow): boolean => {
+      if (event.type !== "intake_state" || event.repo !== null || typeof event.payload.intakeId !== "string")
+        return false;
+      const intake = store.getIntake(event.payload.intakeId);
+      if (!intake || (space !== null && intake.spaceId !== space.id)) return false;
+      return whole || intake.createdBy === client.name;
+    };
+    // Dans un espace, ce qui n'a pas de dépôt mais parle de LUI (sa pause, ses changements) reste au propriétaire.
+    const ofSpace = (event: EventRow): boolean =>
+      space !== null &&
+      whole &&
       event.repo === null &&
-      typeof event.payload.intakeId === "string" &&
-      store.getIntake(event.payload.intakeId)?.createdBy === client.name;
+      ((event.type === "pause" && event.payload.space === space.id) ||
+        (event.type === "space" && event.payload.id === space.id));
     // Les événements d'une session locale (son état, l'intention de ses outils) sont au propriétaire :
     // sans dépôt, ils échappent déjà aux clients restreints ; un client pilote ne les reçoit pas non plus.
     const visible = (event: EventRow): boolean =>
       (runId === null || event.runId === runId) &&
       (auditId === null || event.payload.auditId === auditId) &&
-      (repos === null || (event.repo !== null && repos.includes(event.repo)) || authorOf(event)) &&
+      (repos === null || (event.repo !== null && repos.includes(event.repo)) || authorOf(event) || ofSpace(event)) &&
       !(client.pilot && isLocalSessionEvent(event));
     let closed = false;
     let ping: NodeJS.Timeout | undefined;
@@ -1757,7 +2033,9 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     // (`audit=`) qui ne garde rien n'est pas relu indéfiniment.
     let read = cursor;
     for (;;) {
-      const batch = store.eventsSince(read, runId, REPLAY_BATCH, repos);
+      // Le propriétaire qui suit un espace relit tout le journal : `visible` y garde aussi la pause et les
+      // changements de l'espace, que le filtre SQL par dépôt écarterait.
+      const batch = store.eventsSince(read, runId, REPLAY_BATCH, whole && space !== null ? null : repos);
       if (batch.length === 0) break;
       for (const event of batch) {
         write(event);
@@ -1774,14 +2052,22 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     pending.filter((event) => !event.ephemeral).forEach(write);
     if (closed) return;
     ping = setInterval(() => {
-      // La révocation (ou un changement de dépôts) vaut aussi pour un flux déjà ouvert.
+      // La révocation (ou un changement de dépôts, du client comme de l'espace suivi) vaut aussi pour un flux déjà ouvert.
       let still: Client | null = null;
+      let now: { repos: RepoFilter; space: Space | null } | null = null;
       try {
         still = clients.authenticate(token);
+        now = still ? scopeOf(still, url) : null;
       } catch {
         still = null;
       }
-      if (!still || still.name !== client.name || JSON.stringify(repoFilter(still)) !== JSON.stringify(repos)) {
+      if (
+        !still ||
+        !now ||
+        still.name !== client.name ||
+        JSON.stringify(now.repos) !== JSON.stringify(repos) ||
+        (now.space?.id ?? null) !== (space?.id ?? null)
+      ) {
         close(false);
         return;
       }
@@ -1849,9 +2135,10 @@ export function createHandler(options: HttpOptions): http.RequestListener {
           send(res, 401, { error: "jeton absent ou invalide" });
           return;
         }
-        const repos = repoFilter(client);
+        // `?space=` est résolu ICI, une fois : toutes les routes lisent `call.repos` déjà borné à l'espace.
+        const { repos, space } = scopeOf(client, url);
         if (req.method === "GET" && url.pathname === "/v1/events") {
-          await events(req, res, url, token, client);
+          await events(req, res, url, token, client, { repos, space });
           return;
         }
         let matchedPath = false;
@@ -1866,7 +2153,7 @@ export function createHandler(options: HttpOptions): http.RequestListener {
               `le rôle ${client.role} ne permet pas ${route.method} ${route.path} (${route.role} requis)`,
             );
           const actor: Actor = { by: client.name, rev: ifMatch(req), ...(client.pilot ? { pilot: true } : {}) };
-          await route.handle({ match, req, res, url, client, repos, actor });
+          await route.handle({ match, req, res, url, client, repos, space, actor });
           return;
         }
         send(res, matchedPath ? 405 : 404, { error: matchedPath ? "méthode non permise" : "route inconnue" });

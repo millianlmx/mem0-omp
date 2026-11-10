@@ -7,7 +7,8 @@
 // arbitre ne relit pas sa propre correction) ; partout ailleurs il meurt à la fin de
 // l'étape ou à l'escalade.
 import type { Tier } from "./config.ts";
-import type { MergeDecision } from "./verdict.ts";
+import type { IrreversibleCategory } from "./decisions.ts";
+import type { MergeDecision, MergeFact } from "./verdict.ts";
 
 export type StepKind = "req" | "specs" | "impl" | "review" | "fix";
 
@@ -165,6 +166,159 @@ export function mergeStopOf(run: {
   return reason.startsWith("suite complète") ? "fix" : "review";
 }
 
+/** Le début de la raison d'une étape en échec (`afterFailure`) : ce qui distingue une panne d'étape d'une panne du service. */
+function failedHead(step: StepKind): string {
+  return `/${step} a échoué`;
+}
+
+/** Dans la raison de specs rendues à l'humain (`specsBackToHuman`) : la validation prise seule a été renversée. */
+const AUTONOMY_REVERSED = "validation de l'autonomie (#";
+
+/** Le début de la raison d'un merge impossible (`afterMergeFailed`). */
+const MERGE_IMPOSSIBLE = "merge impossible";
+
+/** Le début de la raison d'un run arrêté par l'humain (`cancelled`) : les chiffres y reconnaissent un arrêt. */
+export const CANCELLED_BY_HUMAN = "annulé par l'humain";
+
+/** Une raison de la porte des specs, en DONNÉES (steps.ts `gateFacts`, `specsGateFacts`). */
+export type GateFact =
+  | { code: "split_proposed" }
+  | { code: "empty_modules" }
+  | { code: "irreversible"; category: IrreversibleCategory }
+  | { code: "first_of_project" }
+  /** Les désaccords restés ouverts avec le contradicteur (`/étape C-n`). */
+  | { code: "dispute"; ids: string[] };
+
+/**
+ * Un fait à CODE de ce qu'un run attend de l'humain : les apps en écrivent leur phrase, le texte de
+ * `run.reason` reste au journal. `other` : un motif que le serveur ne sait pas structurer (jamais son texte).
+ */
+export type WaitFact =
+  | MergeFact
+  | GateFact
+  /** La porte des specs est systématique sur ce serveur (`review.specsGate: true`), sans autre raison. */
+  | { code: "specs_gate" }
+  /** Une validation de specs prise seule par l'autonomie a été renversée : elles reviennent à l'humain. */
+  | { code: "autonomy_reversed" }
+  /** Le run est en « tout me demander » (`autonomy: "ask"`). */
+  | { code: "ask_level" }
+  | { code: "fix_cap"; fixes: number; cap: number }
+  /** Le correcteur a contesté les bloquants deux fois de suite. */
+  | { code: "contest" }
+  /** `budget` : le seuil franchi (le budget, plus ce que les relances ont accordé) ; `null` s'il n'y en a plus. */
+  | { code: "budget"; spent: number; budget: number | null }
+  /** `resume` : l'étape d'où le run repartira (`fix` : suite rouge ; `review` : conflit, fusion refusée). */
+  | { code: "merge_stopped"; attempts: number; resume: "review" | "fix" }
+  | { code: "merge_failed" }
+  /** `attempts` : les essais de l'étape, relances comprises ; `oom` : le runner a été tué faute de mémoire. */
+  | { code: "step_failed"; step: StepKind; cause: FailCause | null; attempts: number; oom: boolean }
+  | { code: "other" };
+
+/** Ce qu'un run attend de l'humain, tel que l'API le rend : la sorte d'attente et ses faits. */
+export type HumanWaitView = { kind: HumanWait | "questions"; reasons: WaitFact[] };
+
+/**
+ * Ce que le serveur sait d'une attente, lu à la demande (une attente ne lit que ce qui la concerne) :
+ * `gate` — les raisons de porte relues des specs ; `merge` — les motifs du refus d'auto-merge relus de
+ * l'évidence de la dernière revue, `null` si elle manque ; `budget` — le coût du run et son seuil ;
+ * `openQuestions` — ses escalades ouvertes ; `fixCap` — `review.fixCap`.
+ */
+export type WaitSources = {
+  gate: () => GateFact[];
+  merge: () => MergeFact[] | null;
+  budget: () => { spent: number; budget: number | null };
+  openQuestions: () => number;
+  fixCap: number;
+};
+
+/** Ce qu'il faut d'un run pour dire son attente ou son échec. */
+type Stalled = {
+  state: RunState;
+  step: StepKind | null;
+  reason: string | null;
+  fixes: number;
+  attempts: number;
+  mergeRetries: number;
+  lastFailCause: FailCause | null;
+  autonomy: string | null;
+  verdict: { blockers: readonly unknown[] } | null;
+};
+
+/**
+ * Pourquoi un run attend l'humain, en données : `kind` (`humanWaitOf`, `questions` pour un run
+ * `escalated`) et ses faits à code ; `null` hors attente humaine. La SORTE se lit dans la raison du run,
+ * comme partout ; les faits viennent de ce que le serveur sait (`sources`), jamais du texte. Des specs
+ * relues avec un geste irréversible rendent `irreversible` même quand la raison est nue
+ * (`review.specsGate: true`). Jamais de liste vide : sans fait connu, `other`.
+ */
+export function humanWaitFacts(run: Stalled, sources: WaitSources): HumanWaitView | null {
+  if (run.state === "escalated")
+    return { kind: "questions", reasons: [{ code: "open_questions", count: sources.openQuestions() }] };
+  const wait = humanWaitOf(run);
+  if (wait === null) return null;
+  const reason = run.reason ?? "";
+  const ask: WaitFact[] = run.autonomy === "ask" || reason.includes(ASK_REASON) ? [{ code: "ask_level" }] : [];
+  const known = (kind: HumanWait, reasons: WaitFact[]): HumanWaitView => ({
+    kind,
+    reasons: reasons.length > 0 ? reasons : [{ code: "other" }],
+  });
+  switch (wait) {
+    case "budget":
+      return known(wait, [{ code: "budget", ...sources.budget() }]);
+    case "specs":
+    case "irreversible": {
+      const gate = sources.gate();
+      const reasons: WaitFact[] = [
+        ...gate,
+        ...(reason.includes(AUTONOMY_REVERSED) ? [{ code: "autonomy_reversed" } as const] : []),
+        ...ask,
+      ];
+      return known(
+        gate.some((fact) => fact.code === "irreversible") ? "irreversible" : wait,
+        reasons.length > 0 ? reasons : [{ code: "specs_gate" }],
+      );
+    }
+    case "verdict":
+      return known(wait, [...(sources.merge() ?? []), ...ask]);
+    case "arbitration": {
+      if (reason.startsWith(WAIT_REASON.contest)) return known(wait, [{ code: "contest" }]);
+      const blockers = run.verdict?.blockers.length ?? 0;
+      return known(wait, [
+        { code: "fix_cap", fixes: run.fixes, cap: sources.fixCap },
+        ...(blockers > 0 ? [{ code: "blockers", count: blockers } as const] : []),
+      ]);
+    }
+    case "failure": {
+      const resume = mergeStopOf(run);
+      if (resume !== null) return known(wait, [{ code: "merge_stopped", attempts: run.mergeRetries, resume }]);
+      if (reason.startsWith(MERGE_IMPOSSIBLE)) return known(wait, [{ code: "merge_failed" }]);
+      if (run.step === null || !reason.startsWith(failedHead(run.step))) return known(wait, []);
+      return known(wait, [
+        {
+          code: "step_failed",
+          step: run.step,
+          cause: run.lastFailCause,
+          attempts: run.attempts + 1,
+          oom: isRunnerOom(reason),
+        },
+      ]);
+    }
+  }
+}
+
+/** Pourquoi un run a échoué, tel que l'API le rend : l'étape en échec et la cause de son dernier échec. */
+export type RunFailure = { step: StepKind | null; cause: FailCause | null };
+
+/**
+ * L'échec d'un run `failed` (`null` sinon) : son étape, et `lastFailCause` quand c'est bien l'étape qui a
+ * échoué — une panne du service (worktree perdu, erreur de conduite) n'a pas de cause d'étape : `null`.
+ */
+export function failureOf(run: Pick<Stalled, "state" | "step" | "reason" | "lastFailCause">): RunFailure | null {
+  if (run.state !== "failed") return null;
+  const stepFailed = run.step !== null && (run.reason ?? "").startsWith(failedHead(run.step));
+  return { step: run.step, cause: stepFailed ? run.lastFailCause : null };
+}
+
 function to(
   state: RunState,
   step: StepKind | null,
@@ -289,13 +443,13 @@ function afterFailure(
     });
   }
   if (!outcome.retryable) {
-    return to("failed", step, cursor, { attempts: cursor.attempts, reason: `/${step} a échoué : ${outcome.reason}` });
+    return to("failed", step, cursor, { attempts: cursor.attempts, reason: `${failedHead(step)} : ${outcome.reason}` });
   }
   if (cursor.lastFailCause === outcome.cause && !WAITABLE_CAUSES.includes(outcome.cause)) {
     const cause = isRunnerOom(outcome.reason) ? OOM_CAUSE : outcome.cause;
     return to("awaiting_human", step, cursor, {
       attempts: cursor.attempts,
-      reason: `/${step} a échoué deux fois de suite pour la même cause (${cause}) : ${outcome.reason}`,
+      reason: `${failedHead(step)} deux fois de suite pour la même cause (${cause}) : ${outcome.reason}`,
     });
   }
   const backoffSec = limits.retryBackoffSec[cursor.attempts];
@@ -308,7 +462,7 @@ function afterFailure(
   }
   return to("awaiting_human", step, cursor, {
     attempts: cursor.attempts,
-    reason: `/${step} a échoué ${limits.retryBackoffSec.length + 1} fois (${outcome.cause}), relances épuisées : ${outcome.reason}`,
+    reason: `${failedHead(step)} ${limits.retryBackoffSec.length + 1} fois (${outcome.cause}), relances épuisées : ${outcome.reason}`,
   });
 }
 
@@ -400,7 +554,7 @@ export function afterSpecsValidation(
 /** Une validation de specs prise seule par l'autonomie est renversée avant le merge : les specs reviennent à l'humain. */
 export function specsBackToHuman(cursor: RunCursor, seq: number): Transition {
   return to("awaiting_human", "specs", cursor, {
-    reason: `${WAIT_REASON.specs} : validation de l'autonomie (#${seq}) renversée par l'humain`,
+    reason: `${WAIT_REASON.specs} : ${AUTONOMY_REVERSED}${seq}) renversée par l'humain`,
   });
 }
 
@@ -522,7 +676,7 @@ export function afterMergeFailed(cursor: Pick<RunCursor, "fixes">, reason: strin
     "awaiting_human",
     null,
     { step: "review", fixes: cursor.fixes, attempts: 0 },
-    { reason: `merge impossible : ${reason}` },
+    { reason: `${MERGE_IMPOSSIBLE} : ${reason}` },
   );
 }
 
@@ -542,7 +696,7 @@ export function cancelled(
     keepRunner: false,
     rebase: false,
     notBefore: null,
-    reason: motive === "" ? "annulé par l'humain" : `annulé par l'humain : ${motive}`,
+    reason: motive === "" ? CANCELLED_BY_HUMAN : `${CANCELLED_BY_HUMAN} : ${motive}`,
   };
 }
 

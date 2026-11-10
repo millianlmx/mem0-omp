@@ -1,7 +1,7 @@
 // Le poste de travail, ce qu'on en retient : les meetings et leurs segments transcrits,
 // les versions du profil établi et les services de l'agent 24/24. La couche du dessous
 // (workstation.ts) tient l'observation et la file des actions.
-import { WorkstationStore } from "./workstation.ts";
+import { BROWSER_SPACE, WorkstationStore, scopeClause } from "./workstation.ts";
 import { str, strOrNull, num, numOrNull, json } from "./sql.ts";
 import type { Row, SqlValue } from "./sql.ts";
 
@@ -21,6 +21,11 @@ export type Meeting = {
   segments: number;
   /** Le navigateur d'où vient le meeting ; `null` pour les lignes d'avant les navigateurs. */
   browserId: string | null;
+  /**
+   * L'espace (son id) où il a été ouvert : celui de son navigateur À CE MOMENT ; son digest tourne
+   * dans cet espace. Absente hors espace : un meeting sans espace garde exactement sa forme d'avant.
+   */
+  space?: string;
 };
 
 export type Segment = { at: number; speaker: "moi" | "autres"; text: string };
@@ -41,6 +46,7 @@ export type WorkstationProfile = { version: number; updatedAt: number } & Workst
 export type ShiftRow = { startedAt: number; at: number; outcome: string; actions: number };
 
 function meetingOf(row: Row): Meeting {
+  const space = strOrNull(row, "space_id");
   return {
     id: str(row, "id"),
     title: str(row, "title"),
@@ -52,6 +58,7 @@ function meetingOf(row: Row): Meeting {
     needs: json<MeetingNeed[]>(row, "needs", []),
     segments: num(row, "segments"),
     browserId: strOrNull(row, "browser_id"),
+    ...(space === null ? {} : { space }),
   };
 }
 
@@ -88,14 +95,15 @@ export class WorkstationMeetingStore extends WorkstationStore {
   }): Meeting {
     const at = this.now();
     this.execute(
-      `INSERT INTO workstation_meetings (id, title, url, started_at, state, created_at, updated_at, browser_id)
-       VALUES (?, ?, ?, ?, 'live', ?, ?, ?)`,
+      `INSERT INTO workstation_meetings (id, title, url, started_at, state, created_at, updated_at, browser_id, space_id)
+       VALUES (?, ?, ?, ?, 'live', ?, ?, ?, ${BROWSER_SPACE})`,
       input.id,
       input.title,
       input.url,
       input.startedAt,
       at,
       at,
+      input.browserId,
       input.browserId,
     );
     return this.getWorkstationMeeting(input.id) as Meeting;
@@ -138,13 +146,17 @@ export class WorkstationMeetingStore extends WorkstationStore {
     return Number(result.changes) > 0 ? this.getWorkstationMeeting(id) : null;
   }
 
-  /** Les meetings, les plus récents d'abord ; `states` filtre. */
-  listWorkstationMeetings(filter: { states?: readonly MeetingState[]; limit?: number } = {}): Meeting[] {
+  /** Les meetings, les plus récents d'abord ; `states` filtre, `space` ne garde que ceux des navigateurs de cette portée. */
+  listWorkstationMeetings(
+    filter: { states?: readonly MeetingState[]; limit?: number; space?: string | null } = {},
+  ): Meeting[] {
     const states = filter.states ?? [];
-    const clause = states.length > 0 ? `WHERE state IN (${states.map(() => "?").join(", ")})` : "";
+    const scope = scopeClause(filter.space);
+    const inStates = states.length > 0 ? `state IN (${states.map(() => "?").join(", ")})` : "1 = 1";
     return this.selectAll(
-      `SELECT * FROM workstation_meetings ${clause} ORDER BY started_at DESC, id DESC LIMIT ?`,
+      `SELECT * FROM workstation_meetings WHERE ${inStates}${scope.and} ORDER BY started_at DESC, id DESC LIMIT ?`,
       ...states,
+      ...scope.params,
       filter.limit ?? 50,
     ).map(meetingOf);
   }
@@ -192,30 +204,66 @@ export class WorkstationMeetingStore extends WorkstationStore {
 
   // -- profil et services ----------------------------------------------------------
 
-  /** Une nouvelle version du profil (la précédente reste en base). */
-  addWorkstationProfile(profile: WorkstationProfileBody): WorkstationProfile {
+  /**
+   * Une nouvelle version du profil (la précédente reste en base). `spaceId` : le profil de CET espace
+   * (table `workstation_space_profiles`, versions comptées par espace) ; `null` : le profil hors espace.
+   */
+  addWorkstationProfile(profile: WorkstationProfileBody, spaceId: string | null = null): WorkstationProfile {
     return this.transaction(() => {
-      const version =
-        num(this.selectOne("SELECT COALESCE(MAX(version), 0) AS v FROM workstation_profiles") as Row, "v") + 1;
-      this.execute(
-        "INSERT INTO workstation_profiles (version, updated_at, profile) VALUES (?, ?, ?)",
-        version,
-        this.now(),
-        JSON.stringify(profile),
-      );
-      return this.latestWorkstationProfile() as WorkstationProfile;
+      if (spaceId === null) {
+        const version =
+          num(this.selectOne("SELECT COALESCE(MAX(version), 0) AS v FROM workstation_profiles") as Row, "v") + 1;
+        this.execute(
+          "INSERT INTO workstation_profiles (version, updated_at, profile) VALUES (?, ?, ?)",
+          version,
+          this.now(),
+          JSON.stringify(profile),
+        );
+      } else {
+        const last = this.selectOne(
+          "SELECT COALESCE(MAX(version), 0) AS v FROM workstation_space_profiles WHERE space_id = ?",
+          spaceId,
+        ) as Row;
+        this.execute(
+          "INSERT INTO workstation_space_profiles (space_id, version, updated_at, profile) VALUES (?, ?, ?, ?)",
+          spaceId,
+          num(last, "v") + 1,
+          this.now(),
+          JSON.stringify(profile),
+        );
+      }
+      return this.latestWorkstationProfile(spaceId) as WorkstationProfile;
     });
   }
 
-  latestWorkstationProfile(): WorkstationProfile | null {
-    const row = this.selectOne("SELECT * FROM workstation_profiles ORDER BY version DESC LIMIT 1");
+  /** Le dernier profil : celui de l'espace `spaceId`, ou (`null`) le profil hors espace. */
+  latestWorkstationProfile(spaceId: string | null = null): WorkstationProfile | null {
+    const row =
+      spaceId === null
+        ? this.selectOne("SELECT * FROM workstation_profiles ORDER BY version DESC LIMIT 1")
+        : this.selectOne(
+            "SELECT * FROM workstation_space_profiles WHERE space_id = ? ORDER BY version DESC LIMIT 1",
+            spaceId,
+          );
     return row ? profileOf(row) : null;
   }
 
-  /** Une version donnée du profil (les tâches s'y désignent par leur rang), ou `null`. */
-  workstationProfile(version: number): WorkstationProfile | null {
-    const row = this.selectOne("SELECT * FROM workstation_profiles WHERE version = ?", version);
+  /** Une version donnée du profil (les tâches s'y désignent par leur rang) de l'espace `spaceId` ou hors espace, ou `null`. */
+  workstationProfile(version: number, spaceId: string | null = null): WorkstationProfile | null {
+    const row =
+      spaceId === null
+        ? this.selectOne("SELECT * FROM workstation_profiles WHERE version = ?", version)
+        : this.selectOne(
+            "SELECT * FROM workstation_space_profiles WHERE space_id = ? AND version = ?",
+            spaceId,
+            version,
+          );
     return row ? profileOf(row) : null;
+  }
+
+  /** Les profils d'un espace retiré partent avec lui. Rend le nombre de versions parties. */
+  deleteWorkstationSpaceProfiles(spaceId: string): number {
+    return Number(this.execute("DELETE FROM workstation_space_profiles WHERE space_id = ?", spaceId).changes);
   }
 
   addWorkstationShift(input: { startedAt: number; endedAt: number; outcome: string; actions: number }): ShiftRow {

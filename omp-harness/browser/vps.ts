@@ -228,6 +228,7 @@ export class VpsBrowser {
           await sleep(retryMs, undefined, { signal: stopped, ref: false });
           continue;
         }
+        await this.#purgeIfDue();
         await this.#probeDue();
         const poll = new AbortController();
         this.#poll = poll;
@@ -535,7 +536,14 @@ export class VpsBrowser {
    * cookies de `moli-poste`, ou `null` (ce navigateur n'est pas la source, ou Moli est injoignable).
    */
   async mirrorStatus(hello: BrowserHello): Promise<{ mirror: { generation: string } | null }> {
-    if (!this.configured || hello.id === null || this.#workstation.settings().mirrorBrowser !== hello.id)
+    // La source permise (`mirrorSource`) : celle du réglage, tant qu'elle est dans le même espace que `vps` —
+    // et jamais tant que la session d'une ancienne portée n'a pas été purgée.
+    if (
+      !this.configured ||
+      hello.id === null ||
+      this.#workstation.mirrorSource() !== hello.id ||
+      this.#workstation.vpsPurgeDue()
+    )
       return { mirror: null };
     try {
       await this.#connect();
@@ -552,9 +560,14 @@ export class VpsBrowser {
    * des comptes est relu : une page de connexion donne `blocked` (session copiée refusée).
    */
   async acceptMirror(hello: BrowserHello, body: Record<string, unknown>): Promise<{ set: number; removed: number }> {
-    const source = this.#workstation.settings().mirrorBrowser;
+    const source = this.#workstation.mirrorSource();
     if (source === null || hello.id !== source)
       throw new HarnessError(403, "ce navigateur n'est pas la source du mirroir (réglage `mirrorBrowser` du poste)");
+    if (this.#workstation.vpsPurgeDue())
+      throw new HarnessError(
+        409,
+        "la session du navigateur du poste change de portée : elle est purgée d'abord, puis le mirroir renvoie tout",
+      );
     const cookies = parseMirrorCookies(body.set);
     const removals = parseMirrorRemovals(body.removed);
     let connection: CdpConnection;
@@ -577,12 +590,41 @@ export class VpsBrowser {
         `navigateur du poste : cookies refusés (${error instanceof Error ? error.name : "erreur"})`,
       );
     }
+    // La portée a changé PENDANT l'envoi : ce qui vient d'être posé repart — avec la purge encore due,
+    // ou tout de suite si elle a déjà eu lieu (la génération n'est plus celle de l'envoi).
+    if (this.#workstation.vpsPurgeDue() || body.generation !== this.#generation) {
+      if (!this.#workstation.vpsPurgeDue())
+        await (await this.#connect()).send("Network.clearBrowserCookies", {}, { sessionId: this.#home as string });
+      throw new HarnessError(409, "génération périmée : le mirroir doit renvoyer la session entière");
+    }
     this.#workstation.markMirrored();
     if (body.full === true && body.last === true)
       void (async () => {
         for (const domain of ACCOUNT_DOMAINS) await this.#probe(domain, "blocked");
       })();
     return { set: cookies.length, removed: removals.length };
+  }
+
+  /**
+   * La session de `moli-poste` vient d'une autre portée — l'espace du navigateur `vps`, ou celui de la
+   * source du mirroir, a changé (`Workstation.vpsPurgeDue`, marque gardée en base) : avant toute autre
+   * action, la page de connexion interactive et les onglets de l'agent sont fermés, TOUS les cookies
+   * du contexte effacés (`Network.clearBrowserCookies`), la génération renouvelée (le mirroir, s'il
+   * reste permis, renvoie la session entière) et les comptes dits déconnectés. Moli injoignable ou un
+   * effacement refusé : la purge reste due, rien ne part ni n'entre avant qu'elle ait réussi.
+   * Limite : le stockage local des sites (localStorage, IndexedDB) n'a pas d'effacement d'ensemble par
+   * CDP dans Moli (`Storage.clearDataForOrigin` exige une origine exacte) ; il n'est pas purgé ici.
+   */
+  async #purgeIfDue(): Promise<void> {
+    if (!this.#workstation.vpsPurgeDue()) return;
+    await this.#login.finish().catch(() => undefined);
+    const connection = await this.#connect();
+    for (const tab of this.#tabs.values())
+      await connection.send("Target.closeTarget", { targetId: tab.targetId }).catch(() => undefined);
+    this.#tabs.clear();
+    await connection.send("Network.clearBrowserCookies", {}, { sessionId: this.#home as string });
+    this.#generation = randomBytes(8).toString("hex");
+    this.#workstation.vpsPurged();
   }
 
   get login(): VpsLogin {

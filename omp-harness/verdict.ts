@@ -5,6 +5,7 @@
 // résultat heavy enregistré par le service pour l'arbre exact qui sera mergé. De même
 // la liste des critères d'acceptation à couvrir (`acIds`) et les fichiers touchés
 // (`touchedFiles`) sont lus par le service, pas déclarés par la revue.
+import { isRecord } from "./config.ts";
 
 export type Risk = "low" | "medium" | "high";
 
@@ -244,6 +245,91 @@ export type MergeDecision =
 const RISK_RANK: Record<Risk, number> = { low: 0, medium: 1, high: 2 };
 
 /**
+ * Un motif du refus d'auto-merge, en DONNÉES : le code de ce que `mergeDecision` dit en texte, et ses
+ * chiffres. Les apps en tirent leur propre phrase (`humanWait.reasons` d'un run, machine.ts).
+ * `open_questions` sert aussi à un run `escalated` : le nombre de ses questions ouvertes.
+ */
+export type MergeFact =
+  | { code: "blockers"; count: number }
+  /** `max` : le risque le plus haut que l'auto-merge accepte (`review.autoMergeRisk`). */
+  | { code: "risk"; risk: Risk; max: "low" | "medium" }
+  | { code: "tests_not_green"; tests: "fail" | "not_run" }
+  | { code: "diff_over_limit"; diffLines: number; maxDiffLines: number }
+  | { code: "open_questions"; count: number }
+  | { code: "criteria_missing"; ids: string[] }
+  | { code: "criteria_unproven"; ids: string[] }
+  | { code: "specs_drift"; ids: string[] }
+  /** `files` : les dix premiers au plus. */
+  | { code: "files_unread"; count: number; files: string[] }
+  | { code: "criteria_unverified"; ids: string[] }
+  | { code: "weak_verdict" };
+
+/** Les fichiers non relus nommés dans le fait `files_unread`. */
+const UNREAD_FILES_MAX = 10;
+
+/** Chaque motif de refus de l'auto-merge : son fait à code et le texte que la raison du run en garde. */
+function mergeFindings(verdict: Verdict, evidence: MergeEvidence): { fact: MergeFact; text: string }[] {
+  const found: { fact: MergeFact; text: string }[] = [];
+  const blockers = verdict.blockers.length;
+  if (blockers > 0) found.push({ fact: { code: "blockers", count: blockers }, text: `${blockers} bloquant(s)` });
+  if (RISK_RANK[verdict.risk] > RISK_RANK[evidence.autoMergeRisk])
+    found.push({
+      fact: { code: "risk", risk: verdict.risk, max: evidence.autoMergeRisk },
+      text: `risque ${verdict.risk}`,
+    });
+  if (evidence.fullTests !== "pass")
+    found.push({
+      fact: { code: "tests_not_green", tests: evidence.fullTests },
+      text: evidence.fullTests === "fail" ? "suite complète rouge" : "suite complète non lancée sur cet arbre",
+    });
+  if (evidence.diffLines > evidence.maxDiffLines)
+    found.push({
+      fact: { code: "diff_over_limit", diffLines: evidence.diffLines, maxDiffLines: evidence.maxDiffLines },
+      text: `diff de ${evidence.diffLines} lignes (> ${evidence.maxDiffLines})`,
+    });
+  if (evidence.openEscalations > 0)
+    found.push({
+      fact: { code: "open_questions", count: evidence.openEscalations },
+      text: `${evidence.openEscalations} escalade(s) ouverte(s)`,
+    });
+  const missing = evidence.acIds.filter((id) => !verdict.criteria.some((c) => c.id === id));
+  if (missing.length > 0)
+    found.push({
+      fact: { code: "criteria_missing", ids: missing },
+      text: `critère(s) absent(s) du verdict : ${missing.join(", ")}`,
+    });
+  const unproven = verdict.criteria.filter((c) => evidence.acIds.includes(c.id) && c.status !== "pass");
+  if (unproven.length > 0)
+    found.push({
+      fact: { code: "criteria_unproven", ids: unproven.map((c) => c.id) },
+      text: `critère(s) non prouvé(s) : ${unproven.map((c) => `${c.id} ${c.status}`).join(", ")}`,
+    });
+  const weakened = evidence.specsDrift.filter((drift) => drift.validated !== null);
+  if (weakened.length > 0)
+    found.push({
+      fact: { code: "specs_drift", ids: weakened.map((drift) => drift.id) },
+      text: `critère(s) validé(s) modifié(s) depuis /specs : ${weakened.map(driftLabel).join(", ")}`,
+    });
+  const unread = evidence.touchedFiles.filter((file) => !verdict.files.includes(file));
+  if (unread.length > 0)
+    found.push({
+      fact: { code: "files_unread", count: unread.length, files: unread.slice(0, UNREAD_FILES_MAX) },
+      text: `fichier(s) touchés non relus : ${unread.join(", ")}`,
+    });
+  const unverifiedAc = verdict.unverified.filter((item) => /\bAC-\d+\b/.test(item));
+  if (unverifiedAc.length > 0)
+    found.push({
+      fact: {
+        code: "criteria_unverified",
+        ids: [...new Set(unverifiedAc.flatMap((item) => item.match(/\bAC-\d+\b/g) ?? []))],
+      },
+      text: `critère(s) non vérifié(s) : ${unverifiedAc.join(" ; ")}`,
+    });
+  if (verdict.confidence === "weak") found.push({ fact: { code: "weak_verdict" }, text: "verdict faible" });
+  return found;
+}
+
+/**
  * Auto-merge si tout est établi : aucun bloquant, risque sous le plafond, suite
  * complète verte, petite PR, aucune escalade ouverte, confiance forte, chaque AC des
  * specs validées prouvé `pass` par la revue, aucun d'eux retiré ou réécrit depuis, et
@@ -252,28 +338,58 @@ const RISK_RANK: Record<Risk, number> = { low: 0, medium: 1, high: 2 };
  * points non vérifiés).
  */
 export function mergeDecision(verdict: Verdict, evidence: MergeEvidence): MergeDecision {
-  const reasons: string[] = [];
-  if (verdict.blockers.length > 0) reasons.push(`${verdict.blockers.length} bloquant(s)`);
-  if (RISK_RANK[verdict.risk] > RISK_RANK[evidence.autoMergeRisk]) reasons.push(`risque ${verdict.risk}`);
-  if (evidence.fullTests !== "pass")
-    reasons.push(evidence.fullTests === "fail" ? "suite complète rouge" : "suite complète non lancée sur cet arbre");
-  if (evidence.diffLines > evidence.maxDiffLines)
-    reasons.push(`diff de ${evidence.diffLines} lignes (> ${evidence.maxDiffLines})`);
-  if (evidence.openEscalations > 0) reasons.push(`${evidence.openEscalations} escalade(s) ouverte(s)`);
-  const missing = evidence.acIds.filter((id) => !verdict.criteria.some((c) => c.id === id));
-  if (missing.length > 0) reasons.push(`critère(s) absent(s) du verdict : ${missing.join(", ")}`);
-  const unproven = verdict.criteria.filter((c) => evidence.acIds.includes(c.id) && c.status !== "pass");
-  if (unproven.length > 0)
-    reasons.push(`critère(s) non prouvé(s) : ${unproven.map((c) => `${c.id} ${c.status}`).join(", ")}`);
-  const weakened = evidence.specsDrift.filter((drift) => drift.validated !== null);
-  if (weakened.length > 0)
-    reasons.push(`critère(s) validé(s) modifié(s) depuis /specs : ${weakened.map(driftLabel).join(", ")}`);
-  const unread = evidence.touchedFiles.filter((file) => !verdict.files.includes(file));
-  if (unread.length > 0) reasons.push(`fichier(s) touchés non relus : ${unread.join(", ")}`);
-  const unverifiedAc = verdict.unverified.filter((item) => /\bAC-\d+\b/.test(item));
-  if (unverifiedAc.length > 0) reasons.push(`critère(s) non vérifié(s) : ${unverifiedAc.join(" ; ")}`);
-  if (verdict.confidence === "weak") reasons.push("verdict faible");
+  const reasons = mergeFindings(verdict, evidence).map((finding) => finding.text);
   const readCode = verdict.confidence === "weak" || verdict.unverified.length > 0;
   if (reasons.length === 0) return { auto: true };
   return { auto: false, reasons, readCode };
+}
+
+/** Les motifs à code du refus d'auto-merge, dans l'ordre des raisons de `mergeDecision` ; vide s'il l'accepte. */
+export function mergeFacts(verdict: Verdict, evidence: MergeEvidence): MergeFact[] {
+  return mergeFindings(verdict, evidence).map((finding) => finding.fact);
+}
+
+function isStrings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+/**
+ * L'évidence de merge gardée par la revue (steps.ts `REVIEW_EVIDENCE` : `{merge, evidence}`), relue de
+ * son artefact ; `null` s'il manque ou ne se lit plus (run d'avant un champ) — jamais d'exception.
+ */
+export function readMergeEvidence(raw: string | null): MergeEvidence | null {
+  if (raw === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const saved = isRecord(parsed) ? parsed.evidence : null;
+  if (!isRecord(saved)) return null;
+  const { fullTests, diffLines, maxDiffLines, openEscalations, acIds, specsDrift, autoMergeRisk, touchedFiles } = saved;
+  if (fullTests !== "pass" && fullTests !== "fail" && fullTests !== "not_run") return null;
+  if (typeof diffLines !== "number" || typeof maxDiffLines !== "number" || typeof openEscalations !== "number")
+    return null;
+  if (autoMergeRisk !== "low" && autoMergeRisk !== "medium") return null;
+  if (!isStrings(acIds) || !isStrings(touchedFiles) || !Array.isArray(specsDrift)) return null;
+  const drifts: CriterionDrift[] = [];
+  for (const drift of specsDrift) {
+    if (!isRecord(drift)) return null;
+    const { id, validated, current } = drift;
+    if (typeof id !== "string") return null;
+    if (validated !== null && typeof validated !== "string") return null;
+    if (current !== null && typeof current !== "string") return null;
+    drifts.push({ id, validated, current });
+  }
+  return {
+    fullTests,
+    diffLines,
+    maxDiffLines,
+    openEscalations,
+    acIds,
+    specsDrift: drifts,
+    autoMergeRisk,
+    touchedFiles,
+  };
 }

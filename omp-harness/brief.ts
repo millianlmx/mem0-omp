@@ -4,8 +4,9 @@
 // (`factoryState`, `factoryStatePrompt`). Fonctions PURES sur la base : ce qui retient un run en file
 // (tenu en mémoire par l'orchestrateur) et le nombre de propositions leur sont donnés.
 import type { CancelCause, RepoFilter, RunRow, Store } from "./db.ts";
-import { humanWaitOf } from "./machine.ts";
-import type { HumanWait } from "./machine.ts";
+import { failureOf, humanWaitOf } from "./machine.ts";
+import type { HumanWait, HumanWaitView, RunFailure } from "./machine.ts";
+import type { QueueBlocker, QueueFacts } from "./orchestrator.ts";
 import { cleanTitle } from "./proposals.ts";
 import { humanTouched } from "./scoreboard.ts";
 import { untrusted } from "./workstation-guards.ts";
@@ -23,8 +24,38 @@ export function briefSeenKey(client: string): string {
 /** Ce qu'un run attend de l'humain : des réponses à ses questions, ou une attente de `humanWaitOf`. */
 export type BriefWait = HumanWait | "questions";
 
-/** Ce qui retient un run en file : la cause (le code de `QueueWait`) et son texte. */
-export type HeldBy = { cause: string; text: string };
+/**
+ * Ce qui retient un run en file : la cause (le code de `QueueWait`) et son texte, puis ce que l'admission
+ * en sait de plus — les runs qui le retiennent, l'instant avant lequel il ne repart pas, les chiffres de la cause.
+ */
+export type HeldBy = {
+  cause: string;
+  text: string;
+  blockedBy?: QueueBlocker[];
+  until?: number;
+  facts?: QueueFacts;
+};
+
+/** Un run retenu en file, tel que le brief le rend : ses textes (`cause`, `text`) et les mêmes champs qu'un run de l'API. */
+type Blocked = {
+  cause: string;
+  text: string;
+  waitCause: string;
+  blockedBy?: QueueBlocker[];
+  waitUntil?: number;
+  waitFacts?: QueueFacts;
+};
+
+/** Les comptes du brief, en clair : `yours` — ce qui attend l'humain ; `waiting` — les runs retenus en file. */
+export type BriefCounts = {
+  yours: number;
+  working: number;
+  waiting: number;
+  delivered: number;
+  failed: number;
+  stopped: number;
+  decided: number;
+};
 
 type Item = { runId: string; repo: string; title: string };
 
@@ -36,17 +67,22 @@ export type Brief = {
   headline: string;
   /** Les runs mergés dans la fenêtre ; `alone` : aucun geste humain. */
   delivered: (Item & { prUrl: string | null; at: number; cost: number; alone: boolean })[];
-  /** Tout ce qui attend l'humain à l'instant du brief, quelle que soit la date. */
-  waiting: (Item & { wait: BriefWait; since: number })[];
-  failed: (Item & { reason: string | null; at: number })[];
+  /** Tout ce qui attend l'humain à l'instant du brief, quelle que soit la date ; `humanWait` : pourquoi, en données (`wait` en est la sorte). */
+  waiting: (Item & { wait: BriefWait; since: number; humanWait: HumanWaitView })[];
+  /** `failure` : l'étape en échec et sa cause, en données (`reason` reste pour les anciens clients). */
+  failed: (Item & { reason: string | null; at: number; failure: RunFailure })[];
   stopped: (Item & { cause: CancelCause | null; at: number })[];
   /** Les décisions prises seules, à relire. */
   decided: (Item & { seq: number; question: string; chosen: string; status: string })[];
   /** Les runs en file que quelque chose retient. */
-  blocked: (Item & HeldBy)[];
+  blocked: (Item & Blocked)[];
   /** Les propositions ouvertes. */
   proposals: number;
+  counts: BriefCounts;
+  /** Le coût de la fenêtre [since, until]. */
   cost: number;
+  /** Le coût du jour UTC de `until` : la journée du plafond du serveur et du budget des espaces. */
+  costToday: number;
 };
 
 export type BriefInput = {
@@ -56,6 +92,8 @@ export type BriefInput = {
   repos: RepoFilter;
   /** Ce qui retient ce run en file (`Orchestrator.withWait`), ou `null`. */
   heldBy: (run: RunRow) => HeldBy | null;
+  /** Pourquoi ce run attend l'humain (`Orchestrator.humanWait`), ou `null`. */
+  humanWait: (run: RunRow) => HumanWaitView | null;
   proposals: number;
 };
 
@@ -100,7 +138,16 @@ export function briefOf(store: Store, input: BriefInput): Brief {
   const blocked: Brief["blocked"] = [];
   for (const run of runs) {
     const held = run.state === "queued" ? input.heldBy(run) : null;
-    if (held !== null) blocked.push({ ...itemOf(run), cause: held.cause, text: held.text });
+    if (held !== null)
+      blocked.push({
+        ...itemOf(run),
+        cause: held.cause,
+        text: held.text,
+        waitCause: held.cause,
+        ...(held.blockedBy ? { blockedBy: held.blockedBy } : {}),
+        ...(held.until !== undefined ? { waitUntil: held.until } : {}),
+        ...(held.facts ? { waitFacts: held.facts } : {}),
+      });
   }
   const decisions = store
     .listDecisions({ status: ["auto", "auto_timeout"], repos })
@@ -110,6 +157,29 @@ export function briefOf(store: Store, input: BriefInput): Brief {
         (decision.autonomy !== null && decision.status === "auto" && decision.createdAt <= until),
     );
   const usage = store.usageSince(since, repos).filter((row) => row.at <= until);
+  // Le jour UTC de `until` : la même journée que le plafond du serveur (monitor.ts) et le budget des espaces.
+  const dayStart = until - (until % DAY_MS);
+  const today =
+    dayStart >= since
+      ? usage.filter((row) => row.at >= dayStart)
+      : store.usageSince(dayStart, repos).filter((row) => row.at <= until);
+  const waiting: Brief["waiting"] = runs
+    .filter((run) => run.state === "awaiting_human" || run.state === "escalated")
+    .map((run) => {
+      const humanWait: HumanWaitView = input.humanWait(run) ?? {
+        kind: run.state === "escalated" ? "questions" : (humanWaitOf(run) ?? "failure"),
+        reasons: [{ code: "other" }],
+      };
+      return {
+        ...itemOf(run),
+        wait: humanWait.kind,
+        // L'instant où l'attente a été posée : la dernière transition du run, sinon sa dernière écriture.
+        since: store.lastRunEvent(run.id, "run_state")?.at ?? run.updatedAt,
+        humanWait,
+      };
+    });
+  const failed = ended("failed");
+  const stopped = ended("cancelled");
   const brief: Omit<Brief, "headline"> = {
     since,
     until,
@@ -121,16 +191,14 @@ export function briefOf(store: Store, input: BriefInput): Brief {
       cost: round2(costs[run.id] ?? 0),
       alone: !touched.has(run.id),
     })),
-    waiting: runs
-      .filter((run) => run.state === "awaiting_human" || run.state === "escalated")
-      .map((run) => ({
-        ...itemOf(run),
-        wait: run.state === "escalated" ? "questions" : (humanWaitOf(run) ?? "failure"),
-        // L'instant où l'attente a été posée : la dernière transition du run, sinon sa dernière écriture.
-        since: store.lastRunEvent(run.id, "run_state")?.at ?? run.updatedAt,
-      })),
-    failed: ended("failed").map((run) => ({ ...itemOf(run), reason: run.reason, at: run.updatedAt })),
-    stopped: ended("cancelled").map((run) => ({ ...itemOf(run), cause: run.cancelCause, at: run.updatedAt })),
+    waiting,
+    failed: failed.map((run) => ({
+      ...itemOf(run),
+      reason: run.reason,
+      at: run.updatedAt,
+      failure: failureOf(run) ?? { step: run.step, cause: null },
+    })),
+    stopped: stopped.map((run) => ({ ...itemOf(run), cause: run.cancelCause, at: run.updatedAt })),
     decided: decisions.map((decision) => {
       const run = byId.get(decision.runId);
       return {
@@ -145,7 +213,17 @@ export function briefOf(store: Store, input: BriefInput): Brief {
     }),
     blocked,
     proposals: input.proposals,
+    counts: {
+      yours: waiting.length,
+      working: runs.filter((run) => run.state === "running" || run.state === "merging").length,
+      waiting: blocked.length,
+      delivered: merged.length,
+      failed: failed.length,
+      stopped: stopped.length,
+      decided: decisions.length,
+    },
     cost: round2(usage.reduce((sum, row) => sum + row.cost, 0)),
+    costToday: round2(today.reduce((sum, row) => sum + row.cost, 0)),
   };
   return { ...brief, headline: headlineOf(brief) };
 }

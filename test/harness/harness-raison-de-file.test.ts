@@ -67,7 +67,11 @@ test("harness-raison-de-file/AC-1 : une admission mémoire refusée se lit dans 
     const status = (await api.get("/v1/status")) as {
       queue: { held: number; byCause: Record<string, number>; dominant: { cause: string; text: string } | null };
     };
-    assert.deepEqual(status.queue, { held: 1, byCause: { memory: 1 }, dominant: { cause: "memory", text: expected } });
+    assert.deepEqual(status.queue, {
+      held: 1,
+      byCause: { memory: 1 },
+      dominant: { cause: "memory", text: expected, facts: { availableMiB: 2908, requiredMiB: 3072 } },
+    });
 
     // Les chiffres bougent : la raison suit, le journal n'écrit rien de plus, la base pas davantage.
     const rev = world.store.getRun(run.id)?.rev;

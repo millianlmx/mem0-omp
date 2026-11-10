@@ -683,8 +683,14 @@ test("os-telecommande/AC-12 : les routes sont servies par apiRoutes() et décrit
     assert.ok((API_FEATURES as readonly string[]).includes(feature), `capacité ${feature} non annoncée`);
     assert.ok(readme.includes(`\`${feature}\``), `capacité ${feature} absente du README`);
   }
-  for (const text of ["omp.answer", "omp.question", "`context`", "| `intake` `{id?, text?, source?, repo?, context?}`"])
+  for (const text of ["omp.answer", "omp.question", "`context`"])
     assert.ok(readme.includes(text), `${text} absent du README`);
+  // La ligne de l'outil MCP `intake` nomme `context` parmi ses arguments, quels que soient les autres.
+  assert.match(
+    readme,
+    /^\| `intake` `\{[^}]*\bcontext\?[^}]*\}`/m,
+    "l'outil `intake` du README ne nomme pas `context`",
+  );
 
   // Les noms de la charge push-to-start sont ceux des types Swift : un écart, et iOS ignore le démarrage.
   const swift = fs.readFileSync(

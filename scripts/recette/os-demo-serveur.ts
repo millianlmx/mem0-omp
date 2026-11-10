@@ -149,15 +149,17 @@ function seed(world: FakeWorld): void {
       },
     ],
   });
-  orchestrator.spaces.create(
-    { name: "Perso", repos: ["demo"], poste: true, jiraProjects: [], dailyBudgetUsd: 20, autonomy: null },
+  const perso = orchestrator.spaces.create(
+    { name: "Perso", repos: ["demo"], jiraProjects: [], dailyBudgetUsd: 20, autonomy: null },
     ACTOR,
   );
+  // L'espace « Perso » a le poste : un navigateur lui est rattaché (`poste` se déduit des navigateurs).
+  store.touchWorkstationBrowser({ id: "demo-chrome", label: "Chrome perso", version: null, at: Date.now() });
+  store.setWorkstationBrowserSpace("demo-chrome", perso.id);
   orchestrator.spaces.create(
     {
       name: "Client Acme",
       repos: [CLIENT_REPO],
-      poste: false,
       jiraProjects: ["ACME"],
       dailyBudgetUsd: 50,
       autonomy: "ask",

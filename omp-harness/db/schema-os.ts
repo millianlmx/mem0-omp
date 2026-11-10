@@ -84,4 +84,33 @@ export const MIGRATIONS_OS: readonly string[] = [
      PRIMARY KEY (client, key)
    );
    CREATE INDEX idempotency_keys_created ON idempotency_keys (created_at);`,
+  // Le multi-client : l'espace devient la frontière d'un client. Une consigne permanente d'espace ; l'espace
+  // d'une Demande, d'une demande du poste, d'une écriture et d'un plan Atlassian, d'une consommation sans
+  // dépôt (poste, Demande, rêve) ; le navigateur du poste rattaché à un espace et le profil du poste par
+  // espace ; la politique de modèles et les identités d'un espace (JSON) ; l'espace d'où vient un signalement
+  // corpo (celui du job du poste qui l'a remis) ; l'espace d'une observation, d'un meeting et d'une action du
+  // poste AU MOMENT où la ligne est écrite (elle n'en change plus : un navigateur réattribué n'emporte pas
+  // son histoire), et celui où une automatisation a été créée.
+  `ALTER TABLE standing_rules ADD COLUMN space_id TEXT;
+   ALTER TABLE intakes ADD COLUMN space_id TEXT;
+   ALTER TABLE usage ADD COLUMN space_id TEXT;
+   CREATE INDEX usage_space ON usage (space_id, at);
+   ALTER TABLE workstation_browsers ADD COLUMN space_id TEXT;
+   ALTER TABLE workstation_requests ADD COLUMN space_id TEXT;
+   CREATE TABLE workstation_space_profiles (
+     space_id TEXT NOT NULL,
+     version INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     profile TEXT NOT NULL,
+     PRIMARY KEY (space_id, version)
+   );
+   ALTER TABLE atlassian_writes ADD COLUMN space_id TEXT;
+   ALTER TABLE atlassian_plans ADD COLUMN space_id TEXT;
+   ALTER TABLE spaces ADD COLUMN policy TEXT;
+   ALTER TABLE spaces ADD COLUMN identities TEXT;
+   ALTER TABLE corporate_signals ADD COLUMN space_id TEXT;
+   ALTER TABLE workstation_observations ADD COLUMN space_id TEXT;
+   ALTER TABLE workstation_meetings ADD COLUMN space_id TEXT;
+   ALTER TABLE workstation_actions ADD COLUMN space_id TEXT;
+   ALTER TABLE workstation_automations ADD COLUMN space_id TEXT;`,
 ];
