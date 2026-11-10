@@ -1,8 +1,9 @@
-// L'« OS agentique » : les SECTIONS DU BRIEF, sur « Maintenant » — ce qui vous attend, ce
-// qui a été livré (avec la pastille « seul » quand aucun geste humain n'a été fait), ce
-// qui est bloqué en file et pourquoi, les échecs, les décisions prises seules (« Garder »,
-// « Revoir ») et les arrêts avec leur motif. Chaque section se replie et ne se montre que
-// si elle a quelque chose ; chaque ligne est un élément, et ouvre son fil.
+// L'« OS agentique » : les SECTIONS DU BRIEF, sur « Maintenant » — ce qui a été livré (avec
+// la pastille « seul » quand aucun geste humain n'a été fait), ce qui est bloqué en file et
+// pourquoi, les échecs, les décisions prises seules (« Garder », « Revoir ») et les arrêts
+// avec leur motif. Ce qui vous attend n'y est pas : le compteur « À vous » le porte et ouvre
+// le tri. Chaque section se replie et ne se montre que si elle a quelque chose ; chaque
+// ligne est un élément, et ouvre son fil.
 
 import ConsoleClient
 import ConsoleCore
@@ -16,7 +17,7 @@ public struct OSBriefSections: View {
     let threads: [OSThread]
 
     private enum Fold: Hashable {
-        case waiting, delivered, blocked, failed, decided, stopped
+        case delivered, blocked, failed, decided, stopped
     }
 
     /// Les arrêts sont repliés d'office : ils se lisent en dernier.
@@ -47,11 +48,6 @@ public struct OSBriefSections: View {
                 }
                 .buttonStyle(.plain)
             }
-            section(.waiting, OSWatchText.sectionWaiting, brief.waiting.count) {
-                ForEach(brief.waiting) { item in
-                    row(.yours, item.runId, item.title, detail: [item.repo, OSWatchText.wait(item.wait), item.since.osRelative])
-                }
-            }
             section(.delivered, OSWatchText.sectionDelivered, brief.delivered.count) {
                 ForEach(brief.delivered) { item in
                     row(
@@ -63,7 +59,8 @@ public struct OSBriefSections: View {
             }
             section(.blocked, OSWatchText.sectionBlocked, brief.blocked.count) {
                 ForEach(brief.blocked) { item in
-                    row(.queued, item.runId, item.title, detail: [item.repo, item.text.isEmpty ? ControlText.waitCause(item.cause) : item.text]) {
+                    let cause = item.text.isEmpty ? ControlText.waitCause(item.cause) : item.text
+                    row(.queued, item.runId, item.title, detail: [item.repo], cause: (OSGlyph.waitSymbol(item.cause), cause)) {
                         if item.cause == "paused", pause.isPaused {
                             Button(OSWatchText.resume) { Task { await pause.setPause(paused: false) } }
                                 .disabled(!server.canAct || pause.isSaving)
@@ -126,8 +123,10 @@ public struct OSBriefSections: View {
     }
 
     /// Une ligne : l'état, le titre, où et quoi en gris, puis ses gestes. Elle ouvre le fil.
+    /// `cause` : ce qui retient la feature, en un symbole ; la phrase est en infobulle.
     private func row<Gestures: View>(
         _ phase: OSPhase, _ runId: String, _ title: String, detail: [String?], tag: String? = nil, symbol: String? = nil,
+        cause: (symbol: String, text: String)? = nil,
         @ViewBuilder gestures: () -> Gestures
     ) -> some View {
         HStack(spacing: 8) {
@@ -154,6 +153,7 @@ public struct OSBriefSections: View {
                         .lineLimit(1)
                         .layoutPriority(1)
                     if let tag { OSTag(text: tag, symbol: "sparkle", tint: .green) }
+                    if let cause { causeMark(cause) }
                     Text(detail.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -163,8 +163,9 @@ public struct OSBriefSections: View {
                         HStack(spacing: 6) {
                             Text(title).lineLimit(2)
                             if let tag { OSTag(text: tag, symbol: "sparkle", tint: .green) }
+                            if let cause { causeMark(cause) }
                         }
-                        Text(detail.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                        Text((detail + [cause?.text]).compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
@@ -186,5 +187,15 @@ public struct OSBriefSections: View {
                 .buttonStyle(OSTouchLinkStyle())
             #endif
         }
+    }
+
+    private func causeMark(_ cause: (symbol: String, text: String)) -> some View {
+        Image(systemName: cause.symbol)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .padding(5)
+            .background(Circle().fill(Color.secondary.opacity(0.14)))
+            .help(cause.text)
+            .accessibilityLabel(cause.text)
     }
 }

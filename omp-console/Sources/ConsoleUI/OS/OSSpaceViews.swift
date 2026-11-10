@@ -284,6 +284,7 @@ public struct OSSpacePage: View {
     @State private var report: HarnessSpaceReport?
     @State private var loading = false
     @State private var copied = false
+    @State private var reportShown = false
     @State private var editing: OSSpaceEditing?
 
     /// `copy` : le presse-papiers de la plateforme, posé par la coque ; sans lui, « Copier »
@@ -365,35 +366,42 @@ public struct OSSpacePage: View {
         }
     }
 
-    /// Les chiffres de la semaine : livrées, échecs, arrêtées, coût.
+    /// Les chiffres de la semaine : livrées, échecs, arrêtées en compteurs colorés, puis le coût.
     private func week(_ stats: HarnessSpaceStats) -> some View {
         section(OSText.sectionWeek) {
             HStack(spacing: 10) {
-                OSTile(value: "\(stats.mergedWeek)", label: OSWatchText.weekDelivered, tint: stats.mergedWeek > 0 ? .green : .secondary)
-                OSTile(value: "\(stats.failedWeek)", label: OSWatchText.weekFailed, tint: stats.failedWeek > 0 ? .red : .secondary)
-                OSTile(value: "\(stats.cancelledWeek)", label: OSWatchText.weekStopped, tint: .secondary)
+                OSCountStrip(items: [
+                    OSCountStrip.Item(phase: .done, label: OSWatchText.weekDelivered, count: stats.mergedWeek),
+                    OSCountStrip.Item(phase: .failed, label: OSWatchText.weekFailed, count: stats.failedWeek),
+                    OSCountStrip.Item(phase: .stopped, label: OSWatchText.weekStopped, count: stats.cancelledWeek),
+                ])
                 OSTile(value: MonitoringText.cost(stats.costWeek), label: OSWatchText.weekCost)
+                    .frame(maxWidth: 150)
             }
             .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    /// Le budget du jour : la dépense sur le plafond et ce qu'il en reste ; sans plafond, la dépense seule.
+    /// Le budget du jour : un anneau qui se remplit (vert, orange à 80 %, rouge au plafond) et
+    /// « dépensé / plafond » ; ce qu'il reste est en infobulle. Sans plafond, la dépense seule.
     private func budget(_ space: HarnessSpace) -> some View {
         section(OSWatchText.budgetToday) {
-            if let ceiling = space.dailyBudgetUsd {
-                VStack(alignment: .leading, spacing: 6) {
-                    ProgressView(value: min(max(space.stats.costToday, 0), ceiling), total: ceiling)
-                        .tint(space.stats.costToday >= ceiling ? .red : .accentColor)
-                    HStack {
-                        Text(OSWatchText.budgetUse(spent: space.stats.costToday, ceiling: ceiling))
-                        Spacer()
-                        if let left = space.stats.budgetLeftToday {
-                            Text(OSWatchText.budgetLeft(left)).foregroundStyle(.secondary)
-                        }
+            if let ceiling = space.dailyBudgetUsd, ceiling > 0 {
+                let spent = space.stats.costToday
+                let share = OSGlyph.budgetShare(spent: spent, ceiling: ceiling)
+                let tint: Color = share >= 1 ? .red : share >= 0.8 ? .orange : .green
+                HStack(spacing: 14) {
+                    OSRing(fraction: share, tint: tint, size: 64) {
+                        Text(PipelineServerText.percent(min(share, 9.99)))
+                            .font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
                     }
-                    .font(.callout.monospacedDigit())
+                    Text(MonitoringText.cost(spent) + " / " + MonitoringText.cost(ceiling))
+                        .font(.title3.weight(.semibold).monospacedDigit())
                 }
+                .help(space.stats.budgetLeftToday.map(OSWatchText.budgetLeft) ?? OSWatchText.budgetUse(spent: spent, ceiling: ceiling))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(OSWatchText.budgetUse(spent: spent, ceiling: ceiling))
+                .accessibilityValue(space.stats.budgetLeftToday.map(OSWatchText.budgetLeft) ?? "")
             } else {
                 Text(OSText.today(space.stats.costToday) + " · " + OSWatchText.spaceBudgetPrompt)
                     .font(.callout.monospacedDigit())
@@ -402,36 +410,57 @@ public struct OSSpacePage: View {
         }
     }
 
-    /// Le rapport hebdomadaire, rendu ; « Copier » et le partage natif portent son texte.
+    /// Le rapport hebdomadaire : replié, c'est la plus grosse masse de texte de la page. Son titre
+    /// l'ouvre ; « Copier » et le partage natif portent son texte, replié ou non.
     private var weekly: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Text(OSWatchText.weeklyReport.uppercased())
-                    .font(.caption.weight(.bold))
+                Button {
+                    reportShown.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.bold))
+                            .rotationEffect(.degrees(reportShown ? 90 : 0))
+                        Text(OSWatchText.weeklyReport.uppercased())
+                            .font(.caption.weight(.bold))
+                    }
                     .foregroundStyle(.secondary)
+                    .frame(minHeight: ConsolePlatform.minimumTarget)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(.isHeader)
                 Spacer()
                 if let text = report?.text, !text.isEmpty {
                     if let copy {
-                        Button(copied ? OSWatchText.copied : OSWatchText.copy, systemImage: copied ? "checkmark" : "doc.on.doc") {
+                        Button {
                             copy(text)
                             copied = true
+                        } label: {
+                            Label(copied ? OSWatchText.copied : OSWatchText.copy, systemImage: copied ? "checkmark" : "doc.on.doc")
+                                .labelStyle(.iconOnly)
                         }
+                        .help(OSWatchText.copy)
                     }
                     ShareLink(item: text) {
-                        Label(OSWatchText.share, systemImage: "square.and.arrow.up")
+                        Label(OSWatchText.share, systemImage: "square.and.arrow.up").labelStyle(.iconOnly)
                     }
+                    .help(OSWatchText.share)
                 }
             }
             .osBorderless()
-            if let text = report?.text, !text.isEmpty {
-                OSCard {
-                    ConsoleMarkdown(markdown: text)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            if reportShown {
+                if let text = report?.text, !text.isEmpty {
+                    OSCard {
+                        ConsoleMarkdown(markdown: text)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else if loading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text(OSWatchText.noReport).foregroundStyle(.secondary)
                 }
-            } else if loading {
-                ProgressView().controlSize(.small)
-            } else {
-                Text(OSWatchText.noReport).foregroundStyle(.secondary)
             }
         }
         .onChange(of: report?.text) { copied = false }

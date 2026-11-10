@@ -38,7 +38,11 @@ public struct OSAutonomyPicker: View {
                 picker(live)
             }
             #else
-            picker(live)
+            // Trois symboles se lisent vite, mais le niveau retenu garde son mot à côté.
+            HStack(spacing: 8) {
+                picker(live)
+                Text(title(of: chosen ?? live.last?.autonomy)).font(.caption).foregroundStyle(.secondary)
+            }
             #endif
         }
     }
@@ -48,9 +52,9 @@ public struct OSAutonomyPicker: View {
             get: { chosen ?? targets.last?.autonomy },
             set: { level in apply(level, to: targets) }
         )) {
-            Text(OSDecideText.askAll).tag(HarnessRunAutonomy?.some(.ask))
-            Text(OSDecideText.repoRules).tag(HarnessRunAutonomy?.none)
-            Text(OSDecideText.deliver).tag(HarnessRunAutonomy?.some(.deliver))
+            level(OSDecideText.askAll, "hand.raised.fill", .some(.ask))
+            level(OSDecideText.repoRules, "shield.lefthalf.filled", .none)
+            level(OSDecideText.deliver, "paperplane.fill", .some(.deliver))
         }
         // Trois positions côte à côte sur le Mac ; sur l'iPhone, où elles ne tiennent pas en
         // largeur, le menu du système montre la position retenue.
@@ -67,6 +71,27 @@ public struct OSAutonomyPicker: View {
         .accessibilityLabel(OSDecideText.autonomy)
         // Le serveur a rendu les features : son niveau fait foi.
         .onChange(of: targets.map(\.autonomy)) { chosen = nil }
+    }
+
+    private func title(of level: HarnessRunAutonomy?) -> String {
+        switch level {
+        case .ask: OSDecideText.askAll
+        case .deliver: OSDecideText.deliver
+        case nil: OSDecideText.repoRules
+        }
+    }
+
+    /// Une position du curseur : un symbole (la main qui retient, le bouclier des règles, l'envoi),
+    /// le mot en infobulle et pour VoiceOver. Le menu de l'iPhone garde le mot à côté du symbole.
+    private func level(_ title: String, _ symbol: String, _ value: HarnessRunAutonomy?) -> some View {
+        #if os(macOS)
+        Label(title, systemImage: symbol)
+            .labelStyle(.iconOnly)
+            .help(title)
+            .tag(value)
+        #else
+        Label(title, systemImage: symbol).tag(value)
+        #endif
     }
 
     private func apply(_ level: HarnessRunAutonomy?, to targets: [HarnessRun]) {

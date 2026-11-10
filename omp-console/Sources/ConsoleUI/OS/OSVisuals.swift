@@ -1,7 +1,7 @@
 // L'« OS agentique » : le langage visuel commun au Mac et à l'iPhone/iPad. Un état = un
-// symbole et une couleur (`OSPhaseMark`), le chemin d'une feature en cinq points
-// (`OSStepDots`), une carte du fil (`OSCard`), une étiquette (`OSTag`), et OÙ et SUR QUOI
-// travaille un agent (`OSPlace`).
+// symbole et une couleur (`OSPhaseMark`), une carte du fil (`OSCard`), une étiquette
+// (`OSTag`), et OÙ et SUR QUOI travaille un agent (`OSPlace`). Les repères qui se lisent sans
+// mot (le chemin d'une feature, les compteurs, les anneaux) sont dans `OSGlyphs.swift`.
 
 import ConsoleClient
 import ConsoleCore
@@ -24,30 +24,6 @@ public struct OSPhaseMark: View {
             .symbolEffect(.rotate, options: .repeat(.continuous), isActive: phase == .working)
             .frame(width: size + 6, height: size + 6)
             .accessibilityLabel(phase.label)
-    }
-}
-
-/// Le chemin d'une feature en cinq points : fait, en cours, à venir.
-public struct OSStepDots: View {
-    let run: HarnessRun
-
-    public init(run: HarnessRun) {
-        self.run = run
-    }
-
-    public var body: some View {
-        let current = OSThreads.stepIndex(of: run)
-        let merged = run.phase == .merged
-        HStack(spacing: 4) {
-            ForEach(0..<5, id: \.self) { index in
-                Circle()
-                    .fill(index < current || merged ? Color.green : index == current ? Color.accentColor : Color.secondary.opacity(0.25))
-                    .frame(width: 7, height: 7)
-                    .help(OSText.steps[index])
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(OSText.steps[current])
     }
 }
 
@@ -146,7 +122,8 @@ public struct OSPlace: View {
 }
 
 /// Une tuile : une valeur en grand, son mot dessous, et au besoin un symbole à côté de la
-/// valeur (une tendance). Une valeur absente se lit « — », en gris.
+/// valeur (une tendance). Une valeur absente se lit « — », en gris. Une valeur qui est une
+/// part (`share`, de 0 à 1) s'inscrit dans un anneau qui se remplit.
 struct OSTile: View {
     /// Le symbole posé à côté de la valeur : son nom, sa couleur, ce que VoiceOver en dit.
     struct Mark {
@@ -159,15 +136,25 @@ struct OSTile: View {
     let label: String
     var tint: Color = .primary
     var mark: Mark?
+    var share: Double?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(value ?? OSWatchText.none)
-                    .font(.system(size: 26, weight: .semibold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(value == nil ? Color.secondary : tint)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+            HStack(alignment: .center, spacing: 6) {
+                if let share, let value {
+                    OSRing(fraction: share, tint: tint, size: 56) {
+                        Text(value)
+                            .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                    }
+                } else {
+                    Text(value ?? OSWatchText.none)
+                        .font(.system(size: 26, weight: .semibold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(value == nil ? Color.secondary : tint)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
                 if let mark {
                     Image(systemName: mark.symbol)
                         .font(.caption.weight(.bold))

@@ -48,7 +48,6 @@ public enum OSWatchText {
     // MARK: - Maintenant (le brief)
 
     public static let seen = L10n.text("Vu")
-    public static let sectionWaiting = L10n.text("Vous attend")
     public static let sectionDelivered = L10n.text("Livré")
     public static let sectionBlocked = L10n.text("Bloqué")
     public static let sectionFailed = L10n.text("Échecs")

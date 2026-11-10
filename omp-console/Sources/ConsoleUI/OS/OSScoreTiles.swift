@@ -69,18 +69,21 @@ public struct OSScoreTiles: View {
                 tile(
                     OSWatchText.scoreAlone,
                     value: week.aloneRate.map(PipelineServerText.percent),
+                    share: week.aloneRate,
                     trend: .of(recent?.aloneRate, against: week.aloneRate, tolerance: 0.02),
                     better: .up
                 )
                 tile(
                     OSWatchText.scoreDelay,
                     value: week.medianDecisionMs.map { ConsoleFormat.duration(ms: $0) },
+                    share: nil,
                     trend: .of(recent?.medianDecisionMs, against: week.medianDecisionMs, tolerance: (week.medianDecisionMs ?? 0) / 10),
                     better: .down
                 )
                 tile(
                     OSWatchText.scoreStarted,
                     value: week.startedAloneRate.map(PipelineServerText.percent),
+                    share: week.startedAloneRate,
                     trend: .of(recent?.startedAloneRate, against: week.startedAloneRate, tolerance: 0.02),
                     better: .up
                 )
@@ -90,11 +93,13 @@ public struct OSScoreTiles: View {
     }
 
     /// `better` : le sens qui est un progrès (vert) ; l'autre reste gris.
-    private func tile(_ label: String, value: String?, trend: OSScoreTrend?, better: OSScoreTrend) -> some View {
+    private func tile(_ label: String, value: String?, share: Double?, trend: OSScoreTrend?, better: OSScoreTrend) -> some View {
         OSTile(
             value: value,
             label: label,
-            mark: trend.map { OSTile.Mark(symbol: $0.symbol, tint: $0 == better ? .green : .secondary, label: $0.label) }
+            tint: share == nil ? .primary : .green,
+            mark: trend.map { OSTile.Mark(symbol: $0.symbol, tint: $0 == better ? .green : .secondary, label: $0.label) },
+            share: share
         )
     }
 }

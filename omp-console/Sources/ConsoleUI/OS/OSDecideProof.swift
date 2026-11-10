@@ -28,21 +28,36 @@ struct OSDecideReviewProof: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let round { captures(round) }
-            OSFlow(spacing: 6) {
+            OSFlow(spacing: 8) {
                 if let report = round?.reports.last { tests(report) }
                 if let verdict = run.verdict {
                     if !verdict.files.isEmpty {
-                        OSTag(text: OSDecideText.files(verdict.files.count), symbol: "doc.on.doc")
+                        OSMetric(symbol: "doc.on.doc", value: "\(verdict.files.count)", tint: .secondary, label: OSDecideText.files(verdict.files.count)) {
+                            EmptyView()
+                        }
                     }
                     if let lines = OSReviewFacts.diffLines(reason: run.reason) {
-                        OSTag(text: OSDecideText.lines(lines), symbol: "plusminus")
+                        OSMetric(symbol: "plusminus", value: "\(lines)", tint: .accentColor, label: OSDecideText.lines(lines)) {
+                            OSBar(fill: OSGlyph.diffFill(lines: lines), tint: .accentColor)
+                        }
                     }
-                    OSTag(text: PipelineServerText.risk(verdict.risk), symbol: "shield", tint: verdict.isLowRisk ? .green : .orange)
+                    if let level = OSGlyph.riskLevel(verdict.risk) {
+                        let tint: Color = level == 1 ? .green : level == 2 ? .orange : .red
+                        OSMetric(symbol: "shield.fill", value: nil, tint: tint, label: PipelineServerText.risk(verdict.risk)) {
+                            OSLevelBars(level: level, tint: tint)
+                        }
+                    } else {
+                        OSTag(text: PipelineServerText.risk(verdict.risk), symbol: "shield", tint: .orange)
+                    }
                     if !verdict.blockers.isEmpty {
-                        OSTag(text: PipelineServerText.blockers, symbol: "exclamationmark.octagon", tint: .red)
+                        OSMetric(symbol: "exclamationmark.octagon.fill", value: "\(verdict.blockers.count)", tint: .red, label: PipelineServerText.blockers) {
+                            EmptyView()
+                        }
                     }
                     if verdict.isWeak {
-                        OSTag(text: PipelineServerText.unverified, symbol: PipelineServerText.weakVerdictSymbol, tint: .orange)
+                        OSMetric(symbol: PipelineServerText.weakVerdictSymbol, value: nil, tint: .orange, label: PipelineServerText.unverified) {
+                            EmptyView()
+                        }
                     }
                 }
             }
@@ -91,16 +106,22 @@ struct OSDecideReviewProof: View {
         .accessibilityLabel(proof.title)
     }
 
-    /// Les tests du dernier rapport : verts, ou combien ont échoué.
+    /// Les tests du dernier rapport : le nombre passé sur le total, et une barre verte ou rouge.
     @ViewBuilder
     private func tests(_ proof: HarnessProof) -> some View {
         if case let .report(report)? = proofs.contents[proof.n] {
             let tally = OSTestTally(report)
             let green = OSTestTally.isGreen(report)
-            OSTag(
-                text: ProofsText.counts(passed: tally.passed, failed: tally.failed),
-                symbol: green ? "checkmark.circle.fill" : "xmark.octagon.fill", tint: green ? .green : .red
-            )
+            let tint: Color = green ? .green : .red
+            OSMetric(
+                symbol: green ? "checkmark.circle.fill" : "xmark.octagon.fill",
+                value: "\(tally.passed)/\(tally.passed + tally.failed)", tint: tint,
+                label: ProofsText.counts(passed: tally.passed, failed: tally.failed)
+            ) {
+                if let share = OSGlyph.testShare(passed: tally.passed, failed: tally.failed) {
+                    OSBar(fill: share, tint: tint)
+                }
+            }
         }
     }
 }

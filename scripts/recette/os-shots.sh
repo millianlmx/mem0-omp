@@ -26,7 +26,7 @@
 # l'écran le temps de chaque capture.
 #
 # Vérifications DURES avant de rendre 0 : chaque PNG existe et ses dimensions (`sips`)
-# sont non nulles. Codes de sortie : 0 les six captures produites, 1 échec, 2 « non
+# sont non nulles. Codes de sortie : 0 les sept captures produites, 1 échec, 2 « non
 # exécuté » (pas macOS, ou Node/Swift absents).
 set -uo pipefail
 
@@ -101,6 +101,7 @@ field() { node -e 'const j = JSON.parse(require("fs").readFileSync(process.argv[
 url="$(field url)"
 token="$(field token)"
 working="$(field runs.working)"
+review="$(field runs.review)"
 
 # Le dossier personnel jetable : le seul réglage que lit l'app sans préférences.
 mkdir -p "$WORK/home/.omp"
@@ -193,6 +194,7 @@ shot() {
 
 shot maintenant "OMP_CONSOLE_OS_VIEW=now" || exit 1
 shot fil "OMP_CONSOLE_OS_RUN=$working" || exit 1
+shot revue "OMP_CONSOLE_OS_RUN=$review" || exit 1
 shot tri "OMP_CONSOLE_OS_TRIAGE=1" || exit 1
 shot propositions "OMP_CONSOLE_OS_VIEW=proposals" || exit 1
 shot savoir "OMP_CONSOLE_OS_VIEW=knowledge" || exit 1

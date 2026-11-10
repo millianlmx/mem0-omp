@@ -1189,9 +1189,10 @@ revue à valider, une question, une feature au travail, une feature retenue en f
 échec, un arrêt motivé, un audit proposé, deux espaces, des consignes permanentes, une
 règle de palier, une session omp locale), puis relance une COPIE de l'app
 (`com.omp.console.recette-os`, préférences vides : `ui.os` n'est pas posée) une fois
-par écran, ouvert par les variables `OMP_CONSOLE_OS_*`. Six images sous
+par écran, ouvert par les variables `OMP_CONSOLE_OS_*`. Sept images sous
 `omp-console/build/os-shots/` (dossier ignoré par git) : `maintenant.png`, `fil.png`,
-`tri.png`, `propositions.png`, `savoir.png`, `espace.png`. Codes de sortie : 0 les six
+`revue.png` (la revue à valider d'une feature : preuve en mesures, geste principal),
+`tri.png`, `propositions.png`, `savoir.png`, `espace.png`. Codes de sortie : 0 les sept
 images produites, 1 échec, 2 non exécuté hors macOS. `mac-shots.sh` pose `ui.os` à faux :
 l'onglet « Preuves » est celui de l'interface classique.
 

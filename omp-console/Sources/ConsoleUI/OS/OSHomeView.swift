@@ -1,9 +1,9 @@
 // L'« OS agentique » : MAINTENANT, l'accueil, partagé par le Mac et l'iPhone/iPad. C'est
-// le BRIEF du serveur : sa phrase de tête et depuis quand (« Vu » le marque lu), le
-// composeur « Demander » et, dessous, la réponse de l'OS à une question d'état ; les
-// trois chiffres de la boucle ; les agents au travail avec ce qu'ils font ; puis les
-// sections du brief. Chaque ligne ouvre son fil. Un serveur sans brief garde l'accueil
-// d'avant : cinq chiffres, les agents au travail, le livré du jour.
+// le BRIEF du serveur, en repères : cinq compteurs (à vous, au travail, en file, échecs,
+// livrées) qui remplacent la phrase de tête, le composeur « Demander » et, dessous, la
+// réponse de l'OS à une question d'état ; les trois chiffres de la boucle ; les agents au
+// travail, avec leur chemin ; puis les sections du brief. Chaque ligne ouvre son fil. Un
+// serveur sans brief garde l'accueil d'avant : cinq tuiles, les agents, le livré du jour.
 
 import ConsoleClient
 import ConsoleCore
@@ -42,6 +42,7 @@ public struct OSHomeView: View {
                 header
                 if brief.isServed {
                     asking
+                    if let current = brief.brief { countStrip(current, threads: threads) }
                     OSScoreTiles(server: server, recent: recentScores)
                     atWork(working)
                     if let current = brief.brief {
@@ -70,7 +71,7 @@ public struct OSHomeView: View {
 
     // MARK: En-tête
 
-    /// « Maintenant », puis la phrase du brief et sa fenêtre ; sans brief, la date du jour.
+    /// « Maintenant », puis ce qui s'est passé depuis le dernier « Vu » ; sans brief, la date du jour.
     private var header: some View {
         // Aux tailles de texte d'accessibilité (iPhone, iPad), « Vu » passe sous la phrase.
         let layout = dynamicTypeSize.isAccessibilitySize
@@ -83,9 +84,6 @@ public struct OSHomeView: View {
                 Text(OSText.now).font(.largeTitle.weight(.bold))
                 #endif
                 if let current = brief.brief {
-                    Text(current.headline)
-                        .font(.title3)
-                        .osSelectable()
                     Text(OSWatchText.since(ms: current.since, nowMs: max(current.until, Date().timeIntervalSince1970 * 1000)))
                         .foregroundStyle(.secondary)
                 } else {
@@ -104,6 +102,22 @@ public struct OSHomeView: View {
                 .osRowButton()
             }
         }
+    }
+
+    // MARK: Les cinq compteurs
+
+    /// À vous, au travail, en file, en échec, livré : un nombre et une couleur chacun. « À vous »
+    /// ouvre le tri ; « Échecs » ouvre le premier échec.
+    private func countStrip(_ current: HarnessBrief, threads: [OSThread]) -> some View {
+        OSCountStrip(items: [
+            OSCountStrip.Item(phase: .yours, label: OSText.yours, count: decisions) { workspace.triage = true },
+            OSCountStrip.Item(phase: .working, label: OSText.atWork, count: threads.filter { $0.phase == .working }.count),
+            OSCountStrip.Item(phase: .queued, label: OSText.sectionQueued, count: threads.filter { $0.phase == .queued }.count),
+            OSCountStrip.Item(phase: .failed, label: OSWatchText.sectionFailed, count: current.failed.count) {
+                if let first = current.failed.first { workspace.open(runId: first.runId, in: threads) }
+            },
+            OSCountStrip.Item(phase: .done, label: OSWatchText.weekDelivered, count: current.delivered.count),
+        ])
     }
 
     // MARK: Demander, et la réponse de l'OS
@@ -183,12 +197,18 @@ public struct OSHomeView: View {
                     } else {
                         OSPhaseMark(phase: .working, size: 16)
                     }
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text(thread.title).font(.headline).lineLimit(Self.rowLines).multilineTextAlignment(.leading)
                         Text("↳ " + line).foregroundStyle(.secondary).lineLimit(Self.rowLines)
+                        // L'iPhone n'a pas la largeur de poser le chemin à côté du texte : dessous.
+                        #if os(iOS)
+                        if let run { OSJourney(run: run) }
+                        #endif
                     }
                     Spacer()
-                    if let run { OSStepDots(run: run) }
+                    #if os(macOS)
+                    if let run { OSJourney(run: run) }
+                    #endif
                 }
             }
             .contentShape(Rectangle())
