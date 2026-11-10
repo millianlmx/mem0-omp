@@ -10,7 +10,16 @@
 import type { ModelChoice, ModelPolicy, RepoConfig, Tier } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { EventType } from "./events.ts";
-import { policyChain, policySecretVars, repoMemoryToken, spaceRule, strictest, syncMemoryTokenFile } from "./policy.ts";
+import {
+  permits,
+  policyChain,
+  policySecretVars,
+  repoMemoryToken,
+  scoutModel,
+  spaceRule,
+  strictest,
+  syncMemoryTokenFile,
+} from "./policy.ts";
 import { FAILOVER_PROMPT } from "./prompts.ts";
 import type { HostToolDefinition, HostToolHandler, PromptError, PromptErrorCause, PromptResult } from "./rpc.ts";
 import { RpcRunner, classifyPromptError, parseRetryAfter } from "./rpc.ts";
@@ -124,6 +133,8 @@ export class RunnerSession {
   #prepaid = false;
   /** Le runner vivant a été lancé en « local-only » : sans les clés des fournisseurs distants. */
   #sealed = false;
+  /** Le modèle d'exploration (`scout`) du runner vivant, posé à son lancement dans son overlay : `null` sans override. */
+  #scout: ModelChoice | null = null;
 
   readonly #memory: false | undefined;
 
@@ -166,6 +177,17 @@ export class RunnerSession {
   }
 
   /**
+   * Le runner vivant n'est plus sous le régime de la politique : lancé sans (ou avec) les clés des
+   * fournisseurs distants alors qu'elle dit l'inverse, ou avec un modèle d'exploration (`scout`) qu'elle
+   * ne permet plus. Son modèle de session se change à chaud, ces deux-là non.
+   */
+  #drifted(policy: ModelPolicy): boolean {
+    return (
+      this.#sealed !== (policy.privacy === "local-only") || (this.#scout !== null && !permits(policy, this.#scout))
+    );
+  }
+
+  /**
    * La chaîne de bascule d'un tier sous la politique du dépôt et de son espace (policy.ts) : jamais un
    * fournisseur hors de la liste blanche ; aucun modèle permis lève `PolicyRefusal`.
    */
@@ -186,9 +208,10 @@ export class RunnerSession {
     options: { avoidProvider?: string | null } = {},
   ): Promise<boolean> {
     const { config, scheduler } = this.#ctx;
-    // Un espace passé (ou sorti de) « local-only » pendant que le runner vit : il a été lancé avec (ou
-    // sans) les clés des fournisseurs distants, il ne se réutilise pas — un runner neuf repart, permis.
-    if (this.#runner?.alive && this.#sealed !== (this.#policy().policy.privacy === "local-only")) await this.stop();
+    // Un espace passé (ou sorti de) « local-only », ou durci au point de refuser le modèle d'exploration du
+    // runner, pendant qu'il vit : il a été lancé avec (ou sans) les clés des fournisseurs distants, ou avec
+    // cet override, il ne se réutilise pas — un runner neuf repart, permis.
+    if (this.#runner?.alive && this.#drifted(this.#policy().policy)) await this.stop();
     if (this.#runner?.alive) {
       if (this.#tier !== tier) {
         const pick = await scheduler.waitModel(tier, this.#chain(tier), 0, signal);
@@ -205,6 +228,7 @@ export class RunnerSession {
     const memoryToken = repoMemoryToken(this.#repo);
     const localOnly = policy.policy.privacy === "local-only";
     this.#sealed = localOnly;
+    this.#scout = scoutModel(config, policy.policy, policy.owner);
     const pick = await scheduler.waitModel(tier, chain, chainStart(chain, options.avoidProvider ?? null), signal);
     this.#tier = tier;
     this.#model = pick?.choice ?? null;
@@ -218,7 +242,7 @@ export class RunnerSession {
     const argv = runnerArgv(config, {
       unit,
       cwd: this.#cwd,
-      overlay: this.#ctx.overlay(),
+      overlay: this.#ctx.overlay(this.#scout),
       model: this.#model,
       scope,
       repo: this.#repo.path,
@@ -329,9 +353,10 @@ export class RunnerSession {
     // une relance) compte tout de suite — aucun modèle permis lève `PolicyRefusal`, rien n'est envoyé.
     const policy = this.#policy();
     const chain = this.#chain(tier, policy);
-    if (this.alive && this.#sealed !== (policy.policy.privacy === "local-only")) {
-      // Le runner vivant a été lancé sous l'autre régime (avec ou sans les clés des fournisseurs distants) :
-      // changer son modèle ne suffit pas. Il s'arrête ; l'étape relancée repart sur un runner neuf.
+    if (this.alive && this.#drifted(policy.policy)) {
+      // Le runner vivant a été lancé sous un autre régime (avec ou sans les clés des fournisseurs distants, ou un
+      // modèle d'exploration que la politique ne permet plus) : changer son modèle ne suffit pas. Il s'arrête ;
+      // l'étape relancée repart sur un runner neuf.
       await this.stop();
       return {
         status: "error",

@@ -37,6 +37,14 @@ export const GITLAB_TOKEN_VARS = ["GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_
 /** Un jeton mémoire tel que mem0-rs l'accepte dans `MEM0_HTTP_TOKENS` (ni `:`, ni `;`, ni espace). */
 const MEMORY_TOKEN = /^[A-Za-z0-9._~+/=-]{16,512}$/;
 
+/** La politique permet-elle ce modèle : `local-only` ne permet que le fournisseur local, `providers` est une liste blanche. */
+export function permits(policy: ModelPolicy, choice: ModelChoice): boolean {
+  return (
+    (policy.privacy !== "local-only" || choice.provider === LOCAL_PROVIDER) &&
+    (policy.providers?.includes(choice.provider) ?? true)
+  );
+}
+
 /**
  * La chaîne de bascule d'un tier sous une politique : pour chaque tier, du demandé vers
  * le plus capable, la chaîne propre (`models`) sinon celle du serveur, filtrée par la
@@ -55,8 +63,7 @@ export function policyChain(
   served: () => readonly string[] = () => localProvider(config)?.models ?? [],
 ): ModelChoice[] {
   const localOnly = policy.privacy === "local-only";
-  const allowed = (choice: ModelChoice) =>
-    (!localOnly || choice.provider === LOCAL_PROVIDER) && (policy.providers?.includes(choice.provider) ?? true);
+  const allowed = (choice: ModelChoice) => permits(policy, choice);
   for (const candidate of TIERS.slice(TIERS.indexOf(tier))) {
     const own = (policy.models?.[candidate] ?? []).flatMap((ref) => {
       const match = MODEL_REF.exec(ref);
@@ -79,6 +86,16 @@ export function policyChain(
       `${owner} : aucun modèle du tier ${tier} (ni au-dessus) chez ses fournisseurs permis (${policy.providers.join(", ") || "liste vide"}) — l'étape ne bascule jamais hors de la liste`,
     );
   return [];
+}
+
+/**
+ * Le modèle de l'agent d'exploration d'omp (`scout`) : la tête de la chaîne du tier `fast` sous la
+ * politique ; `null` si aucun tier `fast` n'est déclaré (l'agent suit alors le modèle de l'étape).
+ * Il ne sort jamais de la politique : la chaîne est filtrée comme celle d'une étape.
+ */
+export function scoutModel(config: HarnessConfig, policy: ModelPolicy, owner: string): ModelChoice | null {
+  const declared = (policy.models?.fast?.length ?? 0) > 0 || config.models.fast.length > 0;
+  return declared ? (policyChain(config, policy, "fast", owner)[0] ?? null) : null;
 }
 
 /**

@@ -1418,6 +1418,8 @@ capacité et un remplissage par minute (`capacity`, `refillPerMinute`) donnent a
 fournisseur son seau à jetons. Tout s'applique au prochain runner, sans redémarrage,
 et survit aux redémarrages (base SQLite, `providers`/`settings`).
 
+**L'exploration sur le tier `fast`.** Quand un tier `fast` est déclaré (au serveur ou par le dépôt), l'agent d'exploration `scout` d'omp — celui que le modèle de l'étape lance pour lire, chercher et résumer — tourne sur la tête de cette chaîne (`task.agentModelOverrides.scout` de l'overlay du runner, `runner-settings.scout-<hachage>.json` : un fichier par modèle). La chaîne est filtrée par la politique du dépôt et de son espace comme celle d'une étape : jamais hors de la liste blanche ni de `local-only`. Un espace durci qui ne permet plus ce modèle arrête le runner vivant, comme un passage en `local-only`. Sans tier `fast`, rien ne change : `scout` suit le modèle de l'étape. Les autres agents (`task`, `reviewer`, `security-reviewer`, `sonic`) ne sont pas touchés.
+
 **Les clés n'entrent jamais en base ni dans une réponse.** Elles vivent dans
 `providers.env` (0600, à côté du jeton : `providersEnvFile`), et arrivent aux runners
 selon l'isolation :
