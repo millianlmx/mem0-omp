@@ -1,8 +1,12 @@
-// L'« OS agentique » : une DÉCISION en carte compacte, partagée par le Mac et
-// l'iPhone/iPad. L'en-tête tient en une ligne, l'option recommandée est le bouton
-// principal (⏎ dans le tri), le reste se déplie à la demande ; « Lire » ouvre
-// « Comprendre » au niveau Résumé, où vivent les cartes complètes existantes. Chaque
-// bouton est un vrai geste du serveur.
+// L'« OS agentique » : une DÉCISION en carte, partagée par le Mac et l'iPhone/iPad. L'ordre
+// est toujours le même : la sorte et le fil, LA PREUVE (vignettes avant/après, tests,
+// ampleur et risque d'une revue ; première carte du briefing et raison de porte de specs ;
+// enjeu d'une question), la phrase de décision, puis les gestes. Une question montre ses
+// options avec leur conséquence, la recommandée en tête, et son échéance quand le serveur
+// tranchera seul. Une porte se valide ou se corrige (« Corriger… », à la place d'un refus) ;
+// « Toujours ainsi » fait d'une réponse ou d'une correction une consigne permanente ; le
+// menu « … » écrit la règle de palier du type et arrête la feature avec son motif. « Lire »
+// ouvre « Comprendre ». Chaque bouton est un vrai geste du serveur.
 
 import ConsoleClient
 import ConsoleCore
@@ -13,15 +17,15 @@ public struct OSDecisionCard: View {
     @ObservedObject var workstation: WorkstationModel
     @ObservedObject var intakes: HarnessIntakes
     @ObservedObject var workspace: OSWorkspace
-    let decision: OSDecision
+    let decision: ConsoleClient.OSDecision
     /// Le tri : la carte est seule à l'écran, plus grande, et ⏎ prend le geste principal.
     let large: Bool
     let done: (() -> Void)?
 
-    /// `large` : la carte du tri. `done` : appelé quand le geste a réussi.
+    /// `large` : la carte du tri. `done` : appelé quand le geste a tranché la décision.
     public init(
         server: HarnessModel, workstation: WorkstationModel, intakes: HarnessIntakes, workspace: OSWorkspace,
-        decision: OSDecision, large: Bool = false, done: (() -> Void)? = nil
+        decision: ConsoleClient.OSDecision, large: Bool = false, done: (() -> Void)? = nil
     ) {
         self.server = server
         self.workstation = workstation
@@ -34,34 +38,64 @@ public struct OSDecisionCard: View {
 
     @State private var choices: [Int: String] = [:]
     @State private var custom = ""
+    /// « Autre… » : la réponse libre à une question.
     @State private var editing = false
     @State private var reason = ""
-    @State private var refusing = false
-    @State private var failed = false
+    /// « Corriger… » d'une porte, « Refuser… » d'un envoi du poste : le champ est ouvert.
+    @State private var correcting = false
+    @State private var always = false
+    @State private var failure: HarnessFailure?
     @State private var working = false
+    @State private var stopping: HarnessRun?
+    @State private var ruleWritten = false
 
     public var body: some View {
         OSCard(tint: .orange, emphasized: true) {
             VStack(alignment: .leading, spacing: large ? 14 : 10) {
                 HStack(spacing: 6) {
-                    Image(systemName: decision.symbol)
-                    Text(decision.kind.uppercased())
+                    Image(systemName: symbol)
+                    Text(kind.uppercased())
                     if let context { Text("·"); Text(context).lineLimit(1) }
                 }
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(.orange)
                 content
-                if failed {
-                    if let failure = server.failure ?? workstation.failure {
-                        ConsoleFailureBanner(failure: failure)
-                    }
+                if let failure {
+                    ConsoleFailureBanner(failure: failure)
                 }
             }
             .disabled(working)
         }
+        .osRunStop(server: server, run: $stopping) { done?() }
+        .task { await server.osReadFeatures() }
     }
 
     // MARK: En-tête
+
+    /// La sorte de décision, en tête de la carte.
+    private var kind: String {
+        switch decision {
+        case .questions: OSText.kindQuestion
+        case .specs: OSText.kindSpecs
+        case .verdict: OSText.kindVerdict
+        case .approval: OSText.kindSend
+        case let .intake(intake): intake.isClarifying ? OSText.kindClarify : OSText.kindPlan
+        case .audit: OSText.kindProposals
+        case .jira: OSText.kindJira
+        }
+    }
+
+    private var symbol: String {
+        switch decision {
+        case .questions: "questionmark.bubble.fill"
+        case .specs: "doc.text.fill"
+        case .verdict: "checkmark.seal.fill"
+        case .approval: "paperplane.fill"
+        case .intake: "sparkles"
+        case .audit: "list.bullet.rectangle"
+        case .jira: "text.bubble.fill"
+        }
+    }
 
     /// Le fil d'où vient la décision, quand la carte est vue hors de son fil (le tri).
     private var context: String? {
@@ -83,8 +117,8 @@ public struct OSDecisionCard: View {
     private var content: some View {
         switch decision {
         case let .questions(batch): questions(batch)
-        case let .specs(run): gate(run, headline: specsHeadline(run), detail: run.briefing?.cards.first?.headline, primary: OSText.validate)
-        case let .verdict(run): gate(run, headline: verdictHeadline(run), detail: run.verdict.map { PipelineServerText.risk($0.risk) }, primary: OSText.merge)
+        case let .specs(run): gate(run, primary: OSText.validate)
+        case let .verdict(run): gate(run, primary: OSText.merge)
         case let .approval(action): approval(action)
         case let .intake(intake): intakeCard(intake)
         case let .audit(audit): auditCard(audit)
@@ -92,31 +126,25 @@ public struct OSDecisionCard: View {
         }
     }
 
-    private func specsHeadline(_ run: HarnessRun) -> String {
-        let feature = run.briefing?.feature.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return feature.isEmpty ? OSText.specsReady : OSThreads.firstLine(feature)
-    }
+    // MARK: Questions
 
-    private func verdictHeadline(_ run: HarnessRun) -> String {
-        run.verdict.map { OSThreads.firstLine($0.summary) } ?? OSThreads.clean(run.title).title
-    }
-
-    // Questions : la recommandation d'abord, les autres options en menu, « Autre… » en champ.
+    // L'enjeu, la question, ses options (la recommandée en tête, chacune avec ce qu'elle
+    // emporte), l'échéance, puis le geste qui prend l'option choisie.
     @ViewBuilder
     private func questions(_ batch: HarnessEscalationBatch) -> some View {
+        let gestures = batch.run.map(server.osGestures) ?? OSRunGestures()
         ForEach(batch.items) { item in
             VStack(alignment: .leading, spacing: 6) {
-                Text(item.card?.headline ?? OSThreads.firstLine(item.question))
-                    .font(headlineFont)
-                    .fixedSize(horizontal: false, vertical: true)
                 if let stake = item.card?.stake, !stake.isEmpty {
                     Text(stake).font(.callout).foregroundStyle(.secondary)
                 }
-                if large || batch.items.count > 1 {
-                    ForEach(item.choices) { choice in
-                        choiceRow(item: item, choice: choice)
-                    }
+                Text(item.card?.headline ?? OSThreads.firstLine(item.question))
+                    .font(headlineFont)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(OSChoices.ordered(item.choices)) { choice in
+                    choiceRow(item: item, choice: choice)
                 }
+                deadline(item, run: batch.run, gestures: gestures)
             }
         }
         if editing {
@@ -125,50 +153,50 @@ public struct OSDecisionCard: View {
                 .lineLimit(1...4)
         }
         HStack(spacing: 8) {
-            if batch.items.count == 1, let item = batch.items.first, !editing {
-                // En grand, les options sont montrées : le geste prend celle qui est choisie.
-                let recommended = (large ? choices[item.id] : nil) ?? item.recommended ?? item.options.first ?? ""
-                Button {
-                    answer(batch, with: [item.id: recommended])
-                } label: {
-                    Label(OSText.take(recommended), systemImage: "checkmark")
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(large ? .defaultAction : nil)
-                .disabled(recommended.isEmpty || !batch.acceptsAnswers)
-                if item.options.count > 1, !large {
-                    Menu(OSText.answer) {
-                        ForEach(item.options.filter { $0 != recommended }, id: \.self) { option in
-                            Button(option) { answer(batch, with: [item.id: option]) }
-                        }
-                    }
-                    .fixedSize()
-                    .disabled(!batch.acceptsAnswers)
-                }
-                Button(OSText.other) { editing = true }
-                    .disabled(!batch.acceptsAnswers)
-            } else if editing, let item = batch.items.first {
+            if editing, let item = batch.items.first {
                 Button(OSText.answer) { answer(batch, with: [item.id: custom]) }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(large ? .defaultAction : nil)
-                    .disabled(custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(custom.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !batch.acceptsAnswers)
                 Button(OSText.cancel) { editing = false }
             } else {
-                Button(OSText.answer) {
-                    var answers: [Int: String] = [:]
-                    for item in batch.items { answers[item.id] = choices[item.id] ?? item.recommended ?? item.options.first ?? "" }
-                    answer(batch, with: answers)
+                let chosen = chosen(batch)
+                Button {
+                    answer(batch, with: chosen)
+                } label: {
+                    Label(primaryLabel(batch, chosen: chosen), systemImage: "checkmark")
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(large ? .defaultAction : nil)
-                .disabled(!batch.acceptsAnswers)
+                .disabled(!batch.acceptsAnswers || chosen.values.contains(where: \.isEmpty))
+                if batch.items.count == 1 {
+                    Button(OSText.other) { editing = true }
+                        .disabled(!batch.acceptsAnswers)
+                }
+            }
+            if gestures.always {
+                OSCheckbox(label: OSDecideText.always, isOn: $always)
             }
             Spacer()
             readButton(batch.id)
+            moreMenu(batch.run, gestures: gestures)
         }
         if !batch.acceptsAnswers {
             Label(OSText.waitsStep, systemImage: "hourglass").font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    /// La réponse à chaque question : l'option choisie, sinon la recommandée, sinon la première.
+    private func chosen(_ batch: HarnessEscalationBatch) -> [Int: String] {
+        var answers: [Int: String] = [:]
+        for item in batch.items { answers[item.id] = choices[item.id] ?? item.recommended ?? item.options.first ?? "" }
+        return answers
+    }
+
+    /// « Prendre « Garder le cache » » pour une question seule dont l'option tient sur un bouton.
+    private func primaryLabel(_ batch: HarnessEscalationBatch, chosen: [Int: String]) -> String {
+        guard batch.items.count == 1, let option = chosen.values.first, !option.isEmpty, option.count <= 32 else { return OSText.answer }
+        return OSText.take(option)
     }
 
     private func choiceRow(item: HarnessEscalation, choice: HarnessChoice) -> some View {
@@ -185,7 +213,7 @@ public struct OSDecisionCard: View {
                         if choice.isPreferred { OSTag(text: OSText.recommended, tint: .green) }
                     }
                     if let impact = choice.impact, !impact.isEmpty {
-                        Text(impact).font(.caption).foregroundStyle(.secondary).lineLimit(large ? 3 : 1)
+                        Text(impact).font(.caption).foregroundStyle(.secondary).lineLimit(large ? 3 : 2)
                     }
                 }
             }
@@ -193,31 +221,66 @@ public struct OSDecisionCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    // Specs et revue : valider, refuser avec une raison, lire.
+    /// « « Garder le cache » dans 12 min sauf avis contraire » : le délai vit, et « Attendre ma
+    /// réponse » passe la feature en « tout me demander » (plus rien ne s'applique seul).
     @ViewBuilder
-    private func gate(_ run: HarnessRun, headline: String, detail: String?, primary: String) -> some View {
-        Text(headline)
+    private func deadline(_ item: HarnessEscalation, run: HarnessRun?, gestures: OSRunGestures) -> some View {
+        if item.autoDate != nil {
+            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                if let deadline = OSDeadline.of(item, now: timeline.date) {
+                    HStack(spacing: 8) {
+                        Label(deadline.text, systemImage: "timer")
+                            .monospacedDigit()
+                            .foregroundStyle(.orange)
+                        if gestures.autonomy, let run {
+                            Button {
+                                perform(settles: false) { await server.setAutonomy(runId: run.id, level: .ask) }
+                            } label: {
+                                Text(OSDecideText.waitForMe).underline().foregroundStyle(Color.accentColor)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                    .font(.caption)
+                }
+            }
+        }
+    }
+
+    // MARK: Specs et revue
+
+    // La preuve, la phrase, puis : valider (ou fusionner), corriger, et le menu « … ».
+    @ViewBuilder
+    private func gate(_ run: HarnessRun, primary: String) -> some View {
+        let gestures = server.osGestures(run)
+        if run.awaitsSpecs {
+            specsProof(run)
+        } else {
+            OSDecideReviewProof(server: server, run: run, large: large)
+        }
+        Text(run.awaitsSpecs ? specsHeadline(run) : verdictHeadline(run))
             .font(headlineFont)
             .lineLimit(large ? 4 : 2)
-        if let detail, !detail.isEmpty {
-            Text(detail).font(.callout).foregroundStyle(.secondary).lineLimit(2)
-        }
-        if refusing {
-            TextField(OSText.reason, text: $reason, axis: .vertical)
+        if correcting {
+            TextField(OSDecideText.amendPrompt, text: $reason, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...4)
         }
         HStack(spacing: 8) {
-            if refusing {
-                Button(OSText.refuseNow, role: .destructive) {
-                    perform { await server.validate(runId: run.id, approve: false, reason: reason) }
+            if correcting {
+                Button(OSDecideText.amendNow) {
+                    perform { await server.osAmend(run, text: reason, always: always) }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.red)
+                .keyboardShortcut(large ? .defaultAction : nil)
                 .disabled(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button(OSText.cancel) { refusing = false }
+                Button(OSText.cancel) { correcting = false }
+                if gestures.always {
+                    OSCheckbox(label: OSDecideText.always, isOn: $always)
+                }
             } else {
                 Button {
                     perform { await server.validate(runId: run.id, approve: true, reason: "") }
@@ -226,22 +289,82 @@ public struct OSDecisionCard: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(large ? .defaultAction : nil)
-                Button(OSText.refuse) { refusing = true }
+                .disabled(!server.canAct)
+                if gestures.amend {
+                    Button(OSDecideText.amend) { correcting = true }
+                }
             }
             Spacer()
             readButton(run.id)
+            moreMenu(run, gestures: gestures)
         }
     }
 
-    // L'envoi du poste : le message EN ENTIER, ses destinataires, approuver ou refuser.
+    /// La première carte du briefing (le point qui demande un regard) et la raison de la porte.
+    @ViewBuilder
+    private func specsProof(_ run: HarnessRun) -> some View {
+        if let card = run.briefing?.cards.first {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(card.headline).font(.callout.weight(.semibold))
+                if !card.stake.isEmpty {
+                    Text(card.stake).font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+        }
+        if let reason = run.reason, !reason.isEmpty {
+            Label(OSThreads.firstLine(reason), systemImage: "flag")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+    }
+
+    private func specsHeadline(_ run: HarnessRun) -> String {
+        let feature = run.briefing?.feature.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return feature.isEmpty ? OSText.specsReady : OSThreads.firstLine(feature)
+    }
+
+    private func verdictHeadline(_ run: HarnessRun) -> String {
+        run.verdict.map { OSThreads.firstLine($0.summary) } ?? OSThreads.clean(run.title).title
+    }
+
+    /// Le menu « … » : la règle de palier du type (admin, feature typée) et l'arrêt motivé.
+    @ViewBuilder
+    private func moreMenu(_ run: HarnessRun?, gestures: OSRunGestures) -> some View {
+        if let run, gestures.stop || gestures.rule != nil {
+            Menu {
+                if let rule = gestures.rule {
+                    Button(
+                        OSDecideText.alwaysAlone(kind: rule.kind.rawValue, repo: rule.repo),
+                        systemImage: ruleWritten ? "checkmark" : "bolt.badge.checkmark"
+                    ) {
+                        write(rule)
+                    }
+                    .disabled(ruleWritten)
+                }
+                if gestures.stop {
+                    Button(OSDecideText.stop, systemImage: "stop.circle", role: .destructive) { stopping = run }
+                }
+            } label: {
+                Label(OSDecideText.more, systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
+            }
+            .menuIndicator(.hidden)
+            .buttonStyle(.borderless)
+            .fixedSize()
+        }
+    }
+
+    // MARK: Envoi du poste
+
+    // Le message EN ENTIER, ses destinataires, approuver ou refuser.
     @ViewBuilder
     private func approval(_ action: WorkstationAction) -> some View {
         let shown = action.approval
-        Text(shown?.summary ?? action.kind)
-            .font(headlineFont)
-        Text(OSText.to(shown?.recipients ?? []))
-            .font(.caption)
-            .foregroundStyle(.secondary)
         if let preview = shown?.preview, !preview.isEmpty {
             Text(preview)
                 .font(.callout)
@@ -250,17 +373,22 @@ public struct OSDecisionCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
         }
-        if refusing {
+        Text(shown?.summary ?? action.kind)
+            .font(headlineFont)
+        Text(OSText.to(shown?.recipients ?? []))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        if correcting {
             TextField(OSText.reason, text: $reason).textFieldStyle(.roundedBorder)
         }
         HStack(spacing: 8) {
-            if refusing {
+            if correcting {
                 Button(OSText.refuseNow, role: .destructive) {
                     perform { await workstation.refuse(shown: action, reason: reason) }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
-                Button(OSText.cancel) { refusing = false }
+                Button(OSText.cancel) { correcting = false }
             } else {
                 Button {
                     perform { await workstation.approve(shown: action) }
@@ -269,13 +397,15 @@ public struct OSDecisionCard: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(large ? .defaultAction : nil)
-                Button(OSText.refuse) { refusing = true }
+                Button(OSText.refuse) { correcting = true }
             }
             Spacer()
         }
     }
 
-    // La Demande : le plan à lancer, ou la question de l'OS.
+    // MARK: Demande
+
+    // Le plan à lancer, ou la question de l'OS.
     @ViewBuilder
     private func intakeCard(_ intake: HarnessIntake) -> some View {
         if intake.isClarifying {
@@ -294,10 +424,10 @@ public struct OSDecisionCard: View {
                 Spacer()
             }
         } else if let plan = intake.plan {
-            Text(plan.title).font(headlineFont)
             if let creates = plan.creates, !creates.isEmpty {
                 Text(creates).font(.callout).foregroundStyle(.secondary).lineLimit(3)
             }
+            Text(plan.title).font(headlineFont)
             HStack {
                 Button {
                     perform { (try? await intakes.confirm(intake)) != nil }
@@ -312,16 +442,18 @@ public struct OSDecisionCard: View {
         }
     }
 
-    // Un commentaire Jira proposé : le texte EN ENTIER, la raison, envoyer ou écarter.
+    // MARK: Commentaire Jira
+
+    // Le texte EN ENTIER, la raison, envoyer ou écarter.
     @ViewBuilder
     private func jiraCard(_ write: AtlassianWrite) -> some View {
-        Text(write.issueKey + " · " + OSThreads.firstLine(write.why)).font(headlineFont).lineLimit(2)
         Text(write.body)
             .font(.callout)
             .osSelectable()
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+        Text(write.issueKey + " · " + OSThreads.firstLine(write.why)).font(headlineFont).lineLimit(2)
         HStack {
             Button {
                 perform { await server.atlassian.approve(write.id) }
@@ -335,14 +467,16 @@ public struct OSDecisionCard: View {
         }
     }
 
+    // MARK: Propositions d'audit
+
     @ViewBuilder
     private func auditCard(_ audit: HarnessAudit) -> some View {
-        Text(audit.focus.isEmpty ? audit.repo : OSThreads.firstLine(audit.focus)).font(headlineFont)
         ForEach(Array(audit.proposals.prefix(large ? 8 : 3).enumerated()), id: \.offset) { _, proposal in
             Label(proposal.title, systemImage: proposal.isWeakness ? "exclamationmark.triangle" : "plus.circle")
                 .font(.callout)
                 .lineLimit(1)
         }
+        Text(audit.focus.isEmpty ? audit.repo : OSThreads.firstLine(audit.focus)).font(headlineFont)
         HStack {
             Button {
                 perform {
@@ -369,21 +503,53 @@ public struct OSDecisionCard: View {
     // MARK: Gestes
 
     private func answer(_ batch: HarnessEscalationBatch, with answers: [Int: String]) {
-        perform { await server.answer(runId: batch.id, answers: answers) }
+        perform { await server.answer(runId: batch.id, answers: answers, always: always ? Set(answers.keys) : []) }
     }
 
-    private func perform(_ gesture: @escaping @MainActor () async -> Bool) {
+    /// « Toujours valider seul … » : la règle est écrite, la décision en cours reste à prendre.
+    private func write(_ rule: OSAlwaysRule) {
         working = true
-        failed = false
+        Task {
+            ruleWritten = await server.autonomy.setRule(repo: rule.repo, kind: rule.kind, gate: rule.gate, mode: .auto)
+            failure = ruleWritten ? nil : server.autonomy.failure
+            working = false
+        }
+    }
+
+    /// `settles` : le geste tranche la décision (la carte s'efface, le tri avance).
+    private func perform(settles: Bool = true, _ gesture: @escaping @MainActor () async -> Bool) {
+        working = true
+        failure = nil
         Task {
             let ok = await gesture()
             working = false
-            failed = !ok
-            if ok {
+            failure = ok ? nil : server.failure ?? workstation.failure
+            if ok, settles {
                 editing = false
-                refusing = false
+                correcting = false
                 done?()
             }
         }
+    }
+}
+
+/// Une case à cocher avec son mot, la même sur le Mac et l'iPhone/iPad.
+struct OSCheckbox: View {
+    let label: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Button {
+            isOn.toggle()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: isOn ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(isOn ? Color.accentColor : .secondary)
+                Text(label)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }

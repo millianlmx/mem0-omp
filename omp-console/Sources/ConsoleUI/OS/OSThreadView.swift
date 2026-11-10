@@ -1,8 +1,10 @@
 // L'« OS agentique » : la page d'un FIL, partagée par le Mac et l'iPhone/iPad. Pas
-// d'onglets : un récit en cartes, de l'origine au résultat — ce qui l'a ouvert, le
-// plan quand il a plusieurs tâches, l'agent au travail (son pouls), ce qui vous attend,
-// ce que l'agent a décidé seul, le résultat. En pied, une seule zone : une consigne
-// à l'agent qui travaille, sinon une demande de suite à l'OS.
+// d'onglets : un récit en cartes, de l'origine au résultat — ce qui l'a ouvert, la session
+// locale qui y travaille, le plan quand il a plusieurs tâches, l'agent au travail (son
+// pouls, « Corriger… », « Arrêter… »), ce qui le retient en file (carte « Bloqué »), ce qui
+// vous attend, ce que l'agent a décidé seul, le résultat (« Refaire »). L'en-tête porte le
+// coût du fil et son curseur d'autonomie. En pied, une seule zone : une consigne à l'agent
+// qui travaille (elle le corrige là où il est), sinon une demande de suite à l'OS.
 
 import ConsoleClient
 import ConsoleCore
@@ -17,11 +19,16 @@ public struct OSThreadView: View {
     let thread: OSThread
     /// Le nom de chaque navigateur du poste, par identifiant.
     let browsers: [String: String]
+    /// Les brouillons de la coque : ses feuilles de création (« Refaire ») et l'ouverture
+    /// d'une feature dans son fil.
+    let drafts: HarnessDrafts?
 
-    /// `browsers` : le nom de chaque navigateur du poste, par identifiant.
+    /// `browsers` : le nom de chaque navigateur du poste, par identifiant. `drafts` : les
+    /// brouillons de la coque ; sans eux, « Refaire » n'est pas proposé et une feature
+    /// citée s'ouvre dans « Comprendre ».
     public init(
         server: HarnessModel, workstation: WorkstationModel, intakes: HarnessIntakes, pulse: OSPulse, workspace: OSWorkspace,
-        thread: OSThread, browsers: [String: String]
+        thread: OSThread, browsers: [String: String], drafts: HarnessDrafts? = nil
     ) {
         self.server = server
         self.workstation = workstation
@@ -30,12 +37,20 @@ public struct OSThreadView: View {
         self.workspace = workspace
         self.thread = thread
         self.browsers = browsers
+        self.drafts = drafts
     }
 
     @State private var draft = ""
     @State private var sending = false
     @State private var sent: String?
     @State private var reportExpanded = false
+    /// La feature que « Corriger… » a désignée : la consigne du pied lui est adressée.
+    @State private var amending: String?
+    @State private var always = false
+    @State private var stopping: HarnessRun?
+    /// Un geste de la page a été refusé : sa raison s'affiche sous l'en-tête.
+    @State private var failure: HarnessFailure?
+    @FocusState private var composing: Bool
 
     private var inbox: HarnessInbox? { server.inbox }
 
@@ -44,7 +59,15 @@ public struct OSThreadView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     header
+                    if let failure {
+                        ConsoleFailureBanner(failure: failure)
+                    }
                     originCard
+                    if let session = thread.localSession {
+                        OSLocalSessionCard(server: server, pulse: pulse, session: session, opened: open) {
+                            workspace.open(OSWorkspace.now)
+                        }
+                    }
                     if thread.runs.count > 1 { planCard }
                     if thread.requests.count > 1 { attemptsCard }
                     if let request = thread.request { requestCards(request) }
@@ -66,9 +89,22 @@ public struct OSThreadView: View {
             if !thread.runs.isEmpty || thread.request != nil {
                 Divider()
                 composer
+                    .frame(maxWidth: 760)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
             }
+        }
+        .osRunStop(server: server, run: $stopping)
+        .task { await server.osReadFeatures() }
+    }
+
+    /// Ouvre une feature dans son fil (la coque le résout) ; sans coque, dans « Comprendre ».
+    private func open(_ runId: String) {
+        if let drafts {
+            drafts.openedRun = runId
+        } else {
+            workspace.understand(runId: runId, level: .summary)
         }
     }
 
@@ -86,7 +122,7 @@ public struct OSThreadView: View {
                 OSTag(text: thread.origin.label, symbol: thread.origin.symbol)
                 OSTag(text: thread.phase.label, tint: thread.phase.color)
                 if thread.cost > 0 {
-                    OSTag(text: MonitoringText.cost(thread.cost), symbol: "dollarsign.circle")
+                    OSTag(text: OSDecideText.total(thread.cost), symbol: "dollarsign.circle")
                 }
                 Text(thread.createdAt.osRelative)
                     .font(.caption)
@@ -98,6 +134,8 @@ public struct OSThreadView: View {
             } else if let request = thread.request {
                 OSPlace(subject: .request(request, browser: request.browserId.flatMap { browsers[$0] }))
             }
+            OSAutonomyPicker(server: server, runs: thread.liveRuns) { failure = server.failure }
+                .padding(.top, 2)
         }
     }
 
@@ -204,19 +242,24 @@ public struct OSThreadView: View {
     @ViewBuilder
     private func runCards(_ run: HarnessRun) -> some View {
         let phase = OSThreads.phase(of: run, inbox: inbox)
-        if phase == .working || phase == .queued {
-            liveCard(run, phase: phase)
+        let gestures = server.osGestures(run)
+        if phase == .queued, run.waitCause != nil {
+            OSRunBlockedCard(server: server, run: run, open: open, stop: { stopping = run }) {
+                failure = server.pause.failure ?? server.failure
+            }
+        } else if phase == .working || phase == .queued {
+            liveCard(run, phase: phase, gestures: gestures)
         }
-        ForEach(OSDecision.of(runId: run.id, server: server)) { decision in
+        ForEach(OSDecisions.of(runId: run.id, inbox: inbox)) { decision in
             OSDecisionCard(server: server, workstation: workstation, intakes: intakes, workspace: workspace, decision: decision)
         }
         autonomousCards(run)
         if [.merged, .failed, .cancelled].contains(run.phase) {
-            resultCard(run)
+            resultCard(run, gestures: gestures)
         }
     }
 
-    private func liveCard(_ run: HarnessRun, phase: OSPhase) -> some View {
+    private func liveCard(_ run: HarnessRun, phase: OSPhase, gestures: OSRunGestures) -> some View {
         TimelineView(.periodic(from: .now, by: 5)) { context in
             OSCard(tint: .accentColor, emphasized: phase == .working) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -240,16 +283,24 @@ public struct OSThreadView: View {
                     } else if let reason = run.reason, !reason.isEmpty {
                         Text("↳ " + OSThreads.firstLine(reason)).foregroundStyle(.secondary).lineLimit(2)
                     }
-                    HStack {
-                        Text(run.createdAt.osRelative)
-                        if run.fixes > 0 { Text("· " + OSText.fixes(run.fixes)) }
-                        if let cost = inbox?.costs[run.id], cost > 0 { Text("· " + MonitoringText.cost(cost)) }
+                    HStack(spacing: 8) {
+                        if gestures.amend {
+                            Button(OSDecideText.amend) { amend(run) }
+                        }
+                        if gestures.stop {
+                            Button(OSDecideText.stop) { stopping = run }
+                        }
                         Spacer()
-                        Button(OSText.understand + " ›") { workspace.understand(runId: run.id, level: .raw) }
-                            .buttonStyle(.borderless)
+                        Group {
+                            Text(run.createdAt.osRelative)
+                            if run.fixes > 0 { Text("· " + OSText.fixes(run.fixes)) }
+                            if let cost = inbox?.costs[run.id], cost > 0 { Text("· " + MonitoringText.cost(cost)) }
+                            Button(OSText.understand + " ›") { workspace.understand(runId: run.id, level: .raw) }
+                                .buttonStyle(.borderless)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 }
             }
         }
@@ -282,11 +333,11 @@ public struct OSThreadView: View {
         }
     }
 
-    private func resultCard(_ run: HarnessRun) -> some View {
+    private func resultCard(_ run: HarnessRun, gestures: OSRunGestures) -> some View {
         let merged = run.phase == .merged
         let tint: Color = merged ? .green : run.phase == .failed ? .red : .secondary
         return OSCard(tint: tint, emphasized: merged) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     OSPhaseMark(phase: OSThreads.phase(of: run, inbox: nil), size: 14)
                     Text(merged ? OSText.merged : run.osState.capitalized)
@@ -304,6 +355,17 @@ public struct OSThreadView: View {
                     Text(OSThreads.firstLine(summary)).foregroundStyle(.secondary).lineLimit(2)
                 } else if let reason = run.reason, !reason.isEmpty {
                     Text(OSThreads.firstLine(reason)).foregroundStyle(.secondary).lineLimit(2)
+                }
+                if gestures.amend || (gestures.redo && drafts != nil) {
+                    HStack(spacing: 8) {
+                        if gestures.amend {
+                            Button(OSDecideText.amend) { amend(run) }
+                        }
+                        if gestures.redo, let drafts {
+                            OSRunRedoMenu(server: server, drafts: drafts, run: run) { failure = server.failure }
+                        }
+                        Spacer()
+                    }
                 }
             }
         }
@@ -374,19 +436,35 @@ public struct OSThreadView: View {
 
     // MARK: Pied
 
+    /// La feature que la consigne du pied corrige : celle que « Corriger… » a désignée,
+    /// sinon la dernière qui en accepte une.
     private var target: HarnessRun? {
-        thread.runs.last { $0.acceptsInstructions }
+        if let amending, let run = thread.runs.first(where: { $0.id == amending }), server.osGestures(run).amend { return run }
+        return thread.runs.last { $0.acceptsInstructions && server.osGestures($0).amend }
+    }
+
+    /// « Corriger… » : la consigne du pied s'adresse à cette feature.
+    private func amend(_ run: HarnessRun) {
+        amending = run.id
+        composing = true
     }
 
     private var composer: some View {
-        HStack(spacing: 8) {
+        let target = target
+        return HStack(spacing: 8) {
             Image(systemName: target == nil ? "sparkles" : "text.bubble")
                 .foregroundStyle(Color.accentColor)
             TextField(target == nil ? OSText.followUp : OSText.reply, text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...5)
+                .focused($composing)
                 .onSubmit(send)
                 .disabled(sending || !server.canAct)
+            // La case ne paraît qu'avec une consigne en cours : elle porte sur elle.
+            if let target, !draft.isEmpty, server.osGestures(target).always {
+                OSCheckbox(label: OSDecideText.always, isOn: $always)
+                    .font(.caption)
+            }
             if sending { ProgressView().controlSize(.small) }
             if let sent { Text(sent).font(.caption).foregroundStyle(.secondary) }
         }
@@ -398,22 +476,30 @@ public struct OSThreadView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         sending = true
+        failure = nil
         Task {
             if let run = target {
-                if await server.instruct(runId: run.id, text: text) != nil {
-                    draft = ""
-                    sent = "✓"
+                if await server.osAmend(run, text: text, always: always) {
+                    delivered()
+                } else {
+                    failure = server.failure
                 }
             } else {
                 // Une phrase du PROTOCOLE, pas un texte d'écran : le serveur titre ses suites
                 // ainsi et `OSThreads.clean` la reconnaît, en français quelle que soit la langue.
                 let ask = "Suite de « \(thread.title) » : \(text)"
                 if (try? await intakes.submit(text: ask, source: intakeSource, repo: thread.repo)) != nil {
-                    draft = ""
-                    sent = "✓"
+                    delivered()
                 }
             }
             sending = false
         }
+    }
+
+    private func delivered() {
+        draft = ""
+        sent = "✓"
+        always = false
+        amending = nil
     }
 }
