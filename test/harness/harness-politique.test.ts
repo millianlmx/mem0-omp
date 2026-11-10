@@ -616,3 +616,58 @@ test("harness-politique/AC-11 : la pile Portainer pose les jetons par dépôt �
   assert.doesNotMatch(fs.readFileSync(path.join(secrets, "harness", "harness.env"), "utf8"), /MEM0_TOKEN_/);
   assert.notEqual(setup({ OMP_HARNESS_MEMORY_TOKENS: "a:b c:d" }).status, 0, "un blanc est refusé");
 });
+
+/** Le modèle d'exploration (`task.agentModelOverrides.scout`) que l'overlay d'un runner lancé pose. */
+function scoutOf(spawned: Spawned | undefined): string | undefined {
+  const file = spawned?.args[spawned.args.indexOf("--config") + 1] ?? "";
+  const settings = JSON.parse(fs.readFileSync(file, "utf8")) as { task?: { agentModelOverrides?: { scout?: string } } };
+  return settings.task?.agentModelOverrides?.scout;
+}
+
+test("harness-politique/AC-12 : l'agent d'exploration d'omp (scout) tourne sur la tête du tier fast sous la politique du dépôt — jamais hors de sa liste blanche ni de local-only ; sans tier fast rien ne change ; un espace durci arrête le runner qui porte l'ancien override", async () => {
+  const fast = [{ provider: "anthropic", model: "haiku" }];
+  const plain = world((c) => {
+    c.models.fast = fast;
+  });
+  await plain.session.open("heavy", "u1", signal());
+  assert.equal(modelArg(plain.runner.spawned[0]), "anthropic/opus", "la session garde le modèle de son étape");
+  assert.equal(scoutOf(plain.runner.spawned[0]), "anthropic/haiku");
+  await plain.session.stop();
+
+  const none = world(() => {});
+  await none.session.open("heavy", "u1", signal());
+  assert.equal(scoutOf(none.runner.spawned[0]), undefined, "aucun tier fast : l'agent suit le modèle de l'étape");
+  await none.session.stop();
+
+  const listed = world((c) => {
+    c.models.fast = fast;
+    Object.assign(c.repos[0] as RepoConfig, { providers: ["openrouter"] });
+  });
+  await listed.session.open("heavy", "u1", signal());
+  assert.equal(scoutOf(listed.runner.spawned[0]), "openrouter/big", "anthropic est hors liste blanche");
+  await listed.session.stop();
+
+  const sealed = world((c) => {
+    declareLocal(c);
+    c.models.fast = fast;
+    Object.assign(c.repos[0] as RepoConfig, { privacy: "local-only" });
+  });
+  await sealed.session.open("heavy", "u1", signal());
+  assert.equal(scoutOf(sealed.runner.spawned[0]), "omlx/qwen3-coder", "local-only : le seul modèle local");
+  await sealed.session.stop();
+
+  const drift = world((c) => {
+    c.models.fast = fast;
+  });
+  assert.equal(await drift.session.open("heavy", "u1", signal()), false);
+  assert.equal(
+    await drift.session.open("heavy", "u1", signal()),
+    true,
+    "politique inchangée : le runner est réutilisé",
+  );
+  Object.assign(drift.config.repos[0] as RepoConfig, { providers: ["openrouter"] });
+  assert.equal(await drift.session.open("heavy", "u1", signal()), false, "l'override n'est plus permis : runner neuf");
+  assert.equal(drift.runner.spawned.length, 2);
+  assert.equal(scoutOf(drift.runner.spawned[1]), "openrouter/big");
+  await drift.session.stop();
+});

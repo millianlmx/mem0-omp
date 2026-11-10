@@ -7,7 +7,7 @@
 // - `transition` : un changement d'état validé par la table de `machine.ts`, écrit
 //   par compare-and-swap, ses événements dans la MÊME transaction SQLite.
 import { Baseline } from "./baseline.ts";
-import type { HarnessConfig, RepoConfig } from "./config.ts";
+import type { HarnessConfig, ModelChoice, RepoConfig } from "./config.ts";
 import { repoByName } from "./config.ts";
 import type { RunPatch, RunRow, Store } from "./db.ts";
 import { HarnessError } from "./errors.ts";
@@ -108,7 +108,7 @@ export class HarnessContext {
   readonly observability: Observability;
   /** Les alertes push des appareils enregistrés (APNs, même clé que les Live Activities). */
   readonly alerts: AlertPusher;
-  #overlay: string | null = null;
+  readonly #overlays = new Map<string, string>();
 
   constructor(deps: HarnessDeps) {
     this.config = deps.config;
@@ -201,10 +201,15 @@ export class HarnessContext {
     this.alerts.subscribe();
   }
 
-  /** L'overlay de réglages du profil pipeline, écrit une fois. */
-  overlay(): string {
-    this.#overlay ??= writePipelineOverlay(this.config.dataDir);
-    return this.#overlay;
+  /** L'overlay de réglages du profil pipeline pour ce modèle d'exploration (`null` : aucun override), écrit une fois. */
+  overlay(scout: ModelChoice | null = null): string {
+    const key = scout ? `${scout.provider}/${scout.model}` : "";
+    let file = this.#overlays.get(key);
+    if (file === undefined) {
+      file = writePipelineOverlay(this.config.dataDir, scout);
+      this.#overlays.set(key, file);
+    }
+    return file;
   }
 
   /** Un dépôt DÉCLARÉ par son nom (la configuration peut être rechargée : toujours relue). */

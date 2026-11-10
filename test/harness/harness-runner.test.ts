@@ -233,3 +233,20 @@ test("harness-runner/AC-34 : GH_TOKEN et GITHUB_TOKEN du service n'atteignent ni
     }
   }
 });
+
+test("harness-runner/AC-35 : l'overlay d'un modèle d'exploration est un fichier à part, un par modèle, qui garde le profil pipeline — sans modèle, l'overlay n'a aucun override", () => {
+  const dir = tmpdir("harness-overlay-scout-");
+  const read = (file: string) => JSON.parse(fs.readFileSync(file, "utf8"));
+  const plain = writePipelineOverlay(dir);
+  const haiku = writePipelineOverlay(dir, { provider: "anthropic", model: "haiku" });
+  const local = writePipelineOverlay(dir, { provider: "omlx", model: "qwen3-coder" });
+  assert.equal(
+    new Set([plain, haiku, local]).size,
+    3,
+    "un fichier par modèle : un dépôt ne lit pas l'override d'un autre",
+  );
+  assert.deepEqual(read(plain), PIPELINE_SETTINGS);
+  assert.deepEqual(read(haiku), { ...PIPELINE_SETTINGS, task: { agentModelOverrides: { scout: "anthropic/haiku" } } });
+  assert.deepEqual(read(local), { ...PIPELINE_SETTINGS, task: { agentModelOverrides: { scout: "omlx/qwen3-coder" } } });
+  assert.equal(writePipelineOverlay(dir, { provider: "anthropic", model: "haiku" }), haiku, "le chemin est stable");
+});

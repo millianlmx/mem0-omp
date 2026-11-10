@@ -11,6 +11,7 @@
 // En isolation `container`, c'est un conteneur frère (`run -i`, stdio gardés), aux
 // mêmes plafonds, qui ne monte que son worktree, le clone en lecture, son HOME et
 // ses clés.
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,11 +36,30 @@ export const PIPELINE_SETTINGS = {
   python: { kernelMode: "per-call" },
 } as const;
 
-/** Écrit l'overlay du profil pipeline dans `dataDir` et rend son chemin. */
-export function writePipelineOverlay(dataDir: string): string {
-  const file = path.join(dataDir, "runner-settings.json");
+/** Le sélecteur `fournisseur/modèle` qu'omp lit dans ses réglages. */
+function selector(choice: ModelChoice): string {
+  return `${choice.provider}/${choice.model}`;
+}
+
+/** Le profil pipeline ; avec `scout`, l'agent d'exploration d'omp tourne sur ce modèle (`task.agentModelOverrides`). */
+export function pipelineSettings(scout: ModelChoice | null = null): Record<string, unknown> {
+  return scout
+    ? { ...PIPELINE_SETTINGS, task: { agentModelOverrides: { scout: selector(scout) } } }
+    : PIPELINE_SETTINGS;
+}
+
+/**
+ * Écrit l'overlay du profil pipeline dans `dataDir` et rend son chemin. Un overlay par
+ * modèle d'exploration (un hachage du sélecteur dans le nom) : l'override d'un dépôt ne
+ * peut donc jamais atteindre un runner dont la politique n'a pas permis ce modèle.
+ */
+export function writePipelineOverlay(dataDir: string, scout: ModelChoice | null = null): string {
+  const name = scout
+    ? `runner-settings.scout-${createHash("sha256").update(selector(scout)).digest("hex").slice(0, 12)}.json`
+    : "runner-settings.json";
+  const file = path.join(dataDir, name);
   fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(PIPELINE_SETTINGS, null, 2)}\n`);
+  fs.writeFileSync(file, `${JSON.stringify(pipelineSettings(scout), null, 2)}\n`);
   return file;
 }
 
