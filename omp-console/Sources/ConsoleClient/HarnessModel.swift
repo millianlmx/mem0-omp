@@ -242,7 +242,12 @@ public final class HarnessModel: ObservableObject {
     /// gardé au seul trousseau (`onPaired` n'écrit ailleurs que le jeton ordinaire).
     @discardableResult
     public func configure(address rawAddress: String, token tokenInput: String) async -> Bool {
-        let pairing = HarnessPairing.decode(rawAddress)
+        await connect(pairing: HarnessPairing.decode(rawAddress), address: rawAddress, token: tokenInput)
+    }
+
+    /// Le cœur de `configure` : le même pour un code collé (`omp1:…`, décodé par l'appelant)
+    /// et pour un appairage par ticket (`pair(with:)`, HarnessPairLink.swift).
+    func connect(pairing: HarnessPairing?, address rawAddress: String, token tokenInput: String) async -> Bool {
         let raw = pairing?.address ?? rawAddress
         let rawToken = pairing?.appToken ?? tokenInput
         guard let normalized = Self.normalizedAddress(raw), let url = URL(string: normalized) else {

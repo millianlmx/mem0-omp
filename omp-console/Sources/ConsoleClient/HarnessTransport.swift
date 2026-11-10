@@ -23,12 +23,16 @@ public struct HarnessCall: Equatable, Sendable {
     public var path: String
     public var body: Data?
     public var headers: [String: String]
+    /// Faux pour l'appel d'une route PUBLIQUE (l'échange d'un ticket d'appairage : l'appareil n'a
+    /// pas encore de jeton) : le transport n'envoie alors aucun `Authorization`.
+    public var authenticated: Bool
 
-    public init(method: String, path: String, body: Data? = nil, headers: [String: String] = [:]) {
+    public init(method: String, path: String, body: Data? = nil, headers: [String: String] = [:], authenticated: Bool = true) {
         self.method = method
         self.path = path
         self.body = body
         self.headers = headers
+        self.authenticated = authenticated
     }
 }
 
@@ -159,13 +163,17 @@ public struct URLSessionHarnessTransport: HarnessTransport {
         return URL(string: base + path)
     }
 
-    private static func request(_ call: HarnessCall, server: HarnessServer, stream: Bool) throws -> URLRequest {
+    /// La requête d'un appel. Un appel public (`authenticated` faux) ne porte JAMAIS d'`Authorization`,
+    /// pas même celui qu'un en-tête en plus tenterait d'y mettre.
+    static func request(_ call: HarnessCall, server: HarnessServer, stream: Bool) throws -> URLRequest {
         guard let target = Self.url(call.path, server: server) else { throw HarnessFailure.invalidAddress }
         var request = URLRequest(url: target)
         request.httpMethod = call.method
-        request.setValue("Bearer \(server.token)", forHTTPHeaderField: "Authorization")
+        if call.authenticated { request.setValue("Bearer \(server.token)", forHTTPHeaderField: "Authorization") }
         request.setValue(stream ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")
-        for (name, value) in call.headers { request.setValue(value, forHTTPHeaderField: name) }
+        for (name, value) in call.headers where call.authenticated || name.lowercased() != "authorization" {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
         if let body = call.body {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

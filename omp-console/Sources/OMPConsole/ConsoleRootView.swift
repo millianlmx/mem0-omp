@@ -130,7 +130,9 @@ struct ConsoleRootView: View {
 
     /// Ouvre un lien `ompconsole://` : une section, la page d'une feature, une page de Système.
     private func open(_ url: URL) {
-        guard let section = HarnessWidgetLink.section(of: url) else { return }
+        // Un lien d'appairage (`ompconsole://pair…`, le QR code que ce Mac affiche) ne s'ouvre jamais ici :
+        // c'est l'iPhone qui appaire ; le Mac l'ignore, sans changer de section.
+        guard !HarnessPairLink.isPairLink(url), let section = HarnessWidgetLink.section(of: url) else { return }
         let item = url.pathComponents.dropFirst().first
         switch section {
         case .runs:

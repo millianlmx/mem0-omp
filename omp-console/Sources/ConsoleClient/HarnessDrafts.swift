@@ -68,8 +68,17 @@ public final class HarnessDrafts: ObservableObject {
     /// feature, elle, s'ouvre en page : `openedRun`).
     @Published public var sessionRequest: HarnessSessionRequest?
     @Published public var forgetAsked = false
+    /// Le lien d'appairage ouvert (QR code scanné par l'appareil photo) qui attend la confirmation
+    /// de l'humain, serveur nommé : rien n'est échangé avant son « Appairer ».
+    @Published public var pairRequest: HarnessPairLink?
+    /// Un échange d'appairage attend la réponse du serveur.
+    @Published public var isPairing = false
+    /// Le résultat du dernier appairage, montré jusqu'à ce que l'humain l'ait lu.
+    @Published public var pairOutcome: HarnessPairOutcome?
     /// La feuille de configuration du serveur est ouverte.
     @Published public var serverSheetShown = false
+    /// La feuille « Appairer un iPhone » (QR code), ouverte depuis la feuille Serveur, est ouverte.
+    @Published public var pairSheetShown = false
     /// Le genre d'élément de « À traiter » où défiler (palette, notification) ; remis à
     /// `nil` une fois le défilement fait.
     @Published public var homeAnchor: HarnessHomeAnchor?

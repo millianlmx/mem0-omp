@@ -192,7 +192,11 @@ Puis sur le Mac, dans un de tes dépôts :
   `omp-console/ios/`) : [omp-console/README.md](omp-console/README.md) § « Coque
   iOS ». Elle prend le même code d'appairage et joint le serveur seule, Mac
   éteint ; pour qu'elle approuve les envois du poste, colle-lui plutôt le code de
-  `harness.sh approver`.
+  `harness.sh approver`. **Sans rien coller :** le Mac affiche un QR code
+  (feuille **Serveur**, **Appairer un iPhone**), ou le serveur
+  (`harness.sh pair-qr`, avec `qrencode`). L'appareil photo de l'iPhone l'ouvre
+  dans l'app, qui reçoit son propre jeton (révocable seul) : le code vaut 10
+  minutes et un seul usage.
 - **Des souvenirs déjà sur le Mac ?** Copie-les sur le serveur avant d'y écrire :
   [omp-harness/README.md](omp-harness/README.md) § « La mémoire du projet ».
 - **Mettre à jour.** Le serveur : `git pull` puis `harness.sh up`, sans rien

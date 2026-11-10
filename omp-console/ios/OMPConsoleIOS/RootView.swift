@@ -192,13 +192,20 @@ struct RootView: View {
             }
             // Un lien `ompconsole://` (widget, Live Activity, raccourci) : une section, le
             // fil d'une feature (`threads/<id>`), le tri (`decisions`) ou « Maintenant » (`now`).
+            // Le lien d'un QR code d'appairage (`pair`) ne relie rien tout seul : il ouvre la
+            // confirmation, qui nomme le serveur, dans les deux interfaces.
             .onOpenURL { url in
+                if HarnessPairLink.isPairLink(url) {
+                    askToPair(url)
+                    return
+                }
                 guard let destination = HarnessWidgetLink.destination(of: url) else { return }
                 open(destination)
             }
             .sheet(isPresented: $drafts.serverSheetShown) {
                 IOSServerSheet(server: server, drafts: drafts)
             }
+            .pairLinkConfirmation(server: server, drafts: drafts)
             // La palette ⌘K et les feuilles de création (feature ⌘N, projet, audit,
             // planification), partagées avec le Mac (ConsoleUI).
             .consolePalette(server: server, drafts: drafts, sections: IOSSection.all, memory: true, select: selector)
@@ -260,6 +267,19 @@ struct RootView: View {
             drafts: drafts,
             memoryRecipe: memoryRecipe
         )
+    }
+
+    /// Le lien d'un QR code d'appairage : la confirmation, serveur nommé (l'échange n'a lieu qu'après
+    /// « Appairer ») ; un lien incomplet ou forgé dit qu'il est illisible au lieu de se taire. Une feuille
+    /// déjà ouverte ne cache pas la confirmation.
+    private func askToPair(_ url: URL) {
+        drafts.serverSheetShown = false
+        drafts.pairOutcome = nil
+        guard let link = HarnessPairLink(url: url) else {
+            drafts.pairOutcome = .failed(.invalidLink)
+            return
+        }
+        drafts.pairRequest = link
     }
 
     /// Un lien `ompconsole://` : dans la nouvelle interface, « Maintenant », le tri et le fil
