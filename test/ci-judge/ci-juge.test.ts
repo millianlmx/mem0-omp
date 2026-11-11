@@ -513,3 +513,65 @@ test("ci-juge/AC-9 : la branche réécrite après un /fix ou un rebase est rejug
   assert.match(blocked.output, /push refusé/);
   assert.equal(remoteHead(), foreign, "le commit du tiers reste sur la branche");
 });
+
+test("ci-juge/AC-10 : l'extrait d'un build Swift rouge porte l'erreur située, pas les lignes de code citées par les avertissements", async () => {
+  // La forme du log réel (swimmich, 2026-11-11) : des dizaines de citations de code avant la seule erreur.
+  const prefix = "Unit tests (iOS simulator)\tBuild and run unit tests\t2026-11-11T14:14:57.7800560Z ";
+  const quoted = [
+    "188 |         var error: NSError?",
+    "189 |         return LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: &error)",
+  ];
+  const swiftLog = [
+    ...Array.from({ length: 20 }, () => quoted.map((line) => prefix + line)).flat(),
+    `${prefix}/Users/ci/_work/app/UITests/Scenarios/AlbumRolesUITests.swift:217:16: error: the compiler is unable to type-check this expression in reasonable time`,
+    `${prefix}** TEST BUILD FAILED **`,
+  ].join("\n");
+  const gh = fakeGh({ runs: () => [red("Unit tests (iOS simulator)")], logs: { "42": swiftLog } });
+  const world = ciWorld({ exec: gh.exec, judge: "ci" });
+  const run = await branchRun(world, "ci-swift");
+  const result = await world.deps.heavy.run(fullJob(world, run));
+  assert.equal(result.outcome, "fail");
+  assert.match(result.output, /AlbumRolesUITests\.swift:217:16: error: the compiler is unable/, "l'erreur située");
+  assert.doesNotMatch(result.output, /var error: NSError\?/, "aucune ligne de code citée");
+});
+
+test("ci-juge/AC-11 : l'extrait d'une suite XCTest rouge nomme les tests en échec et garde leur message d'assertion", async () => {
+  // La forme du log réel (swimmich, 2026-11-11) : sur simulateur, xcodebuild ne logue que le bilan, chaque
+  // test relancé y figure deux fois ; ci.sh publie ensuite le message de chaque test en annotation.
+  const at = (stamp: string) => `Unit tests (iOS simulator)\tBuild and run unit tests\t2026-11-11T16:54:${stamp}Z `;
+  const names = Array.from({ length: 12 }, (_, i) => `MemoryTitlePresentationTests.test_AC_17_${i}_birthdayTitle()`);
+  const xcodeLog = [
+    `${at("15.5938870")}error: the following command failed with exit code 0 but produced no further output`,
+    `${at("17.7356810")}error: the following command failed with exit code 0 but produced no further output`,
+    `${at("47.6296240")}2026-11-11 12:54:47.629 xcodebuild[4367:49390526] [MT] IDETestOperationsObserverDebug: 26.645 elapsed`,
+    `${at("47.6330990")}Failing tests:`,
+    ...names.flatMap((name) => [`${at("47.6331240")}\t${name}`, `${at("47.6331550")}\t${name}`]),
+    `${at("47.6331860")}`,
+    `${at("47.6331920")}** TEST EXECUTE FAILED **`,
+    `${at("48.1357620")}Testing started`,
+    `${at("48.8493660")}##[error]MemoryTitlePresentationTests/test_AC_17_0_birthdayTitle(): XCTAssertEqual failed: ("Anniversaire de Alice") is not equal to ("Alice's birthday")`,
+    `${at("48.8539280")}##[error]Process completed with exit code 65.`,
+  ].join("\n");
+  const gh = fakeGh({ runs: () => [red("Unit tests (iOS simulator)")], logs: { "42": xcodeLog } });
+  const world = ciWorld({ exec: gh.exec, judge: "ci" });
+  const run = await branchRun(world, "ci-xctest");
+  const result = await world.deps.heavy.run(fullJob(world, run));
+  assert.equal(result.outcome, "fail");
+  assert.match(
+    result.output,
+    /##\[error\]MemoryTitlePresentationTests\/test_AC_17_0_birthdayTitle\(\): XCTAssertEqual failed: \("Anniversaire de Alice"\)/,
+    "le message d'assertion passe avant le bilan",
+  );
+  assert.match(result.output, /Failing tests:\n.*\tMemoryTitlePresentationTests\.test_AC_17_0_birthdayTitle\(\)/);
+  assert.equal(
+    result.output.split("\tMemoryTitlePresentationTests.test_AC_17_0_birthdayTitle()").length,
+    2,
+    "un test relancé n'est cité qu'une fois",
+  );
+  assert.equal(
+    result.output.split("produced no further output").length,
+    2,
+    "une ligne répétée n'est gardée qu'une fois",
+  );
+  assert.doesNotMatch(result.output, /Testing started/, "le bilan s'arrête à la première ligne non indentée");
+});

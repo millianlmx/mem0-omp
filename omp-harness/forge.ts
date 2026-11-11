@@ -103,8 +103,41 @@ export type OpenChange = {
 /** Une exécution terminée de la CI, en échec : `name` son workflow (son pipeline), `title` ce qui l'a lancée, `at` sa fin (ISO 8601). */
 export type FailedCi = { id: string; name: string; title: string; url: string | null; sha: string; at: string };
 
-/** Les lignes qui disent POURQUOI un job a échoué (test rouge, erreur TypeScript, lint), à garder d'un log de CI. */
-const USEFUL_LOG_LINE = /✗|not ok|error TS\d*|\bError:|\blint|##\[error\]/i;
+/**
+ * Les lignes qui disent POURQUOI un job a échoué (test rouge, erreur TypeScript, lint), à garder d'un log de CI.
+ * xcodebuild clôt une suite rouge par `** TEST EXECUTE FAILED **` (ou `** TEST BUILD FAILED **`).
+ */
+const USEFUL_LOG_LINE = /✗|not ok|error TS\d*|\bError:|\blint|##\[error\]|\*\* [A-Z ]*FAILED \*\*/i;
+
+/**
+ * L'en-tête du bilan d'xcodebuild : les tests rouges suivent, un par ligne indentée d'une tabulation
+ * (`\tClasse.test_x()`, après l'horodatage `…Z ` dans un log de GitHub). Le log n'a pas d'autre trace
+ * de leur nom quand les tests tournent sur un simulateur.
+ */
+const FAILING_TESTS = /Failing tests:\s*$/;
+const LISTED_TEST = /(^|\dZ )\t\S/;
+
+/**
+ * Une erreur de compilateur qui situe sa cause : `chemin:ligne[:colonne]: error: …` (Swift, clang, gcc, Go)
+ * ou `chemin(ligne,colonne): error TS…`. Elle passe avant toute autre ligne utile.
+ */
+const LOCATED_DIAGNOSTIC = /[\w.~/-]+:\d+(:\d+)?: (fatal )?error:|\(\d+,\d+\): error TS\d+/;
+
+/**
+ * Une ligne de code citée sous un diagnostic (`188 |     var error: NSError?`) : elle porte les mots
+ * d'une erreur sans en être une, et un avertissement répété en remplissait l'extrait.
+ */
+const SOURCE_EXCERPT = /(^|\s)\d+ +\| /;
+
+/**
+ * Une annotation d'erreur du job (`::error::` → `##[error]` dans le log) qui n'est pas la sortie finale
+ * du processus : un script de CI y met la cause (swimmich : chaque test rouge et son message d'assertion).
+ * Elle passe juste après les diagnostics situés.
+ */
+const ANNOTATION = /##\[error\](?!Process completed with exit code)/;
+
+/** Le préfixe d'une ligne de `gh run view --log-failed` : `job\tétape\t<horodatage>Z `. */
+const GH_LOG_PREFIX = /^[^\t]*\t[^\t]*\t\S+Z /;
 
 const ANSI_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
 
@@ -114,16 +147,31 @@ function plainLine(line: string): string {
 }
 
 /**
- * L'extrait d'un log de CI : les lignes utiles (`✗`, `not ok`, `error TS`, `Error:`, lint) dans
- * l'ordre du log, au plus `limit` caractères. Aucune ligne utile : les dernières lignes du log.
+ * L'extrait d'un log de CI, au plus `limit` caractères : d'abord les diagnostics situés
+ * (`chemin:ligne:col: error:`), puis les annotations d'erreur, puis les autres lignes utiles (`✗`,
+ * `not ok`, `error TS`, `Error:`, lint, le bilan `Failing tests:` d'xcodebuild et ses tests), chacune
+ * dans l'ordre du log, une seule fois (xcodebuild liste deux fois un test relancé) et sans les lignes
+ * de code citées. Aucune ligne utile : les dernières lignes du log.
  */
 export function usefulLogLines(raw: string, limit: number): string {
   const lines = raw
     .split("\n")
     .map(plainLine)
     .filter((line) => line.trim() !== "");
-  const useful = lines.filter((line) => USEFUL_LOG_LINE.test(line));
-  const picked = useful.length > 0 ? useful : lines.slice(-20);
+  let listing = false;
+  const seen = new Set<string>();
+  const useful = lines.filter((line) => {
+    const listed = listing && LISTED_TEST.test(line);
+    listing = FAILING_TESTS.test(line) || listed;
+    if (!listing && !(USEFUL_LOG_LINE.test(line) && !SOURCE_EXCERPT.test(line))) return false;
+    const content = line.replace(GH_LOG_PREFIX, "");
+    if (seen.has(content)) return false;
+    seen.add(content);
+    return true;
+  });
+  const rank = (line: string): number => (LOCATED_DIAGNOSTIC.test(line) ? 0 : ANNOTATION.test(line) ? 1 : 2);
+  const picked =
+    useful.length > 0 ? [0, 1, 2].flatMap((r) => useful.filter((line) => rank(line) === r)) : lines.slice(-20);
   let text = "";
   for (const line of picked) {
     if (text.length + line.length + 1 > limit) return text === "" ? line.slice(0, limit) : text;
