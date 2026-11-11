@@ -129,6 +129,16 @@ const LOCATED_DIAGNOSTIC = /[\w.~/-]+:\d+(:\d+)?: (fatal )?error:|\(\d+,\d+\): e
  */
 const SOURCE_EXCERPT = /(^|\s)\d+ +\| /;
 
+/**
+ * Une annotation d'erreur du job (`::error::` → `##[error]` dans le log) qui n'est pas la sortie finale
+ * du processus : un script de CI y met la cause (swimmich : chaque test rouge et son message d'assertion).
+ * Elle passe juste après les diagnostics situés.
+ */
+const ANNOTATION = /##\[error\](?!Process completed with exit code)/;
+
+/** Le préfixe d'une ligne de `gh run view --log-failed` : `job\tétape\t<horodatage>Z `. */
+const GH_LOG_PREFIX = /^[^\t]*\t[^\t]*\t\S+Z /;
+
 const ANSI_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
 
 /** Une ligne de log sans séquence ANSI, bornée à 400 caractères (une ligne de bundle minifié ne remplit pas l'extrait). */
@@ -138,8 +148,9 @@ function plainLine(line: string): string {
 
 /**
  * L'extrait d'un log de CI, au plus `limit` caractères : d'abord les diagnostics situés
- * (`chemin:ligne:col: error:`), puis les autres lignes utiles (`✗`, `not ok`, `error TS`, `Error:`, lint,
- * le bilan `Failing tests:` d'xcodebuild et ses tests), chacune dans l'ordre du log et sans les lignes
+ * (`chemin:ligne:col: error:`), puis les annotations d'erreur, puis les autres lignes utiles (`✗`,
+ * `not ok`, `error TS`, `Error:`, lint, le bilan `Failing tests:` d'xcodebuild et ses tests), chacune
+ * dans l'ordre du log, une seule fois (xcodebuild liste deux fois un test relancé) et sans les lignes
  * de code citées. Aucune ligne utile : les dernières lignes du log.
  */
 export function usefulLogLines(raw: string, limit: number): string {
@@ -148,14 +159,19 @@ export function usefulLogLines(raw: string, limit: number): string {
     .map(plainLine)
     .filter((line) => line.trim() !== "");
   let listing = false;
+  const seen = new Set<string>();
   const useful = lines.filter((line) => {
     const listed = listing && LISTED_TEST.test(line);
     listing = FAILING_TESTS.test(line) || listed;
-    return listing || (USEFUL_LOG_LINE.test(line) && !SOURCE_EXCERPT.test(line));
+    if (!listing && !(USEFUL_LOG_LINE.test(line) && !SOURCE_EXCERPT.test(line))) return false;
+    const content = line.replace(GH_LOG_PREFIX, "");
+    if (seen.has(content)) return false;
+    seen.add(content);
+    return true;
   });
-  const located = useful.filter((line) => LOCATED_DIAGNOSTIC.test(line));
+  const rank = (line: string): number => (LOCATED_DIAGNOSTIC.test(line) ? 0 : ANNOTATION.test(line) ? 1 : 2);
   const picked =
-    useful.length > 0 ? [...located, ...useful.filter((line) => !LOCATED_DIAGNOSTIC.test(line))] : lines.slice(-20);
+    useful.length > 0 ? [0, 1, 2].flatMap((r) => useful.filter((line) => rank(line) === r)) : lines.slice(-20);
   let text = "";
   for (const line of picked) {
     if (text.length + line.length + 1 > limit) return text === "" ? line.slice(0, limit) : text;
