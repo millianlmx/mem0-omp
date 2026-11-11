@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.40.1 — 2026-11-11
+
+- fix(harness): le juge CI repousse une branche réécrite au lieu de buter sur « stale info » (#458) (2a01d4d)
+
 ## omp-harness 1.40.0 — 2026-11-10
 
 - feat(harness): l'agent d'exploration scout tourne sur le tier fast, sous la politique du dépôt (#455) (5d4e984)
