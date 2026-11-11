@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.40.2 — 2026-11-11
+
+- fix(harness): l'extrait de CI transmis au correcteur porte l'erreur de compilation, pas les lignes de code citées (#460) (a3b378a)
+
 ## omp-harness 1.40.1 — 2026-11-11
 
 - fix(harness): le juge CI repousse une branche réécrite au lieu de buter sur « stale info » (#458) (2a01d4d)
