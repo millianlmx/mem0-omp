@@ -534,3 +534,28 @@ test("ci-juge/AC-10 : l'extrait d'un build Swift rouge porte l'erreur située, p
   assert.match(result.output, /AlbumRolesUITests\.swift:217:16: error: the compiler is unable/, "l'erreur située");
   assert.doesNotMatch(result.output, /var error: NSError\?/, "aucune ligne de code citée");
 });
+
+test("ci-juge/AC-11 : l'extrait d'une suite XCTest rouge nomme les tests en échec du bilan d'xcodebuild", async () => {
+  // La forme du log réel (swimmich, 2026-11-11) : sur simulateur, xcodebuild ne logue que le bilan.
+  const at = (stamp: string) => `Unit tests (iOS simulator)\tBuild and run unit tests\t2026-11-11T16:54:${stamp}Z `;
+  const xcodeLog = [
+    `${at("15.5938870")}error: the following command failed with exit code 0 but produced no further output`,
+    `${at("47.6296240")}2026-11-11 12:54:47.629 xcodebuild[4367:49390526] [MT] IDETestOperationsObserverDebug: 26.645 elapsed`,
+    `${at("47.6330990")}Failing tests:`,
+    `${at("47.6331240")}\tAlbumRolesAndOrderTests.test_AC_8_v2OwnedAlbumMatchedWithoutCreate()`,
+    `${at("47.6331860")}`,
+    `${at("47.6331920")}** TEST EXECUTE FAILED **`,
+    `${at("48.1357620")}Testing started`,
+  ].join("\n");
+  const gh = fakeGh({ runs: () => [red("Unit tests (iOS simulator)")], logs: { "42": xcodeLog } });
+  const world = ciWorld({ exec: gh.exec, judge: "ci" });
+  const run = await branchRun(world, "ci-xctest");
+  const result = await world.deps.heavy.run(fullJob(world, run));
+  assert.equal(result.outcome, "fail");
+  assert.match(
+    result.output,
+    /Failing tests:\n.*\tAlbumRolesAndOrderTests\.test_AC_8_v2OwnedAlbumMatchedWithoutCreate\(\)/,
+  );
+  assert.match(result.output, /\*\* TEST EXECUTE FAILED \*\*/);
+  assert.doesNotMatch(result.output, /Testing started/, "le bilan s'arrête à la première ligne non indentée");
+});

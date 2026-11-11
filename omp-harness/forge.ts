@@ -103,8 +103,19 @@ export type OpenChange = {
 /** Une exécution terminée de la CI, en échec : `name` son workflow (son pipeline), `title` ce qui l'a lancée, `at` sa fin (ISO 8601). */
 export type FailedCi = { id: string; name: string; title: string; url: string | null; sha: string; at: string };
 
-/** Les lignes qui disent POURQUOI un job a échoué (test rouge, erreur TypeScript, lint), à garder d'un log de CI. */
-const USEFUL_LOG_LINE = /✗|not ok|error TS\d*|\bError:|\blint|##\[error\]/i;
+/**
+ * Les lignes qui disent POURQUOI un job a échoué (test rouge, erreur TypeScript, lint), à garder d'un log de CI.
+ * xcodebuild clôt une suite rouge par `** TEST EXECUTE FAILED **` (ou `** TEST BUILD FAILED **`).
+ */
+const USEFUL_LOG_LINE = /✗|not ok|error TS\d*|\bError:|\blint|##\[error\]|\*\* [A-Z ]*FAILED \*\*/i;
+
+/**
+ * L'en-tête du bilan d'xcodebuild : les tests rouges suivent, un par ligne indentée d'une tabulation
+ * (`\tClasse.test_x()`, après l'horodatage `…Z ` dans un log de GitHub). Le log n'a pas d'autre trace
+ * de leur nom quand les tests tournent sur un simulateur.
+ */
+const FAILING_TESTS = /Failing tests:\s*$/;
+const LISTED_TEST = /(^|\dZ )\t\S/;
 
 /**
  * Une erreur de compilateur qui situe sa cause : `chemin:ligne[:colonne]: error: …` (Swift, clang, gcc, Go)
@@ -127,15 +138,21 @@ function plainLine(line: string): string {
 
 /**
  * L'extrait d'un log de CI, au plus `limit` caractères : d'abord les diagnostics situés
- * (`chemin:ligne:col: error:`), puis les autres lignes utiles (`✗`, `not ok`, `error TS`, `Error:`, lint),
- * chacune dans l'ordre du log et sans les lignes de code citées. Aucune ligne utile : les dernières lignes du log.
+ * (`chemin:ligne:col: error:`), puis les autres lignes utiles (`✗`, `not ok`, `error TS`, `Error:`, lint,
+ * le bilan `Failing tests:` d'xcodebuild et ses tests), chacune dans l'ordre du log et sans les lignes
+ * de code citées. Aucune ligne utile : les dernières lignes du log.
  */
 export function usefulLogLines(raw: string, limit: number): string {
   const lines = raw
     .split("\n")
     .map(plainLine)
     .filter((line) => line.trim() !== "");
-  const useful = lines.filter((line) => USEFUL_LOG_LINE.test(line) && !SOURCE_EXCERPT.test(line));
+  let listing = false;
+  const useful = lines.filter((line) => {
+    const listed = listing && LISTED_TEST.test(line);
+    listing = FAILING_TESTS.test(line) || listed;
+    return listing || (USEFUL_LOG_LINE.test(line) && !SOURCE_EXCERPT.test(line));
+  });
   const located = useful.filter((line) => LOCATED_DIAGNOSTIC.test(line));
   const picked =
     useful.length > 0 ? [...located, ...useful.filter((line) => !LOCATED_DIAGNOSTIC.test(line))] : lines.slice(-20);
