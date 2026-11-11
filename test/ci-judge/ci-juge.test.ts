@@ -513,3 +513,24 @@ test("ci-juge/AC-9 : la branche réécrite après un /fix ou un rebase est rejug
   assert.match(blocked.output, /push refusé/);
   assert.equal(remoteHead(), foreign, "le commit du tiers reste sur la branche");
 });
+
+test("ci-juge/AC-10 : l'extrait d'un build Swift rouge porte l'erreur située, pas les lignes de code citées par les avertissements", async () => {
+  // La forme du log réel (swimmich, 2026-11-11) : des dizaines de citations de code avant la seule erreur.
+  const prefix = "Unit tests (iOS simulator)\tBuild and run unit tests\t2026-11-11T14:14:57.7800560Z ";
+  const quoted = [
+    "188 |         var error: NSError?",
+    "189 |         return LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: &error)",
+  ];
+  const swiftLog = [
+    ...Array.from({ length: 20 }, () => quoted.map((line) => prefix + line)).flat(),
+    `${prefix}/Users/ci/_work/app/UITests/Scenarios/AlbumRolesUITests.swift:217:16: error: the compiler is unable to type-check this expression in reasonable time`,
+    `${prefix}** TEST BUILD FAILED **`,
+  ].join("\n");
+  const gh = fakeGh({ runs: () => [red("Unit tests (iOS simulator)")], logs: { "42": swiftLog } });
+  const world = ciWorld({ exec: gh.exec, judge: "ci" });
+  const run = await branchRun(world, "ci-swift");
+  const result = await world.deps.heavy.run(fullJob(world, run));
+  assert.equal(result.outcome, "fail");
+  assert.match(result.output, /AlbumRolesUITests\.swift:217:16: error: the compiler is unable/, "l'erreur située");
+  assert.doesNotMatch(result.output, /var error: NSError\?/, "aucune ligne de code citée");
+});

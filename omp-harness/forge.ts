@@ -106,6 +106,18 @@ export type FailedCi = { id: string; name: string; title: string; url: string | 
 /** Les lignes qui disent POURQUOI un job a échoué (test rouge, erreur TypeScript, lint), à garder d'un log de CI. */
 const USEFUL_LOG_LINE = /✗|not ok|error TS\d*|\bError:|\blint|##\[error\]/i;
 
+/**
+ * Une erreur de compilateur qui situe sa cause : `chemin:ligne[:colonne]: error: …` (Swift, clang, gcc, Go)
+ * ou `chemin(ligne,colonne): error TS…`. Elle passe avant toute autre ligne utile.
+ */
+const LOCATED_DIAGNOSTIC = /[\w.~/-]+:\d+(:\d+)?: (fatal )?error:|\(\d+,\d+\): error TS\d+/;
+
+/**
+ * Une ligne de code citée sous un diagnostic (`188 |     var error: NSError?`) : elle porte les mots
+ * d'une erreur sans en être une, et un avertissement répété en remplissait l'extrait.
+ */
+const SOURCE_EXCERPT = /(^|\s)\d+ +\| /;
+
 const ANSI_SEQUENCE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
 
 /** Une ligne de log sans séquence ANSI, bornée à 400 caractères (une ligne de bundle minifié ne remplit pas l'extrait). */
@@ -114,16 +126,19 @@ function plainLine(line: string): string {
 }
 
 /**
- * L'extrait d'un log de CI : les lignes utiles (`✗`, `not ok`, `error TS`, `Error:`, lint) dans
- * l'ordre du log, au plus `limit` caractères. Aucune ligne utile : les dernières lignes du log.
+ * L'extrait d'un log de CI, au plus `limit` caractères : d'abord les diagnostics situés
+ * (`chemin:ligne:col: error:`), puis les autres lignes utiles (`✗`, `not ok`, `error TS`, `Error:`, lint),
+ * chacune dans l'ordre du log et sans les lignes de code citées. Aucune ligne utile : les dernières lignes du log.
  */
 export function usefulLogLines(raw: string, limit: number): string {
   const lines = raw
     .split("\n")
     .map(plainLine)
     .filter((line) => line.trim() !== "");
-  const useful = lines.filter((line) => USEFUL_LOG_LINE.test(line));
-  const picked = useful.length > 0 ? useful : lines.slice(-20);
+  const useful = lines.filter((line) => USEFUL_LOG_LINE.test(line) && !SOURCE_EXCERPT.test(line));
+  const located = useful.filter((line) => LOCATED_DIAGNOSTIC.test(line));
+  const picked =
+    useful.length > 0 ? [...located, ...useful.filter((line) => !LOCATED_DIAGNOSTIC.test(line))] : lines.slice(-20);
   let text = "";
   for (const line of picked) {
     if (text.length + line.length + 1 > limit) return text === "" ? line.slice(0, limit) : text;
