@@ -151,12 +151,22 @@ export class CiJudge {
     if (await git.mergeInProgress(worktree)) throw new Error("une fusion est en cours : rien à pousser");
     // La CI juge un commit : ce que le worktree porte encore sans commit y entre d'abord (même arbre que la clé de cache).
     if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip: avant la CI — ${run.title}`.slice(0, 120));
+    // Le bail attend ce que le harness a lui-même poussé : une réécriture après /fix ou rebase passe,
+    // un commit poussé par quelqu'un d'autre sur la branche fait refuser la poussée au lieu d'être écrasé.
+    const expected = await git.pushedSha(worktree, run.branch);
     const push = await git.raw(
       worktree,
-      ["push", "-q", "--force-with-lease", repo.remote ?? "origin", `HEAD:refs/heads/${run.branch}`],
+      [
+        "push",
+        "-q",
+        `--force-with-lease=refs/heads/${run.branch}:${expected}`,
+        repo.remote ?? "origin",
+        `HEAD:refs/heads/${run.branch}`,
+      ],
       remoteEnv(repo),
     );
     if (push.code !== 0) throw new Error(`push refusé : ${(push.stderr || push.stdout).trim().slice(0, 300)}`);
+    await git.recordPushed(worktree, run.branch, "HEAD");
     const sha = await git.revParse(worktree, "HEAD");
     const prUrl = await forge.openChange(
       {

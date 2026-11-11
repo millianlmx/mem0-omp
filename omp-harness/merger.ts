@@ -201,6 +201,7 @@ export class Merger {
         if (outcome.prUrl !== null && outcome.prUrl !== run.prUrl)
           run = store.updateRun(run.id, { prUrl: outcome.prUrl });
         if (outcome.kind === "merged") {
+          await git.forgetPushed(repo.path, run.branch);
           this.#finish(run, await git.revParse(repo.path, repo.mainBranch), repo);
           return;
         }
@@ -209,8 +210,10 @@ export class Merger {
       const sha = await git.squashMerge(repo.path, run.branch, repo.mainBranch, main, `${subject}\n\n${commitBody}`);
       if (!(await this.#pushMain(run, repo))) return;
       // `judge: "ci"` : la branche poussée pour la CI et sa PR brouillon n'ont plus d'objet ; sans branche, la forge ferme la PR.
-      if (testsJudge(repo) === "ci")
+      if (testsJudge(repo) === "ci") {
         await git.raw(repo.path, ["push", "-q", repo.remote ?? "origin", "--delete", run.branch], remoteEnv(repo));
+        await git.forgetPushed(repo.path, run.branch);
+      }
       this.#finish(run, sha, repo);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
@@ -274,6 +277,8 @@ export class Merger {
     if (worktree === null) throw new Error("le run n'a plus de worktree");
     const forge = await this.#forge(repo);
     await git.run(worktree, ["push", "-q", "-f", remote, `${run.branch}:${run.branch}`], remoteEnv(repo));
+    // Le jugement suivant de la CI (rouge après ce rebase → /fix) prend ce SHA pour bail.
+    await git.recordPushed(worktree, run.branch, run.branch);
     // Le SHA que la CI de la forge jugera (`judge: "ci"`).
     const sha = testsJudge(repo) === "ci" ? await git.revParse(worktree, "HEAD") : null;
     const prUrl = await forge.openChange(
