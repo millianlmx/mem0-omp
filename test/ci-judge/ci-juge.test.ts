@@ -16,12 +16,16 @@ import { tmpdir } from "../support/repo.ts";
 const GITHUB_URL = "git@github.com:acme/app.git";
 const GITLAB_URL = "git@gitlab.example.com:acme/app.git";
 
-/** Un clone dont `origin` porte l'URL d'une forge, mais dont la poussée va dans un distant nu local. */
+/**
+ * Un clone dont `origin` porte l'URL d'une forge, mais dont la poussée va dans un distant nu local.
+ * Comme le clone du harness en production, `origin` n'a QUE son URL : ni refspec de fetch, ni
+ * référence de suivi que la poussée mettrait à jour.
+ */
 function forgeRepo(url: string): { repo: string; bare: string } {
   const repo = harnessRepo();
   const bare = path.join(tmpdir("ci-remote-"), "origin.git");
   git(path.dirname(bare), "clone", "-q", "--bare", repo, bare);
-  git(repo, "remote", "add", "origin", url);
+  git(repo, "config", "remote.origin.url", url);
   git(repo, "config", `url.${bare}.pushInsteadOf`, url);
   return { repo, bare };
 }
@@ -481,4 +485,31 @@ test("ci-juge/AC-8 : avec GitLab, le statut du pipeline et la trace du job rouge
   assert.ok(!result.output.includes("\u001b"), "les séquences ANSI sont retirées");
   assert.doesNotMatch(result.output, /- build|deploy-doc/, "ni un job vert ni un échec toléré (allow_failure)");
   assert.deepEqual(others, [], "aucun job local");
+});
+
+test("ci-juge/AC-9 : la branche réécrite après un /fix ou un rebase est rejugée ; un commit poussé par un tiers bloque la poussée", async () => {
+  const gh = fakeGh({ runs: () => [green("build")] });
+  const world = ciWorld({ exec: gh.exec, judge: "ci" });
+  const run = await branchRun(world, "ci-reecrit");
+  const worktree = run.worktree as string;
+  const remoteHead = () => git(world.bare, "rev-parse", `refs/heads/${run.branch}`);
+
+  assert.equal((await world.deps.heavy.run(fullJob(world, run))).outcome, "pass", "premier jugement");
+
+  // Le correcteur réécrit le commit déjà poussé (amend, comme après un rebase) : la poussée n'est pas un fast-forward.
+  fs.writeFileSync(path.join(worktree, "src", "api", "ci-reecrit.ts"), "// corrigé\n");
+  git(worktree, "commit", "-q", "-a", "--amend", "-m", "feat: ci-reecrit (corrigé)");
+  const rewritten = await world.deps.heavy.run(fullJob(world, run));
+  assert.equal(rewritten.outcome, "pass", rewritten.output);
+  assert.equal(remoteHead(), git(worktree, "rev-parse", "HEAD"), "la branche distante porte le commit réécrit");
+
+  // Quelqu'un pousse sur la branche du run : le jugement suivant ne l'écrase pas.
+  const foreign = git(world.repo, "commit-tree", `${git(worktree, "rev-parse", "HEAD")}^{tree}`, "-m", "à la main");
+  git(world.repo, "push", "-q", "-f", world.bare, `${foreign}:refs/heads/${run.branch}`);
+  fs.writeFileSync(path.join(worktree, "src", "api", "ci-reecrit.ts"), "// encore\n");
+  git(worktree, "commit", "-q", "-a", "-m", "fix: encore");
+  const blocked = await world.deps.heavy.run(fullJob(world, run));
+  assert.equal(blocked.outcome, "error");
+  assert.match(blocked.output, /push refusé/);
+  assert.equal(remoteHead(), foreign, "le commit du tiers reste sur la branche");
 });

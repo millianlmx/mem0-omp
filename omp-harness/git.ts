@@ -630,7 +630,31 @@ export class Git {
   async listFiles(repo: string, ref: string): Promise<string[]> {
     return (await this.run(repo, ["ls-tree", "-r", "--name-only", ref])).split("\n").filter(Boolean);
   }
+
+  /**
+   * Le dernier SHA que le harness a poussé sur la branche `branch` du distant, `""` s'il n'en a
+   * poussé aucun : la valeur attendue d'un `--force-with-lease=refs/heads/<branch>:<sha>`. Le clone
+   * n'a ni refspec de fetch ni référence de suivi : un `--force-with-lease` nu n'y attend RIEN, et
+   * toute réécriture d'une branche déjà poussée y est refusée (« stale info »).
+   */
+  async pushedSha(cwd: string, branch: string): Promise<string> {
+    const read = await this.raw(cwd, ["rev-parse", "--verify", "-q", `${PUSHED_REFS}${branch}^{commit}`]);
+    return read.code === 0 ? read.stdout.trim() : "";
+  }
+
+  /** Retient `rev` comme poussé sur `branch` (après un push réussi). */
+  async recordPushed(cwd: string, branch: string, rev: string): Promise<void> {
+    await this.run(cwd, ["update-ref", `${PUSHED_REFS}${branch}`, rev]);
+  }
+
+  /** Oublie ce qui a été poussé sur `branch` (la branche distante est supprimée ou fusionnée). */
+  async forgetPushed(cwd: string, branch: string): Promise<void> {
+    await this.raw(cwd, ["update-ref", "-d", `${PUSHED_REFS}${branch}`]);
+  }
 }
+
+/** Où le clone retient le dernier SHA poussé sur chaque branche de run (références partagées entre worktrees). */
+const PUSHED_REFS = "refs/harness/pushed/";
 
 /**
  * L'environnement de git pour tout appel au distant d'un dépôt : `{}` sans clé propre
