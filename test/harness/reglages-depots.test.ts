@@ -217,3 +217,44 @@ test("reglages-depots/AC-3 : `DELETE /v1/repos/{name}` exige `?confirm=1`, refus
     await api.close();
   }
 });
+
+test("reglages-depots/AC-4 : `GET /v1/repos` rend au propriétaire la forge qui sert et l'espace de chaque dépôt, de quoi dessiner la liste sans lire chaque dépôt ; un client borné n'en voit rien", async () => {
+  const { world, file, api } = await setup();
+  try {
+    world.store.insertSpace({
+      id: "e-acme",
+      name: "Acme",
+      repos: ["demo"],
+      jiraProjects: [],
+      dailyBudgetUsd: null,
+      autonomy: null,
+      policy: null,
+      by: "mac",
+    });
+    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { repos: Record<string, unknown>[] };
+    const autre = raw.repos.find((repo) => repo.name === "autre");
+    assert.ok(autre);
+    autre.forge = "gitlab";
+    fs.writeFileSync(file, `${JSON.stringify(raw, null, 2)}\n`);
+    await api.call("POST", "/v1/reload");
+
+    const listed = await api.call("GET", "/v1/repos");
+    assert.equal(listed.status, 200, JSON.stringify(listed.body));
+    const byName = new Map((listed.body.repos as Record<string, unknown>[]).map((repo) => [repo.name, repo]));
+    assert.equal(byName.get("demo")?.space, "Acme");
+    assert.equal(byName.get("autre")?.space, null);
+    assert.equal(byName.get("autre")?.forge, "gitlab", "une forge déclarée sert telle quelle");
+    assert.ok(
+      ["github", "gitlab", "none"].includes(String(byName.get("demo")?.forge)),
+      "la forge déduite est une forge connue",
+    );
+
+    const bounded = await api.call("GET", "/v1/repos", undefined, api.partial);
+    assert.equal(bounded.status, 200);
+    for (const repo of bounded.body.repos as Record<string, unknown>[]) {
+      assert.ok(!("forge" in repo) && !("space" in repo), JSON.stringify(repo));
+    }
+  } finally {
+    await api.close();
+  }
+});

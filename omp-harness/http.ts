@@ -593,14 +593,16 @@ export function apiRoutes(
     // `policy` : ce que borne la politique de modèles en vigueur du dépôt (la sienne croisée avec celle de
     // son espace) — absent quand elle ne borne rien. La vigie y lit ce qu'elle ne doit pas envoyer à son
     // modèle : rendu au client qui voit tous les dépôts et au client pilote, pas à un autre client borné
-    // (la politique d'un espace ne lui est pas montrée).
-    route("GET", "/v1/repos", "viewer", (call) => {
+    // (la politique d'un espace ne lui est pas montrée). Au propriétaire seulement, de quoi dessiner une ligne
+    // de l'écran Dépôts sans lire chaque dépôt : `forge` (celle qui sert) et `space` (l'espace qui le range).
+    route("GET", "/v1/repos", "viewer", async (call) => {
       const spaces = store.listSpaces();
       const bounds = call.client.repos === "*" || call.client.pilot === true;
-      send(call.res, 200, {
-        repos: orchestrator.config.repos
+      const owner = call.client.repos === "*" && admin !== null ? admin : null;
+      const repos = await Promise.all(
+        orchestrator.config.repos
           .filter((repo) => sees(call, repo.name))
-          .map((repo) => {
+          .map(async (repo) => {
             const policy = bounds ? policyBounds(repo, spaces) : null;
             return {
               name: repo.name,
@@ -610,9 +612,16 @@ export function apiRoutes(
               maxParallel: repo.maxParallel,
               judge: testsJudge(repo),
               ...(policy === null ? {} : { policy }),
+              ...(owner === null
+                ? {}
+                : {
+                    forge: await owner.forgeInUse(repo),
+                    space: spaces.find((space) => space.repos.includes(repo.name))?.name ?? null,
+                  }),
             };
           }),
-      });
+      );
+      send(call.res, 200, { repos });
     }),
     // `--add-repo` par l'API : clé du dépôt, clone, écriture éprouvée, configuration écrite et rechargée.
     route("POST", "/v1/repos", "admin", async (call) => {

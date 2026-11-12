@@ -51,7 +51,7 @@ public struct OSThreadView: View {
 
     @State private var draft = ""
     @State private var sending = false
-    @State private var sent: String?
+    @State private var sent = false
     @State private var reportExpanded = false
     /// La tâche que « Corriger… » a désignée : la consigne du pied lui est adressée.
     @State private var amending: String?
@@ -691,7 +691,12 @@ public struct OSThreadView: View {
                     .font(.caption)
             }
             if sending { ProgressView().controlSize(.small) }
-            if let sent { Text(sent).font(.caption).foregroundStyle(.secondary) }
+            if sent, draft.isEmpty {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .help(OSText.sent)
+                    .accessibilityLabel(OSText.sent)
+            }
             // Sans touche ⏎ sous le doigt, la saisie part par son bouton.
             #if os(iOS)
             if !sending, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -733,7 +738,7 @@ public struct OSThreadView: View {
 
     private func delivered() {
         draft = ""
-        sent = "✓"
+        sent = true
         always = false
         amending = nil
     }

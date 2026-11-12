@@ -201,6 +201,8 @@ public enum OSText {
     public static let cancel = L10n.text("Annuler")
     public static let dismiss = L10n.text("Écarter")
     public static let send = L10n.text("Envoyer")
+    /// Une suite ou une réponse partie : dit à VoiceOver et en bulle d'aide par la coche.
+    public static let sent = L10n.text("Envoyé")
     public static let keep = L10n.text("Garder")
     public static let revisit = L10n.text("Revoir")
     public static let reason = L10n.text("Pourquoi ?")

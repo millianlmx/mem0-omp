@@ -7,6 +7,7 @@
 import ConsoleClient
 import ConsoleCore
 import Foundation
+import Synchronization
 import Testing
 
 private final class Transport: HarnessTransport, @unchecked Sendable {
@@ -235,19 +236,24 @@ struct HarnessControlTests {
         let settings = #"{"name":"demo","mainBranch":"main","scope":"demo","merge":"local","forge":null,"forgeInUse":"github","maxParallel":null,"git":null,"corporate":"redacted","atlassian":false,"privacy":null,"providers":null,"models":null,"tests":{"touched":"npm test -- {files}","full":"npm test","pattern":null,"judge":"local","ciTimeoutSec":3600},"checks":{"lint":"bash scripts/lint.sh"},"testImage":null,"preview":false,"autonomyRules":0,"remoteUrl":"git@github.com:o/demo.git","deployKey":{"publicKey":"ssh-ed25519 AAAA","url":"https://github.com/o/demo/settings/keys"}}"#
         let patched = settings.replacingOccurrences(of: #""merge":"local""#, with: #""merge":"gh""#)
             .replacingOccurrences(of: #""maxParallel":null"#, with: #""maxParallel":2"#)
+        // Comme le vrai serveur, la liste rend le réglage écrit par le dernier PATCH accepté.
+        let listedMerge = Mutex("local")
+        @Sendable func patch(_ call: HarnessCall) -> HarnessReply {
+            if let body = call.body, String(decoding: body, as: UTF8.self).contains("forge") {
+                return ok(#"{"error":"réglage refusé, rien ne change : merge gh sans forge"}"#, status: 400)
+            }
+            listedMerge.withLock { $0 = "gh" }
+            return ok(#"{"repo":\#(patched),"judge":"local","ciTimeoutSec":3600,"spaces":["Acme"]}"#)
+        }
         let transport = Transport { call in
             switch (call.method, call.path) {
             case (_, "/v1/inbox"): ok(inbox)
             case ("GET", "/v1/me"): ok(#"{"client":{"name":"admin","role":"admin","repos":"*","createdAt":0,"approver":false}}"#)
             case ("GET", "/v1/health"): ok(#"{"ok":true,"features":["repo-settings"],"checks":{"db":{"ok":true},"scheduler":{"ok":true,"ageSec":1},"disk":{"ok":true,"freeMiB":1000}}}"#)
-            case ("GET", "/v1/repos"): ok(#"{"repos":[{"name":"demo","scope":"demo","mainBranch":"main","merge":"local","maxParallel":null,"judge":"local"}]}"#)
+            case ("GET", "/v1/repos"):
+                ok(#"{"repos":[{"name":"demo","scope":"demo","mainBranch":"main","merge":"\#(listedMerge.withLock { $0 })","maxParallel":null,"judge":"local","forge":"github","space":"Acme"}]}"#)
             case ("GET", "/v1/repos/demo"): ok(#"{"repo":\#(settings),"spaces":["Acme"]}"#)
-            case ("PATCH", "/v1/repos/demo"):
-                if let body = call.body, String(decoding: body, as: UTF8.self).contains("forge") {
-                    ok(#"{"error":"réglage refusé, rien ne change : merge gh sans forge"}"#, status: 400)
-                } else {
-                    ok(#"{"repo":\#(patched),"judge":"local","ciTimeoutSec":3600,"spaces":["Acme"]}"#)
-                }
+            case ("PATCH", "/v1/repos/demo"): patch(call)
             case ("DELETE", "/v1/repos/demo?confirm=1"): ok(#"{"repo":"demo","kept":false,"reload":{"repos":[],"added":[],"removed":["demo"],"kept":[]}}"#)
             default: ok("{}", status: 404)
             }
@@ -259,6 +265,7 @@ struct HarnessControlTests {
         await admin.loadRepos()
         #expect(admin.editsRepos)
         #expect(admin.repos.first?.judge == "local")
+        #expect(admin.repos.first?.forge == "github" && admin.repos.first?.space == "Acme", "une ligne se dessine sans lire le dépôt")
         let read = try #require(await admin.loadRepo("demo"))
         #expect(read.spaces == ["Acme"])
         #expect(read.repo.forge == nil && read.repo.forgeInUse == "github")
@@ -266,7 +273,7 @@ struct HarnessControlTests {
 
         let written = await admin.updateRepo("demo", HarnessRepoSettingsPatch(merge: .value("gh"), maxParallel: .value(2), git: .reset, judge: .reset, ciTimeoutSec: .value(600)))
         #expect(written?.merge == "gh" && written?.maxParallel == 2)
-        #expect(admin.repos.first?.merge == "gh", "la liste suit la réponse")
+        #expect(admin.repos.first?.merge == "gh", "la liste se relit au serveur après l'écriture")
         let body = try #require(transport.body(of: "/v1/repos/demo"))
         #expect(Set(body.keys) == ["merge", "maxParallel", "git", "tests"], "seuls les champs posés partent")
         #expect(body["git"] is NSNull, "le retour au défaut part en null explicite")

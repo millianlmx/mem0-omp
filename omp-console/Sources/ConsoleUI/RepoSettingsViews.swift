@@ -92,8 +92,7 @@ public struct RepoSettingsList: View {
 
     @ViewBuilder
     private func row(_ repo: HarnessServedRepo) -> some View {
-        let label = RepoRow(repo: repo, settings: admin.repoSettings[repo.name])
-            .task { await admin.loadRepo(repo.name, reuse: true) }
+        let label = RepoRow(repo: repo)
         #if os(macOS)
         label.tag(repo.name)
         #else
@@ -179,10 +178,10 @@ struct RepoBadges: View {
     }
 }
 
-/// Une ligne de la liste : la forge, le nom et ses repères ; dessous, la branche et l'espace.
+/// Une ligne de la liste : la forge, le nom et ses repères ; dessous, la branche et l'espace. Tout vient de
+/// `GET /v1/repos` : la liste ne lit pas chaque dépôt.
 struct RepoRow: View {
     let repo: HarnessServedRepo
-    let settings: HarnessRepoSettingsReply?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -195,7 +194,7 @@ struct RepoRow: View {
                     Spacer(minLength: 4)
                     RepoBadges(
                         branch: nil, merge: repo.merge, judge: repo.judge,
-                        localOnly: settings?.repo.privacy == "local-only"
+                        localOnly: repo.policy?.privacy == "local-only"
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -205,7 +204,7 @@ struct RepoRow: View {
                         Label(branch, systemImage: RepoText.branchSymbol)
                             .foregroundStyle(.secondary)
                     }
-                    if let space = settings?.spaces.first {
+                    if let space = repo.space {
                         Label(space, systemImage: RepoText.spaceSymbol)
                             .foregroundStyle(.tint)
                     }
@@ -222,7 +221,7 @@ struct RepoRow: View {
 
     @ViewBuilder
     private var forgeGlyph: some View {
-        let forge = settings?.repo.forgeInUse
+        let forge = repo.forge
         Image(systemName: forge.map(RepoText.forgeSymbol) ?? RepoText.repoSymbol)
             .font(.title3)
             .foregroundStyle(.secondary)
