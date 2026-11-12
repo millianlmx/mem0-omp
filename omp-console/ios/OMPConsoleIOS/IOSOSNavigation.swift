@@ -2,11 +2,11 @@ import ConsoleClient
 import ConsoleCore
 import ConsoleUI
 
-// La logique PURE de la coque de la nouvelle interface (l'« OS agentique ») sur iPhone et
-// iPad : ses cinq onglets, les pages qu'un onglet pousse dans sa pile, le choix de la
-// coque au lancement (arguments de recette, réglage gardé), où mène une demande venue du
-// dehors (lien, notification, palette, clavier) et les pastilles. Sans état partagé, sans
-// UIKit : `IOSOSRootView` la rend, les tests la prouvent.
+// La logique PURE de la coque de l'app (l'« OS agentique ») sur iPhone et iPad : ses cinq
+// onglets, les pages qu'un onglet pousse dans sa pile (dont le hub Système et ses pages),
+// l'écran ouvert au lancement (arguments de recette), où mène une demande venue du dehors
+// (lien, notification, palette, clavier) et les pastilles. Sans état partagé, sans UIKit :
+// `IOSOSRootView` la rend, les tests la prouvent.
 
 /// Les cinq onglets de la nouvelle interface, dans l'ordre de la barre. Leur `rawValue`
 /// est la valeur de l'argument de recette `-os.view`.
@@ -53,8 +53,13 @@ enum IOSOSRoute: Hashable, Sendable {
     case space(String)
     case automations
     case memory
+    /// Le hub Système, poussé dans l'onglet courant par la roue de la barre.
+    case system
+    /// Une page du hub Système (Poste, dépôts, vigie…).
+    case systemPage(OSSystemDestination)
 
-    /// La sélection de l'espace de travail quand la page est montrée.
+    /// La sélection de l'espace de travail quand la page est montrée ; `nil` : celle de la
+    /// racine de l'onglet, que la page ne change pas.
     @MainActor var selection: String? {
         switch self {
         case let .thread(id): id
@@ -62,6 +67,8 @@ enum IOSOSRoute: Hashable, Sendable {
         case .automations: OSWorkspace.automations
         // La Mémoire est un écran de l'app : elle s'ouvre depuis le Savoir, qui reste la sélection.
         case .memory: OSWorkspace.knowledge
+        // Le Système est un écran de l'app, poussé dans n'importe quel onglet.
+        case .system, .systemPage: nil
         }
     }
 }
@@ -108,9 +115,16 @@ struct IOSOSNavigation: Equatable {
     }
 
     /// Ce que l'écran montre, dit à l'espace de travail : la page du haut de la pile, sinon
-    /// la racine de l'onglet.
+    /// la racine de l'onglet (aussi sous une page de l'app qui ne sélectionne rien).
     @MainActor var selection: String? {
-        top.map { $0.selection } ?? tab.rootSelection
+        top?.selection ?? tab.rootSelection
+    }
+
+    /// Le hub Système dans l'onglet courant, et la page demandée par-dessus. Le Serveur n'est
+    /// jamais poussé : c'est une feuille, ouverte par la racine.
+    mutating func showSystem(_ destination: OSSystemDestination? = nil) {
+        let page = destination.flatMap { $0 == .server ? nil : IOSOSRoute.systemPage($0) }
+        paths[tab] = [.system] + (page.map { [$0] } ?? [])
     }
 
     /// Suit ce qu'un écran partagé demande par `OSWorkspace.selection` : « Maintenant »
@@ -135,30 +149,31 @@ struct IOSOSNavigation: Equatable {
     }
 }
 
-/// Où mène, dans la nouvelle interface, une demande venue du dehors.
+/// Où mène, dans l'app, une demande venue du dehors.
 enum IOSOSDestination: Equatable {
     case tab(IOSOSTab)
     /// Le fil d'une feature : l'onglet Fils, puis son fil dès qu'il est connu.
     case run(String)
     /// La Mémoire, poussée dans le Savoir.
     case memory
-    /// Sans équivalent dans la nouvelle interface : la coque classique, à cette section.
-    case classic(ConsoleSection)
-    /// Une page du hub Système de la coque classique.
-    case classicPage(SystemPage)
+    /// Le hub Système, dans l'onglet courant.
+    case system
+    /// Une page du hub Système ; le Serveur est la feuille de connexion.
+    case systemPage(OSSystemDestination)
 }
 
 enum IOSOSRouting {
-    /// Une section demandée (⌘<n>, palette, notification) : ce qui attend l'humain est
-    /// l'onglet Décisions, envois du poste compris ; les features sont les Fils — ou le
-    /// fil de la feature à ouvrir (`openedRun`) ; la Mémoire se pousse dans le Savoir. Le
-    /// Système n'existe que dans la coque classique.
-    static func destination(of section: ConsoleSection, openedRun: String? = nil) -> IOSOSDestination {
+    /// Une section demandée (⌘K, notification, lien) : ce qui attend l'humain est l'onglet
+    /// Décisions ; les features sont les Fils — ou le fil de la feature à ouvrir
+    /// (`openedRun`) ; le Poste est sa page du Système ; la Mémoire se pousse dans le
+    /// Savoir ; le Système ouvre la page demandée (`page`, `drafts.systemPage`), sinon son hub.
+    static func destination(of section: ConsoleSection, openedRun: String? = nil, page: SystemPage? = nil) -> IOSOSDestination {
         switch section {
-        case .inbox, .workstation: .tab(.decisions)
+        case .inbox: .tab(.decisions)
         case .runs: openedRun.map(IOSOSDestination.run) ?? .tab(.threads)
+        case .workstation: .systemPage(.workstation)
         case .memory: .memory
-        default: .classic(section)
+        case .system: page.map { IOSOSDestination.systemPage(OSSystemDestination($0)) } ?? .system
         }
     }
 
@@ -169,7 +184,7 @@ enum IOSOSRouting {
         case .decisions: .tab(.decisions)
         case let .thread(runId): .run(runId)
         case let .section(section): destination(of: section)
-        case let .system(page): .classicPage(page)
+        case let .system(page): destination(of: .system, page: page)
         }
     }
 
@@ -194,33 +209,31 @@ enum IOSOSRouting {
     }
 }
 
-/// La coque montrée au lancement et, pour la recette, l'écran de la nouvelle interface à
-/// ouvrir. Lu dans les arguments de lancement :
+/// L'écran ouvert au lancement, pour la recette. Lu dans les arguments de lancement :
 ///
-/// - `-section`, `-ios.state`, `-memoire.recipe` : les crochets de recette de la coque
-///   classique l'ouvrent TOUJOURS (les scripts de capture et leurs gardes en dépendent) ;
-/// - `-os.view <now|threads|decisions|proposals|knowledge>`, `-os.thread <fil ou feature>`,
-///   `-os.space <identifiant ou nom>` : la nouvelle interface, à cet écran, quel que soit
-///   le réglage ;
-/// - sinon le réglage gardé : la nouvelle interface, sauf si la classique a été choisie.
+/// - `-os.view <now|threads|decisions|proposals|knowledge>` : cet onglet ;
+/// - `-os.thread <fil ou feature>`, `-os.space <identifiant ou nom>` : ce fil, cet espace ;
+/// - `-os.system <page>` : cette page du hub Système (`OSSystemDestination`), dans l'onglet ;
+/// - `-ios.state` et `-memoire.recipe` (crochets de l'écran Mémoire) : la Mémoire, dans le
+///   Savoir.
 ///
-/// Même tolérance que `IOSSection.resolve` : la dernière paire reconnue gagne, une valeur
-/// absente ou inconnue est ignorée.
+/// La dernière paire reconnue gagne, une valeur absente ou inconnue est ignorée.
 struct IOSShellLaunch: Equatable {
-    var classic: Bool
     var tab: IOSOSTab?
     var thread: String?
     var space: String?
+    var system: OSSystemDestination?
+    var memory = false
 
-    /// Les crochets de recette de la coque classique.
-    static let classicFlags = ["-section", "-ios.state", "-memoire.recipe"]
     static let viewFlag = "-os.view"
     static let threadFlag = "-os.thread"
     static let spaceFlag = "-os.space"
+    static let systemFlag = "-os.system"
+    /// Les crochets de recette de l'écran Mémoire.
+    static let memoryFlags = ["-ios.state", "-memoire.recipe"]
 
-    static func resolve(_ arguments: [String], prefersClassic: Bool) -> IOSShellLaunch {
-        if arguments.contains(where: classicFlags.contains) { return IOSShellLaunch(classic: true) }
-        var launch = IOSShellLaunch(classic: prefersClassic)
+    static func resolve(_ arguments: [String]) -> IOSShellLaunch {
+        var launch = IOSShellLaunch(memory: arguments.contains(where: memoryFlags.contains))
         var index = 0
         while index + 1 < arguments.count {
             let value = arguments[index + 1]
@@ -231,22 +244,36 @@ struct IOSShellLaunch: Equatable {
                 launch.thread = value
             case spaceFlag:
                 launch.space = value
+            case systemFlag:
+                if let system = OSSystemDestination(rawValue: value) { launch.system = system }
             default:
                 break
             }
             index += 1
         }
-        if launch.tab != nil || launch.thread != nil || launch.space != nil { launch.classic = false }
         return launch
     }
 
-    /// L'onglet ouvert au lancement de la nouvelle interface : celui que nomme la recette ;
-    /// un fil s'ouvre dans les Fils, un espace dans le Savoir ; sinon « Maintenant ».
+    /// L'onglet ouvert au lancement : celui que nomme la recette ; un fil s'ouvre dans les
+    /// Fils, un espace et la Mémoire dans le Savoir ; sinon « Maintenant ».
     var initialTab: IOSOSTab {
         if let tab { return tab }
         if thread != nil { return .threads }
-        if space != nil { return .knowledge }
+        if space != nil || memory { return .knowledge }
         return .now
+    }
+
+    /// La navigation au lancement : l'onglet, et la page de l'app que la recette demande
+    /// (une page du Système, sinon la Mémoire). Le fil et l'espace s'ouvrent dès qu'ils sont
+    /// connus (`IOSOSRootView`).
+    var initialNavigation: IOSOSNavigation {
+        var navigation = IOSOSNavigation(tab: initialTab)
+        if let system {
+            navigation.showSystem(system)
+        } else if memory {
+            navigation.show(.memory, in: initialTab)
+        }
+        return navigation
     }
 }
 

@@ -46,10 +46,12 @@ public struct OSRadar: View {
 
     @State private var ask: Ask?
 
-    private var liveRuns: [HarnessRun] {
-        (server.inbox?.runs ?? []).filter { run in
-            let phase = OSThreads.phase(of: run, inbox: server.inbox)
-            return phase == .working || phase == .yours
+    /// Les features au travail ou qui vous attendent, et leur phase : la boîte indexée une fois.
+    private var liveRuns: [(run: HarnessRun, phase: OSPhase)] {
+        let waiting = OSThreads.pendingByRun(server.inbox)
+        return (server.inbox?.runs ?? []).compactMap { run in
+            let phase = OSThreads.phase(of: run, pending: waiting[run.id] ?? 0)
+            return phase == .working || phase == .yours ? (run, phase) : nil
         }
     }
 
@@ -57,12 +59,14 @@ public struct OSRadar: View {
         // Sur le Mac, la hauteur ne change jamais : en pause, la barre elle-même devient le
         // bandeau orange. Sur l'iPhone et l'iPad, le Radar tient en deux rangées qui suivent
         // la taille du texte : la pause et le coût, puis les agents.
-        TimelineView(.periodic(from: .now, by: 5)) { context in
+        // Seules les pastilles des agents suivent l'horloge (la fraîcheur du pouls) : le reste
+        // de la barre ne se redessine pas toutes les cinq secondes.
+        Group {
             #if os(macOS)
             HStack(spacing: 10) {
                 if pause.isPaused { pausedLabel }
                 ScrollView(.horizontal, showsIndicators: false) {
-                    agents(now: context.date)
+                    agentsTicking
                         .padding(.vertical, 6)
                 }
                 Spacer(minLength: 0)
@@ -90,7 +94,7 @@ public struct OSRadar: View {
                     HStack(spacing: 10) { gauges }
                 }
                 ScrollView(.horizontal, showsIndicators: false) {
-                    agents(now: context.date)
+                    agentsTicking
                         .padding(.horizontal, 16)
                 }
                 .padding(.horizontal, -16)
@@ -133,16 +137,24 @@ public struct OSRadar: View {
         (server.address ?? "") + "|" + (workspace.spaceId ?? "")
     }
 
+    /// Les pastilles des agents, redessinées toutes les cinq secondes : une activité trop
+    /// vieille quitte la ligne.
+    private var agentsTicking: some View {
+        TimelineView(.periodic(from: .now, by: 5)) { context in
+            agents(now: context.date)
+        }
+    }
+
     /// Une pastille par agent : les features vivantes, le poste, la vigie, les sessions locales, l'OS.
     private func agents(now: Date) -> some View {
         HStack(spacing: 8) {
-            ForEach(liveRuns) { run in
+            ForEach(liveRuns, id: \.run.id) { live in
                 agent(
-                    phase: OSThreads.phase(of: run, inbox: server.inbox),
-                    name: OSThreads.clean(run.title).title,
-                    line: run.repo + " · " + (pulse.current(.run(run.id), now: now)?.line ?? run.osState)
+                    phase: live.phase,
+                    name: OSThreads.clean(live.run.title).title,
+                    line: live.run.repo + " · " + (pulse.current(.run(live.run.id), now: now)?.line ?? live.run.osState)
                 ) {
-                    workspace.open(runId: run.id, in: threads)
+                    workspace.open(runId: live.run.id, in: threads)
                 }
             }
             poste(now: now)
@@ -395,7 +407,7 @@ public struct OSRadar: View {
         case .stopPoste:
             Task { await workstation.stop() }
         case .stopRuns:
-            let ids = liveRuns.map(\.id)
+            let ids = liveRuns.map(\.run.id)
             Task { for id in ids { await server.cancel(runId: id) } }
         }
     }

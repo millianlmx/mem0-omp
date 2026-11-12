@@ -488,9 +488,6 @@ public struct HarnessAuditProposal: Codable, Equatable, Sendable {
         self.kind = kind
         self.rationale = rationale
     }
-
-    /// Une faiblesse du code existant (sinon une feature qui manque).
-    public var isWeakness: Bool { kind == "faiblesse" }
 }
 
 /// Un audit d'un dépôt : `queued` → `analysing` → `proposed`, puis `launched` en projet.
@@ -551,8 +548,6 @@ public struct HarnessProject: Codable, Equatable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.runs = runs
     }
-
-    public var isDone: Bool { status == "done" }
 }
 
 /// Une étape, dans les statistiques : combien, combien en échec, durée médiane.
@@ -770,12 +765,6 @@ public struct HarnessInbox: Codable, Equatable, Sendable {
             guard let phase = batch.run?.phase else { return true }
             return ![.merged, .cancelled, .failed].contains(phase)
         }
-    }
-
-    /// Les runs qui ont des décisions à relire, dans l'ordre de la boîte, sans doublon.
-    public var decisionRunIds: [String] {
-        var seen = Set<String>()
-        return decisions.map(\.runId).filter { seen.insert($0).inserted }
     }
 }
 

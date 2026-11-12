@@ -27,8 +27,9 @@ function source(file: string): string {
 /** Les fichiers de l'app iOS qui lisent la mémoire du serveur. */
 const TRANSLATING_FILES = ["IOSMemoryScreen.swift", "IOSMemoryGraphView.swift"];
 
-/** Les fichiers qui affichent un échec du serveur de pipelines. */
-const SERVER_FILES = ["IOSHarnessScreens.swift", "IOSServerSheet.swift"];
+/** Les fichiers qui affichent un échec du serveur de pipelines : la racine d'un onglet, la
+ *  page du Système et la feuille du serveur. */
+const SERVER_FILES = ["IOSOSScreens.swift", "IOSSystemScreens.swift", "IOSServerSheet.swift"];
 
 /** Les fragments qui relisent un détail brut ou une ancienne traduction locale. */
 const RAW_DETAILS = ["api.message", "gestureError(", "IOSMemoryText.unavailable(", "localizedDescription"];
@@ -105,14 +106,14 @@ test("ios-erreurs-serveur-lisibles/AC-8 : un seul traducteur des pannes de la m�
 
   // Et un écran du serveur qui affiche la description brute d'une erreur.
   const copy3 = copyRepo("ios-erreurs-serveur-lisibles-copie-");
-  const harness = path.join(copy3, "omp-console", "ios", "OMPConsoleIOS", "IOSHarnessScreens.swift");
+  const harness = path.join(copy3, "omp-console", "ios", "OMPConsoleIOS", "IOSSystemScreens.swift");
   fs.writeFileSync(
     harness,
     fs.readFileSync(harness, "utf8").replace("Text(failure.message)", "Text(failure.localizedDescription)"),
   );
   const faults3 = singleTranslatorFaults(copy3);
   assert.ok(
-    faults3.some((fault) => fault.includes("IOSHarnessScreens.swift ne passe pas")),
+    faults3.some((fault) => fault.includes("IOSSystemScreens.swift ne passe pas")),
     "un écran du serveur sans traducteur doit rougir",
   );
   assert.ok(

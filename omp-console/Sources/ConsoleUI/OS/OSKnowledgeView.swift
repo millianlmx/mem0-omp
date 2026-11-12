@@ -2,7 +2,7 @@
 // et applique sans qu'on le lui redise. Les consignes permanentes (liste, interrupteur,
 // modifier, supprimer, ajouter), les paliers d'autonomie par dépôt (règles en phrases,
 // confiance, propositions à appliquer), les espaces (créer, modifier, supprimer ; chacun
-// ouvre sa page), puis la mémoire et l'interface classique, que la coque ouvre. Chaque
+// ouvre sa page), puis la mémoire et les automatismes quand la coque les ouvre d'ici. Chaque
 // partie que le serveur ne sert pas est absente, sans rien dire.
 
 import ConsoleClient
@@ -13,20 +13,16 @@ public struct OSKnowledgeView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var workspace: OSWorkspace
     let openMemory: (() -> Void)?
-    let openClassic: (() -> Void)?
     let openAutomations: (() -> Void)?
 
-    /// `openMemory`, `openClassic`, `openAutomations` : ce que la coque sait ouvrir (l'écran
-    /// de la mémoire, l'interface classique, et les Automatismes quand ils n'ont pas leur
-    /// entrée ailleurs : iPhone, iPad) ; sans geste, la ligne n'existe pas.
+    /// `openMemory`, `openAutomations` : ce que la coque ouvre d'ici quand ces écrans n'ont
+    /// pas leur entrée ailleurs (iPhone, iPad) ; sans geste, la ligne n'existe pas.
     public init(
-        server: HarnessModel, workspace: OSWorkspace, openMemory: (() -> Void)? = nil, openClassic: (() -> Void)? = nil,
-        openAutomations: (() -> Void)? = nil
+        server: HarnessModel, workspace: OSWorkspace, openMemory: (() -> Void)? = nil, openAutomations: (() -> Void)? = nil
     ) {
         self.server = server
         self.workspace = workspace
         self.openMemory = openMemory
-        self.openClassic = openClassic
         self.openAutomations = openAutomations
     }
 
@@ -35,16 +31,13 @@ public struct OSKnowledgeView: View {
             OSKnowledgeRules(server: server)
             OSKnowledgeTiers(server: server)
             OSSpacesSection(server: server, workspace: workspace)
-            if openMemory != nil || openClassic != nil || openAutomations != nil {
+            if openMemory != nil || openAutomations != nil {
                 Section {
                     if let openAutomations {
                         link(OSText.automations, symbol: "gearshape.arrow.triangle.2.circlepath", action: openAutomations)
                     }
                     if let openMemory {
                         link(OSWatchText.memory, symbol: "brain", action: openMemory)
-                    }
-                    if let openClassic {
-                        link(OSText.classic, symbol: "sidebar.left", action: openClassic)
                     }
                 }
             }

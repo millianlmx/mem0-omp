@@ -1,15 +1,14 @@
 // Les commandes clavier de l'iPad (ipad-clavier-et-largeur-de-lecture, S-2, S-3) :
 // la table des raccourcis, leur routage vers l'écran courant, et les commandes de
-// scène qui les posent dans la barre des menus de l'iPad (menu Présentation), sur
-// le patron des commandes du Mac (`SectionCommands`).
+// scène qui les posent dans la barre des menus de l'iPad (menu Présentation).
 //
-// Le routage passe par `@FocusedValue` : la racine publie la sélection de section,
+// Le routage passe par `@FocusedValue` : la racine publie l'onglet montré,
 // chaque écran publie son rafraîchissement et, s'il cherche, sa recherche
 // (`.focusedSceneValue`). Une fermeture voyage dans une struct
 // `Equatable` (jamais nue dans une entrée de `FocusedValues`, qui invaliderait ses
 // lecteurs à chaque mise à jour).
 //
-// Aucun littéral ici : libellés et touches viennent de `ConsoleSection.title` et
+// Aucun littéral ici : libellés et touches viennent de `IOSOSTab.title` et
 // `IOSKeyboardText` ; les chiffres sont calculés.
 
 import ConsoleClient
@@ -31,10 +30,10 @@ enum IOSKeyboard {
     /// restent aux feuilles.
     static let modifiers: EventModifiers = .command
 
-    /// ⌘1…⌘5 : les sections, dans l'ordre affiché par la barre latérale.
-    static var sections: [(section: ConsoleSection, shortcut: IOSShortcut)] {
-        IOSSection.sidebarOrder.enumerated().map { index, section in
-            (section, IOSShortcut(title: section.title, key: Character(String(index + 1))))
+    /// ⌘1…⌘5 : les onglets, dans l'ordre de la barre.
+    static var tabs: [(tab: IOSOSTab, shortcut: IOSShortcut)] {
+        IOSOSTab.allCases.enumerated().map { index, tab in
+            (tab, IOSShortcut(title: tab.title, key: Character(String(index + 1))))
         }
     }
 
@@ -47,16 +46,17 @@ enum IOSKeyboard {
     static let palette = IOSShortcut(title: PipelineServerText.paletteMenu, key: IOSKeyboardText.paletteKey)
     static let newFeature = IOSShortcut(title: PipelineServerText.newFeature, key: IOSKeyboardText.newFeatureKey)
 
-    /// Les raccourcis : les sections, puis Actualiser, Rechercher.
+    /// Les raccourcis : les onglets, puis Actualiser, Rechercher.
     static var all: [IOSShortcut] {
-        sections.map(\.shortcut) + [refresh, search]
+        tabs.map(\.shortcut) + [refresh, search]
     }
 }
 
 /// Une action publiée par un écran pour une commande clavier. L'égalité ignore la
-/// fermeture : seuls l'écran qui la publie et son activation comptent.
+/// fermeture : seuls l'écran qui la publie (son identifiant d'accessibilité) et son
+/// activation comptent.
 struct IOSCommandAction: Equatable {
-    let owner: ConsoleSection
+    let owner: String
     let isEnabled: Bool
     let run: @MainActor () -> Void
 
@@ -72,18 +72,17 @@ struct IOSPaletteAction: Equatable {
     static func == (a: Self, b: Self) -> Bool { a.drafts === b.drafts && a.isEnabled == b.isEnabled }
 }
 
-/// La sélection de section publiée par la racine : la section affichée et le moyen
-/// d'en changer.
-struct IOSSectionSelector: Equatable {
-    let current: ConsoleSection?
-    let select: @MainActor (ConsoleSection) -> Void
+/// L'onglet publié par la racine : l'onglet montré et le moyen d'en changer.
+struct IOSTabSelector: Equatable {
+    let current: IOSOSTab
+    let select: @MainActor (IOSOSTab) -> Void
 
     static func == (a: Self, b: Self) -> Bool { a.current == b.current }
 }
 
 extension FocusedValues {
-    /// Publiée par `RootView` : la sélection de section (⌘1…⌘5).
-    @Entry var iosSelectSection: IOSSectionSelector?
+    /// Publiée par `IOSOSRootView` : l'onglet montré (⌘1…⌘5).
+    @Entry var iosSelectTab: IOSTabSelector?
     /// Publiée par l'écran affiché : relire ses données (⌘R).
     @Entry var iosRefresh: IOSCommandAction?
     /// Publiée par l'écran affiché qui possède un champ de recherche (⌘F).
@@ -113,7 +112,7 @@ enum IOSModalPresence {
 /// Rechercher ⌘F) ; « Nouvelle fenêtre » est retirée (l'app garde une seule
 /// fenêtre et un seul client).
 struct IOSKeyboardCommands: Commands {
-    @FocusedValue(\.iosSelectSection) private var selector
+    @FocusedValue(\.iosSelectTab) private var selector
     @FocusedValue(\.iosRefresh) private var refresh
     @FocusedValue(\.iosSearch) private var search
     @FocusedValue(\.iosPalette) private var palette
@@ -121,8 +120,8 @@ struct IOSKeyboardCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .newItem) {}
         CommandGroup(before: .sidebar) {
-            ForEach(IOSKeyboard.sections, id: \.section) { entry in
-                command(entry.shortcut) { select(entry.section) }
+            ForEach(IOSKeyboard.tabs, id: \.tab) { entry in
+                command(entry.shortcut) { select(entry.tab) }
                     .disabled(selector == nil)
             }
             Divider()
@@ -149,9 +148,9 @@ struct IOSKeyboardCommands: Commands {
             .keyboardShortcut(KeyEquivalent(shortcut.key), modifiers: IOSKeyboard.modifiers)
     }
 
-    @MainActor private func select(_ section: ConsoleSection) {
-        guard !IOSModalPresence.isPresenting(), let selector, selector.current != section else { return }
-        selector.select(section)
+    @MainActor private func select(_ tab: IOSOSTab) {
+        guard !IOSModalPresence.isPresenting(), let selector, selector.current != tab else { return }
+        selector.select(tab)
     }
 
     @MainActor private func openPalette(search: Bool) {

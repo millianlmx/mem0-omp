@@ -22,8 +22,7 @@ import type { Client, Role } from "./auth.ts";
 import { ClientRegistry, ROLES, allows, repoFilter } from "./auth.ts";
 import { policyBounds } from "./policy.ts";
 import type { Actor } from "./context.ts";
-import type { TestJudge } from "./config.ts";
-import { TEST_JUDGES, testsJudge } from "./config.ts";
+import { repoByName, testsJudge } from "./config.ts";
 import type {
   ActionState,
   ClientSource,
@@ -67,6 +66,7 @@ import { PROOF_MIMES } from "./proofs.ts";
 import { COMPATIBLE, COMPATIBLE_APIS, KNOWN_PROVIDERS, OAUTH } from "./providers.ts";
 import { autonomyValidations, escalationBatches, projectsOf } from "./queries.ts";
 import type { ConfigAdmin } from "./repos.ts";
+import { repoSettingsPatch } from "./repos.ts";
 import { computeStats } from "./stats.ts";
 import { autonomyProposals } from "./autonomy-learning.ts";
 import { HARNESS_COMMIT } from "./build-info.ts";
@@ -169,6 +169,7 @@ export const API_FEATURES = [
   "space-policy",
   "space-workstation",
   "run-facts",
+  "repo-settings",
 ] as const;
 
 /** La route publique qui échange un ticket d'appairage contre le jeton d'un appareil. */
@@ -544,6 +545,12 @@ export function apiRoutes(
       throw new HarnessError(409, "service lancé sans fichier de configuration (--config) : rien à relire ni à écrire");
     return admin;
   };
+  /** Les espaces qui rangent un dépôt, par nom (un dépôt n'en a qu'un, `spaces.ts`). */
+  const spacesHolding = (repo: string): string[] =>
+    store
+      .listSpaces()
+      .filter((space) => space.repos.includes(repo))
+      .map((space) => space.name);
   /**
    * L'administration du serveur — ses clients, ses fournisseurs et leurs connexions, ses chaînes de
    * modèles, les réglages de la vigie — est à un client qui voit TOUS les dépôts : un admin borné à des
@@ -615,35 +622,38 @@ export function apiRoutes(
       const declared = await target.declare(text(body, "url"), name === "" ? undefined : name);
       send(call.res, declared.added ? 201 : 200, declared);
     }),
-    // Qui juge la suite complète d'un dépôt (`tests.judge`, `tests.ciTimeoutSec`) : écrit, validé, rechargé à chaud.
+    // Les réglages d'un dépôt tels qu'ils servent (repos.ts `RepoSettings`) et les espaces qui le portent : au
+    // propriétaire, comme leur écriture. Jamais la clé privée ni un secret.
+    route("GET", "/v1/repos/{name}", "admin", async (call) => {
+      const target = adminOf(call);
+      const name = call.match[1] as string;
+      send(call.res, 200, { repo: await target.settings(name), spaces: spacesHolding(name) });
+    }),
+    // Les réglages d'un dépôt (branche, forge, fusion, juge des tests, politique de modèles…) : écrits, validés,
+    // rechargés à chaud. Les commandes, chemins et comptes restent au fichier (repos.ts `repoSettingsPatch`).
     route("PATCH", "/v1/repos/{name}", "admin", async (call) => {
       const target = adminOf(call);
-      const body = await readBody(call.req);
-      const tests = body.tests;
-      if (typeof tests !== "object" || tests === null || Array.isArray(tests))
-        throw new HarnessError(400, "tests : un objet { judge?, ciTimeoutSec? } attendu");
-      const fields = tests as Record<string, unknown>;
-      const unknown = Object.keys(fields).filter((key) => key !== "judge" && key !== "ciTimeoutSec");
-      if (unknown.length > 0)
-        throw new HarnessError(400, `tests : champ(s) non modifiable(s) ici : ${unknown.join(", ")}`);
-      const { judge, ciTimeoutSec } = fields;
-      if (judge !== undefined && judge !== null && !(TEST_JUDGES as readonly unknown[]).includes(judge))
-        throw new HarnessError(400, `tests.judge : ${TEST_JUDGES.map((value) => `"${value}"`).join(" | ")} ou null`);
-      if (
-        ciTimeoutSec !== undefined &&
-        ciTimeoutSec !== null &&
-        !(Number.isInteger(ciTimeoutSec) && (ciTimeoutSec as number) >= 1)
-      )
-        throw new HarnessError(400, "tests.ciTimeoutSec : entier ≥ 1 (secondes) ou null");
+      const patch = repoSettingsPatch(await readBody(call.req));
       const name = call.match[1] as string;
-      send(
-        call.res,
-        200,
-        await target.setTests(name, {
-          ...(judge !== undefined ? { judge: judge as TestJudge | null } : {}),
-          ...(ciTimeoutSec !== undefined ? { ciTimeoutSec: ciTimeoutSec as number | null } : {}),
-        }),
-      );
+      const repo = await target.update(name, patch);
+      send(call.res, 200, {
+        repo,
+        judge: repo.tests.judge,
+        ciTimeoutSec: repo.tests.ciTimeoutSec,
+        spaces: spacesHolding(name),
+      });
+    }),
+    // Retirer un dépôt : `?confirm=1` exigé (409 sinon) ; un dépôt rangé dans un espace s'en retire d'abord (409).
+    route("DELETE", "/v1/repos/{name}", "admin", async (call) => {
+      const target = adminOf(call);
+      const name = call.match[1] as string;
+      if (repoByName(orchestrator.config, name) === null) throw new HarnessError(404, `dépôt non déclaré : ${name}`);
+      const holders = spacesHolding(name);
+      if (holders.length > 0)
+        throw new HarnessError(409, `${name} appartient à l'espace « ${holders.join(" », « ")} » : retirez-le d'abord`);
+      if (call.url.searchParams.get("confirm") !== "1")
+        throw new HarnessError(409, `retirer ${name} : confirmez avec ?confirm=1`);
+      send(call.res, 200, await target.remove(name));
     }),
     // SIGHUP par l'API : la configuration relue, les dépôts rechargés ; invalide, 400 et rien ne change.
     route("POST", "/v1/reload", "admin", async (call) => send(call.res, 200, { reload: await adminOf(call).reload() })),

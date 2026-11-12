@@ -13,21 +13,14 @@ import Foundation
 public enum MonitoringText {
     // MARK: - Onglets du direct
 
-    public static let tabLive = L10n.text("Direct")
-    public static let tabFiles = L10n.text("Fichiers")
-    public static let tabTests = L10n.text("Tests")
-    public static let tabTimeline = L10n.text("Frise")
     public static let loadEarlier = L10n.text("Afficher les entrées précédentes")
     public static let auditSessionTitle = L10n.text("Analyse en direct")
-    public static let refreshSymbol = "arrow.clockwise"
     public static let refresh = L10n.text("Actualiser")
 
     // MARK: - Coût
 
     public static let costLabel = L10n.text("Coût")
-    public static let costSymbol = "dollarsign.circle"
     public static let usageTitle = L10n.text("Consommation des agents")
-    public static let usageHint = L10n.text("Le coût que les fournisseurs annoncent à omp, message par message ; un fournisseur qui ne dit rien de son prix compte pour zéro.")
     public static let usageTotal = L10n.text("Depuis le début")
     public static let usageWeek = L10n.text("7 derniers jours")
     public static let usageByDay = L10n.text("Par jour")
@@ -48,11 +41,6 @@ public enum MonitoringText {
         "\(grouped(count)) \(count == 1 ? L10n.text("jeton") : L10n.text("jetons"))"
     }
 
-    /// « 0,42 $ sur 1,00 $ »
-    public static func budgetLine(cost value: Double, threshold: Double) -> String {
-        L10n.format("%@ sur %@", cost(value), cost(threshold))
-    }
-
     /// « 1,20 $ · 45 000 jetons »
     public static func usageLine(cost value: Double, tokens count: Int) -> String {
         "\(cost(value)) · \(tokens(count))"
@@ -71,9 +59,6 @@ public enum MonitoringText {
     }
 
     // MARK: - Alertes
-
-    public static let alertsTitle = L10n.text("Alertes")
-    public static let alertsHint = L10n.text("La veille du serveur : un agent muet, une étape anormalement longue, une boucle de corrections ou un budget dépassé.")
 
     /// « Agent muet depuis 20 min (outil run_tests) »
     public static func alertStalled(minutes: Int?, tool: String?) -> String {
@@ -130,7 +115,6 @@ public enum MonitoringText {
 
     // MARK: - Frise
 
-    public static let timelineTitle = L10n.text("Frise")
     public static let timelineSteps = L10n.text("Étapes")
     public static let timelineEvents = L10n.text("Événements marquants")
     public static let timelineTests = L10n.text("Tests")
@@ -267,7 +251,6 @@ public enum MonitoringText {
     public static let testsEmpty = L10n.text("Aucun test lancé pour l’instant.")
     public static let testRunning = L10n.text("En cours…")
     public static let flakyTitle = L10n.text("Tests instables")
-    public static let flakyHint = L10n.text("Verts après un rouge sur le même arbre : un échec qui ne dit rien du code.")
     public static let flakyNone = L10n.text("Aucun test instable relevé.")
 
     public static func testScope(_ raw: String) -> String {
@@ -322,7 +305,6 @@ public enum MonitoringText {
     public static let healthTitle = L10n.text("Santé du serveur")
     public static let healthAgents = L10n.text("Agents occupés")
     public static let healthTests = L10n.text("Tests occupés")
-    public static let healthWaiting = L10n.text("En attente")
     public static let healthMemory = L10n.text("Mémoire libre")
     public static let healthQueue = L10n.text("Features en file")
     public static let healthIncidents = L10n.text("Limites de débit et bascules")
@@ -344,7 +326,6 @@ public enum MonitoringText {
     // MARK: - Modèles
 
     public static let modelsTitle = L10n.text("Modèles")
-    public static let modelsHint = L10n.text("Chaque modèle sur ses étapes : échecs, durée médiane, implémentations renvoyées en correction, features fusionnées et coût.")
     public static let modelsNone = L10n.text("Aucune étape conduite par un modèle connu.")
 
     /// « 12 étapes · 1 en échec · médiane 4 min »
@@ -400,9 +381,6 @@ public enum MonitoringText {
     // MARK: - Services
 
     public static let servicesTitle = L10n.text("Services")
-    public static let servicesHint = L10n.text("La santé du serveur, de sa mémoire, de ses sauvegardes et de l’extension Chrome.")
-    public static let servicesUnreachable = L10n.text("Le serveur ne répond pas à la sonde de santé.")
-    public static let servicesAllGood = L10n.text("Tous les services sont en ordre.")
     public static let servicesSymbol = "stethoscope"
     public static let serviceNotConfigured = L10n.text("Non configuré")
 
@@ -430,21 +408,6 @@ public enum MonitoringText {
         }
     }
 
-    /// Le symbole d'un niveau de service.
-    public static func serviceSymbol(_ raw: Int) -> String {
-        switch raw {
-        case 0: "checkmark.circle.fill"
-        case 2: "exclamationmark.triangle.fill"
-        case 3: "xmark.octagon.fill"
-        default: "questionmark.circle"
-        }
-    }
-
-    /// Le résumé de l'Accueil : combien de services demandent un regard.
-    public static func servicesProblems(_ count: Int) -> String {
-        count == 1 ? L10n.text("1 service demande votre attention.") : L10n.format("%lld services demandent votre attention.", count)
-    }
-
     public static func serviceVersion(_ version: String) -> String { L10n.format("Version %@", version) }
     public static func lastTick(_ duration: String) -> String { L10n.format("Dernier tour il y a %@", duration) }
     public static func freeSpace(_ size: String) -> String { L10n.format("%@ libres", size) }
@@ -456,12 +419,6 @@ public enum MonitoringText {
     }
     public static func lastBackup(_ date: String) -> String { L10n.format("Dernière sauvegarde : %@", date) }
     public static func lastError(_ error: String) -> String { L10n.format("Dernière erreur : %@", error) }
-
-    // MARK: - Rapport du matin
-
-    public static let digestTitle = L10n.text("Rapport du matin")
-    public static let digestSymbol = "sun.max"
-    public static func digestWindow(_ since: String) -> String { L10n.format("Depuis le %@", since) }
 }
 
 /// Les NOTIFICATIONS des deux apps : les gestes qu'offre une notification (catégories

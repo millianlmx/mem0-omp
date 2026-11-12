@@ -1,5 +1,5 @@
-// L'action « Choisir un projet… » des états vides de Mémoire, Fichiers et
-// Terminal (S-1, S-2 de mac-etats-vides-sans-issue), et l'état vide qui la porte.
+// L'action « Choisir un projet… » de l'état vide de la Mémoire (S-1, S-2 de
+// mac-etats-vides-sans-issue), et l'état vide qui la porte.
 //
 // Deux formes, jamais un menu vide ni un bouton inactif (D-3) :
 //  - des projets sont connus → un bouton de menu (`MenuStyle.button`, D-2) : une
@@ -9,8 +9,7 @@
 // Ce qui s'affiche est décidé par `ProjectChooserForm`, pur, donc figé par les
 // tests sans rendre la vue.
 //
-// Le choix ne touche jamais la section affichée : `onChosen` remplit l'écran
-// COURANT (rafraîchissement de Mémoire ou de Fichiers, feuille du Terminal).
+// Le choix ne touche jamais l'écran affiché : `onChosen` recharge la Mémoire.
 //
 // Aucun attribut macro SwiftUI (`@State`, `@Preview`) : sous les Command Line
 // Tools seuls, ils ne compilent pas. La liste vit dans `ProjectChooserModel`.
@@ -91,8 +90,8 @@ struct ProjectChooserButton: View {
     }
 }
 
-/// L'état vide « sans projet » d'une des trois sections : ses mots et
-/// l'identifiant de son action. Aucun ne nomme de raccourci clavier (AC-6).
+/// L'état vide « sans projet » de la Mémoire : ses mots et l'identifiant de son action.
+/// Aucun ne nomme de raccourci clavier (AC-6).
 struct NoProjectState: Equatable {
     let title: String
     let description: String
@@ -104,16 +103,6 @@ struct NoProjectState: Equatable {
         title: MemoryText.noProjectTitle,
         description: MemoryText.noProjectDescription,
         chooserIdentifier: "memory.chooseProject"
-    )
-    static let files = NoProjectState(
-        title: FilesText.noProjectTitle,
-        description: FilesText.noProjectDescription,
-        chooserIdentifier: "files.chooseProject"
-    )
-    static let terminal = NoProjectState(
-        title: TerminalViewText.noProjectTitle,
-        description: TerminalViewText.noProjectDescription,
-        chooserIdentifier: "terminal.chooseProject"
     )
 }
 

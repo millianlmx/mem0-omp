@@ -83,28 +83,29 @@ test("onglet-preuves/AC-95 : le contenu d'une preuve que lit le client — octet
   }
 });
 
-test("onglet-preuves/AC-96 : les pages Mac et iOS d'une feature ont l'onglet « Preuves », ouvert d'emblée par la règle partagée, absent sans preuves servies, rendu par les sections partagées et les mots du noyau", () => {
-  const pages = [
-    { file: path.join(CONSOLE, "Sources", "OMPConsole", "Server", "RunPageView.swift"), tabs: "enum RunPageTab" },
-    { file: path.join(CONSOLE, "ios", "OMPConsoleIOS", "IOSRunScreen.swift"), tabs: "enum IOSRunTab" },
-  ];
-  for (const { file, tabs } of pages) {
-    const source = fs.readFileSync(file, "utf8");
-    const declaration = source.slice(source.indexOf(tabs), source.indexOf("\n}\n", source.indexOf(tabs)));
-    assert.match(declaration, /case overview, proofs, /, `${tabs} : les Preuves suivent l'Aperçu`);
-    assert.match(declaration, /case \.proofs: ProofsText\.tab/, `${tabs} : le titre vient de ProofsText`);
-    assert.match(
-      declaration,
-      /allCases\.filter \{ \$0 != \.proofs \|\| proofs \}/,
-      `${tabs} : pas d'onglet sans preuves servies`,
-    );
+test("onglet-preuves/AC-96 : « Comprendre » (Mac et iOS) a le niveau « Preuves », après le récit, rendu par les sections partagées et les mots du noyau", () => {
+  const workspace = read(CONSOLE, "Sources", "ConsoleUI", "OS", "OSWorkspace.swift");
+  assert.match(
+    workspace,
+    /public enum OSLevel[^{]*\{\s*case summary, story, proofs, raw/,
+    "les Preuves suivent le récit",
+  );
+  // Une seule vue « Comprendre », partagée par les deux apps.
+  const understand = read(CONSOLE, "Sources", "ConsoleUI", "OS", "OSUnderstandView.swift");
+  assert.match(
+    understand,
+    /case \.captures:\s*Form \{ RunProofsSections\(proofs: proofs\) \}/,
+    "les sections partagées",
+  );
+  assert.match(understand, /\.task\(id: runId\) \{[^}]*await proofs\.load\(\)/, "la liste est lue à l'ouverture");
+  for (const file of [
+    path.join(CONSOLE, "Sources", "OMPConsole", "OS", "OSRootView.swift"),
+    path.join(CONSOLE, "ios", "OMPConsoleIOS", "IOSOSScreens.swift"),
+  ])
     assert.ok(
-      source.includes("HarnessRunOpening.of("),
-      `${path.basename(file)} : l'onglet d'ouverture vient de la règle partagée`,
+      fs.readFileSync(file, "utf8").includes("OSUnderstandView(server: server"),
+      `${path.basename(file)} : « Comprendre »`,
     );
-    assert.ok(source.includes("RunProofsSections(proofs: proofs)"), `${path.basename(file)} : les sections partagées`);
-    assert.ok(source.includes("await proofs.load()"), `${path.basename(file)} : la liste est lue à l'ouverture`);
-  }
   // Les sections partagées n'écrivent aucun mot en dur : tout vient de ConsoleCore/Design/*Text.swift.
   const sections = read(CONSOLE, "Sources", "ConsoleUI", "RunProofsViews.swift");
   assert.doesNotMatch(sections, /\b(Text|Label|Button|DisclosureGroup|LabeledContent)\("/);

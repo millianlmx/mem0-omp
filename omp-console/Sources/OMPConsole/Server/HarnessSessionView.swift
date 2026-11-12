@@ -25,15 +25,26 @@ enum HarnessSessionPane: Hashable {
     case live, files, tests, timeline
 }
 
-/// L'état du direct puis le journal (ou le panneau choisi) d'une session.
+/// L'état du direct puis le journal (ou le panneau choisi) d'une session. Il observe le
+/// direct seul (`HarnessDirect`, publié au plus quatre fois par seconde), pas tout le modèle.
 struct HarnessSessionContent: View {
-    @ObservedObject var server: HarnessModel
+    let server: HarnessModel
+    @ObservedObject private var direct: HarnessDirect
     let target: HarnessSessionTarget
     let pane: HarnessSessionPane
     @Binding var followsEnd: Bool
     /// L'entrée à montrer (un nœud de la Carte ouvert) ; remise à `nil` une fois montrée.
-    var focus: Binding<Int?> = .constant(nil)
+    var focus: Binding<Int?>
     @State private var opened: HarnessSessionDetailRequest?
+
+    init(server: HarnessModel, target: HarnessSessionTarget, pane: HarnessSessionPane, followsEnd: Binding<Bool>, focus: Binding<Int?> = .constant(nil)) {
+        self.server = server
+        _direct = ObservedObject(wrappedValue: server.direct)
+        self.target = target
+        self.pane = pane
+        _followsEnd = followsEnd
+        self.focus = focus
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,7 +54,7 @@ struct HarnessSessionContent: View {
             case .live:
                 log
             case .files:
-                if let runId { HarnessChangesPane(server: server, runId: runId, refreshKey: toolsDone) }
+                if let runId { HarnessChangesPane(server: server, runId: runId, refreshKey: feed?.toolsDone ?? 0) }
             case .tests:
                 HarnessTestsPane(jobs: feed?.tests ?? [], followsEnd: followsEnd)
             case .timeline:
@@ -62,19 +73,14 @@ struct HarnessSessionContent: View {
     }
 
     private var feed: HarnessSessionFeed? {
-        server.session?.target == target ? server.session : nil
-    }
-
-    /// Les outils terminés : leur nombre relit les fichiers touchés (une écriture en est peut-être une).
-    private var toolsDone: Int {
-        feed?.entries.filter { $0.isTool && !$0.isRunning }.count ?? 0
+        direct.feed?.target == target ? direct.feed : nil
     }
 
     /// L'état du direct : l'agent au travail (et son outil du moment, ou le job de tests
     /// en cours), ou au repos ; l'échec qui a arrêté le direct, ou la reconnexion en cours.
     private var statusBar: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let failure = server.sessionFailure {
+            if let failure = direct.failure {
                 ConsoleFailureBanner(failure: failure)
             } else if let feed, feed.isLoaded {
                 Label(
@@ -92,7 +98,7 @@ struct HarnessSessionContent: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if !server.isSessionLive {
+                if !direct.isLive {
                     Text(PipelineServerText.sessionReconnecting)
                         .font(.caption)
                         .foregroundStyle(.orange)
@@ -109,6 +115,9 @@ struct HarnessSessionContent: View {
 
     private var log: some View {
         let entries = feed?.entries ?? []
+        // Les entrées qui ouvrent une étape portent son en-tête : un tronçon par étape, calculé une fois par rendu.
+        let headers = Dictionary((feed?.stepSegments ?? []).compactMap { segment in segment.step.map { (segment.id, $0) } }, uniquingKeysWith: { first, _ in first })
+        let firstSeq = entries.first?.seq
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -125,14 +134,15 @@ struct HarnessSessionContent: View {
                         Text(PipelineServerText.sessionEmpty)
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(Array(entries.enumerated()), id: \.element.seq) { index, entry in
-                        if let step = entry.step, index == 0 || entries[index - 1].step != step {
+                    ForEach(entries) { entry in
+                        if let step = headers[entry.seq] {
                             Text(PipelineServerText.sessionStep(HarnessRun.label(forStep: step)))
                                 .font(.headline)
-                                .padding(.top, index == 0 ? 0 : 8)
+                                .padding(.top, entry.seq == firstSeq ? 0 : 8)
                                 .accessibilityAddTraits(.isHeader)
                         }
                         HarnessSessionEntryRow(entry: entry) { opened = HarnessSessionDetailRequest(seq: entry.seq) }
+                            .equatable()
                             .id(entry.seq)
                     }
                 }
@@ -209,10 +219,13 @@ struct HarnessSessionDetailRequest: Identifiable, Equatable {
 
 /// Une entrée du direct : un paragraphe rendu en Markdown, un raisonnement replié, un
 /// outil (son état, son intention, sa commande, son résultat replié) ou un signal.
-/// `open` ouvre son détail, quand le serveur en garde un.
-struct HarnessSessionEntryRow: View {
+/// `open` ouvre son détail, quand le serveur en garde un. Égale à elle-même tant que son
+/// entrée l'est : une rangée inchangée ne se redessine pas quand une autre arrive.
+struct HarnessSessionEntryRow: View, Equatable {
     let entry: HarnessSessionEntry
     let open: () -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.entry == rhs.entry }
 
     var body: some View {
         switch entry.sort {
@@ -328,13 +341,21 @@ struct HarnessSessionEntryRow: View {
 /// paragraphe ou raisonnement, son texte entier. Un serveur sans rendu (1.10) montre
 /// l'appel, les arguments et la sortie.
 struct HarnessSessionDetailSheet: View {
-    @ObservedObject var server: HarnessModel
+    let server: HarnessModel
+    @ObservedObject private var direct: HarnessDirect
     let target: HarnessSessionTarget
     let seq: Int
     @Environment(\.dismiss) private var dismiss
     @State private var detail: HarnessSessionDetail?
     @State private var loaded = false
     @State private var showsRaw = false
+
+    init(server: HarnessModel, target: HarnessSessionTarget, seq: Int) {
+        self.server = server
+        _direct = ObservedObject(wrappedValue: server.direct)
+        self.target = target
+        self.seq = seq
+    }
 
     var body: some View {
         NavigationStack {
@@ -367,8 +388,8 @@ struct HarnessSessionDetailSheet: View {
 
     /// L'entrée telle que le direct la tient : chacune de ses versions relit le détail.
     private var live: HarnessSessionEntry? {
-        guard server.session?.target == target else { return nil }
-        return server.session?.entries.last { $0.seq == seq }
+        guard direct.feed?.target == target else { return nil }
+        return direct.feed?.entries.last { $0.seq == seq }
     }
 
     private var entry: HarnessSessionEntry? { live ?? detail?.entry }

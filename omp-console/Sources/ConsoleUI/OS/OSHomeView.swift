@@ -38,7 +38,7 @@ public struct OSHomeView: View {
     public var body: some View {
         let working = threads.filter { $0.phase == .working }
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            LazyVStack(alignment: .leading, spacing: 22) {
                 header
                 if brief.isServed {
                     asking
@@ -171,19 +171,17 @@ public struct OSHomeView: View {
             if working.isEmpty {
                 Text(OSText.calm).foregroundStyle(.secondary)
             }
-            TimelineView(.periodic(from: .now, by: 5)) { context in
-                VStack(spacing: 8) {
-                    ForEach(working) { thread in
-                        workingRow(thread, now: context.date)
-                    }
+            VStack(spacing: 8) {
+                ForEach(working) { thread in
+                    workingRow(thread)
                 }
             }
         }
     }
 
-    private func workingRow(_ thread: OSThread, now: Date) -> some View {
+    /// Seule la ligne d'activité suit l'horloge (la fraîcheur du pouls), pas la carte entière.
+    private func workingRow(_ thread: OSThread) -> some View {
         let run = thread.runs.last { $0.phase == .running || $0.phase == .merging || $0.phase == .queued } ?? thread.focusRun
-        let line = thread.osActivity(pulse, now: now) ?? run?.osState ?? ""
         return Button {
             workspace.open(thread.id)
         } label: {
@@ -199,7 +197,11 @@ public struct OSHomeView: View {
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         Text(thread.title).font(.headline).lineLimit(Self.rowLines).multilineTextAlignment(.leading)
-                        Text("↳ " + line).foregroundStyle(.secondary).lineLimit(Self.rowLines)
+                        TimelineView(.periodic(from: .now, by: 5)) { context in
+                            Text("↳ " + (thread.osActivity(pulse, now: context.date) ?? run?.osState ?? ""))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(Self.rowLines)
+                        }
                         // L'iPhone n'a pas la largeur de poser le chemin à côté du texte : dessous.
                         #if os(iOS)
                         if let run { OSJourney(run: run) }

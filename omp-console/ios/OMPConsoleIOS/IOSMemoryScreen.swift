@@ -140,10 +140,10 @@ struct IOSMemoryScreen: View {
             .onAppear { applyGraphRecipe() }
             .onDisappear { graph.suspend() }
             .focusedSceneValue(\.iosRefresh, IOSCommandAction(
-                owner: .memory,
+                owner: IOSMemoryAccessibility.screen,
                 isEnabled: connection.gesturesEnabled && canRefreshShown
             ) { refreshShown() })
-            .focusedSceneValue(\.iosSearch, IOSCommandAction(owner: .memory, isEnabled: offersSearch) {
+            .focusedSceneValue(\.iosSearch, IOSCommandAction(owner: IOSMemoryAccessibility.screen, isEnabled: offersSearch) {
                 searchPresented = true
                 searchFocused = true
             })

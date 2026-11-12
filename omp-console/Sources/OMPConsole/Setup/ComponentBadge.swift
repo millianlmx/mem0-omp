@@ -1,52 +1,37 @@
-// Le badge d'état des composants embarqués (S-2, BR-2) : ancré au pied de la
-// barre latérale, à son bord gauche — le coin inférieur gauche de la fenêtre.
-// Le mot porte le sens, la couleur le double.
+// Le badge d'état des composants embarqués (S-2, BR-2), au pied de la liste des fils —
+// le coin inférieur gauche de la fenêtre. Il n'apparaît que lorsqu'un composant manque :
+// tout installé, rien ne s'affiche. Le mot porte le sens, la couleur le double.
 //
-// Deux formes (S-3 de mac-omp-manquant-non-bloquant) :
-// - « Tout est installé » (`open == nil`) : un simple `StatusBadge`, sans
-//   interaction ni focus, hors de l'ordre de tabulation.
-// - Un composant manque : un `Button` `.plain` dont le libellé est le même
-//   `StatusBadge`. Clic, ou Espace/↩ au focus (navigation clavier complète du
-//   système), appelle `open` — `SetupModel.reopen()`, qui rouvre la feuille de
-//   préparation, bloquante si OMP manque. Aucun survol ajouté, curseur standard.
+// C'est un `Button` `.plain` dont le libellé est le `ConsoleStatusChip` (S-3 de
+// mac-omp-manquant-non-bloquant) : clic, ou Espace/↩ au focus, appelle
+// `SetupModel.reopen()`, qui rouvre la feuille de préparation, bloquante si OMP manque.
 //
 // Il vit dans la barre latérale, la couche fonctionnelle du système : aucun
-// `glassEffect`, aucun fond maison — la surface de la barre latérale suffit.
-//
-// PAS de `.fixedSize` vertical : mesuré (piège du `safeAreaInset` de barre
-// latérale, omp-console-redesign) qu'un `Text` figé verticalement a fait
-// calculer au `NavigationSplitView` ~1 958 pt de haut, hors écran. Le texte se
-// replie donc au besoin, sans jamais être tronqué (AC-2 exige les noms).
+// `glassEffect`, aucun fond maison. PAS de `.fixedSize` vertical : mesuré (piège du
+// `safeAreaInset` de barre latérale) qu'un `Text` figé verticalement a fait calculer au
+// `NavigationSplitView` ~1 958 pt de haut, hors écran.
 
 import ConsoleCore
 import ConsoleUI
 import SwiftUI
 
 struct ComponentBadge: View {
-    let status: ConsoleStatus
-    /// Rouvre la feuille de préparation ; `nil` quand tout est installé.
-    let open: (@MainActor () -> Void)?
+    @ObservedObject var components: ComponentPresenceModel
+    let setup: SetupModel
 
     var body: some View {
-        badge
-            .accessibilityIdentifier("components.badge")
-            // Le coin inférieur gauche de la fenêtre : ~14 pt du bord gauche,
-            // ~9 pt du bas.
-            .padding(.leading, 14)
-            .padding(.bottom, 9)
-    }
-
-    @ViewBuilder
-    private var badge: some View {
-        if let open {
-            Button(action: open) {
-                ConsoleStatusChip(status: status)
+        if !components.presence.allInstalled {
+            Button {
+                setup.reopen()
+            } label: {
+                ConsoleStatusChip(status: components.presence.status)
             }
             .buttonStyle(.plain)
             .help(SetupText.componentsBadgeHelp)
-            .accessibilityLabel(status.text)
-        } else {
-            ConsoleStatusChip(status: status)
+            .accessibilityLabel(components.presence.status.text)
+            .accessibilityIdentifier("components.badge")
+            .padding(.leading, 14)
+            .padding(.bottom, 9)
         }
     }
 }

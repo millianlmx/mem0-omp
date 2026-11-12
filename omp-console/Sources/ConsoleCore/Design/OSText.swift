@@ -20,7 +20,6 @@ public enum OSText {
     public static let ask = L10n.text("Demander à l’OS…")
     public static let reply = L10n.text("Consigne à l’agent…")
     public static let followUp = L10n.text("Demander une suite…")
-    public static let classic = L10n.text("Interface classique")
     public static let understand = L10n.text("Comprendre")
     public static let now = L10n.text("Maintenant")
 
@@ -123,7 +122,6 @@ public enum OSText {
     // MARK: - Liste des fils
 
     public static let triage = L10n.text("Trier")
-    public static let skip = L10n.text("Passer")
     public static let done = L10n.text("OK")
     public static let sectionWorking = L10n.text("En cours")
     public static let sectionQueued = L10n.text("En file")
@@ -179,11 +177,6 @@ public enum OSText {
     public static let runFailed = L10n.text("échec")
     public static let runStopped = L10n.text("arrêtée")
 
-    /// « Tentative 2 »
-    public static func attempt(_ index: Int) -> String {
-        L10n.format("Tentative %lld", index)
-    }
-
     /// « 3 tâches »
     public static func tasks(_ count: Int) -> String {
         ConsoleFormat.count(count, L10n.text("tâche"), L10n.text("tâches"))
@@ -204,13 +197,10 @@ public enum OSText {
     public static let validate = L10n.text("Valider")
     public static let merge = L10n.text("Fusionner")
     public static let refuse = L10n.text("Refuser…")
-    public static let refuseNow = L10n.text("Refuser")
-    public static let read = L10n.text("Lire")
     public static let approve = L10n.text("Approuver")
     public static let cancel = L10n.text("Annuler")
     public static let dismiss = L10n.text("Écarter")
     public static let send = L10n.text("Envoyer")
-    public static let launchAll = L10n.text("Tout lancer")
     public static let keep = L10n.text("Garder")
     public static let revisit = L10n.text("Revoir")
     public static let reason = L10n.text("Pourquoi ?")

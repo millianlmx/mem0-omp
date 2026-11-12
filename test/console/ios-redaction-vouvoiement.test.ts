@@ -136,11 +136,13 @@ const MEMORY_ERROR_TEXT = "omp-console/ios/OMPConsoleIOS/IOSMemoryErrorText.swif
 const MEMORY_TEXT = "omp-console/ios/OMPConsoleIOS/IOSMemoryText.swift";
 const VOCABULARY = "omp-console/Sources/ConsoleCore/Design/ConsoleVocabulary.swift";
 const HOME_TEXT = "omp-console/Sources/ConsoleCore/Design/PipelineServerText.swift";
-const FILES_TEXT = "omp-console/Sources/OMPConsole/Files/FilesText.swift";
-/** Le cadre des écrans iOS du serveur de pipelines, Accueil compris. */
-const HARNESS_SCREENS = "omp-console/ios/OMPConsoleIOS/IOSHarnessScreens.swift";
-/** Les formulaires de lancement d'une feature des deux coques. */
-const NEW_FEATURE_FILES = [HARNESS_SCREENS, "omp-console/Sources/OMPConsole/Server/HarnessSectionViews.swift"] as const;
+/** Un fichier de la coque macOS, lu pour prouver qu'elle n'est pas jugée. */
+const MAC_FILE = [...SOURCES.keys()].find((file) => file.startsWith("omp-console/Sources/OMPConsole/")) ?? "";
+/** Le cadre de la racine d'un onglet iOS (Décisions compris). */
+const TAB_SCREENS = "omp-console/ios/OMPConsoleIOS/IOSOSScreens.swift";
+const SHELL = "omp-console/ios/OMPConsoleIOS/IOSOSRootView.swift";
+/** Le formulaire de lancement d'une feature, partagé par les deux coques (ConsoleUI). */
+const NEW_FEATURE_FORM = "omp-console/Sources/ConsoleUI/LaunchViews.swift";
 
 const TUTOIEMENT = "Vérifie que le Mac est allumé, puis réessaie";
 
@@ -287,21 +289,20 @@ test("ios-redaction-vouvoiement/AC-3 : la feuille Nouvelle feature ne cite ni br
   const launch = swiftTextUnits(words.slice(start, end)).map((unit) => unit.text);
   assert.ok(launch.includes("Nouvelle feature"), "le titre « Nouvelle feature » doit être lu");
   for (const text of launch) assert.ok(!/feat\/|branche/i.test(text), `${HOME_TEXT} : « ${text} » cite une branche`);
-  for (const file of NEW_FEATURE_FILES) {
-    for (const text of texts(file)) {
-      assert.ok(!/feat\/|branche/i.test(text), `${file} : « ${text} » cite une branche`);
-    }
+  const form = swiftTextUnits(fs.readFileSync(path.join(ROOT, NEW_FEATURE_FORM), "utf8")).map((unit) => unit.text);
+  for (const text of form) {
+    assert.ok(!/feat\/|branche/i.test(text), `${NEW_FEATURE_FORM} : « ${text} » cite une branche`);
   }
 });
 
-test("ios-redaction-vouvoiement/AC-5 : le chargement de « À traiter » sur iOS n'affiche que l'indicateur natif, sans texte", () => {
+test("ios-redaction-vouvoiement/AC-5 : le chargement d'un onglet iOS, Décisions compris, n'affiche que l'indicateur natif, sans texte", () => {
   assertSane();
-  const source = SOURCES.get(HARNESS_SCREENS);
-  assert.ok(source !== undefined, `source non chargée : ${HARNESS_SCREENS}`);
-  // « À traiter » est un écran du serveur : son chargement est celui du cadre commun.
+  const source = SOURCES.get(TAB_SCREENS);
+  assert.ok(source !== undefined, `source non chargée : ${TAB_SCREENS}`);
+  // Les Décisions (ce qui attend l'humain) sont un onglet : leur chargement est celui du cadre commun.
   assert.ok(
-    /struct IOSInboxScreen[\s\S]*?IOSHarnessScreen\(server: server, drafts: drafts, section: \.inbox/.test(source),
-    "« À traiter » doit vivre dans le cadre commun",
+    /case \.decisions:\s*IOSOSScreen\(/.test(SOURCES.get(SHELL) ?? ""),
+    "les Décisions doivent vivre dans le cadre commun",
   );
   const loading = block(withoutComments(source), "if !server.isLoaded");
   assert.ok(loading.includes("ProgressView()"), "ProgressView() sans argument attendu");
@@ -317,8 +318,9 @@ test("ios-redaction-vouvoiement/AC-8 : un texte tutoyé échoue dans l'app iOS e
       `${file}:${plantLine(file)} « ${TUTOIEMENT} » : tutoiement (vérifie, réessaie)`,
     ]);
   }
+  assert.ok(MAC_FILE !== "", "la coque macOS doit être lue");
   assert.deepEqual(
-    tutoiementFaults(plant(SOURCES, FILES_TEXT, swiftLiteral(TUTOIEMENT))),
+    tutoiementFaults(plant(SOURCES, MAC_FILE, swiftLiteral(TUTOIEMENT))),
     BASE,
     "la coque macOS n'est pas jugée",
   );

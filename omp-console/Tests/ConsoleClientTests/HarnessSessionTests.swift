@@ -107,10 +107,10 @@ struct HarnessSessionTests {
         #expect(model.session?.entries.map(\.seq) == [1, 2, 3])
         #expect(model.session?.entries[1].detail == "12 tests verts")
         #expect(model.session?.isRunning == true)
-        #expect(model.sessionFailure == nil)
+        #expect(model.direct.failure == nil)
         model.stopSession()
         #expect(model.session == nil)
-        #expect(model.isSessionLive == false)
+        #expect(model.direct.isLive == false)
     }
 
     @Test("le tampon est montré AVANT l'ouverture du flux : un direct qui ne s'ouvre pas n'empêche pas de lire la session d'un fil fini")
@@ -127,7 +127,7 @@ struct HarnessSessionTests {
         model.followSession(runId: "r1")
         #expect(await eventually { model.session?.isLoaded == true })
         #expect(model.session?.entries.map(\.seq) == [1, 2])
-        #expect(model.isSessionLive == false && model.sessionFailure == nil, "une coupure se reprend, sans échec affiché")
+        #expect(model.direct.isLive == false && model.direct.failure == nil, "une coupure se reprend, sans échec affiché")
         model.stopSession()
     }
 
@@ -225,10 +225,10 @@ struct HarnessSessionTests {
         let model = sessionModel(transport)
         #expect(await model.configure(address: "vps.example", token: "t"))
         model.followSession(runId: "r1")
-        #expect(await eventually { model.sessionFailure != nil })
-        #expect(model.sessionFailure == .rejected("route inconnue"))
+        #expect(await eventually { model.direct.failure != nil })
+        #expect(model.direct.failure == .rejected("route inconnue"))
         #expect(model.failure == nil, "l'échec du direct ne gagne pas les autres écrans")
         model.stopSession()
-        #expect(model.sessionFailure == nil)
+        #expect(model.direct.failure == nil)
     }
 }

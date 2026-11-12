@@ -53,16 +53,4 @@ public enum AtlassianText {
     public static let knowledgeNever = L10n.text("Aucune passe pour l’instant.")
     public static let knowledgeRun = L10n.text("Lancer une passe")
     public static let knowledgeRunSymbol = "sparkles"
-
-    // MARK: - À traiter
-
-    public static let proposalsTitle = L10n.text("Commentaires Jira à publier")
-    public static let proposalsSymbol = "text.bubble"
-    public static let proposalsHint = L10n.text("L’agent propose, rien n’est publié sur Jira sans votre accord.")
-    public static func commentOn(_ key: String) -> String { L10n.format("Commentaire sur %@", key) }
-    public static let commentLabel = L10n.text("Texte du commentaire")
-    public static let publish = L10n.text("Publier")
-    public static let publishSymbol = "paperplane.fill"
-    public static let dismiss = L10n.text("Écarter")
-    public static let dismissSymbol = "xmark"
 }

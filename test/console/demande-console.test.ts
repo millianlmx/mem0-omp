@@ -1,8 +1,8 @@
 // La Demande dans omp-console (Mac et iOS) : le client Swift face au serveur réel
 // (routes et champs de `/v1/intake*`), la palette ⌘K qui commence par « Demande », le
-// bouton permanent d'« À traiter », la feuille de saisie multiligne (dictée du
-// clavier système), les cartes Confirmer / Modifier / Annuler, Répondre et Écarter,
-// et le serveur antérieur dit en français. Le comportement du modèle est prouvé par
+// composeur permanent de la liste des fils, la feuille de saisie multiligne (dictée du
+// clavier système), les cartes de décision Lancer / Envoyer / Écarter, et le serveur
+// antérieur dit en français. Le comportement du modèle est prouvé par
 // omp-console/Tests/ConsoleClientTests/HarnessIntakeTests.swift.
 
 import test from "node:test";
@@ -141,7 +141,7 @@ test("demande-console/AC-16 : chaque route et chaque champ /v1/intake* décodés
   }
 });
 
-test("demande-console/AC-17 : « Demande » ouvre la palette ⌘K saisie vide, sur Mac et iOS (onglet de recherche compris), un bouton permanent dans « À traiter », une feuille titrée au champ multiligne sans dictée propre", () => {
+test("demande-console/AC-17 : « Demande » ouvre la palette ⌘K saisie vide, sur Mac et iOS, un composeur permanent dans la liste des fils, une feuille titrée au champ multiligne sans dictée propre", () => {
   const palette = code(read("Sources", "ConsoleClient", "HarnessPalette.swift"));
   const search = palette.indexOf("if !search {");
   assert.ok(search > 0);
@@ -155,25 +155,18 @@ test("demande-console/AC-17 : « Demande » ouvre la palette ⌘K saisie vide, s
   assert.match(actions, /case \.intake:\s*\n\s*drafts\.openIntake\(\)/);
   assert.match(actions, /\.sheet\(isPresented: \$drafts\.intakeSheetShown\)/);
   // Les deux apps posent la palette (donc la feuille) à leur racine.
-  assert.match(read("Sources", "OMPConsole", "ConsoleRootView.swift"), /\.consolePalette\(/);
+  assert.match(read("Sources", "OMPConsole", "OS", "OSRootView.swift"), /\.consolePalette\(/);
   assert.match(read("ios", "OMPConsoleIOS", "RootView.swift"), /\.consolePalette\(/);
-  // L'onglet de recherche de l'iPhone liste les entrées de la palette, Demande en tête.
-  const searchScreen = code(read("ios", "OMPConsoleIOS", "IOSSearchScreen.swift"));
-  assert.match(searchScreen, /HarnessPalette\.items\(/);
-  assert.match(searchScreen, /ConsolePaletteActions\.perform\(item\.command/);
-  // « À traiter » (Mac et iOS partagent InboxFeed) porte le bouton, toujours rendu.
-  const feed = code(read("Sources", "ConsoleUI", "InboxFeed.swift"));
-  assert.match(feed, /IntakeInboxSection\(server: server, drafts: drafts\)/);
-  assert.match(code(read("Sources", "OMPConsole", "Server", "HarnessSectionViews.swift")), /InboxFeed\(server:/);
-  assert.match(code(read("ios", "OMPConsoleIOS", "IOSHarnessScreens.swift")), /InboxFeed\(server:/);
-  const views = VIEWS();
-  const section = views.slice(views.indexOf("public struct IntakeInboxSection"), views.indexOf("struct IntakeCard"));
-  assert.match(section, /Button\(IntakeText\.title[^)]*\) \{ drafts\.openIntake\(\) \}/);
-  assert.doesNotMatch(
-    section.slice(0, section.indexOf("ForEach")),
-    /\bif\b/,
-    "le bouton Demande ne doit dépendre d'aucune condition",
+  // La liste des fils (Mac et iOS la partagent) porte le composeur, toujours rendu, qui envoie une Demande.
+  const list = code(read("Sources", "ConsoleUI", "OS", "OSThreadList.swift"));
+  assert.match(list, /OSAskComposer\(intakes: intakes, draft: \$draft, sending: \$sending\)/);
+  assert.match(list, /try\? await intakes\.submit\(text: text, source: intakeSource\)/);
+  // L'iPhone a en plus « Demander » dans la barre, qui ouvre la feuille.
+  assert.match(
+    code(read("ios", "OMPConsoleIOS", "IOSOSScreens.swift")),
+    /struct IOSOSAskButton[\s\S]*?drafts\.openIntake\(\)/,
   );
+  const views = VIEWS();
   const sheet = views.slice(views.indexOf("struct IntakeSheet"), views.indexOf("struct IntakePlanSheet"));
   assert.match(sheet, /TextField\(IntakeText\.fieldPrompt, text: \$drafts\.intakeText, axis: \.vertical\)/);
   assert.match(sheet, /\.navigationTitle\(IntakeText\.title\)/);
@@ -184,29 +177,29 @@ test("demande-console/AC-17 : « Demande » ouvre la palette ⌘K saisie vide, s
   assert.doesNotMatch(read("..", "test", "console", "ios-listes-groupees-natives.test.ts"), /IntakeViews\.swift/);
 });
 
-test("demande-console/AC-18 : les demandes ouvertes sont dans « À traiter » — plan en carte avec Confirmer / Modifier / Annuler, question avec Répondre, réponse ou échec avec Écarter, sans « Reformuler »", () => {
+test("demande-console/AC-18 : les demandes ouvertes sont des décisions de l'OS — plan avec Lancer / Écarter, question avec Envoyer / Écarter, réponse ou échec rangés d'un geste, sans « Reformuler »", () => {
   const model = MODEL();
   assert.match(model, /openStates = \["classifying", "clarifying", "planned", "answered", "failed"\]/);
-  const views = VIEWS();
-  const card = views.slice(views.indexOf("struct IntakeCard"), views.indexOf("// MARK: - Feuille de saisie"));
-  for (const [button, gesture] of [
-    ["IntakeText.confirm", "intakes.confirm(intake)"],
-    ["IntakeText.reply", "intakes.answer(intake"],
-    ["IntakeText.dismiss", "intakes.cancel(intake)"],
-    ["IntakeText.cancel", "intakes.cancel(intake)"],
-  ]) {
-    const at = card.indexOf(`Button(${button})`);
-    assert.ok(at >= 0, `bouton ${button} absent`);
-    assert.ok(card.slice(at, at + 200).includes(gesture), `${button} n'appelle pas ${gesture}`);
-  }
-  assert.match(card, /Button\(IntakeText\.modify\) \{ drafts\.intakeEdit = intake \}/);
-  // La carte du plan montre type, dépôt et ce qui sera créé.
-  assert.match(card, /IntakeText\.kind\(plan\.kind\)/);
-  assert.match(card, /plan\.repo/);
-  assert.match(card, /plan\.creates/);
-  assert.ok(!/Reformuler/i.test(views + read("Sources", "ConsoleCore", "Design", "IntakeText.swift")));
-  const text = read("Sources", "ConsoleCore", "Design", "IntakeText.swift");
-  for (const word of ["Confirmer", "Modifier", "Annuler", "Répondre", "Écarter"]) assert.ok(text.includes(`"${word}"`));
+  assert.match(
+    code(read("Sources", "ConsoleClient", "OSDecisions.swift")),
+    /items \+= intakes\.filter \{ \$0\.isPlanned \|\| \$0\.isClarifying \}\.map\(OSDecision\.intake\)/,
+  );
+  const decision = code(read("Sources", "ConsoleUI", "OS", "OSDecisionCard.swift"));
+  const card = decision.slice(
+    decision.indexOf("private func intakeCard"),
+    decision.indexOf("// MARK: Commentaire Jira"),
+  );
+  assert.ok(card.length > 0, "la carte d'une demande est introuvable");
+  for (const gesture of ["intakes.answer(intake, text: custom)", "intakes.confirm(intake)", "intakes.cancel(intake)"])
+    assert.ok(card.includes(gesture), `la carte n'appelle pas ${gesture}`);
+  // La carte du plan dit le dépôt où il sera lancé.
+  assert.match(card, /plan\.repo\.map\(OSDecideText\.launchOn\)/);
+  // Une réponse ou un échec se lit dans « Maintenant », et se range d'un geste.
+  assert.match(
+    code(read("Sources", "ConsoleUI", "OS", "OSHomeView.swift")),
+    /if intake\.isSettled \{\s*Button\(OSText\.done\) \{ Task \{ _ = try\? await intakes\.cancel\(intake\) \} \}/,
+  );
+  assert.ok(!/Reformuler/i.test(VIEWS() + card + read("Sources", "ConsoleCore", "Design", "IntakeText.swift")));
 });
 
 test("demande-console/AC-21 : un 404 « route inconnue » sur /v1/intake devient un message français : le serveur ne connaît pas encore la Demande", () => {

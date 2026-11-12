@@ -3,15 +3,17 @@ import ConsoleCore
 import ConsoleUI
 import SwiftUI
 
-// L'« OS agentique » sur iPhone et iPad : la COQUE de l'interface par défaut. Une barre
-// d'onglets native (`TabView`, style `.sidebarAdaptable` : barre en bas sur iPhone, en
-// haut ou en barre latérale sur iPad) porte cinq onglets — Maintenant (le Radar et le
-// brief), Fils (le composeur, l'espace, la liste ; un fil se pousse dans la pile),
-// Décisions (le tri, sa pastille), Propositions (sa pastille) et Savoir (consignes,
-// paliers, espaces, Automatismes, Mémoire, « Interface classique »). « Comprendre » est un
+// L'« OS agentique » sur iPhone et iPad : la COQUE de l'app. Une barre d'onglets native
+// (`TabView`, style `.sidebarAdaptable` : barre en bas sur iPhone, en haut ou en barre
+// latérale sur iPad) porte cinq onglets — Maintenant (le Radar et le brief), Fils (le
+// composeur, l'espace, la liste ; un fil se pousse dans la pile), Décisions (le tri, sa
+// pastille), Propositions (sa pastille) et Savoir (consignes, paliers, espaces,
+// Automatismes, Mémoire). La roue de la barre de chaque onglet pousse le hub Système dans
+// sa pile, puis la page d'une tuile (`IOSSystemScreens.swift`). « Comprendre » est un
 // inspecteur : une colonne sur iPad, une feuille sur iPhone. Les écrans eux-mêmes sont
 // partagés avec le Mac (`ConsoleUI/OS/`) : ce fichier ne porte que ce qui est propre à
-// l'iPhone et à l'iPad — onglets, piles, barre, tirer pour actualiser, arguments de recette.
+// l'iPhone et à l'iPad — onglets, piles, barre, tirer pour actualiser, ⌘1…⌘5, arguments de
+// recette.
 //
 // Les écrans partagés demandent un écran par `OSWorkspace` (un fil, un espace, le tri,
 // « Comprendre ») : la coque traduit la demande en onglet et en page (`IOSOSNavigation`)
@@ -19,18 +21,22 @@ import SwiftUI
 // gestes restent posées une fois, à la racine (`RootView`).
 
 struct IOSOSRootView: View {
-    @ObservedObject var memory: MemoryAccess
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
     @ObservedObject var workstation: WorkstationModel
-    @ObservedObject var intakes: HarnessIntakes
-    @ObservedObject var history: HarnessRunsHistory
-    @ObservedObject var vigie: HarnessVigie
-    @ObservedObject var atlassian: AtlassianModel
     @ObservedObject var spaces: HarnessSpacesModel
-    @ObservedObject var localSessions: HarnessLocalSessionsModel
     @ObservedObject var proposals: HarnessProposalsModel
+    /// Les fils et le compte des décisions, recalculés à part et publiés seulement s'ils
+    /// changent : la coque ne les reconstruit pas à chaque rendu.
+    @StateObject private var threadStore: OSThreadStore
     @StateObject private var workspace: OSWorkspace
+    /// Portés sans être observés ici : leurs écrans les observent eux-mêmes.
+    private let memory: MemoryAccess
+    private let intakes: HarnessIntakes
+    private let history: HarnessRunsHistory
+    private let vigie: HarnessVigie
+    private let atlassian: AtlassianModel
+    private let localSessions: HarnessLocalSessionsModel
     @Binding var navigation: IOSOSNavigation
     /// Le fil et l'espace que la recette demande d'ouvrir (`-os.thread`, `-os.space`), tant
     /// qu'ils ne sont pas connus.
@@ -42,12 +48,10 @@ struct IOSOSRootView: View {
     /// L'état de recette et le crochet du graphe de l'écran Mémoire, poussé depuis le Savoir.
     let state: IOSScreenState
     let memoryRecipe: IOSMemoryGraphRecipe?
-    /// Savoir ▸ « Interface classique ».
-    let openClassic: () -> Void
 
     init(
         memory: MemoryAccess, server: HarnessModel, drafts: HarnessDrafts, navigation: Binding<IOSOSNavigation>,
-        launch: IOSShellLaunch, state: IOSScreenState, memoryRecipe: IOSMemoryGraphRecipe?, openClassic: @escaping () -> Void
+        launch: IOSShellLaunch, state: IOSScreenState, memoryRecipe: IOSMemoryGraphRecipe?
     ) {
         self.memory = memory
         self.server = server
@@ -60,25 +64,13 @@ struct IOSOSRootView: View {
         spaces = server.spaces
         localSessions = server.localSessions
         proposals = server.proposals
+        _threadStore = StateObject(wrappedValue: OSThreadStore(server: server))
         _workspace = StateObject(wrappedValue: OSWorkspace(server: server))
         _navigation = navigation
         _pendingThread = State(initialValue: launch.thread)
         _pendingSpace = State(initialValue: launch.space)
         self.state = state
         self.memoryRecipe = memoryRecipe
-        self.openClassic = openClassic
-    }
-
-    private var threads: [OSThread] {
-        OSThreads.build(
-            runs: history.runs,
-            inbox: server.inbox,
-            projects: server.projects,
-            audits: server.audits,
-            requests: workstation.requests ?? [],
-            incidents: vigie.incidents,
-            localSessions: localSessions.sessions
-        )
     }
 
     /// Le nom de chaque navigateur du poste, par identifiant.
@@ -87,9 +79,12 @@ struct IOSOSRootView: View {
     }
 
     var body: some View {
-        let all = self.threads
-        let decisions = OSDecisions.all(server: server).count
+        let all = threadStore.threads
+        let decisions = threadStore.decisionCount
         tabs(all, decisions: decisions)
+            .focusedSceneValue(\.iosSelectTab, IOSTabSelector(current: navigation.tab) { [navigation = $navigation] tab in
+                navigation.wrappedValue.show(tab)
+            })
             .task(id: server.address) { await load() }
             // Un lien, une notification touchée, une proposition acceptée, une feature citée :
             // son fil s'ouvre dès qu'il existe. La recette ouvre le sien de la même façon.
@@ -195,7 +190,7 @@ struct IOSOSRootView: View {
     private func root(_ tab: IOSOSTab, threads: [OSThread], decisions: Int) -> some View {
         switch tab {
         case .now:
-            IOSOSScreen(server: server, drafts: drafts, tab: tab, reload: reload) {
+            IOSOSScreen(server: server, drafts: drafts, tab: tab, reload: reload, openSystem: openSystem) {
                 OSHomeView(server: server, pulse: workspace.pulse, workspace: workspace, threads: threads, decisions: decisions)
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -206,7 +201,7 @@ struct IOSOSRootView: View {
                 }
             }
         case .threads:
-            IOSOSScreen(server: server, drafts: drafts, tab: tab, reload: reload) {
+            IOSOSScreen(server: server, drafts: drafts, tab: tab, reload: reload, openSystem: openSystem) {
                 OSThreadList(
                     server: server, intakes: intakes, pulse: workspace.pulse, workspace: workspace,
                     threads: OSThreadScope.threads(threads, spaceId: workspace.spaceId, place: workspace.place, spaces: spaces.spaces),
@@ -219,20 +214,19 @@ struct IOSOSRootView: View {
                 .listStyle(.sidebar)
             }
         case .decisions:
-            IOSOSScreen(server: server, drafts: drafts, tab: tab, reload: reload) {
+            IOSOSScreen(server: server, drafts: drafts, tab: tab, reload: reload, openSystem: openSystem) {
                 OSTriageView(server: server, workstation: workstation, intakes: intakes, workspace: workspace, embedded: true)
                     .iosReadableWidth()
             }
         case .proposals:
-            IOSOSScreen(server: server, drafts: drafts, tab: tab, reload: reload) {
+            IOSOSScreen(server: server, drafts: drafts, tab: tab, reload: reload, openSystem: openSystem) {
                 OSProposalsView(server: server, workspace: workspace, threads: threads)
             }
         case .knowledge:
-            IOSOSScreen(server: server, drafts: drafts, tab: tab, reload: reload) {
+            IOSOSScreen(server: server, drafts: drafts, tab: tab, reload: reload, openSystem: openSystem) {
                 OSKnowledgeView(
                     server: server, workspace: workspace,
                     openMemory: { navigation.push(.memory) },
-                    openClassic: openClassic,
                     openAutomations: { navigation.push(.automations) }
                 )
             }
@@ -267,6 +261,24 @@ struct IOSOSRootView: View {
                 client: memory, recipe: state, graphRecipe: memoryRecipe,
                 showConnection: $drafts.serverSheetShown, searchRequest: $drafts.memorySearchRequest
             )
+        case .system:
+            IOSSystemHubScreen(server: server, open: openSystemPage)
+        case let .systemPage(destination):
+            IOSSystemDestinationScreen(server: server, drafts: drafts, destination: destination)
+        }
+    }
+
+    /// La roue de la barre : le hub Système, dans la pile de l'onglet montré.
+    private func openSystem() {
+        navigation.push(.system)
+    }
+
+    /// Une tuile du hub : sa page, poussée par-dessus ; le Serveur ouvre sa feuille.
+    private func openSystemPage(_ destination: OSSystemDestination) {
+        if destination == .server {
+            drafts.serverSheetShown = true
+        } else {
+            navigation.push(.systemPage(destination))
         }
     }
 
@@ -319,7 +331,7 @@ struct IOSOSRootView: View {
         await proposals.refresh()
         await server.refreshCatalog()
         loaded = true
-        openPending(self.threads)
+        openPending(threadStore.threads)
     }
 
     /// Tirer pour actualiser : la boîte, les fils, et ce que les cinq onglets montrent.

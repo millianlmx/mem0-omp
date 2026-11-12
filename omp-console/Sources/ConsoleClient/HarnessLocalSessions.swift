@@ -126,22 +126,28 @@ public final class HarnessLocalSessionsModel: ObservableObject {
         guard harness.isConfigured else { return }
         isLoading = true
         defer { isLoading = false }
+        await reload()
+    }
+
+    /// `refresh()` sans rien dire de la lecture (le flux) ; rien n'est republié à l'identique.
+    func reload() async {
+        guard harness.isConfigured else { return }
         do {
             guard let list: HarnessLocalSessionList = try await harness.readBound("/v1/local-sessions") else {
-                availability = .absent
-                sessions = []
-                failure = nil
+                update(\.availability, .absent)
+                update(\.sessions, [])
+                update(\.failure, nil)
                 return
             }
-            sessions = list.sessions.sorted { $0.updatedAt > $1.updatedAt }
-            availability = .available
-            failure = nil
+            update(\.sessions, list.sessions.sorted { $0.updatedAt > $1.updatedAt })
+            update(\.availability, .available)
+            update(\.failure, nil)
         } catch HarnessFailure.forbidden(let motive) {
-            availability = .forbidden(motive)
-            sessions = []
-            failure = nil
+            update(\.availability, .forbidden(motive))
+            update(\.sessions, [])
+            update(\.failure, nil)
         } catch {
-            failure = HarnessModel.failure(of: error)
+            update(\.failure, HarnessModel.failure(of: error))
         }
     }
 
@@ -159,7 +165,7 @@ public final class HarnessLocalSessionsModel: ObservableObject {
             )
             upsert(reply.session)
             failure = nil
-            await harness.refresh()
+            await harness.refreshInbox()
             return reply.run
         } catch {
             failure = HarnessModel.failure(of: error)
@@ -194,7 +200,7 @@ public final class HarnessLocalSessionsModel: ObservableObject {
     /// L'événement `local_session` (une session a changé d'état) fait relire.
     func receive(_ names: [String]) {
         guard availability == .available, names.contains("local_session") else { return }
-        reloader.schedule { [weak self] in await self?.refresh() }
+        reloader.schedule { [weak self] in await self?.reload() }
     }
 
     func reset() {

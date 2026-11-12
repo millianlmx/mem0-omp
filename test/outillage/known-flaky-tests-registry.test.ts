@@ -74,9 +74,9 @@ test("known-flaky-tests-registry/AC-8 : le registre liste exactement les tests i
   }
 
   const identifiants: string[] = registre.tests.map((e: { identifiant: string }) => e.identifiant);
-  // Les instables de l'API entre le Mac et l'iPhone sont partis avec elle ; restent le
-  // réveil du FileWatcher sur un fichier illisible et l'arrêt des terminaux à la sortie.
-  assert.deepEqual(identifiants, ["visionneuse-de-session/AC-13", "terminal-integre/AC-9"]);
+  // Les instables de l'API entre le Mac et l'iPhone et du Terminal sont partis avec eux ;
+  // reste le réveil du FileWatcher sur un fichier illisible.
+  assert.deepEqual(identifiants, ["visionneuse-de-session/AC-13"]);
   assert.equal(new Set(identifiants).size, identifiants.length, "identifiants uniques");
 
   const sources = swiftTestSources();

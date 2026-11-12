@@ -203,19 +203,17 @@ struct SessionGrapheAppsTests {
             HarnessSessionEntry(seq: 6, step: "impl", kind: "tool", text: "tests", tool: "run_tests", status: "error"),
             HarnessSessionEntry(seq: 7, step: "impl", kind: "tool", text: "Où garder la liste ?", tool: "decision", status: "ok"),
         ]
-        func link(_ id: String) -> Int? {
-            HarnessGraphLink.entry(for: graph.nodes.first { $0.id == id }!, in: graph, entries: entries)
-        }
-        #expect(link("step:1") == 1)
-        #expect(link("step:2") == 3)
-        #expect(link("search:1") == 4)
-        #expect(link("file:src/a.ts") == 2)
-        #expect(link("file:src/b.ts") == 5)
-        #expect(link("test:2:touched") == 6)
-        #expect(link("escalation:7") == 7)
+        let links = HarnessGraphLink.links(in: graph, entries: entries)
+        #expect(links["step:1"] == 1)
+        #expect(links["step:2"] == 3)
+        #expect(links["search:1"] == 4)
+        #expect(links["file:src/a.ts"] == 2)
+        #expect(links["file:src/b.ts"] == 5)
+        #expect(links["test:2:touched"] == 6)
+        #expect(links["escalation:7"] == 7)
         // Sans le direct (rejoué plus tard, ou une autre feature) : aucun lien.
-        #expect(HarnessGraphLink.entry(for: graph.nodes[0], in: graph, entries: []) == nil)
-        #expect(HarnessGraphLink.entry(for: graph.nodes[4], in: graph, entries: Array(entries.prefix(3))) == nil)
+        #expect(HarnessGraphLink.links(in: graph, entries: [])[graph.nodes[0].id] == nil)
+        #expect(HarnessGraphLink.links(in: graph, entries: Array(entries.prefix(3)))[graph.nodes[4].id] == nil)
     }
 
     @Test("session-graphe-apps/AC-94 : l'alerte locale d'une question à carte porte sa headline en titre et son stake en corps, rien d'autre ; sans carte, le texte générique reste")

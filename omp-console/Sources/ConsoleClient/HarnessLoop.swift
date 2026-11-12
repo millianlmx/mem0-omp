@@ -73,6 +73,17 @@ extension HarnessModel {
     }
 }
 
+// MARK: - Publication sans bruit
+
+extension ObservableObject {
+    /// Pose `value` seulement s'il diffère : un `@Published` republie à CHAQUE affectation,
+    /// même identique, et chaque publication fait réévaluer tous les écrans qui observent
+    /// le modèle. Une relecture qui rend la même chose ne coûte ainsi aucun rendu.
+    func update<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<Self, Value>, _ value: Value) {
+        if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
+    }
+}
+
 // MARK: - Relecture regroupée
 
 /// Une relecture regroupée, commune aux modèles de l'OS : une rafale d'événements ne coûte

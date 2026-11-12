@@ -98,17 +98,17 @@ func escalationKillsAndReapsAnIgnoringChild() async throws {
 
 // MARK: - S-2 : le mappage des échecs par les deux appelants collectés
 
-@Test("runner-de-process-swift-duplique/AC-3 : GitCLI rend FilesError.commandTimedOut sur un enfant qui ignore SIGTERM")
+@Test("runner-de-process-swift-duplique/AC-3 : GitCLI rend GitError.timedOut sur un enfant qui ignore SIGTERM")
 func gitCLITimesOut() async throws {
     let directory = try makeRunnerDirectory()
     let binary = try makeIgnoringTermBinary()
     let cli = GitCLI(binary: binary, timeout: 0.5)
 
     do {
-        _ = try await cli.run(GitCommand.lsTracked(), in: directory.path)
+        _ = try await cli.revParseCommonDir(in: directory.path)
         Issue.record("une commande expirée doit échouer")
-    } catch let error as FilesError {
-        #expect(error == .commandTimedOut(command: "ls-files", seconds: 0.5))
+    } catch let error as GitError {
+        #expect(error == .timedOut(seconds: 0.5))
     }
 }
 
@@ -136,15 +136,13 @@ func launchFailureIsNamed() async throws {
     }
 
     do {
-        _ = try await GitCLI(binary: missing, timeout: 0.5).run(GitCommand.lsTracked(), in: directory.path)
-        Issue.record("un binaire absent doit faire échouer `GitCLI.run`")
-    } catch let error as FilesError {
-        guard case let .commandFailed(command, code, detail) = error else {
-            Issue.record("`FilesError.commandFailed` est attendu, reçu \(error)")
+        _ = try await GitCLI(binary: missing, timeout: 0.5).revParseCommonDir(in: directory.path)
+        Issue.record("un binaire absent doit faire échouer `GitCLI`")
+    } catch let error as GitError {
+        guard case let .launchFailed(detail) = error else {
+            Issue.record("`GitError.launchFailed` est attendu, reçu \(error)")
             return
         }
-        #expect(command == "ls-files")
-        #expect(code == -1)
         #expect(!detail.isEmpty)
     }
 }

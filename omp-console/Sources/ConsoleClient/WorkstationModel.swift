@@ -112,6 +112,13 @@ public final class WorkstationModel: ObservableObject {
         guard let harness, harness.isConfigured else { return }
         isLoading = true
         defer { isLoading = false }
+        await reload()
+    }
+
+    /// `refresh()` sans rien dire de la lecture (le flux) : l'état d'abord (un serveur sans
+    /// poste s'arrête là), puis le reste en parallèle ; rien n'est republié à l'identique.
+    func reload() async {
+        guard let harness, harness.isConfigured else { return }
         do {
             let call = HarnessCall(method: "GET", path: "/v1/workstation")
             let reply = try await harness.exchange(call)
@@ -120,27 +127,29 @@ public final class WorkstationModel: ObservableObject {
                 clear(.absent)
                 return
             }
-            let read: WorkstationStatus = try harness.decode(reply, for: call)
-            status = read
-            availability = .available
-            let pending: WorkstationActionList = try await get("/v1/workstation/actions?state=awaiting_approval&limit=\(Self.approvalsLimit)")
-            approvals = pending.actions
+            let current: WorkstationStatus = try await harness.decodeOffMain(reply, for: call)
+            update(\.status, current)
+            update(\.availability, .available)
+            async let pending: WorkstationActionList = get("/v1/workstation/actions?state=awaiting_approval&limit=\(Self.approvalsLimit)")
             if wantsDetails {
-                let recent: WorkstationActionList = try await get("/v1/workstation/actions?limit=\(Self.journalLimit)")
-                journal = recent.actions
-                profile = try await get("/v1/workstation/profile")
-                let list: WorkstationMeetingList = try await get("/v1/workstation/meetings?limit=\(Self.meetingsLimit)")
-                meetings = list.meetings
-                let asked: WorkstationRequestList? = try await optional("/v1/workstation/requests?limit=\(Self.requestsLimit)")
-                requests = asked?.requests
-                let kept: WorkstationAutomationList? = try await optional("/v1/workstation/automations")
-                automations = kept?.automations
+                async let recent: WorkstationActionList = get("/v1/workstation/actions?limit=\(Self.journalLimit)")
+                async let readProfile: WorkstationProfileReply = get("/v1/workstation/profile")
+                async let list: WorkstationMeetingList = get("/v1/workstation/meetings?limit=\(Self.meetingsLimit)")
+                async let asked: WorkstationRequestList? = optional("/v1/workstation/requests?limit=\(Self.requestsLimit)")
+                async let kept: WorkstationAutomationList? = optional("/v1/workstation/automations")
+                let details = try await (recent, readProfile, list, asked, kept)
+                update(\.journal, details.0.actions)
+                update(\.profile, details.1)
+                update(\.meetings, details.2.meetings)
+                update(\.requests, details.3?.requests)
+                update(\.automations, details.4?.automations)
             }
-            failure = nil
+            update(\.approvals, try await pending.actions)
+            update(\.failure, nil)
         } catch HarnessFailure.forbidden(let motive) {
             clear(.reserved(motive))
         } catch {
-            failure = HarnessModel.failure(of: error)
+            update(\.failure, HarnessModel.failure(of: error))
         }
     }
 
@@ -157,7 +166,7 @@ public final class WorkstationModel: ObservableObject {
         reloadTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return }
-            await self?.refresh()
+            await self?.reload()
             self?.reloadTask = nil
         }
     }
@@ -292,7 +301,7 @@ public final class WorkstationModel: ObservableObject {
     func get<T: Decodable>(_ path: String) async throws -> T {
         guard let harness else { throw HarnessFailure.unreachable }
         let call = HarnessCall(method: "GET", path: path)
-        return try harness.decode(try await harness.exchange(call), for: call)
+        return try await harness.decodeOffMain(try await harness.exchange(call), for: call)
     }
 
     /// Une lecture d'une route qu'un serveur antérieur ne sert pas : 404 rend `nil`, sans échec.
@@ -301,7 +310,7 @@ public final class WorkstationModel: ObservableObject {
         let call = HarnessCall(method: "GET", path: path)
         let reply = try await harness.exchange(call)
         if reply.status == 404 { return nil }
-        return try harness.decode(reply, for: call)
+        return try await harness.decodeOffMain(reply, for: call)
     }
     private func decide<Body: Encodable>(seq: Int, revisionTag: String, path: String, body: Body) async -> Bool {
         guard let harness, harness.isConfigured else { return false }

@@ -65,20 +65,6 @@ public enum OSWatchText {
         L10n.format("depuis %@", ConsoleFormat.duration(ms: nowMs - ms))
     }
 
-    /// Ce qu'une feature attend de l'humain (`wait` du brief).
-    public static func wait(_ raw: String) -> String {
-        switch raw {
-        case "questions": OSText.runQuestion
-        case "specs": OSText.runAwaitsSpecs
-        case "verdict": OSText.runAwaitsVerdict
-        case "irreversible": L10n.text("geste irréversible")
-        case "arbitration": L10n.text("arbitrage")
-        case "budget": L10n.text("budget atteint")
-        case "failure": L10n.text("échec à relancer")
-        default: raw
-        }
-    }
-
     /// Le motif d'un arrêt (`cancelCause`) ; sans motif connu, « sans motif ».
     public static func cancelCause(_ raw: String?) -> String {
         switch raw {

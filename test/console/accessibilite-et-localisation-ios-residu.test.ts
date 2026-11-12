@@ -5,7 +5,7 @@
 // liste de fautes, vide sur le dépôt ; une faute PLANTÉE en mémoire (texte modifié,
 // rien n'est écrit dans le dépôt) doit la faire rougir. Ce sont des gardes de FORME :
 // ce que l'écran rend (cadres AX ≥ 44 × 44, identifiants uniques, éléments collés au
-// bord) se prouve au simulateur par la recette idb des six sections
+// bord) se prouve au simulateur par la recette idb des cinq surfaces
 // (`scripts/recette/ios-recette-ui.sh`).
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -18,16 +18,16 @@ import { declaredTexts, stripComments } from "../support/swift-source.ts";
 const APP = path.join("omp-console", "ios", "OMPConsoleIOS");
 const CORE = path.join("omp-console", "Sources", "ConsoleCore");
 
-const HARNESS = path.join(APP, "IOSHarnessScreens.swift");
+const OS_SCREENS = path.join(APP, "IOSOSScreens.swift");
+const SYSTEM = path.join(APP, "IOSSystemScreens.swift");
 const MEMORY = path.join(APP, "IOSMemoryScreen.swift");
 const GRAPH = path.join(APP, "IOSMemoryGraphView.swift");
-const PIPELINE_TEXT = path.join(CORE, "Design", "PipelineServerText.swift");
 const SHELL_WORDS = path.join(CORE, "Design", "ShellText.swift");
 const EXCEPTIONS = path.join("scripts", "recette", "ios-recette-ui-exceptions.json");
 const ANALYSEUR = path.join(ROOT, "scripts", "recette", "ios-recette-ui-analyse.py");
 const PBXPROJ = path.join("omp-console", "ios", "OMPConsoleIOS.xcodeproj", "project.pbxproj");
 const INFO_PLIST = path.join("omp-console", "ios", "OMPConsoleIOS-Info.plist");
-const ROOT_VIEW = path.join(APP, "RootView.swift");
+const SHELL = path.join(APP, "IOSOSRootView.swift");
 const SHELL_TEXT = path.join(APP, "IOSShellText.swift");
 const CONNECTION_STATE = path.join(APP, "Design", "IOSConnectionStateView.swift");
 
@@ -36,7 +36,7 @@ type Sources = Map<string, string>;
 
 /** Les sources du dépôt (commentaires retirés pour le Swift, texte brut pour le JSON, le pbxproj et le plist). */
 function repoSources(): Sources {
-  const files = [HARNESS, MEMORY, GRAPH, PIPELINE_TEXT, SHELL_WORDS, ROOT_VIEW, SHELL_TEXT, CONNECTION_STATE];
+  const files = [OS_SCREENS, SYSTEM, MEMORY, GRAPH, SHELL_WORDS, SHELL, SHELL_TEXT, CONNECTION_STATE];
   const sources: Sources = new Map();
   for (const rel of files) sources.set(rel, stripComments(fs.readFileSync(path.join(ROOT, rel), "utf8")));
   for (const rel of [EXCEPTIONS, PBXPROJ, INFO_PLIST]) sources.set(rel, fs.readFileSync(path.join(ROOT, rel), "utf8"));
@@ -61,23 +61,23 @@ function plant(sources: Sources, rel: string, from: string | RegExp, to: string)
 
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// ── AC-1 : symboles décoratifs muets (S-1) ─────────────────────────────────────
+// ── AC-1 : symbole décoratif muet (S-1) ────────────────────────────────────────
 
-const DECORATIVE: Array<[string, string]> = [[HARNESS, "Image(systemName: IOSShellText.serverSymbol)"]];
+/** L'écran d'un serveur non relié : le symbole est l'icône du `Label` d'un `ContentUnavailableView`, lu avec son texte. */
+const PROMPT_LABEL = "Label(PipelineServerText.notConfigured, systemImage: IOSShellText.serverSymbol)";
 
 function decorativeFaults(sources: Sources): string[] {
   const faults: string[] = [];
-  for (const [rel, image] of DECORATIVE) {
-    const text = get(sources, rel);
-    const at = text.indexOf(image);
-    if (at === -1) {
-      faults.push(`${rel} : ${image} est introuvable`);
-      continue;
-    }
-    const following = text.slice(at).split("\n").slice(1, 4).join("\n");
-    if (!following.includes(".accessibilityHidden(true)")) {
-      faults.push(`${rel} : ${image} n'est pas suivi de .accessibilityHidden(true) à moins de 4 lignes`);
-    }
+  const screens = get(sources, OS_SCREENS);
+  const prompt = screens.indexOf("struct IOSServerPrompt");
+  if (prompt === -1) return [`${OS_SCREENS} : IOSServerPrompt est introuvable`];
+  const body = screens.slice(prompt);
+  if (!new RegExp(`ContentUnavailableView \\{\\s*${escapeRegex(PROMPT_LABEL)}`).test(body)) {
+    faults.push(`${OS_SCREENS} : le symbole du serveur non relié n'est pas l'icône de ${PROMPT_LABEL}`);
+  }
+  for (const rel of [OS_SCREENS, SYSTEM, SHELL]) {
+    if (get(sources, rel).includes("Image(systemName: IOSShellText.serverSymbol)"))
+      faults.push(`${rel} : le symbole du serveur est une image nue, lue par VoiceOver sous son nom`);
   }
   return faults;
 }
@@ -85,19 +85,26 @@ function decorativeFaults(sources: Sources): string[] {
 // ── AC-2 : symboles porteurs de sens libellés en français (S-2) ────────────────
 
 /**
- * Les boutons à symbole de la barre : le `Label` français, puis (après la fermeture
- * du libellé et ses modificateurs) l'identifiant du contrôle. Le bouton « Serveur »
- * des barres a disparu avec la refonte (la feuille s'ouvre depuis Système › Serveur) ;
- * restent les « + » de création.
+ * Les boutons à symbole des barres : le `Label` français, puis (après la fermeture
+ * du libellé et ses modificateurs) l'identifiant du contrôle — « Demander » et la roue
+ * du Système dans la barre de chaque onglet, le « + » d'une nouvelle planification.
  */
-const MEANINGFUL: Array<{ name: string; label: string; anchor: string }> = [
+const MEANINGFUL: Array<{ name: string; file: string; label: string; anchor: string }> = [
   {
-    name: "Nouvelle feature",
-    label: "Label(PipelineServerText.newFeature, systemImage: PipelineServerText.newFeatureSymbol)",
-    anchor: '.accessibilityIdentifier("ios.inbox.new")',
+    name: "Demander",
+    file: OS_SCREENS,
+    label: "Label(IOSOSText.ask, systemImage: IOSOSText.askSymbol)",
+    anchor: '.accessibilityIdentifier("ios.os.ask")',
+  },
+  {
+    name: "Système",
+    file: OS_SCREENS,
+    label: "Label(ConsoleSection.system.title, systemImage: IOSOSText.systemSymbol)",
+    anchor: '.accessibilityIdentifier("ios.os.system")',
   },
   {
     name: "Nouvelle planification",
+    file: SYSTEM,
     label: "Label(ShellText.newSchedule, systemImage: IOSShellText.addSymbol)",
     anchor: '.accessibilityIdentifier("ios.schedules.new")',
   },
@@ -105,16 +112,13 @@ const MEANINGFUL: Array<{ name: string; label: string; anchor: string }> = [
 
 function meaningfulFaults(sources: Sources): string[] {
   const faults: string[] = [];
-  const screen = get(sources, HARNESS);
-  for (const { name, label, anchor } of MEANINGFUL) {
-    if (!new RegExp(`${escapeRegex(label)}\\s*\\}[^{}]*?${escapeRegex(anchor)}`).test(screen)) {
-      faults.push(`IOSHarnessScreens : le bouton ${anchor} n'a plus ${label} pour libellé (${name})`);
+  for (const { name, file, label, anchor } of MEANINGFUL) {
+    if (!new RegExp(`${escapeRegex(label)}\\s*\\}[^{}]*?${escapeRegex(anchor)}`).test(get(sources, file))) {
+      faults.push(`${path.basename(file)} : le bouton ${anchor} n'a plus ${label} pour libellé (${name})`);
     }
   }
   // La clé de `L10n.text` est le libellé français (localisation-apps) : il est lu
   // sous ses deux formes, littéral nu ou localisé.
-  if (declaredTexts(get(sources, PIPELINE_TEXT)).get("newFeature") !== "Nouvelle feature…")
-    faults.push("PipelineServerText.newFeature n'est plus « Nouvelle feature… »");
   if (declaredTexts(get(sources, SHELL_WORDS)).get("newSchedule") !== "Nouvelle planification…")
     faults.push("ShellText.newSchedule n'est plus « Nouvelle planification… »");
   return faults;
@@ -123,7 +127,8 @@ function meaningfulFaults(sources: Sources): string[] {
 // ── AC-3 : identifiants de conteneur non propagés (S-3) ────────────────────────
 
 const CONTAINERS: Array<[string, string]> = [
-  [HARNESS, ".accessibilityIdentifier(identifier)"],
+  [OS_SCREENS, ".accessibilityIdentifier(identifier)"],
+  [SYSTEM, ".accessibilityIdentifier(identifier)"],
   [MEMORY, ".accessibilityIdentifier(IOSMemoryAccessibility.screen)"],
 ];
 
@@ -251,7 +256,7 @@ function targetFaults(sources: Sources): string[] {
 function validate(entries: ExceptionEntry[]): { status: number | null; stderr: string } {
   const file = path.join(tmpdir("acces-loc-exceptions-"), "exceptions.json");
   const full = entries.map((e) => ({
-    surface: "inbox",
+    surface: "now",
     apparence: "clair",
     taille: "defaut",
     source: "ax",
@@ -267,37 +272,32 @@ function validate(entries: ExceptionEntry[]): { status: number | null; stderr: s
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
-test("accessibilite-et-localisation-ios-residu/AC-1 : le symbole décoratif des écrans du serveur est masqué à VoiceOver", () => {
+test("accessibilite-et-localisation-ios-residu/AC-1 : le symbole décoratif d'un serveur non relié est masqué à VoiceOver", () => {
   const sources = repoSources();
   assert.deepEqual(decorativeFaults(sources), []);
-  const planted = plant(
-    sources,
-    HARNESS,
-    /(Image\(systemName: IOSShellText\.serverSymbol\)[\s\S]*?)\.accessibilityHidden\(true\)/,
-    "$1",
-  );
+  const planted = plant(sources, OS_SCREENS, PROMPT_LABEL, "Image(systemName: IOSShellText.serverSymbol)");
   assert.ok(
     decorativeFaults(planted).some((f) => f.includes("serverSymbol")),
     "un symbole décoratif lu par VoiceOver doit faire rougir la garde",
   );
 });
 
-test("accessibilite-et-localisation-ios-residu/AC-2 : « Nouvelle feature » et « Nouvelle planification » gardent leur libellé français, jamais le nom du symbole", () => {
+test("accessibilite-et-localisation-ios-residu/AC-2 : « Demander », le Système et « Nouvelle planification » gardent leur libellé français, jamais le nom du symbole", () => {
   const sources = repoSources();
   assert.deepEqual(meaningfulFaults(sources), []);
-  const feature = plant(
+  const ask = plant(
     sources,
-    HARNESS,
-    "Label(PipelineServerText.newFeature, systemImage: PipelineServerText.newFeatureSymbol)",
-    "Image(systemName: PipelineServerText.newFeatureSymbol)",
+    OS_SCREENS,
+    "Label(IOSOSText.ask, systemImage: IOSOSText.askSymbol)",
+    "Image(systemName: IOSOSText.askSymbol)",
   );
   assert.ok(
-    meaningfulFaults(feature).some((f) => f.includes("ios.inbox.new")),
-    "un symbole nu sur « Nouvelle feature » doit faire rougir la garde",
+    meaningfulFaults(ask).some((f) => f.includes("ios.os.ask")),
+    "un symbole nu sur « Demander » doit faire rougir la garde",
   );
   const schedule = plant(
     sources,
-    HARNESS,
+    SYSTEM,
     "Label(ShellText.newSchedule, systemImage: IOSShellText.addSymbol)",
     "Image(systemName: IOSShellText.addSymbol)",
   );
@@ -312,13 +312,13 @@ test("accessibilite-et-localisation-ios-residu/AC-3 : les identifiants d'écran 
   assert.deepEqual(containerFaults(sources), []);
   const planted = plant(
     sources,
-    HARNESS,
+    SYSTEM,
     /\.accessibilityElement\(children: \.contain\)(\s*\.accessibilityIdentifier\(identifier\))/,
     "$1",
   );
   assert.ok(
-    containerFaults(planted).some((f) => f.startsWith(HARNESS)),
-    "un écran du serveur sans .contain doit faire rougir la garde",
+    containerFaults(planted).some((f) => f.startsWith(SYSTEM)),
+    "une page du Système sans .contain doit faire rougir la garde",
   );
   const memory = plant(
     sources,
@@ -455,11 +455,10 @@ test("accessibilite-et-localisation-ios-residu/AC-7 : l'icône est légendée «
   assert.ok(displayNameFaults(renamed).length > 0, "un autre nom affiché doit faire rougir la garde");
 });
 
-// ── AC-8 / AC-9 : barre latérale titrée, rangée Mémoire au chevron du système (S-7) ──
-// Depuis `ios-navigation-onglets-adaptables`, la racine est une barre d'onglets
-// adaptable : le titre « OMP Console » vit dans l'en-tête de la barre latérale de
-// l'iPad. Sur iPhone, la Mémoire n'a pas d'onglet : c'est une rangée du hub Système,
-// poussée dans sa pile — un lien système, dont le chevron est rendu par la liste.
+// ── AC-8 / AC-9 : barre latérale titrée, Mémoire poussée sans chevron dessiné (S-7) ──
+// La racine est une barre d'onglets adaptable : le titre « OMP Console » vit dans
+// l'en-tête de la barre latérale de l'iPad. La Mémoire n'a pas d'onglet : le Savoir la
+// pousse dans sa pile, et le bouton retour est celui du système.
 
 /** Le bloc `{ … }` qui suit `marker` dans `text` (accolades équilibrées), ou null. */
 function block(text: string, marker: string): string | null {
@@ -482,36 +481,29 @@ const TITLE_TEXT = "Text(IOSShellText.rootTitle)";
 function rootTitleFaults(sources: Sources): string[] {
   const faults: string[] = [];
   if (!get(sources, SHELL_TEXT).includes(ROOT_TITLE)) faults.push(`IOSShellText.swift ne déclare pas ${ROOT_TITLE}`);
-  const root = get(sources, ROOT_VIEW);
+  const root = get(sources, SHELL);
   const titles = root.split(TITLE_TEXT).length - 1;
-  if (titles !== 1) faults.push(`RootView.swift pose ${TITLE_TEXT} ${titles} fois (attendu : 1)`);
+  if (titles !== 1) faults.push(`IOSOSRootView.swift pose ${TITLE_TEXT} ${titles} fois (attendu : 1)`);
   const header = block(root, SIDEBAR_HEADER);
   if (header === null)
-    return [...faults, `RootView.swift : l'en-tête de barre latérale ${SIDEBAR_HEADER} est introuvable`];
+    return [...faults, `IOSOSRootView.swift : l'en-tête de barre latérale ${SIDEBAR_HEADER} est introuvable`];
   if (!header.includes(TITLE_TEXT)) faults.push(`${TITLE_TEXT} n'est pas dans l'en-tête ${SIDEBAR_HEADER}`);
   return faults;
 }
 
-/** La rangée Mémoire du hub : un lien système qui enveloppe la rangée, identifié `ios.system.memory`. */
-const ROW = new RegExp(
-  [
-    String.raw`NavigationLink\(value: IOSSystemRoute\.memory\) \{`,
-    "memoryRow",
-    String.raw`\}`,
-    String.raw`\.accessibilityIdentifier\("ios\.system\.memory"\)`,
-  ].join(String.raw`\s*`),
-);
+/** Le Savoir pousse la Mémoire dans sa pile, que la coque rend par sa destination de navigation. */
+const MEMORY_PUSH = "openMemory: { navigation.push(.memory) }";
 
 function chevronFaults(sources: Sources): string[] {
   const faults: string[] = [];
-  const screens = get(sources, HARNESS);
-  if (!screens.includes("NavigationLink(value: IOSSystemRoute.memory)"))
-    faults.push("le hub Système n'enveloppe pas la rangée Mémoire dans NavigationLink(value: IOSSystemRoute.memory)");
-  else if (!ROW.test(screens))
-    faults.push(
-      "la rangée Mémoire n'a pas la forme NavigationLink { memoryRow } .accessibilityIdentifier(ios.system.memory)",
-    );
-  for (const rel of [ROOT_VIEW, HARNESS]) {
+  const shell = get(sources, SHELL);
+  if (!shell.includes(MEMORY_PUSH)) faults.push(`le Savoir ne pousse pas la Mémoire (${MEMORY_PUSH})`);
+  if (
+    !shell.includes(".navigationDestination(for: IOSOSRoute.self)") ||
+    !/case \.memory:\s*IOSMemoryScreen\(/.test(shell)
+  )
+    faults.push("la pile de l'onglet ne rend pas la Mémoire par sa destination de navigation");
+  for (const rel of [SHELL, OS_SCREENS, SYSTEM]) {
     if (/chevron/i.test(get(sources, rel)))
       faults.push(`${path.basename(rel)} dessine un chevron à la main : c'est le système qui les rend`);
   }
@@ -522,7 +514,7 @@ test("accessibilite-et-localisation-ios-residu/AC-8 : la barre latérale de l'iP
   const sources = repoSources();
   assert.deepEqual(rootTitleFaults(sources), []);
 
-  const removed = plant(sources, ROOT_VIEW, TITLE_TEXT, "Text(ConsoleSection.inbox.title)");
+  const removed = plant(sources, SHELL, TITLE_TEXT, "Text(ConsoleSection.inbox.title)");
   assert.ok(
     rootTitleFaults(removed).some((f) => f.includes("fois")),
     "un titre retiré doit faire rougir la garde",
@@ -535,11 +527,11 @@ test("accessibilite-et-localisation-ios-residu/AC-8 : la barre latérale de l'iP
   const elsewhere = plant(
     plant(
       sources,
-      ROOT_VIEW,
+      SHELL,
       /(\.tabViewSidebarHeader \{\s*)Text\(IOSShellText\.rootTitle\)/,
       "$1Text(ConsoleSection.inbox.title)",
     ),
-    ROOT_VIEW,
+    SHELL,
     ".tabViewStyle(.sidebarAdaptable)",
     `.tabViewStyle(.sidebarAdaptable)\n        .overlay { ${TITLE_TEXT} }`,
   );
@@ -549,30 +541,20 @@ test("accessibilite-et-localisation-ios-residu/AC-8 : la barre latérale de l'iP
   );
 });
 
-test("accessibilite-et-localisation-ios-residu/AC-9 : la rangée Mémoire du hub Système est un NavigationLink sans chevron dessiné", () => {
+test("accessibilite-et-localisation-ios-residu/AC-9 : la Mémoire se pousse dans la pile du Savoir, sans chevron dessiné", () => {
   const sources = repoSources();
   assert.deepEqual(chevronFaults(sources), []);
 
-  const bare = plant(
-    sources,
-    HARNESS,
-    /NavigationLink\(value: IOSSystemRoute\.memory\) \{\s*memoryRow\s*\}/,
-    "memoryRow",
-  );
+  const sheet = plant(sources, SHELL, MEMORY_PUSH, "openMemory: { drafts.serverSheetShown = true }");
   assert.ok(
-    chevronFaults(bare).some((f) => f.includes("n'enveloppe pas")),
-    "une rangée sans lien doit faire rougir la garde",
-  );
-  const oldId = plant(sources, HARNESS, '"ios.system.memory"', '"ios.plus.memory"');
-  assert.ok(
-    chevronFaults(oldId).some((f) => f.includes("forme")),
-    "une rangée à l'identifiant de l'ancienne liste « Plus » doit faire rougir la garde",
+    chevronFaults(sheet).some((f) => f.includes("ne pousse pas")),
+    "une Mémoire qui ne se pousse pas doit faire rougir la garde",
   );
   const drawn = plant(
     sources,
-    HARNESS,
-    /(Text\(IOSShellText\.memorySummary\))/,
-    '$1\nImage(systemName: "chevron.right")',
+    OS_SCREENS,
+    "IOSOSAskButton(server: server, drafts: drafts)",
+    'IOSOSAskButton(server: server, drafts: drafts)\nImage(systemName: "chevron.right")',
   );
   assert.ok(
     chevronFaults(drawn).some((f) => f.includes("à la main")),

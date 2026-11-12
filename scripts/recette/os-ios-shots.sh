@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Produit les captures de l'app iOS dans son interface par défaut (l'« OS agentique ») :
-# les cinq onglets — Maintenant (le Radar et le brief), Fils, Décisions (le tri),
-# Propositions, Savoir —, un fil au travail, le fil d'une revue à valider et la page d'un
-# espace, en portrait sur iPhone ET sur iPad : seize images.
+# Produit les captures de l'app iOS dans son interface (l'« OS agentique ») : les cinq
+# onglets — Maintenant (le Radar et le brief), Fils, Décisions (le tri), Propositions,
+# Savoir —, un fil au travail, le fil d'une revue à valider, la page d'un espace, et deux
+# écrans du hub Système (Dépôts, Poste), en portrait sur iPhone ET sur iPad : vingt images.
 #
 # Un serveur de démonstration (`os-demo-serveur.ts` : le vrai gestionnaire HTTP
 # d'omp-harness et le vrai orchestrateur sur un monde de test) sert une revue à valider,
@@ -12,15 +12,15 @@
 # lancement de recette (`-os.server <adresse> -os.token <jeton>`, `IOSRecipeServer`) :
 # rien n'est enregistré dans le simulateur — ni préférence, ni trousseau —, donc
 # `ios-shots.sh` y retrouve ensuite l'app non reliée. Chaque écran est ouvert d'office par
-# `-os.view`, `-os.thread` ou `-os.space` (`IOSShellLaunch`).
+# `-os.view`, `-os.thread`, `-os.space` ou `-os.system` (`IOSShellLaunch`).
 #
 # Les images sont des ARTEFACTS DE PR : elles vivent sous `omp-console/build/os-ios-shots/`
 # (ignoré par git) et ne sont jamais committées. Le dossier de sortie est vidé d'abord, les
 # simulateurs sont démarrés à la demande (`bootstatus -b`, idempotent), l'app est
 # réinstallée et relancée pour chaque écran (`--terminate-running-process`).
 #
-# Vérifications DURES avant de rendre 0 : seize PNG, et les dimensions de CHAQUE PNG
-# (`sips`) — toutes PORTRAIT. Codes de sortie : 0 les seize captures produites, 1 échec,
+# Vérifications DURES avant de rendre 0 : vingt PNG, et les dimensions de CHAQUE PNG
+# (`sips`) — toutes PORTRAIT. Codes de sortie : 0 les vingt captures produites, 1 échec,
 # 2 « non exécuté » (pas macOS, Xcode ou Node inutilisable, aucun runtime iOS ≥ 26).
 set -uo pipefail
 
@@ -226,11 +226,13 @@ for pair in "iphone:$iphone" "ipad:$ipad"; do
   shot "$label" "$udid" fil-au-travail -os.thread "$working" || exit 1
   shot "$label" "$udid" fil-revue -os.thread "$review" || exit 1
   shot "$label" "$udid" espace -os.space "$SPACE" || exit 1
+  shot "$label" "$udid" depots -os.system repos || exit 1
+  shot "$label" "$udid" poste -os.system workstation || exit 1
 done
 
 total="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$total" != "16" ]; then
-  echo "  ✗ $total captures produites (16 attendues : 8 écrans × iPhone et iPad)" >&2
+if [ "$total" != "20" ]; then
+  echo "  ✗ $total captures produites (20 attendues : 10 écrans × iPhone et iPad)" >&2
   exit 1
 fi
 

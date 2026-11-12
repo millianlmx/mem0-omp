@@ -5,7 +5,7 @@
 // `ios-gestes-et-retours-natifs` (AC-13, vrai bouton désactivé) — sa garde a été retirée.
 // AC-2 (panneau d'IOSSectionView), AC-3 (bouton de Projet) et AC-8 (noms de feature
 // de l'Accueil) gardaient des écrans du moteur local, retirés avec lui : les écrans
-// de pilotage sont désormais ceux du serveur de pipelines, en listes groupées.
+// sont désormais les onglets de la coque et les pages du hub Système.
 //
 // Preuves hors de ce fichier :
 //  - tests Swift (`OMPConsoleIOSTests/IOSFinitionsTests.swift`) : AC-5 (icônes
@@ -45,26 +45,40 @@ function forbidAll(faults: string[], label: string, text: string, needles: strin
   }
 }
 
-/** AC-1 : plus de titre interne ; le titre de navigation reste, posé par le cadre (section ou page du hub). */
+/** Les cadres qui posent le titre de navigation : la racine d'un onglet et une page du Système. */
+const FRAMES: Array<[string, string]> = [
+  ["IOSOSScreens.swift", ".navigationTitle(tab.title)"],
+  ["IOSSystemScreens.swift", ".navigationTitle(destination.title)"],
+];
+
+/** AC-1 : plus de titre interne ; le titre de navigation reste, posé par le cadre (onglet ou page du hub). */
 function titleFaults(root: string): string[] {
   const faults: string[] = [];
-  const frame = appFile(root, "IOSHarnessScreens.swift");
+  for (const [name, title] of FRAMES) {
+    const frame = appFile(root, name);
+    if (frame === "") {
+      faults.push(`${name} absent`);
+      continue;
+    }
+    forbidAll(faults, name, frame, ["Text(tab.title)", "Text(destination.title)", "Text(title)"]);
+    requireAll(faults, name, frame, [title]);
+  }
   const memory = appFile(root, "IOSMemoryScreen.swift");
-  if (frame === "") return ["IOSHarnessScreens.swift absent"];
-  forbidAll(faults, "IOSHarnessScreens.swift", frame, ["Text(section.title)", "Text(title)"]);
-  requireAll(faults, "IOSHarnessScreens.swift", frame, [".navigationTitle(title)"]);
   forbidAll(faults, "IOSMemoryScreen.swift", memory, ["Text(ConsoleSection.memory.title)"]);
   requireAll(faults, "IOSMemoryScreen.swift", memory, [".navigationTitle(ConsoleSection.memory.title)"]);
   return faults;
 }
 
-/** AC-4 : l'icône iOS d'une section passe par `IOSSection.systemImage(of:)`. */
+/** AC-4 : l'icône d'un onglet passe par `IOSOSTab.systemImage`, nommée dans `IOSOSText` ; aucun nom de symbole en dur. */
 function sectionIconFaults(root: string): string[] {
   const faults: string[] = [];
-  const text = appFile(root, "RootView.swift");
-  if (text === "") return ["RootView.swift absent"];
-  requireAll(faults, "RootView.swift", text, ["IOSSection.systemImage(of: section)"]);
-  forbidAll(faults, "RootView.swift", text, ["systemImage: section.systemImage"]);
+  const shell = appFile(root, "IOSOSRootView.swift");
+  const navigation = appFile(root, "IOSOSNavigation.swift");
+  if (shell === "") return ["IOSOSRootView.swift absent"];
+  requireAll(faults, "IOSOSRootView.swift", shell, ["systemImage: tab.systemImage"]);
+  forbidAll(faults, "IOSOSRootView.swift", shell, ['systemImage: "']);
+  requireAll(faults, "IOSOSNavigation.swift", navigation, ["IOSOSText.nowSymbol"]);
+  forbidAll(faults, "IOSOSNavigation.swift", navigation, ['systemImage: "', 'Symbol = "']);
   return faults;
 }
 
@@ -136,28 +150,28 @@ test("ios-finitions-titres-icones/AC-1 : chaque écran n'a que le titre de navig
   assert.deepEqual(titleFaults(ROOT), []);
   const faults = plant(
     copy(),
-    app("IOSHarnessScreens.swift"),
-    (text) => text.replace("List {\n", "List {\n                    Text(title)\n"),
+    app("IOSSystemScreens.swift"),
+    (text) => text.replace("List {\n", "List {\n            Text(destination.title)\n"),
     titleFaults,
   );
   assert.ok(
-    faults.some((f) => f.includes("Text(title)")),
+    faults.some((f) => f.includes("Text(destination.title)")),
     `un titre interne réinséré doit faire rougir la garde : ${faults.join(" | ")}`,
   );
 });
 
-test("ios-finitions-titres-icones/AC-4 : l'icône iOS d'une section passe par IOSSection.systemImage(of:)", () => {
+test("ios-finitions-titres-icones/AC-4 : l'icône iOS d'un onglet passe par IOSOSTab.systemImage", () => {
   assert.deepEqual(sectionIconFaults(ROOT), []);
 
   const root = plant(
     copy(),
-    app("RootView.swift"),
-    (text) => text.replaceAll("IOSSection.systemImage(of: section)", "section.systemImage"),
+    app("IOSOSRootView.swift"),
+    (text) => text.replaceAll("systemImage: tab.systemImage", 'systemImage: "circle"'),
     sectionIconFaults,
   );
   assert.ok(
-    root.some((f) => f.includes("RootView.swift")),
-    `une icône du noyau dans la barre latérale doit faire rougir la garde : ${root.join(" | ")}`,
+    root.some((f) => f.includes("IOSOSRootView.swift")),
+    `un symbole en dur dans la barre d'onglets doit faire rougir la garde : ${root.join(" | ")}`,
   );
 });
 

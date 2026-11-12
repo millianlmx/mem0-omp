@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Produit la capture de l'app Mac montrant l'onglet « Preuves » de la page d'une
-# feature (onglet-preuves) : un serveur de démonstration (`mac-shots-serveur.ts`, le
-# vrai gestionnaire HTTP d'omp-harness sur un monde de test) sert une feature qui
-# attend la validation de sa revue, avec ses preuves sur deux tours ; l'app Mac,
-# construite depuis le dépôt, s'ouvre sur cette feature et la page s'ouvre d'elle-même
-# sur l'onglet « Preuves ».
+# Produit la capture de l'app Mac montrant le niveau « Preuves » de « Comprendre »
+# (onglet-preuves) : un serveur de démonstration (`mac-shots-serveur.ts`, le vrai
+# gestionnaire HTTP d'omp-harness sur un monde de test) sert une feature qui attend la
+# validation de sa revue, avec ses preuves sur deux tours ; l'app Mac, construite
+# depuis le dépôt, ouvre d'office le fil de cette feature et « Comprendre » au niveau
+# « Preuves » (variables de recette `OMP_CONSOLE_OS_RUN` et `OMP_CONSOLE_OS_LEVEL`).
 #
 # L'image est un ARTEFACT DE PR : elle vit sous `omp-console/build/mac-shots/` (ignoré
 # par git) et n'est jamais committée. Le dossier de sortie est vidé d'abord.
@@ -106,13 +106,11 @@ fi
 defaults delete "$BUNDLE_ID" >/dev/null 2>&1
 defaults write "$BUNDLE_ID" "NSWindow Frame main-AppWindow-1" "80 60 1500 960 0 0 1728 1084 "
 defaults write "$BUNDLE_ID" setup.recipe succes
-# L'onglet « Preuves » est celui de la page d'une feature de l'interface CLASSIQUE : la
-# nouvelle interface est le défaut de l'app, la préférence `ui.os` la coupe ici.
-defaults write "$BUNDLE_ID" ui.os -bool false
 
 echo "  · ouverture de la feature $run_id"
 open -n -a "$APP" --env "CFFIXED_USER_HOME=$WORK/home" --env "OMP_CONSOLE_SUPPORT_ROOT=$WORK/support" \
-  --env "OMP_CONSOLE_OMP_BINARY=/usr/bin/true" "ompconsole://runs/$run_id"
+  --env "OMP_CONSOLE_OMP_BINARY=/usr/bin/true" --env "OMP_CONSOLE_OS_RUN=$run_id" \
+  --env "OMP_CONSOLE_OS_LEVEL=Preuves" --args -ApplePersistenceIgnoreState YES
 for _ in $(seq 1 100); do
   app_pid="$(pgrep -f "$APP/Contents/MacOS/" | head -n 1)"
   [ -n "$app_pid" ] && break

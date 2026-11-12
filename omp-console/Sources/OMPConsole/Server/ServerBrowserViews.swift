@@ -1,4 +1,4 @@
-// Le NAVIGATEUR DU SERVEUR dans la section « Poste » du Mac, à l'usage de l'appareil
+// Le NAVIGATEUR DU SERVEUR dans l'écran « Poste » du Mac, à l'usage de l'appareil
 // approbateur : l'état de chaque compte (Slack, Google), la source de la copie continue du
 // profil Chrome (l'extension choisie copie tout le profil, la date de la dernière copie
 // reçue suit) et, en secours, la connexion interactive, dans une feuille qui montre la page
@@ -17,7 +17,7 @@ import ConsoleCore
 import ConsoleUI
 import SwiftUI
 
-// MARK: - Section de la page Poste
+// MARK: - Section de l'écran Poste
 
 struct ServerBrowserSection: View {
     @ObservedObject var workstation: WorkstationModel
@@ -42,8 +42,6 @@ struct ServerBrowserSection: View {
                 openLogin
             } header: {
                 Label(ServerBrowserText.sectionTitle, systemImage: ServerBrowserText.sectionSymbol)
-            } footer: {
-                Text(ServerBrowserText.sectionHint + " " + ServerBrowserText.mirrorHint + " " + ServerBrowserText.loginHint)
             }
         }
     }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Produit les captures de la coque iOS (S-6, BR-4) : d'abord QUARANTE, cinq écrans en
+# Produit les captures de la coque iOS (S-6, BR-4) : d'abord QUARANTE, les cinq onglets en
 # portrait sur iPhone et sur iPad, en clair et en sombre, à taille de texte par
 # défaut puis en Dynamic Type maximum ; puis le groupe de recette du graphe Mémoire.
 #
@@ -7,7 +7,7 @@
 # (ignoré par git) et ne sont jamais committées. Le script est reproductible : le
 # dossier de sortie est vidé d'abord, les simulateurs sont démarrés à la demande
 # (`bootstatus -b`, idempotent), l'app est réinstallée et relancée pour chaque
-# section (`--terminate-running-process`).
+# onglet (`--terminate-running-process`).
 #
 # LIMITE D'OUTILLAGE MESURÉE (2026-10-06, poste de référence) — il n'y a AUCUNE
 # ligne « iPad paysage » :
@@ -38,12 +38,10 @@ SHOTS="$ROOT/omp-console/build/ios-shots"
 APP="$ROOT/omp-console/.build-ios/Build/Products/Debug-iphonesimulator/OMPConsoleIOS.app"
 BUNDLE_ID="com.omp.console.ios"
 
-# Les cinq sections de l'app iOS, par `rawValue`, dans l'ordre de `allCases`
-# (À traiter, Features, Poste, Mémoire, Système) — jamais un libellé affiché : la
-# liste des sections de l'app est filtrée du type partagé, et ce script de
-# développement se contente des valeurs brutes. Sur iPhone, `-section memory` ouvre
-# Système puis y pousse la Mémoire.
-sections=(inbox runs workstation memory system)
+# Les cinq onglets de l'app iOS, par `rawValue` d'`IOSOSTab`, dans l'ordre de la barre
+# (Maintenant, Fils, Décisions, Propositions, Savoir), ouverts par `-os.view` — jamais un
+# libellé affiché. Sans serveur relié, chacun montre « Relier le serveur ».
+views=(now threads decisions proposals knowledge)
 
 # Les deux tailles de texte des passages : le défaut système, et le MAXIMUM de
 # Dynamic Type (`accessibility-extra-extra-extra-large`, D-1).
@@ -190,7 +188,7 @@ for pair in "iphone:$iphone" "ipad:$ipad"; do
 done
 
 # Un passage complet : apparence de l'appareil posée une fois, puis une capture
-# par section, section par section.
+# par onglet, onglet par onglet.
 #   $1 libellé (iphone | ipad)
 #   $2 UDID
 #   $3 apparence (light | dark)
@@ -206,10 +204,10 @@ shoot() {
   shift 5
   xcrun simctl ui "$udid" content_size "$size" >/dev/null 2>&1 || true
   xcrun simctl ui "$udid" appearance "$appearance" >/dev/null 2>&1 || true
-  for section in "${sections[@]}"; do
-    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -section "$section" "$@" -AppleLanguages "(fr)" >/dev/null 2>&1
+  for view in "${views[@]}"; do
+    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -os.view "$view" "$@" -AppleLanguages "(fr)" >/dev/null 2>&1
     sleep 2
-    shot="$SHOTS/$label-$section-$appearance$suffix.png"
+    shot="$SHOTS/$label-$view-$appearance$suffix.png"
     if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
       echo "  ✗ capture impossible ($shot)" >&2
       exit 1
@@ -218,14 +216,14 @@ shoot() {
   done
 }
 
-# Passage 1 — cinq écrans × {iPhone portrait, iPad portrait} × {clair, sombre},
+# Passage 1 — cinq onglets × {iPhone portrait, iPad portrait} × {clair, sombre},
 # à la taille de texte par défaut : 20 captures.
 for appearance in light dark; do
   shoot iphone "$iphone" "$appearance" "$TEXT_DEFAULT" ""
   shoot ipad "$ipad" "$appearance" "$TEXT_DEFAULT" ""
 done
 
-# Passage 2 — cinq écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type
+# Passage 2 — cinq onglets × {iPhone, iPad} × {clair, sombre} en Dynamic Type
 # MAXIMUM : 20 captures `-ax`.
 for appearance in light dark; do
   shoot iphone "$iphone" "$appearance" "$TEXT_AX" "-ax"
@@ -239,9 +237,10 @@ if [ "$count" != "40" ]; then
 fi
 
 # Passage 3 — le MODE GRAPHE de la Mémoire (ios-memoire-graphe) : ses trois états de
-# recette (`-memoire.recipe`), sur les deux appareils et les deux apparences, à
-# taille de texte par défaut. La charge utile vient de la fixture partagée
-# `MemoryGraphParity` (ConsoleCore) : chaque capture montre un chemin de code RÉEL.
+# recette (`-memoire.recipe`, qui ouvre la Mémoire dans le Savoir), sur les deux appareils
+# et les deux apparences, à taille de texte par défaut. La charge utile vient de la
+# fixture partagée `MemoryGraphParity` (ConsoleCore) : chaque capture montre un chemin de
+# code RÉEL.
 memoire_recipes=(graphe zoom fiche)
 
 # Journaux de la sortie d'erreur de chaque lancement de recette, sous build/. L'app y écrit
@@ -263,7 +262,7 @@ shoot_memoire() {
     log="$RECIPE_LOGS/$label-$appearance-$recipe.log"
     rm -f "$log"
     xcrun simctl launch --terminate-running-process --stderr="$log" "$udid" "$BUNDLE_ID" \
-      -section memory -memoire.recipe "$recipe" -AppleLanguages "(fr)" >/dev/null 2>&1
+      -memoire.recipe "$recipe" -AppleLanguages "(fr)" >/dev/null 2>&1
     reached=""
     for _ in $(seq 1 40); do
       if grep -q "memoire-recipe-ready" "$log" 2>/dev/null; then reached=1; break; fi
@@ -292,11 +291,11 @@ for appearance in light dark; do
 done
 
 # Le second groupe fait 3 états × {iPhone, iPad} × {clair, sombre} = 12 captures ;
-# le total avec les 40 écrans est 52.
+# le total avec les 40 captures d'onglets est 52.
 reset_simulators
 total="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
 if [ "$total" != "52" ]; then
-  echo "  ✗ $total captures produites (52 attendues : 40 écrans + 12 graphe)" >&2
+  echo "  ✗ $total captures produites (52 attendues : 40 onglets + 12 graphe)" >&2
   exit 1
 fi
 

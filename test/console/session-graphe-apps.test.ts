@@ -96,7 +96,7 @@ function inOrder(text: string, needles: string[], label: string): void {
   }
 }
 
-test("session-graphe-apps/AC-1 : dans « À traiter » (Mac et iOS), une escalade à carte se lit headline + stake + une ligne par option, puis le schéma natif aux options cliquables, puis la carte d'exploration (repliée sur iPhone), puis les Détails repliés ; sans carte, l'affichage d'avant", async () => {
+test("session-graphe-apps/AC-1 : dans « Comprendre » (Mac et iOS), une escalade à carte se lit headline + stake + une ligne par option, puis le schéma natif aux options cliquables, puis la carte d'exploration (repliée sur iPhone), puis les Détails repliés ; sans carte, l'affichage d'avant", async () => {
   const feed = read(CONSOLE, "Sources", "ConsoleUI", "InboxFeed.swift");
   const batch = swiftBody(feed, "struct EscalationBatchCard: View");
   inOrder(
@@ -114,13 +114,14 @@ test("session-graphe-apps/AC-1 : dans « À traiter » (Mac et iOS), une escalad
     ],
     "EscalationBatchCard",
   );
-  // La même carte sert « À traiter » et la page de la feature, sur les deux plateformes.
-  assert.match(read(CONSOLE, "Sources", "ConsoleUI", "RunDetailViews.swift"), /EscalationBatchCard\(/);
+  // La carte de ce que la feature attend se pose en tête de « Comprendre », partagé par les deux plateformes.
+  assert.match(read(CONSOLE, "Sources", "ConsoleUI", "RunPendingCard.swift"), /EscalationBatchCard\(/);
+  assert.match(read(CONSOLE, "Sources", "ConsoleUI", "OS", "OSUnderstandView.swift"), /RunPendingCard\(server: server/);
   for (const host of [
-    read(CONSOLE, "Sources", "OMPConsole", "Server", "HarnessSectionViews.swift"),
-    read(CONSOLE, "ios", "OMPConsoleIOS", "IOSHarnessScreens.swift"),
+    read(CONSOLE, "Sources", "OMPConsole", "OS", "OSRootView.swift"),
+    read(CONSOLE, "ios", "OMPConsoleIOS", "IOSOSScreens.swift"),
   ])
-    assert.match(host, /InboxFeed\(/);
+    assert.match(host, /OSUnderstandView\(/);
 
   const cards = read(CONSOLE, "Sources", "ConsoleUI", "DecisionCardViews.swift");
   const summary = swiftBody(cards, "public struct DecisionCardSummary: View");
@@ -226,31 +227,20 @@ test("session-graphe-apps/AC-2 : specs à valider et arbitrages — le briefing 
   }
 });
 
-test("session-graphe-apps/AC-3 : les pages Mac et iOS d'une feature ont l'onglet « Carte » — graphe relu sur l'événement `graph`, dossiers dépliables, ambiguïtés et décisions en évidence, nœud → entrée du direct — absent sans la capacité `session-graph`", async () => {
-  const pages = [
-    { file: path.join(CONSOLE, "Sources", "OMPConsole", "Server", "RunPageView.swift"), tabs: "enum RunPageTab" },
-    { file: path.join(CONSOLE, "ios", "OMPConsoleIOS", "IOSRunScreen.swift"), tabs: "enum IOSRunTab" },
-  ];
-  for (const { file, tabs } of pages) {
-    const source = fs.readFileSync(file, "utf8");
-    const name = path.basename(file);
-    const declaration = swiftBody(source, tabs);
-    assert.match(declaration, /case overview, proofs, map, /, `${name} : la Carte suit les Preuves`);
-    assert.match(declaration, /case \.map: SessionGraphText\.tab/, `${name} : le titre vient de SessionGraphText`);
-    assert.match(declaration, /\.filter \{ \$0 != \.map \|\| map \}/, `${name} : pas d'onglet sans graphe servi`);
-    assert.match(source, /map: graph\.showsTab/, `${name} : l'onglet suit la lecture du graphe`);
-    assert.ok(source.includes("await graph.load()"), `${name} : le graphe est lu à l'ouverture`);
-    assert.match(
-      source,
-      /\.onChange\(of: server\.graphVersions\[runId\]\) \{ _, version in\s+Task \{ await graph\.receive\(version: version\) \}/,
-    );
-    assert.ok(source.includes("RunGraphSections("), `${name} : les sections partagées`);
-    assert.ok(
-      source.includes("HarnessGraphLink.entry(for: node, in: read, entries: feed.entries)"),
-      `${name} : nœud → direct`,
-    );
-    assert.ok(source.includes("chosen = .live"), `${name} : le nœud ouvre l'onglet Direct`);
-  }
+test("session-graphe-apps/AC-3 : le niveau « Récit » de « Comprendre » (Mac et iOS) montre la carte — graphe relu sur l'événement `graph`, dossiers dépliables, ambiguïtés et décisions en évidence, nœud → entrée du direct — et sans la capacité `session-graph`, le fil du direct", async () => {
+  const source = read(CONSOLE, "Sources", "ConsoleUI", "OS", "OSUnderstandView.swift");
+  const name = "OSUnderstandView.swift";
+  inOrder(
+    swiftBody(source, "private func story(_ run: HarnessRun) -> some View"),
+    ["if graph.showsTab {", "RunGraphSections(", "workspace.level = .raw", "} else {", "live(run, .timeline)"],
+    `${name} : la carte au Récit, le direct sans graphe servi`,
+  );
+  assert.ok(source.includes("await graph.load()"), `${name} : le graphe est lu à l'ouverture`);
+  assert.match(
+    source,
+    /\.onChange\(of: server\.graphVersions\[runId\]\) \{ _, version in\s+Task \{ await graph\.receive\(version: version\) \}/,
+  );
+  assert.ok(source.includes("HarnessGraphLink.links(in: read, entries: feed.entries)"), `${name} : nœud → direct`);
   // Le direct du Mac défile jusqu'à l'entrée ouverte depuis la Carte.
   assert.match(
     read(CONSOLE, "Sources", "OMPConsole", "Server", "HarnessSessionView.swift"),

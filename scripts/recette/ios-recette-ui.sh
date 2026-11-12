@@ -20,17 +20,17 @@
 #                 supprimé à la sortie ; rien n'est poussé ni créé). Un conflit .md
 #                 garde la version déjà intégrée ; tout autre conflit sort en 2.
 #
-# Matrice : 5 surfaces (les cinq sections) × 3 configurations (clair/défaut,
+# Matrice : 5 surfaces (quatre onglets et la Mémoire) × 3 configurations (clair/défaut,
 # sombre/défaut, clair/AX-XL) = 15 relevés, dans
 # omp-console/build/ios-recette-ui/<base|integration>/ (ignoré par git, vidé au
 # début du passage) : 15 arbres AX (JSON d'idb), 15 captures PNG, logs/ et
 # rapport.txt. La Mémoire est alimentée par son crochet de recette
-# (-memoire.recipe), sans appairage (sur iPhone, `-section memory` ouvre Système et
-# y pousse la Mémoire) ; À traiter, Features, Poste et Système sont relevés serveur
-# non relié. Un relevé n'est accepté que quand deux
-# lectures consécutives de l'arbre sont identiques ET que le marqueur de la
-# surface est vrai (scripts/recette/ios-recette-ui-analyse.py marqueur) : jamais une
-# capture d'un écran déconnecté ou d'une autre section.
+# (-memoire.recipe, qui l'ouvre dans le Savoir), sans appairage ; Maintenant, Fils,
+# Décisions et Savoir (`-os.view`) sont relevés serveur non relié. Propositions n'est
+# pas relevé : l'onglet n'existe pas sans serveur qui en sert. Un relevé n'est accepté
+# que quand deux lectures consécutives de l'arbre sont identiques ET que le marqueur de
+# la surface est vrai (scripts/recette/ios-recette-ui-analyse.py marqueur) : jamais une
+# capture d'un écran déconnecté ou d'un autre onglet.
 #
 # L'analyse est celle de scripts/recette/ios-recette-ui-analyse.py ; le code de sortie de
 # la recette est le sien.
@@ -51,16 +51,15 @@ BUNDLE_ID="com.omp.console.ios"
 ANALYSE="$ROOT/scripts/recette/ios-recette-ui-analyse.py"
 USAGE='usage : bash scripts/recette/ios-recette-ui.sh --sim <UDID> [--exceptions <fichier.json>] [--integrer <branche>]…'
 
-# Les 5 surfaces, dans l'ordre de l'analyseur : la clé est la section (rawValue de
-# `-section`) ; arguments de recette en plus, signal attendu sur la sortie d'erreur.
-surface_keys=(inbox runs workstation memory system)
+# Les 5 surfaces, dans l'ordre de l'analyseur : la clé est l'onglet (rawValue de
+# `-os.view`), ou `memory` ; arguments de recette, signal attendu sur la sortie d'erreur.
+surface_keys=(now threads decisions knowledge memory)
 
-# Écrit les arguments de recette en plus, un par ligne (rien pour les écrans du
-# serveur, relevés serveur non relié).
+# Écrit les arguments de lancement de la surface, un par ligne.
 surface_recipe_args() {
   case "$1" in
     memory) printf '%s\n' -memoire.recipe graphe ;;
-    *) ;;
+    *) printf '%s\n' -os.view "$1" ;;
   esac
 }
 
@@ -276,7 +275,7 @@ releve() {
 
   # 1. Lancement ; le journal est sous le dépôt (simctl refuse /tmp).
   xcrun simctl launch --terminate-running-process --stderr="$journal" "$SIM" "$BUNDLE_ID" \
-    -section "$surface" ${args[@]+"${args[@]}"} -AppleLanguages "(fr)" >/dev/null 2>&1 || true
+    ${args[@]+"${args[@]}"} -AppleLanguages "(fr)" >/dev/null 2>&1 || true
 
   # 2. Le signal de PRÊT, quand la surface en annonce un : pas de sommeil fixe.
   if [ -n "$signal" ]; then

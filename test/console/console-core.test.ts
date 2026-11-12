@@ -196,7 +196,6 @@ const SHELL_SOURCES_REL = path.join("Sources", "OMPConsole");
 /** Les symboles déplacés de S-1/S-3 vers le noyau, que la coque ne redéclare pas. */
 const MOVED: string[] = [
   "ConsoleSection",
-  "ConsoleSectionGroup",
   "ConsoleTone",
   "ConsoleStatus",
   "ConsoleFormat",
@@ -225,7 +224,7 @@ const MOVED: string[] = [
 ];
 
 /** Les symboles qui RESTENT dans la coque (S-1). */
-const SHELL_ONLY: string[] = ["FilesText", "TerminalViewText", "OmpStatus"];
+const SHELL_ONLY: string[] = ["ProjectChooserText", "OmpStatus"];
 
 test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans dépendance vers une autre cible du paquet", (t) => {
   const pkg = path.join(SHELL, "Package.swift");

@@ -9,7 +9,6 @@
 import Foundation
 
 public enum ProofsText {
-    public static let tab = L10n.text("Preuves")
     public static let pairs = L10n.text("Avant et après")
     public static let before = L10n.text("Avant")
     public static let after = L10n.text("Après")

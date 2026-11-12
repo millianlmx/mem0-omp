@@ -34,10 +34,20 @@ enum IOSSessionTab: Hashable {
 /// détails (différences d'un fichier, entrée entière) se poussent dans la pile de
 /// navigation qui l'entoure.
 struct IOSSessionSections: View {
-    @ObservedObject var server: HarnessModel
+    let server: HarnessModel
+    /// Le direct seul (publié au plus quatre fois par seconde), pas tout le modèle.
+    @ObservedObject private var direct: HarnessDirect
     let target: HarnessSessionTarget
     let tab: IOSSessionTab
     @Binding var followsEnd: Bool
+
+    init(server: HarnessModel, target: HarnessSessionTarget, tab: IOSSessionTab, followsEnd: Binding<Bool>) {
+        self.server = server
+        _direct = ObservedObject(wrappedValue: server.direct)
+        self.target = target
+        self.tab = tab
+        _followsEnd = followsEnd
+    }
 
     var body: some View {
         statusSection
@@ -45,7 +55,7 @@ struct IOSSessionSections: View {
         case .live:
             liveSections
         case .changes:
-            if let runId { IOSChangesSections(server: server, runId: runId, refreshKey: toolsDone) }
+            if let runId { IOSChangesSections(server: server, runId: runId, refreshKey: feed?.toolsDone ?? 0) }
         case .tests:
             IOSTestsSections(jobs: feed?.tests ?? [])
         case .timeline:
@@ -58,27 +68,7 @@ struct IOSSessionSections: View {
     }
 
     private var feed: HarnessSessionFeed? {
-        server.session?.target == target ? server.session : nil
-    }
-
-    private var entries: [HarnessSessionEntry] { feed?.entries ?? [] }
-
-    /// Les outils terminés : leur nombre relit les fichiers touchés.
-    private var toolsDone: Int {
-        entries.filter { $0.isTool && !$0.isRunning }.count
-    }
-
-    /// Les entrées, en groupes consécutifs de même étape.
-    private var groups: [[HarnessSessionEntry]] {
-        var groups: [[HarnessSessionEntry]] = []
-        for entry in entries {
-            if let last = groups.last?.last, last.step == entry.step {
-                groups[groups.count - 1].append(entry)
-            } else {
-                groups.append([entry])
-            }
-        }
-        return groups
+        direct.feed?.target == target ? direct.feed : nil
     }
 
     @ViewBuilder
@@ -92,25 +82,30 @@ struct IOSSessionSections: View {
                 .accessibilityIdentifier("ios.session.earlier")
             }
         }
-        ForEach(groups, id: \.first?.seq) { group in
-            Section {
-                ForEach(group) { entry in
-                    Group {
-                        if entry.canOpenDetails {
-                            NavigationLink {
-                                IOSSessionDetailScreen(server: server, target: target, seq: entry.seq)
-                            } label: {
-                                IOSSessionEntryRow(entry: entry, opens: true)
+        if let feed {
+            // Une section par étape : des tranches d'index, sans recopier les entrées.
+            ForEach(feed.stepSegments) { segment in
+                Section {
+                    ForEach(feed.entries[segment.range]) { entry in
+                        Group {
+                            if entry.canOpenDetails {
+                                NavigationLink {
+                                    IOSSessionDetailScreen(server: server, target: target, seq: entry.seq)
+                                } label: {
+                                    IOSSessionEntryRow(entry: entry, opens: true)
+                                        .equatable()
+                                }
+                            } else {
+                                IOSSessionEntryRow(entry: entry, opens: false)
+                                    .equatable()
                             }
-                        } else {
-                            IOSSessionEntryRow(entry: entry, opens: false)
                         }
+                        .id(entry.seq)
                     }
-                    .id(entry.seq)
-                }
-            } header: {
-                if let step = group.first?.step {
-                    Text(PipelineServerText.sessionStep(HarnessRun.label(forStep: step)))
+                } header: {
+                    if let step = segment.step {
+                        Text(PipelineServerText.sessionStep(HarnessRun.label(forStep: step)))
+                    }
                 }
             }
         }
@@ -122,7 +117,7 @@ struct IOSSessionSections: View {
     @ViewBuilder
     private var statusSection: some View {
         Section {
-            if let failure = server.sessionFailure {
+            if let failure = direct.failure {
                 Text(failure.message)
                     .font(.callout)
                     .iosBanner(tone: .attention)
@@ -141,7 +136,7 @@ struct IOSSessionSections: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                if !server.isSessionLive {
+                if !direct.isLive {
                     Text(PipelineServerText.sessionReconnecting)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -165,12 +160,12 @@ extension View {
     /// « Suivre la fin » : la liste qui montre le direct de `target` garde sa dernière
     /// entrée à l'écran tant que `followsEnd` est vrai et que le direct est montré.
     func iosFollowsSessionEnd(server: HarnessModel, target: HarnessSessionTarget, shown: Bool, followsEnd: Bool, proxy: ScrollViewProxy) -> some View {
-        modifier(IOSSessionEndFollower(server: server, target: target, shown: shown, followsEnd: followsEnd, proxy: proxy))
+        modifier(IOSSessionEndFollower(direct: server.direct, target: target, shown: shown, followsEnd: followsEnd, proxy: proxy))
     }
 }
 
 private struct IOSSessionEndFollower: ViewModifier {
-    @ObservedObject var server: HarnessModel
+    @ObservedObject var direct: HarnessDirect
     let target: HarnessSessionTarget
     let shown: Bool
     let followsEnd: Bool
@@ -184,7 +179,7 @@ private struct IOSSessionEndFollower: ViewModifier {
     }
 
     private var last: HarnessSessionEntry? {
-        server.session?.target == target ? server.session?.entries.last : nil
+        direct.feed?.target == target ? direct.feed?.entries.last : nil
     }
 
     private func scroll(to last: HarnessSessionEntry?) {
@@ -257,10 +252,13 @@ struct IOSSessionSheet: View {
 /// Une entrée du direct : un paragraphe rendu en Markdown, un raisonnement replié, un
 /// outil (son état, son intention, sa commande, sa durée, son résultat replié) ou un
 /// signal. `opens` : la rangée ouvre le détail de l'entrée (lien de navigation) — le
-/// résultat et le raisonnement s'y lisent en entier, la rangée ne les replie pas.
-struct IOSSessionEntryRow: View {
+/// résultat et le raisonnement s'y lisent en entier, la rangée ne les replie pas. Égale à
+/// elle-même tant que son entrée l'est : une rangée inchangée ne se redessine pas.
+struct IOSSessionEntryRow: View, Equatable {
     let entry: HarnessSessionEntry
     let opens: Bool
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.entry == rhs.entry && lhs.opens == rhs.opens }
 
     var body: some View {
         switch entry.sort {
@@ -351,12 +349,20 @@ struct IOSSessionEntryRow: View {
 /// tourne —, pour un long paragraphe ou raisonnement, son texte entier. Le texte se
 /// sélectionne par la pose de la feuille.
 struct IOSSessionDetailScreen: View {
-    @ObservedObject var server: HarnessModel
+    let server: HarnessModel
+    @ObservedObject private var direct: HarnessDirect
     let target: HarnessSessionTarget
     let seq: Int
     @State private var detail: HarnessSessionDetail?
     @State private var loaded = false
     @State private var showsRaw = false
+
+    init(server: HarnessModel, target: HarnessSessionTarget, seq: Int) {
+        self.server = server
+        _direct = ObservedObject(wrappedValue: server.direct)
+        self.target = target
+        self.seq = seq
+    }
 
     var body: some View {
         List {
@@ -467,8 +473,8 @@ struct IOSSessionDetailScreen: View {
 
     /// L'entrée telle que le direct la tient : chacune de ses versions relit le détail.
     private var live: HarnessSessionEntry? {
-        guard server.session?.target == target else { return nil }
-        return server.session?.entries.last { $0.seq == seq }
+        guard direct.feed?.target == target else { return nil }
+        return direct.feed?.entries.last { $0.seq == seq }
     }
 
     private var entry: HarnessSessionEntry? { live ?? detail?.entry }

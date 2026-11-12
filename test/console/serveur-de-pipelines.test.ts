@@ -163,8 +163,6 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
     ['launch("/v1/runs"', "POST", "/v1/runs"],
     ['launch("/v1/projects"', "POST", "/v1/projects"],
     ['launch("/v1/audits"', "POST", "/v1/audits"],
-    ['"/v1/audits/\\(id)/launch"', "POST", "/v1/audits/a1/launch"],
-    ['"/v1/audits/\\(id)/cancel"', "POST", "/v1/audits/a1/cancel"],
     ['path: "/retry"', "POST", "/v1/runs/r1/retry"],
     ['path: "/decisions/accept"', "POST", "/v1/runs/r1/decisions/accept"],
     ['path: "/revert"', "POST", "/v1/runs/r1/revert"],
@@ -222,20 +220,18 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
   assert.match(read("omp-harness", "http.ts"), /auth\.startsWith\("Bearer "\)/);
 });
 
-test("serveur-de-pipelines/AC-3 : la coque Mac et l'app iOS ouvrent la feuille du serveur depuis Système › Serveur et l'appel à relier de chaque section, sur un seul client par app", () => {
+test("serveur-de-pipelines/AC-3 : la coque Mac et l'app iOS ouvrent la feuille du serveur depuis la tuile Système › Serveur, sur un seul client par app", () => {
   const shells = [
     {
       app: ["Sources", "OMPConsole", "OMPConsoleApp.swift"],
       root: ["Sources", "OMPConsole", "ConsoleRootView.swift"],
-      frame: ["Sources", "OMPConsole", "Server", "HarnessSectionViews.swift"],
-      system: ["Sources", "OMPConsole", "Server", "SystemPages.swift"],
+      system: ["Sources", "OMPConsole", "OS", "OSSystemScreens.swift"],
       sheet: /ServerSheet\(server: server, drafts: drafts\)/,
     },
     {
       app: ["ios", "OMPConsoleIOS", "OMPConsoleIOSApp.swift"],
       root: ["ios", "OMPConsoleIOS", "RootView.swift"],
-      frame: ["ios", "OMPConsoleIOS", "IOSHarnessScreens.swift"],
-      system: ["ios", "OMPConsoleIOS", "IOSHarnessScreens.swift"],
+      system: ["ios", "OMPConsoleIOS", "IOSOSRootView.swift"],
       sheet: /IOSServerSheet\(server: server, drafts: drafts\)/,
     },
   ];
@@ -268,30 +264,24 @@ test("serveur-de-pipelines/AC-3 : la coque Mac et l'app iOS ouvrent la feuille d
       /await server\.load\(\)\s*\n\s*server\.startLive\(\)/,
       `${shell.root.at(-1)} : la boîte se tient à jour par le flux`,
     );
-    // Le cadre commun des sections propose de relier un serveur absent.
-    const frame = read("omp-console", ...shell.frame);
+    // Le hub Système partagé : sa tuile Serveur ouvre la feuille, les autres poussent leur écran.
+    const system = read("omp-console", ...shell.system);
+    assert.match(system, /(OSSystemHub|IOSSystemHubScreen)\(server: server/, `${shell.system.at(-1)} : le hub Système`);
     assert.match(
-      frame,
-      /Button\(PipelineServerText\.configure\) \{ drafts\.serverSheetShown = true \}/,
-      `${shell.frame.at(-1)} : l'appel à relier ouvre la feuille`,
-    );
-    // Système rend le hub partagé, dont la rangée Serveur ouvre la feuille.
-    assert.match(
-      read("omp-console", ...shell.system),
-      /SystemHubSections\(server: server, drafts: drafts\)/,
-      `${shell.system.at(-1)} : le hub Système`,
+      system,
+      /if destination == \.server \{\s*drafts\.serverSheetShown = true/,
+      `${shell.system.at(-1)} : la tuile Serveur ouvre la feuille`,
     );
   }
-  const hub = read("omp-console", "Sources", "ConsoleUI", "SystemViews.swift");
+  // Un serveur absent : l'écran d'accueil de l'iPhone propose de le relier.
   assert.match(
-    hub,
-    /drafts\.serverSheetShown = true[\s\S]*?\.consoleID\("system\.server"\)/,
-    "la rangée Serveur du hub",
+    read("omp-console", "ios", "OMPConsoleIOS", "IOSOSScreens.swift"),
+    /Button\(PipelineServerText\.configure\) \{ drafts\.serverSheetShown = true \}/,
   );
-  // Sur le Mac, le pied de la barre latérale ouvre aussi la feuille.
+  // ⌘K › Serveur, partagé par les deux apps, ouvre aussi la feuille.
   assert.match(
-    read("omp-console", "Sources", "OMPConsole", "ConsoleRootView.swift"),
-    /ServerConnectionLine\(server: server\) \{ drafts\.serverSheetShown = true \}/,
+    read("omp-console", "Sources", "ConsoleUI", "CommandPalette.swift"),
+    /case \.server:\s*\n\s*drafts\.serverSheetShown = true/,
   );
   assert.match(
     read("omp-console", "Package.swift"),
@@ -723,12 +713,19 @@ test("serveur-de-pipelines/AC-30 : multi-client — chaque route, chaque capacit
   }
 });
 
-test("serveur-de-pipelines/AC-31 : la feuille du serveur est attachée à la racine du Mac, donc ⌘K › Serveur l'ouvre aussi depuis la nouvelle interface, qui n'a pas de barre latérale", () => {
+test("serveur-de-pipelines/AC-31 : la feuille du serveur est attachée une seule fois à la racine du Mac, autour de l'OS, donc ⌘K › Serveur et la tuile Serveur l'ouvrent de partout", () => {
   const root = read("omp-console", "Sources", "OMPConsole", "ConsoleRootView.swift");
-  const classic = root.indexOf("private var classic");
-  const sheet = root.indexOf(".sheet(isPresented: $drafts.serverSheetShown)");
-  assert.ok(classic > 0, "la coque classique est repérée");
-  assert.ok(sheet > 0, "la feuille du serveur est présentée");
-  assert.ok(sheet < classic, "la feuille est présentée par la racine (body), pas par la coque classique seule");
+  assert.match(
+    root,
+    /var body: some View \{\s*\n\s*OSRootView\([^\n]*\)\s*\n\s*\.sheet\(isPresented: \$drafts\.serverSheetShown\)/,
+    "la feuille du serveur est présentée par la racine, autour de l'OS",
+  );
   assert.equal(root.split(".sheet(isPresented: $drafts.serverSheetShown)").length - 1, 1, "une seule présentation");
+  for (const file of fs.readdirSync(path.join(ROOT, "omp-console", "Sources", "OMPConsole", "OS")))
+    assert.ok(
+      !read("omp-console", "Sources", "OMPConsole", "OS", file).includes(
+        ".sheet(isPresented: $drafts.serverSheetShown)",
+      ),
+      `${file} présente à nouveau la feuille du serveur`,
+    );
 });

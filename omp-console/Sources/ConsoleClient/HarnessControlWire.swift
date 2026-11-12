@@ -1,5 +1,5 @@
 // Le contrat de la TOUR DE CONTRÔLE avec le serveur de pipelines : la consigne et le
-// budget d'une feature, la file d'admission, la vigie, les planifications,
+// budget d'une feature, la vigie, les planifications,
 // l'administration (clients, dépôts, rechargement, erreurs des clients) et les issues.
 //
 // Chaque type tolère un serveur qui n'envoie pas un champ facultatif : la valeur qui
@@ -33,32 +33,6 @@ struct HarnessInstructionsReply: Decodable {
 /// `POST /v1/runs/{id}/budget` : le run et son budget désormais.
 struct HarnessBudgetReply: Decodable {
     var budget: HarnessBudget
-}
-
-// MARK: - File d'admission
-
-/// Une cause qui retient des features en file, et son texte.
-public struct HarnessQueueWait: Codable, Equatable, Sendable {
-    public var cause: String
-    public var text: String
-
-    public init(cause: String, text: String) {
-        self.cause = cause
-        self.text = text
-    }
-}
-
-/// `GET /v1/status` → `queue` : les features dues retenues, par cause, et la plus fréquente.
-public struct HarnessQueueStatus: Codable, Equatable, Sendable {
-    public var held: Int
-    public var byCause: [String: Int]
-    public var dominant: HarnessQueueWait?
-
-    public init(held: Int = 0, byCause: [String: Int] = [:], dominant: HarnessQueueWait? = nil) {
-        self.held = held
-        self.byCause = byCause
-        self.dominant = dominant
-    }
 }
 
 // MARK: - Vigie
@@ -536,21 +510,272 @@ public struct HarnessServedRepo: Codable, Equatable, Sendable, Identifiable {
     public var mainBranch: String?
     public var merge: String?
     public var maxParallel: Int?
+    /// Qui juge les tests : `local` (le serveur) ou `ci` (la CI de la forge).
+    public var judge: String?
 
     public var id: String { name }
 
-    public init(name: String, scope: String? = nil, mainBranch: String? = nil, merge: String? = nil, maxParallel: Int? = nil) {
+    public init(name: String, scope: String? = nil, mainBranch: String? = nil, merge: String? = nil, maxParallel: Int? = nil, judge: String? = nil) {
         self.name = name
         self.scope = scope
         self.mainBranch = mainBranch
         self.merge = merge
         self.maxParallel = maxParallel
+        self.judge = judge
     }
 }
 
 /// `GET /v1/repos`.
 struct HarnessServedRepoList: Decodable {
     var repos: [HarnessServedRepo]
+}
+
+/// L'identité des commits d'un dépôt.
+public struct HarnessGitIdentity: Codable, Equatable, Sendable {
+    public var name: String
+    public var email: String
+
+    public init(name: String, email: String) {
+        self.name = name
+        self.email = email
+    }
+}
+
+/// Les tests d'un dépôt : les commandes (lecture seule, elles s'exécutent sur le serveur) et leur juge.
+public struct HarnessRepoTests: Codable, Equatable, Sendable {
+    public var touched: String
+    public var full: String
+    public var pattern: String?
+    /// `local` (le serveur) ou `ci` (la CI de la forge).
+    public var judge: String
+    /// L'attente de la CI, en secondes.
+    public var ciTimeoutSec: Int
+
+    public init(touched: String = "", full: String = "", pattern: String? = nil, judge: String = "local", ciTimeoutSec: Int = 3600) {
+        self.touched = touched
+        self.full = full
+        self.pattern = pattern
+        self.judge = judge
+        self.ciTimeoutSec = ciTimeoutSec
+    }
+}
+
+/// Les réglages d'un dépôt tels qu'ils servent, défauts compris (`GET /v1/repos/{name}`,
+/// omp-harness/repos.ts `RepoSettings`). Jamais un chemin ni la clé privée.
+public struct HarnessRepoSettings: Codable, Equatable, Sendable, Identifiable {
+    public var name: String
+    public var mainBranch: String
+    /// La portée de la mémoire.
+    public var scope: String
+    /// `local` ou `gh` (une pull request sur la forge).
+    public var merge: String
+    /// La forge déclarée (`github`, `gitlab`, `none`) ; `nil` : déduite de l'adresse.
+    public var forge: String?
+    /// La forge qui sert, déclarée ou déduite.
+    public var forgeInUse: String
+    /// `nil` : sans limite.
+    public var maxParallel: Int?
+    /// `nil` : l'identité du serveur.
+    public var git: HarnessGitIdentity?
+    /// Les issues d'entreprise : `forbid`, `redacted` ou `full`.
+    public var corporate: String
+    public var atlassian: Bool
+    /// `standard`, `local-only` ; `nil` : non déclarée.
+    public var privacy: String?
+    /// `nil` : les fournisseurs du serveur.
+    public var providers: [String]?
+    /// Les chaînes de modèles par niveau (`fast`, `standard`, `heavy`) ; `nil` : celles du serveur.
+    public var models: [String: [String]]?
+    public var tests: HarnessRepoTests
+    /// Les vérifications nommées : nom → commande.
+    public var checks: [String: String]
+    public var testImage: String?
+    /// La prévisualisation dans un navigateur est réglée.
+    public var preview: Bool
+    /// Le nombre de règles d'autonomie du dépôt.
+    public var autonomyRules: Int
+    public var remoteUrl: String?
+    /// La clé PUBLIQUE à poser sur la forge ; `nil` : pas de clé propre au dépôt.
+    public var deployKey: HarnessDeployKey?
+
+    public var id: String { name }
+
+    public init(
+        name: String, mainBranch: String = "main", scope: String = "", merge: String = "local", forge: String? = nil,
+        forgeInUse: String = "none", maxParallel: Int? = nil, git: HarnessGitIdentity? = nil, corporate: String = "redacted",
+        atlassian: Bool = false, privacy: String? = nil, providers: [String]? = nil, models: [String: [String]]? = nil,
+        tests: HarnessRepoTests = HarnessRepoTests(), checks: [String: String] = [:], testImage: String? = nil,
+        preview: Bool = false, autonomyRules: Int = 0, remoteUrl: String? = nil, deployKey: HarnessDeployKey? = nil
+    ) {
+        self.name = name
+        self.mainBranch = mainBranch
+        self.scope = scope
+        self.merge = merge
+        self.forge = forge
+        self.forgeInUse = forgeInUse
+        self.maxParallel = maxParallel
+        self.git = git
+        self.corporate = corporate
+        self.atlassian = atlassian
+        self.privacy = privacy
+        self.providers = providers
+        self.models = models
+        self.tests = tests
+        self.checks = checks
+        self.testImage = testImage
+        self.preview = preview
+        self.autonomyRules = autonomyRules
+        self.remoteUrl = remoteUrl
+        self.deployKey = deployKey
+    }
+
+    /// Les réglages tels qu'ils seront une fois `patch` écrit, en attendant la réponse du serveur ;
+    /// un retour au défaut prend le défaut connu du serveur, ou garde la valeur s'il dépend du dépôt.
+    public func applying(_ patch: HarnessRepoSettingsPatch) -> HarnessRepoSettings {
+        var next = self
+        if let branch = patch.mainBranch { next.mainBranch = branch }
+        if case .value(let scope) = patch.scope { next.scope = scope }
+        if let merge = patch.merge { next.merge = merge.value ?? "local" }
+        if let forge = patch.forge {
+            next.forge = forge.value
+            if let declared = forge.value { next.forgeInUse = declared }
+        }
+        if let parallel = patch.maxParallel { next.maxParallel = parallel.value }
+        if let git = patch.git { next.git = git.value }
+        if let corporate = patch.corporate { next.corporate = corporate.value ?? "redacted" }
+        if let atlassian = patch.atlassian { next.atlassian = atlassian.value ?? false }
+        if let privacy = patch.privacy { next.privacy = privacy.value }
+        if let providers = patch.providers { next.providers = providers.value }
+        if let models = patch.models { next.models = models.value }
+        if let judge = patch.judge { next.tests.judge = judge.value ?? "local" }
+        if case .value(let timeout) = patch.ciTimeoutSec { next.tests.ciTimeoutSec = timeout }
+        return next
+    }
+}
+
+/// `GET` et `PATCH /v1/repos/{name}` : les réglages et les espaces qui portent le dépôt.
+public struct HarnessRepoSettingsReply: Codable, Equatable, Sendable {
+    public var repo: HarnessRepoSettings
+    /// Les noms des espaces où le dépôt est rangé (un au plus).
+    public var spaces: [String]
+
+    public init(repo: HarnessRepoSettings, spaces: [String] = []) {
+        self.repo = repo
+        self.spaces = spaces
+    }
+}
+
+/// Un champ d'un `PATCH /v1/repos/{name}` : une valeur, ou le retour au défaut (`null`).
+public enum HarnessRepoSetting<Value: Encodable & Equatable & Sendable>: Equatable, Sendable {
+    case value(Value)
+    case reset
+
+    /// `nil` devient le retour au défaut.
+    public init(_ value: Value?) {
+        self = value.map(Self.value) ?? .reset
+    }
+
+    /// La valeur posée ; `nil` pour un retour au défaut.
+    public var value: Value? {
+        if case .value(let value) = self { return value }
+        return nil
+    }
+}
+
+/// Le corps de `PATCH /v1/repos/{name}` : seuls les champs posés partent, un retour au défaut
+/// part en `null` explicite ; `judge` et `ciTimeoutSec` s'écrivent sous `tests`.
+public struct HarnessRepoSettingsPatch: Encodable, Equatable, Sendable {
+    public var mainBranch: String?
+    public var scope: HarnessRepoSetting<String>?
+    public var merge: HarnessRepoSetting<String>?
+    public var forge: HarnessRepoSetting<String>?
+    public var maxParallel: HarnessRepoSetting<Int>?
+    public var git: HarnessRepoSetting<HarnessGitIdentity>?
+    public var corporate: HarnessRepoSetting<String>?
+    public var atlassian: HarnessRepoSetting<Bool>?
+    public var privacy: HarnessRepoSetting<String>?
+    public var providers: HarnessRepoSetting<[String]>?
+    public var models: HarnessRepoSetting<[String: [String]]>?
+    public var judge: HarnessRepoSetting<String>?
+    public var ciTimeoutSec: HarnessRepoSetting<Int>?
+
+    public init(
+        mainBranch: String? = nil, scope: HarnessRepoSetting<String>? = nil, merge: HarnessRepoSetting<String>? = nil,
+        forge: HarnessRepoSetting<String>? = nil, maxParallel: HarnessRepoSetting<Int>? = nil,
+        git: HarnessRepoSetting<HarnessGitIdentity>? = nil, corporate: HarnessRepoSetting<String>? = nil,
+        atlassian: HarnessRepoSetting<Bool>? = nil, privacy: HarnessRepoSetting<String>? = nil,
+        providers: HarnessRepoSetting<[String]>? = nil, models: HarnessRepoSetting<[String: [String]]>? = nil,
+        judge: HarnessRepoSetting<String>? = nil, ciTimeoutSec: HarnessRepoSetting<Int>? = nil
+    ) {
+        self.mainBranch = mainBranch
+        self.scope = scope
+        self.merge = merge
+        self.forge = forge
+        self.maxParallel = maxParallel
+        self.git = git
+        self.corporate = corporate
+        self.atlassian = atlassian
+        self.privacy = privacy
+        self.providers = providers
+        self.models = models
+        self.judge = judge
+        self.ciTimeoutSec = ciTimeoutSec
+    }
+
+    /// Rien à écrire.
+    public var isEmpty: Bool { self == HarnessRepoSettingsPatch() }
+
+    /// Le patch change ce que le catalogue montre d'un dépôt : sa portée de mémoire.
+    var changesCatalog: Bool { scope != nil }
+
+    private enum CodingKeys: String, CodingKey {
+        case mainBranch, scope, merge, forge, maxParallel, git, corporate, atlassian, privacy, providers, models, tests
+    }
+
+    private enum TestsKeys: String, CodingKey { case judge, ciTimeoutSec }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(mainBranch, forKey: .mainBranch)
+        try Self.put(scope, .scope, in: &container)
+        try Self.put(merge, .merge, in: &container)
+        try Self.put(forge, .forge, in: &container)
+        try Self.put(maxParallel, .maxParallel, in: &container)
+        try Self.put(git, .git, in: &container)
+        try Self.put(corporate, .corporate, in: &container)
+        try Self.put(atlassian, .atlassian, in: &container)
+        try Self.put(privacy, .privacy, in: &container)
+        try Self.put(providers, .providers, in: &container)
+        try Self.put(models, .models, in: &container)
+        guard judge != nil || ciTimeoutSec != nil else { return }
+        var tests = container.nestedContainer(keyedBy: TestsKeys.self, forKey: .tests)
+        try Self.put(judge, .judge, in: &tests)
+        try Self.put(ciTimeoutSec, .ciTimeoutSec, in: &tests)
+    }
+
+    private static func put<Value, Key: CodingKey>(
+        _ setting: HarnessRepoSetting<Value>?, _ key: Key, in container: inout KeyedEncodingContainer<Key>
+    ) throws {
+        switch setting {
+        case nil: break
+        case .reset: try container.encodeNil(forKey: key)
+        case .value(let value): try container.encode(value, forKey: key)
+        }
+    }
+}
+
+/// `DELETE /v1/repos/{name}?confirm=1` : le dépôt retiré, `kept` s'il sert encore le temps
+/// que ses features vivantes ou en file finissent.
+public struct HarnessRepoRemoved: Codable, Equatable, Sendable {
+    public var repo: String
+    public var kept: Bool
+    public var reload: HarnessReloadSummary
+
+    public init(repo: String, kept: Bool = false, reload: HarnessReloadSummary = HarnessReloadSummary()) {
+        self.repo = repo
+        self.kept = kept
+        self.reload = reload
+    }
 }
 
 /// Une erreur remontée par un client (`GET /v1/client-errors`).

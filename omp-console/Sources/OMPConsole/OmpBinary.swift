@@ -48,7 +48,7 @@ protocol UserFacingError: Error {
     var userMessage: String { get }
 }
 
-/// L'échec de résolution du binaire `omp` (préparation des composants, terminal).
+/// L'échec de résolution du binaire `omp` (préparation des composants).
 enum OmpBinaryError: UserFacingError, Equatable, Sendable {
     case binaryNotFound(searched: [String], override: String?)
 

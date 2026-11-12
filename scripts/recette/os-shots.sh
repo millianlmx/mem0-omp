@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Produit les captures de l'app Mac dans son interface par défaut (l'« OS agentique ») :
+# Produit les captures de l'app Mac (l'« OS agentique ») :
 # « Maintenant » (le brief), un fil au travail, le tri des décisions, les Propositions, le
 # Savoir et la page d'un espace. Un serveur de démonstration (`os-demo-serveur.ts` : le
 # vrai gestionnaire HTTP d'omp-harness et le vrai orchestrateur sur un monde de test)
@@ -13,8 +13,7 @@
 # (ignoré par git) et ne sont jamais committées. Le dossier de sortie est vidé d'abord.
 #
 # Comme `mac-shots.sh`, l'app capturée est une COPIE de l'app construite, sous un autre
-# identifiant de bundle (`com.omp.console.recette-os`) : ses préférences sont vides — la
-# préférence `ui.os` n'est PAS posée, la nouvelle interface est celle du défaut —, donc
+# identifiant de bundle (`com.omp.console.recette-os`) : ses préférences sont vides, donc
 # elle se relie au serveur de `~/.omp/harness.json`… d'un dossier personnel JETABLE
 # (`CFFIXED_USER_HOME`), qui pointe sur le serveur de démonstration. Sa racine de support
 # est jetable aussi (`OMP_CONSOLE_SUPPORT_ROOT`), la recette de préparation `succes` y
@@ -199,3 +198,7 @@ shot tri "OMP_CONSOLE_OS_TRIAGE=1" || exit 1
 shot propositions "OMP_CONSOLE_OS_VIEW=proposals" || exit 1
 shot savoir "OMP_CONSOLE_OS_VIEW=knowledge" || exit 1
 shot espace "OMP_CONSOLE_OS_VIEW=space:$SPACE" "OMP_CONSOLE_OS_SPACE=$SPACE" || exit 1
+shot systeme "OMP_CONSOLE_OS_VIEW=system" || exit 1
+shot depots "OMP_CONSOLE_OS_VIEW=system:repos" || exit 1
+shot poste "OMP_CONSOLE_OS_VIEW=system:workstation" || exit 1
+shot statistiques "OMP_CONSOLE_OS_VIEW=system:stats" || exit 1

@@ -1,7 +1,7 @@
-// Les preuves Swift de la coque de la nouvelle interface (l'« OS agentique ») sur iPhone et
-// iPad : le choix de la coque au lancement (arguments de recette, réglage gardé), où mène
-// une demande venue du dehors (lien, notification, palette, clavier), la traduction de ce
-// qu'un écran partagé demande en onglet et en page, et les pastilles. Logique pure : aucun
+// Les preuves Swift de la coque de l'app (l'« OS agentique ») sur iPhone et iPad : l'écran
+// ouvert au lancement (arguments de recette), où mène une demande venue du dehors (lien,
+// notification, palette, clavier), la traduction de ce qu'un écran partagé demande en
+// onglet et en page, le hub Système dans la pile, et les pastilles. Logique pure : aucun
 // écran n'est rendu.
 
 import ConsoleClient
@@ -12,69 +12,98 @@ import Testing
 @testable import OMPConsoleIOS
 
 @MainActor
-@Suite("coque iOS de la nouvelle interface — lancement, routage, pastilles")
+@Suite("coque iOS — lancement, routage, Système, pastilles")
 struct IOSOSShellTests {
-    @Test("la nouvelle interface est le défaut : un lancement sans argument ni réglage l'ouvre sur « Maintenant »")
-    func newInterfaceIsTheDefault() {
-        let launch = IOSShellLaunch.resolve([], prefersClassic: false)
-        #expect(!launch.classic)
+    @Test("un lancement sans argument ouvre « Maintenant », pile vide")
+    func launchOpensNow() {
+        let launch = IOSShellLaunch.resolve([])
+        #expect(launch == IOSShellLaunch())
         #expect(launch.initialTab == .now)
+        #expect(launch.initialNavigation == IOSOSNavigation(tab: .now))
         #expect(IOSOSTab.allCases == [.now, .threads, .decisions, .proposals, .knowledge])
     }
 
-    @Test("les crochets de recette de la coque classique l'ouvrent toujours, quel que soit le réglage et même à côté de -os.view")
-    func classicRecipeHooksAlwaysOpenTheClassicShell() {
-        for arguments in [["-section", "runs"], ["-ios.state", "error"], ["-memoire.recipe", "graphe"], ["-section", "inbox", "-os.view", "threads"]] {
-            #expect(IOSShellLaunch.resolve(arguments, prefersClassic: false) == IOSShellLaunch(classic: true))
-        }
-    }
-
-    @Test("le réglage gardé choisit la coque ; -os.view, -os.thread et -os.space ouvrent la nouvelle interface malgré lui")
-    func storedChoiceAndRecipeScreens() {
-        #expect(IOSShellLaunch.resolve([], prefersClassic: true).classic)
+    @Test("-os.view, -os.thread et -os.space ouvrent leur écran ; une valeur inconnue ou absente est ignorée")
+    func recipeScreens() {
         for tab in IOSOSTab.allCases {
-            let launch = IOSShellLaunch.resolve(["-os.view", tab.rawValue], prefersClassic: true)
-            #expect(!launch.classic && launch.initialTab == tab)
+            #expect(IOSShellLaunch.resolve(["-os.view", tab.rawValue]).initialTab == tab)
         }
-        let onThread = IOSShellLaunch.resolve(["-os.thread", "r1"], prefersClassic: true)
-        #expect(!onThread.classic && onThread.thread == "r1" && onThread.initialTab == .threads)
-        let onSpace = IOSShellLaunch.resolve(["-os.space", "Client Acme"], prefersClassic: false)
+        let onThread = IOSShellLaunch.resolve(["-os.thread", "r1"])
+        #expect(onThread.thread == "r1" && onThread.initialTab == .threads)
+        let onSpace = IOSShellLaunch.resolve(["-os.space", "Client Acme"])
         #expect(onSpace.space == "Client Acme" && onSpace.initialTab == .knowledge)
-        // Une valeur inconnue ou absente est ignorée : le réglage décide.
-        #expect(IOSShellLaunch.resolve(["-os.view", "ailleurs"], prefersClassic: true).classic)
-        #expect(IOSShellLaunch.resolve(["-os.view"], prefersClassic: false) == IOSShellLaunch(classic: false))
+        #expect(IOSShellLaunch.resolve(["-os.view", "ailleurs"]) == IOSShellLaunch())
+        #expect(IOSShellLaunch.resolve(["-os.view"]) == IOSShellLaunch())
+        #expect(IOSShellLaunch.resolve(["-os.system", "ailleurs"]) == IOSShellLaunch())
+        // La dernière paire reconnue gagne.
+        #expect(IOSShellLaunch.resolve(["-os.view", "threads", "-os.view", "decisions"]).initialTab == .decisions)
     }
 
-    @Test("le choix d'interface est gardé d'un lancement à l'autre ; une page de Système montre la classique sans rien garder")
-    func interfaceChoiceIsKept() {
-        let preferences = InMemoryClientPreferences()
-        let first = IOSInterface(arguments: [], preference: ConsoleInterfacePreference(preferences: preferences))
-        #expect(!first.classic)
-        first.showClassic()
-        #expect(first.classic)
-        #expect(!IOSInterface(arguments: [], preference: ConsoleInterfacePreference(preferences: preferences)).classic)
-
-        first.choose(classic: true)
-        let second = IOSInterface(arguments: [], preference: ConsoleInterfacePreference(preferences: preferences))
-        #expect(second.classic)
-        second.choose(classic: false)
-        #expect(!IOSInterface(arguments: [], preference: ConsoleInterfacePreference(preferences: preferences)).classic)
+    @Test("les crochets de l'écran Mémoire (-ios.state, -memoire.recipe) ouvrent la Mémoire dans le Savoir")
+    func memoryRecipeHooksOpenTheMemory() {
+        for arguments in [["-ios.state", "error"], ["-memoire.recipe", "graphe"]] {
+            let launch = IOSShellLaunch.resolve(arguments)
+            #expect(launch.memory && launch.initialTab == .knowledge)
+            #expect(launch.initialNavigation.path(of: .knowledge) == [.memory])
+        }
     }
 
-    @Test("un lien mène à « Maintenant », au tri ou au fil d'une feature ; une section mène à son onglet, le Système à la coque classique")
+    @Test("-os.system ouvre la page demandée par-dessus le hub, dans l'onglet ; le Serveur n'est jamais poussé")
+    func recipeOpensASystemPage() {
+        let repos = IOSShellLaunch.resolve(["-os.system", "repos"])
+        #expect(repos.system == .repos && repos.initialTab == .now)
+        #expect(repos.initialNavigation.path(of: .now) == [.system, .systemPage(.repos)])
+        let vigie = IOSShellLaunch.resolve(["-os.view", "threads", "-os.system", "vigie"]).initialNavigation
+        #expect(vigie.tab == .threads && vigie.path(of: .threads) == [.system, .systemPage(.vigie)])
+        #expect(IOSShellLaunch.resolve(["-os.system", "server"]).initialNavigation.path(of: .now) == [.system])
+    }
+
+    @Test("un lien mène à « Maintenant », au tri, au fil d'une feature ou à une page du Système ; une section à son écran")
     func destinationsReachTheirScreen() {
         #expect(IOSOSRouting.destination(of: HarnessWidgetLink.Destination.now) == .tab(.now))
         #expect(IOSOSRouting.destination(of: HarnessWidgetLink.Destination.decisions) == .tab(.decisions))
         #expect(IOSOSRouting.destination(of: HarnessWidgetLink.Destination.thread("r1")) == .run("r1"))
         #expect(IOSOSRouting.destination(of: HarnessWidgetLink.Destination.section(.runs)) == .tab(.threads))
-        #expect(IOSOSRouting.destination(of: HarnessWidgetLink.Destination.system(.vigie)) == .classicPage(.vigie))
+        #expect(IOSOSRouting.destination(of: HarnessWidgetLink.Destination.system(.vigie)) == .systemPage(.vigie))
+        #expect(IOSOSRouting.destination(of: HarnessWidgetLink.Destination.system(.server)) == .systemPage(.server))
 
-        // Une notification : ce qui attend l'humain (envois du poste compris) est aux Décisions.
+        // Une notification, la palette : ce qui attend l'humain est aux Décisions, le Poste
+        // est sa page du Système.
         #expect(IOSOSRouting.destination(of: ConsoleSection.inbox) == .tab(.decisions))
-        #expect(IOSOSRouting.destination(of: ConsoleSection.workstation) == .tab(.decisions))
+        #expect(IOSOSRouting.destination(of: ConsoleSection.workstation) == .systemPage(.workstation))
         #expect(IOSOSRouting.destination(of: ConsoleSection.runs, openedRun: "r7") == .run("r7"))
         #expect(IOSOSRouting.destination(of: ConsoleSection.memory) == .memory)
-        #expect(IOSOSRouting.destination(of: ConsoleSection.system) == .classic(.system))
+        // Le Système : la page posée par la palette (`drafts.systemPage`), sinon le hub.
+        #expect(IOSOSRouting.destination(of: ConsoleSection.system) == .system)
+        #expect(IOSOSRouting.destination(of: ConsoleSection.system, page: .schedules) == .systemPage(.schedules))
+        #expect(IOSOSRouting.destination(of: ConsoleSection.system, page: .repos) == .systemPage(.repos))
+    }
+
+    @Test("le hub Système se pousse dans l'onglet courant sans changer la sélection ; une page se pose par-dessus")
+    func systemStacksInTheCurrentTab() throws {
+        let home = try #require(IOSOSTab.now.rootSelection)
+        var navigation = IOSOSNavigation(tab: .now)
+        navigation.push(.system)
+        #expect(navigation.path(of: .now) == [.system])
+        // Le Système est un écran de l'app : l'espace de travail garde la racine de l'onglet.
+        #expect(navigation.selection == home)
+        navigation.push(.systemPage(.stats))
+        #expect(navigation.top == .systemPage(.stats) && navigation.selection == home)
+        // Rien à suivre : « Maintenant » est déjà la sélection, la page reste.
+        navigation.follow(selection: home)
+        #expect(navigation.path(of: .now) == [.system, .systemPage(.stats)])
+
+        // Une demande du dehors remplace la pile de l'onglet courant.
+        navigation.show(.decisions)
+        navigation.showSystem(.admin)
+        #expect(navigation.tab == .decisions && navigation.path(of: .decisions) == [.system, .systemPage(.admin)])
+        navigation.showSystem()
+        #expect(navigation.path(of: .decisions) == [.system])
+        navigation.showSystem(.server)
+        #expect(navigation.path(of: .decisions) == [.system])
+        // ⌘<n> : l'onglet repart de sa racine.
+        navigation.show(.decisions)
+        #expect(navigation.top == nil)
     }
 
     @Test("un fil demandé se pousse dans l'onglet courant, revenir rend la racine ; « Maintenant » referme le fil oublié")

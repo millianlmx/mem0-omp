@@ -14,14 +14,19 @@ import * as path from "node:path";
 import { ROOT } from "../support/repo.ts";
 import { stripFullLineComments, swiftSources } from "../support/swift-source.ts";
 
-const MAC_REL = path.join("omp-console", "Sources", "OMPConsole");
+const SOURCES_REL = path.join("omp-console", "Sources");
 
-/** Chaque `.swift` de la coque Mac sous `root`, sans commentaires, par chemin relatif à `root`. */
+/** Chaque `.swift` des sources Swift sous `root` (coque Mac et vues partagées), sans commentaires, par chemin relatif à `root`. */
 function sources(root: string): Map<string, string> {
   const files = new Map<string, string>();
-  for (const [rel, source] of swiftSources(path.join(root, MAC_REL), root))
+  for (const [rel, source] of swiftSources(path.join(root, SOURCES_REL), root))
     files.set(rel, stripFullLineComments(source));
   return files;
+}
+
+/** Le source sans commentaires de `rel` (relatif à `omp-console/Sources`). */
+function source(all: Map<string, string>, rel: string): string {
+  return all.get(path.join(SOURCES_REL, rel)) ?? "";
 }
 
 const dirs: string[] = [];
@@ -29,16 +34,16 @@ test.after(() => {
   for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-/** Une copie jetable de la coque Mac (sources seulement), à muter. */
+/** Une copie jetable des sources Swift, à muter. */
 function copyMac(): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join("/tmp", "mac-finitions-hig-")));
   dirs.push(dir);
-  fs.cpSync(path.join(ROOT, MAC_REL), path.join(dir, MAC_REL), { recursive: true });
+  fs.cpSync(path.join(ROOT, SOURCES_REL), path.join(dir, SOURCES_REL), { recursive: true });
   return dir;
 }
 
 function mutate(root: string, rel: string, change: (source: string) => string): void {
-  const file = path.join(root, MAC_REL, rel);
+  const file = path.join(root, SOURCES_REL, rel);
   const before = fs.readFileSync(file, "utf8");
   const after = change(before);
   assert.notEqual(after, before, `la faute plantée n'a rien changé dans ${rel}`);
@@ -53,11 +58,11 @@ function block(source: string, opener: RegExp, closer: string): string | undefin
   return end < 0 ? undefined : source.slice(start, end + closer.length);
 }
 
-const MEMORY_VIEW = path.join("Memory", "MemoryView.swift");
+const MEMORY_VIEW = path.join("OMPConsole", "Memory", "MemoryView.swift");
 
 /** AC-3 : « Sommaire » porte `rectangle.stack`, et la bascule « Liste » un autre symbole. */
 function memorySymbolFaults(root: string): string[] {
-  const source = sources(root).get(path.join(MAC_REL, MEMORY_VIEW)) ?? "";
+  const source = sources(root).get(path.join(SOURCES_REL, MEMORY_VIEW)) ?? "";
   const summary = /Label\(\s*MemoryText\.summaryButton\s*,\s*systemImage:\s*"([^"]+)"/.exec(source)?.[1];
   const list = /graph\.shown\s*\?\s*MemoryText\.listButton[\s\S]*?systemImage:\s*graph\.shown\s*\?\s*"([^"]+)"/.exec(
     source,
@@ -79,18 +84,20 @@ test("mac-finitions-hig/AC-3 : Mémoire — « Liste » et « Sommaire » ont de
   assert.ok(memorySymbolFaults(copy).length > 0, "« Sommaire » en list.bullet doit rougir");
 });
 
-const HARNESS_VIEWS = path.join("Server", "HarnessSectionViews.swift");
+const ROOT_VIEW = path.join("OMPConsole", "OS", "OSRootView.swift");
+const SYSTEM_SCREENS = path.join("OMPConsole", "OS", "OSSystemScreens.swift");
+const SYSTEM_HUB = path.join("ConsoleUI", "OS", "OSSystemHub.swift");
 
 /**
- * AC-5 : les commandes du serveur ne se répètent dans aucune section : « Actualiser »
- * est la commande de menu ⌘R (`RefreshCommands`, nourrie par la section affichée via
- * `\.harnessRefresh`), et la feuille du serveur s'ouvre depuis le pied de la barre
- * latérale (`server.open`, une seule fois) — ou depuis Système › Serveur.
+ * AC-5 : les commandes du serveur ne se répètent sur aucun écran : « Actualiser »
+ * est la commande de menu ⌘R (`RefreshCommands`, nourrie par la racine de l'OS via
+ * `\.harnessRefresh`), et la feuille du serveur s'ouvre de la tuile Système › Serveur
+ * (ou de ⌘K), jamais d'un bouton `server.refresh`/`server.open` dans un écran.
  */
 function serverToolbarFaults(root: string): string[] {
   const all = sources(root);
   const faults: string[] = [];
-  const app = all.get(path.join(MAC_REL, "OMPConsoleApp.swift")) ?? "";
+  const app = source(all, path.join("OMPConsole", "OMPConsoleApp.swift"));
   const commands = block(app, /struct RefreshCommands: Commands \{/, "\n}\n");
   if (
     commands === undefined ||
@@ -98,41 +105,38 @@ function serverToolbarFaults(root: string): string[] {
     !commands.includes('.keyboardShortcut("r", modifiers: .command)')
   )
     faults.push("RefreshCommands ne porte pas « Actualiser » ⌘R, nourri par \\.harnessRefresh");
-  const frame = all.get(path.join(MAC_REL, HARNESS_VIEWS)) ?? "";
-  if (!frame.includes(".focusedSceneValue(\\.harnessRefresh,"))
-    faults.push("HarnessSection ne publie pas sa relecture pour ⌘R (\\.harnessRefresh)");
+  if (!source(all, ROOT_VIEW).includes(".focusedSceneValue(\\.harnessRefresh,"))
+    faults.push("OSRootView ne publie pas sa relecture pour ⌘R (\\.harnessRefresh)");
+  if (!/if destination == \.server \{\s*drafts\.serverSheetShown = true/.test(source(all, SYSTEM_SCREENS)))
+    faults.push("la tuile Système › Serveur n'ouvre pas la feuille du serveur");
   for (const marker of ['"server.refresh"', '"server.open"']) {
-    let inSections = 0;
-    for (const [rel, text] of all)
-      if (rel.startsWith(path.join(MAC_REL, "Server"))) inSections += text.split(marker).length - 1;
-    if (inSections !== 0) faults.push(`${marker} apparaît ${inSections} fois dans les vues du serveur`);
+    let inScreens = 0;
+    for (const text of all.values()) inScreens += text.split(marker).length - 1;
+    if (inScreens !== 0) faults.push(`${marker} apparaît ${inScreens} fois dans les écrans`);
   }
-  const sidebar = all.get(path.join(MAC_REL, "ConsoleRootView.swift")) ?? "";
-  const opens = sidebar.split('"server.open"').length - 1;
-  if (opens !== 1) faults.push(`"server.open" apparaît ${opens} fois dans la barre latérale (attendu 1, son pied)`);
   return faults;
 }
 
-test("mac-finitions-hig/AC-5 : Pilotage — « Actualiser » est la commande ⌘R et le serveur s'ouvre du pied de la barre latérale, jamais d'une section", () => {
+test("mac-finitions-hig/AC-5 : Pilotage — « Actualiser » est la commande ⌘R et le serveur s'ouvre de Système › Serveur, jamais d'un écran", () => {
   assert.deepEqual(serverToolbarFaults(ROOT), []);
 
-  // Faute plantée : le bouton « Serveur » recopié dans la barre d'une section ⇒ rouge.
+  // Faute plantée : un bouton « Serveur » recopié dans un écran du hub ⇒ rouge.
   const copy = copyMac();
-  mutate(copy, HARNESS_VIEWS, (s) =>
+  mutate(copy, SYSTEM_SCREENS, (s) =>
     s.replace(
-      ".focusedSceneValue(\\.harnessRefresh,",
-      '.toolbar { Button("x") {}.accessibilityIdentifier("server.open") }\n        .focusedSceneValue(\\.harnessRefresh,',
+      '.accessibilityIdentifier("vigie.harness")',
+      '.accessibilityIdentifier("vigie.harness")\n                .toolbar { Button("x") {}.accessibilityIdentifier("server.open") }',
     ),
   );
   assert.ok(
     serverToolbarFaults(copy).some((f) => f.includes('"server.open"')),
-    "un bouton server.open dans une section doit rougir",
+    "un bouton server.open dans un écran doit rougir",
   );
 });
 
-/** Le porteur décoratif de l'Accueil (S-6 R1) : le symbole de l'appel à relier le serveur. */
-const DECORATIVE: { rel: string; marker: string; container?: string }[] = [
-  { rel: HARNESS_VIEWS, marker: 'Image(systemName: "server.rack")' },
+/** Le porteur décoratif du hub Système : le symbole de chaque tuile, que son titre annonce. */
+const DECORATIVE: { rel: string; marker: string }[] = [
+  { rel: SYSTEM_HUB, marker: "Image(systemName: destination.symbol)" },
 ];
 
 /** Les lignes de modificateurs (`.xxx`) qui suivent la ligne de `end` (fin de l'expression porteuse). */
@@ -146,51 +150,30 @@ function trailingModifiers(source: string, end: number): string {
   return modifiers.join("\n");
 }
 
-/** La fin (index du `}` fermant) du bloc `opener` le plus proche avant `at`. */
-function enclosingBlockEnd(source: string, opener: string, at: number): number | undefined {
-  const start = source.lastIndexOf(opener, at);
-  if (start < 0) return undefined;
-  let depth = 0;
-  for (let i = start + opener.length - 1; i < source.length; i++) {
-    if (source[i] === "{") depth++;
-    else if (source[i] === "}" && --depth === 0) return i;
-  }
-  return undefined;
-}
-
-/** AC-7 : chaque symbole décoratif de l'Accueil porte `.accessibilityHidden(true)` avant la fin de son expression. */
+/** AC-7 : chaque symbole décoratif du hub porte `.accessibilityHidden(true)` avant la fin de son expression. */
 function decorativeFaults(root: string): string[] {
   const all = sources(root);
   const faults: string[] = [];
-  for (const { rel, marker, container } of DECORATIVE) {
-    const source = all.get(path.join(MAC_REL, rel)) ?? "";
-    const at = source.indexOf(marker);
-    if (at < 0) {
-      faults.push(`${marker} introuvable dans ${rel}`);
-      continue;
-    }
-    const end = container === undefined ? at : enclosingBlockEnd(source, container, at);
-    if (end === undefined) {
-      faults.push(`${container} autour de ${marker} introuvable`);
-      continue;
-    }
-    if (!trailingModifiers(source, end).includes(".accessibilityHidden(true)")) {
-      faults.push(`${container ?? marker} sans .accessibilityHidden(true)`);
-    }
+  for (const { rel, marker } of DECORATIVE) {
+    const text = source(all, rel);
+    const at = text.indexOf(marker);
+    if (at < 0) faults.push(`${marker} introuvable dans ${rel}`);
+    else if (!trailingModifiers(text, at).includes(".accessibilityHidden(true)"))
+      faults.push(`${marker} sans .accessibilityHidden(true)`);
   }
   return faults;
 }
 
-test("mac-finitions-hig/AC-7 : Accueil Mac — les symboles décoratifs sont muets pour VoiceOver, leurs textes restent annoncés", () => {
+test("mac-finitions-hig/AC-7 : hub Système — les symboles décoratifs des tuiles sont muets pour VoiceOver, leurs titres restent annoncés", () => {
   assert.deepEqual(decorativeFaults(ROOT), []);
 
-  // Faute plantée : le symbole de l'appel à relier perd le modificateur ⇒ rouge.
+  // Faute plantée : le symbole d'une tuile perd le modificateur ⇒ rouge.
   const copy = copyMac();
-  mutate(copy, HARNESS_VIEWS, (s) =>
+  mutate(copy, SYSTEM_HUB, (s) =>
     s.replace(
-      /(Image\(systemName: "server\.rack"\)\n\s*\.font\(\.largeTitle\)\n\s*\.foregroundStyle\(\.secondary\))\n\s*\.accessibilityHidden\(true\)/,
+      /(Image\(systemName: destination\.symbol\)(?:\n\s*\.(?!accessibilityHidden)[^\n]*)*)\n\s*\.accessibilityHidden\(true\)/,
       "$1",
     ),
   );
-  assert.deepEqual(decorativeFaults(copy), ['Image(systemName: "server.rack") sans .accessibilityHidden(true)']);
+  assert.deepEqual(decorativeFaults(copy), ["Image(systemName: destination.symbol) sans .accessibilityHidden(true)"]);
 });

@@ -1,7 +1,6 @@
 // Les GRAPHIQUES de Système › Statistiques et santé : quatre cartes tracées (Swift
 // Charts), deux par ligne quand la fenêtre le permet — ce qui vous attend par projet,
-// le débit sur 14 jours, le coût des agents, la santé. Ils vivaient sur l'Accueil ;
-// « À traiter » n'en garde qu'une ligne de pouls.
+// le débit sur 14 jours, le coût des agents, la santé.
 //
 // Les séries viennent de `HarnessDashboard` (client partagé), les mots de
 // `DashboardText`. Une couleur porte une identité fixe (jamais un rang) ; vert et
@@ -29,15 +28,13 @@ struct HarnessStatsCharts: View {
 
     // MARK: - Cartes
 
+    /// Une carte : son titre, le graphique ; ce qu'il montre en bulle d'aide sur le titre.
     private func card<Content: View>(_ title: String, hint: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
                 .font(.headline)
+                .help(hint)
             content()
-            Text(hint)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)

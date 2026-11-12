@@ -11,15 +11,11 @@ import Foundation
 
 public enum SessionGraphText {
     public static let tab = L10n.text("Carte")
-    public static let stakeTitle = L10n.text("Enjeu")
     public static let reversible = L10n.text("réversible")
     public static let irreversible = L10n.text("irréversible")
     public static let costLow = L10n.text("coût faible")
     public static let costMedium = L10n.text("coût moyen")
     public static let costHigh = L10n.text("coût fort")
-    public static let confidenceLow = L10n.text("confiance faible")
-    public static let confidenceMedium = L10n.text("confiance moyenne")
-    public static let confidenceHigh = L10n.text("confiance forte")
     public static let notReviewed = L10n.text("Carte non relue par le relecteur rapide")
     public static let schemaTitle = L10n.text("La bifurcation")
     public static let established = L10n.text("Établi")
@@ -79,16 +75,6 @@ public enum SessionGraphText {
         }
     }
 
-    /// La confiance de l’agent dans sa recommandation (`faible`, `moyenne`, `forte`).
-    public static func confidence(_ raw: String) -> String {
-        switch raw {
-        case "faible": confidenceLow
-        case "moyenne": confidenceMedium
-        case "forte": confidenceHigh
-        default: raw
-        }
-    }
-
     public static let tabSymbol = "point.3.connected.trianglepath.dotted"
     public static let schemaSymbol = "arrow.triangle.branch"
     public static let explorationSymbol = "map"
@@ -103,5 +89,4 @@ public enum SessionGraphText {
     public static let reversibleSymbol = "arrow.uturn.backward"
     public static let irreversibleSymbol = "exclamationmark.triangle"
     public static let arrowSymbol = "arrow.right"
-    public static let liveSymbol = "dot.radiowaves.left.and.right"
 }

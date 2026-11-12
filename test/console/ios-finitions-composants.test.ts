@@ -4,14 +4,12 @@
 //
 // Fonctions pures sur le texte source de l'app iOS ; chaque faute est plantée EN
 // MÉMOIRE (`source.replace(…)`) : aucune copie du dépôt, aucun SwiftUI rendu. Le
-// fichier ne lit ni le contrat ni l'historique git. La preuve visuelle (coche) est
-// la recette de captures de la feature.
+// fichier ne lit ni le contrat ni l'historique git.
 import test from "node:test";
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT } from "../support/repo.ts";
-import { memberBody, stripComments, stripHashComments, swiftSources } from "../support/swift-source.ts";
+import { memberBody, stripComments, swiftSources } from "../support/swift-source.ts";
 
 const APP = path.join(ROOT, "omp-console", "ios", "OMPConsoleIOS");
 
@@ -25,16 +23,13 @@ function plant(source: string, change: (s: string) => string): string {
   return after;
 }
 
-/** Les propositions d'audit vivent dans la vue partagée (ConsoleUI), compilée dans l'app iOS. */
-const AUDITS = "ScopeSections.swift";
-const AUDITS_PATH = path.join(ROOT, "omp-console", "Sources", "ConsoleUI", AUDITS);
-
 /** Les caractères de coche interdits comme marque de sélection (U+2713, U+2714). */
 const CHECK_CHARACTERS = ["\u2713", "\u2714"];
 
 /**
- * AC-2 : aucune source de l'app ne contient « ✓ » ni « ✔ » hors commentaire, et
- * la marque de sélection n'a plus de constante texte.
+ * AC-2 : aucune source de l'app ne contient « ✓ » ni « ✔ » hors commentaire, et la
+ * marque de sélection n'a plus de constante texte : un choix se retient par un
+ * contrôle système, qui dessine sa marque et annonce son état.
  */
 function checkCharacterFaults(sources: Map<string, string>): string[] {
   const faults: string[] = [];
@@ -49,50 +44,24 @@ function checkCharacterFaults(sources: Map<string, string>): string[] {
   return faults;
 }
 
-/** Le choix d'une proposition : un `Toggle` système lié à `drafts.isPicked` (il porte et annonce son état). */
-const PICK_TOGGLE = "Toggle(isOn: Binding(get: { drafts.isPicked(audit, index) }";
-
-/**
- * AC-2 : une proposition d'audit se retient par un contrôle SYSTÈME (`Toggle`), qui
- * dessine sa marque et annonce « sélectionné » à VoiceOver — jamais une coche
- * maison ni un caractère.
- */
-function pickCheckmarkFaults(source: string): string[] {
-  const rows = memberBody(stripComments(source), "private func auditView");
-  if (rows === "") return [`${AUDITS} : auditView introuvable`];
-  if (!rows.includes(PICK_TOGGLE)) return [`${AUDITS} : la proposition doit se retenir par ${PICK_TOGGLE}…`];
-  return [];
-}
-
-test("ios-finitions-composants/AC-2 : une proposition d'audit se retient par un interrupteur système, aucun « ✓ » dans l'app iOS", () => {
+test("ios-finitions-composants/AC-2 : aucun « ✓ » dans l'app iOS, un choix se retient par un contrôle système", () => {
   const sources = swiftSources(APP);
-  const audits = fs.readFileSync(AUDITS_PATH, "utf8");
-  sources.set(AUDITS, audits);
   assert.deepEqual(checkCharacterFaults(sources), []);
-  assert.deepEqual(pickCheckmarkFaults(audits), []);
 
-  // Faute plantée : la coche redevient le caractère « ✓ » ⇒ rouge.
-  const typed = plant(audits, (s) =>
-    s.replace(
-      /Toggle\(isOn: Binding\(get: \{ drafts\.isPicked\(audit, index\) \}[^\n]*\n/,
-      'Button { } label: { Text("✓")\n',
-    ),
-  );
+  // Faute plantée : une coche redevient le caractère « ✓ » ⇒ rouge.
+  const name = "IOSSystemScreens.swift";
+  const typed = plant(sources.get(name)!, (s) => s.replace("content()\n", 'Text("✓")\n            content()\n'));
   assert.ok(
-    checkCharacterFaults(new Map([[AUDITS, typed]])).some((f) => f.includes("✓")),
+    checkCharacterFaults(new Map([[name, typed]])).some((f) => f.includes("✓")),
     "un « ✓ » dans le code doit rougir",
-  );
-  assert.ok(
-    pickCheckmarkFaults(typed).some((f) => f.includes("Toggle")),
-    "une coche maison doit rougir",
   );
 
   // Un « ✓ » cité en commentaire n'est pas du code ⇒ vert.
-  const commented = plant(audits, (s) => `// La coche n'est plus le caractère « ✓ ».\n${s}`);
-  assert.deepEqual(checkCharacterFaults(new Map([[AUDITS, commented]])), []);
+  const commented = plant(sources.get(name)!, (s) => `// La coche n'est plus le caractère « ✓ ».\n${s}`);
+  assert.deepEqual(checkCharacterFaults(new Map([[name, commented]])), []);
 });
 
-const STATS = "IOSHarnessScreens.swift";
+const STATS = "IOSSystemScreens.swift";
 const DURATIONS = ["ConsoleFormat.duration(", "PipelineServerText.duration", "PipelineServerText.stepLine("];
 const MONOSPACED = ".monospacedDigit()";
 
@@ -226,110 +195,4 @@ test("ios-finitions-composants/AC-8 : un lancement choisit son dépôt dans un P
 
   // Un « Menu { » cité en commentaire n'est pas du code ⇒ vert.
   assert.deepEqual(repoPickerFaults(withView(`// L'ancien sélecteur était un Menu { … }.\n${view}`)), []);
-});
-
-const RECIPE = path.join(ROOT, "scripts", "recette", "ios-finitions-composants-recette.sh");
-
-/** Les jetons qu'une recette de captures privée, signée et avant/après doit porter (S-11). */
-const RECIPE_TOKENS = [
-  "simctl create",
-  "simctl delete",
-  "zz-finitions-tel",
-  "zz-finitions-tab",
-  "CODE_SIGN_IDENTITY=-",
-  "codesign -dv",
-  "--avant",
-  "appearance",
-  "content_size",
-  "IOSLaunchRecipeText.swift",
-];
-
-/** Les jeux d'arguments de lancement des cibles 1, 2, 5, 6, 7 et 8 de la matrice (S-11). */
-const RECIPE_LAUNCHES = [
-  ["project", "-projet.recipe", "dialogue"],
-  ["project", "-projet.recipe", "saisie"],
-  ["kanban", "-pipelines.recipe", "ardoise"],
-  ["kanban", "-pipelines.recipe", "fiche"],
-  ["stats", "-stats.recipe", "pleine"],
-  ["kanban", "-pipelines.recipe", "vide"],
-].map(([section, flag, value]) => `("-section", "${section}", "${flag}", "${value}")`);
-
-/** Ce qui volerait le focus du Mac, toucherait l'app Mac de l'utilisateur ou fusionnerait la PR. */
-const RECIPE_FORBIDDEN = ["open -a", "OMP Console", "osascript", "run-console.sh", "gh pr merge"];
-
-/**
- * AC-12 : la recette de captures crée puis supprime ses simulateurs privés,
- * compile une app signée, greffe le crochet `saisie` sur l'avant, couvre les
- * cibles de la matrice, exécute les contrôles d'AC-2, AC-5, AC-6 et AC-8, et ne
- * touche ni au focus du Mac, ni à l'app Mac, ni à la fusion de la PR.
- */
-function recipeScriptFaults(script: string): string[] {
-  const faults: string[] = [];
-  const code = stripHashComments(script);
-  for (const token of [...RECIPE_TOKENS, ...RECIPE_LAUNCHES]) {
-    if (!code.includes(token)) faults.push(`recette : jeton absent hors commentaire « ${token} »`);
-  }
-  for (const n of [2, 5, 6, 8]) {
-    if (!new RegExp(`\\bAC-${n}\\b`).test(script)) faults.push(`recette : aucune ligne AC-${n}`);
-  }
-  for (const token of RECIPE_FORBIDDEN) {
-    if (script.includes(token)) faults.push(`recette : « ${token} » interdit`);
-  }
-  if (code.includes("Simulator.app")) faults.push("recette : Simulator.app hors commentaire");
-  return faults;
-}
-
-test("ios-finitions-composants/AC-12 : la recette de captures avant/après tourne sur des simulateurs privés supprimés, sans voler le focus ni fusionner", () => {
-  const script = fs.readFileSync(RECIPE, "utf8");
-  assert.deepEqual(recipeScriptFaults(script), []);
-
-  // Faute plantée : la recette ne supprime plus ses simulateurs ⇒ rouge.
-  const kept = plant(script, (s) => s.replaceAll("simctl delete", "simctl shutdown"));
-  assert.ok(
-    recipeScriptFaults(kept).some((f) => f.includes("simctl delete")),
-    "des simulateurs conservés doivent rougir",
-  );
-
-  // Faute plantée : la construction n'est plus signée ⇒ rouge.
-  const unsigned = plant(script, (s) => s.replace("CODE_SIGN_IDENTITY=- ", ""));
-  assert.ok(
-    recipeScriptFaults(unsigned).some((f) => f.includes("CODE_SIGN_IDENTITY=-")),
-    "une app non signée doit rougir",
-  );
-
-  // Faute plantée : l'avant n'est plus greffé du crochet `saisie` ⇒ rouge.
-  const ungrafted = plant(script, (s) =>
-    s.replace('  "omp-console/ios/OMPConsoleIOS/IOSLaunchRecipeText.swift"\n', ""),
-  );
-  assert.ok(
-    recipeScriptFaults(ungrafted).some((f) => f.includes("IOSLaunchRecipeText.swift")),
-    "un avant sans greffe doit rougir",
-  );
-
-  // Faute plantée : la saisie sort de la matrice ⇒ rouge.
-  const noEditor = plant(script, (s) =>
-    s.replace('("-section", "project", "-projet.recipe", "saisie")', '("-section", "project")'),
-  );
-  assert.ok(
-    recipeScriptFaults(noEditor).some((f) => f.includes("saisie")),
-    "une saisie absente doit rougir",
-  );
-
-  // Faute plantée : le Simulateur ouvert au premier plan, l'app Mac relancée, la PR fusionnée ⇒ rouge.
-  for (const intrusion of [
-    'open -a Simulator --args -CurrentDeviceUDID "$iphone"',
-    'xcrun simctl boot "$udid" && open "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app"',
-    "bash scripts/run-console.sh",
-    "gh pr merge --squash",
-  ]) {
-    const intrusive = plant(script, (s) => s.replace("trap cleanup EXIT", `trap cleanup EXIT\n${intrusion}`));
-    assert.ok(recipeScriptFaults(intrusive).length > 0, `« ${intrusion} » doit rougir`);
-  }
-
-  // Simulator.app cité en commentaire reste admis (le script explique ce qu'il ne fait pas).
-  assert.equal(
-    recipeScriptFaults(script.replace("trap cleanup EXIT", "# Simulator.app n'est jamais lancé.\ntrap cleanup EXIT"))
-      .length,
-    0,
-  );
 });

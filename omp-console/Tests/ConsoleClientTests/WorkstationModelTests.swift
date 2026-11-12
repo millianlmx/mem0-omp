@@ -168,8 +168,9 @@ struct WorkstationModelTests {
         #expect(workstation.meetings.map(\.id) == ["m1", "m2"])
         #expect(workstation.failure == nil)
         let reads = transport.calls.filter { $0.path.hasPrefix("/v1/workstation") }.map { "\($0.method) \($0.path)" }
-        #expect(reads.suffix(7) == [
-            "GET /v1/workstation",
+        // L'état d'abord ; le reste part ensemble, dans un ordre quelconque.
+        #expect(reads.suffix(7).first == "GET /v1/workstation")
+        #expect(Set(reads.suffix(6)) == [
             "GET /v1/workstation/actions?state=awaiting_approval&limit=200",
             "GET /v1/workstation/actions?limit=100",
             "GET /v1/workstation/profile",

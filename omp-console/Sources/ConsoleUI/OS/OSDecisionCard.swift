@@ -57,6 +57,8 @@ public struct OSDecisionCard: View {
     @State private var working = false
     @State private var stopping: HarnessRun?
     @State private var ruleWritten = false
+    /// « Modifier le plan » d'une demande : la feuille est ouverte sur elle.
+    @State private var editingPlan: HarnessIntake?
 
     public var body: some View {
         OSCard(tint: .orange, emphasized: true) {
@@ -539,6 +541,17 @@ public struct OSDecisionCard: View {
                 .keyboardShortcut(large ? .defaultAction : nil)
                 Button(OSText.dismiss) { perform { (try? await intakes.cancel(intake)) != nil } }
                 Spacer()
+                Button {
+                    editingPlan = intake
+                } label: {
+                    Label(IntakeText.editTitle, systemImage: "pencil")
+                }
+                .labelStyle(.iconOnly)
+                .help(IntakeText.editTitle)
+                .osBorderless()
+            }
+            .sheet(item: $editingPlan) { intake in
+                IntakePlanSheet(server: server, intake: intake)
             }
         }
     }

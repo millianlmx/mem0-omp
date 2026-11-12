@@ -86,13 +86,11 @@ test("tour-de-controle/AC-1 : chaque route de la tour de contrôle appelée par 
     ['path: "/v1/repos"', "GET", "/v1/repos", "viewer"],
     ['"POST", "/v1/repos"', "POST", "/v1/repos", "admin"],
     ['"POST", "/v1/reload"', "POST", "/v1/reload", "admin"],
+    ['method: "GET", path: "/v1/repos/\\(HarnessModel.pathComponent(name))"', "GET", "/v1/repos/demo", "admin"],
+    ['"PATCH", "/v1/repos/\\(HarnessModel.pathComponent(name))"', "PATCH", "/v1/repos/demo", "admin"],
+    ['"DELETE", "/v1/repos/\\(HarnessModel.pathComponent(name))?confirm=1"', "DELETE", "/v1/repos/demo", "admin"],
     ['"/v1/client-errors?limit=', "GET", "/v1/client-errors", "viewer"],
     ['mcpPath = "/v1/mcp"', "POST", "/v1/mcp", "viewer"],
-    ['"/v1/signals?state=proposed&limit=', "GET", "/v1/signals", "viewer"],
-    ['"/v1/signals/\\(HarnessModel.pathComponent(signal.id))/preview"', "POST", "/v1/signals/s1/preview", "viewer"],
-    ['"/v1/signals/\\(HarnessModel.pathComponent(signal.id))/confirm"', "POST", "/v1/signals/s1/confirm", "operator"],
-    ['"/v1/signals/\\(HarnessModel.pathComponent(signal.id))/dismiss"', "POST", "/v1/signals/s1/dismiss", "operator"],
-    ['"/v1/runs/\\(HarnessModel.pathComponent(runId))/origin"', "GET", "/v1/runs/r1/origin", "viewer"],
   ];
   for (const [literal, method, sample, role] of calls) {
     assert.ok(sources.includes(literal), `le client n'appelle plus ${literal}`);
@@ -148,9 +146,6 @@ test("tour-de-controle/AC-2 : chaque champ de la vigie, des planifications, des 
     const clients = await call("GET", "/v1/clients");
     covers((clients.clients as unknown[])[0], swiftFields(wire, "HarnessManagedClient"), "HarnessManagedClient");
 
-    const status = await call("GET", "/v1/status");
-    covers(status.queue, swiftFields(wire, "HarnessQueueStatus"), "HarnessQueueStatus");
-
     // Un run en file sur un dépôt retiré : l'admission dit ce qui le retient (`waitCause`).
     world.store.createRun({
       id: "r9",
@@ -177,60 +172,55 @@ test("tour-de-controle/AC-2 : chaque champ de la vigie, des planifications, des 
 });
 
 test("tour-de-controle/AC-3 : Vigie, Planifications, Issues et Administration sont câblées dans les deux apps, l'Administration aux seuls admins", () => {
-  // Vigie, Planifications et Administration sont des pages du hub Système ; Issues,
-  // une portée de la section Features.
+  // Ce sont des tuiles du hub Système (partagé), dont chaque app pousse l'écran.
   const section = read("Sources", "ConsoleCore", "Design", "ConsoleSection.swift");
-  assert.match(
-    section,
-    /public enum SystemPage[^{]*\{\s*case vigie\s*case schedules\s*case autonomy\s*case stats\s*case admin\s*case server/,
-  );
-  assert.match(section, /public enum RunsScope[^{]*\{\s*case features\s*case projects\s*case audits\s*case issues/);
-  assert.match(section, /public var isAdminOnly: Bool \{ self == \.admin \}/);
+  const pages = /public enum SystemPage[^{]*\{([^}]*?)public var id/.exec(section)?.[1] ?? "";
+  for (const page of ["vigie", "schedules", "issues", "admin", "server"])
+    assert.match(pages, new RegExp(`case ${page}\\n`), `SystemPage.${page}`);
+  assert.match(section, /public var isAdminOnly: Bool \{ self == \.admin \|\| self == \.repos \}/);
   assert.match(section, /allCases\.filter \{ \(isAdmin \|\| !\$0\.isAdminOnly\) && /);
-  const mac = read("Sources", "OMPConsole", "Server", "SystemPages.swift");
-  const ios = read("ios", "OMPConsoleIOS", "IOSHarnessScreens.swift");
-  for (const [name, macView, iosView] of [
-    ["vigie", "VigieSections", "IOSVigieScreen"],
-    ["schedules", "SystemSchedulesPage", "IOSSchedulesScreen"],
-    ["admin", "AdminSections", "IOSAdminScreen"],
-  ] as const) {
-    assert.match(
-      mac,
-      new RegExp(`case \\.${name}:\\s*(HarnessForm\\(server: server, drafts: drafts\\) \\{ )?${macView}\\(`),
-      `Mac : .${name}`,
-    );
-    assert.match(ios, new RegExp(`case \\.${name}: ${iosView}\\(`), `iOS : .${name}`);
-  }
+  const hub = read("Sources", "ConsoleUI", "OS", "OSSystemHub.swift");
+  assert.match(hub, /return \(isAdmin \|\| !page\.isAdminOnly\) && /);
   assert.match(
-    read("Sources", "OMPConsole", "Server", "HarnessSectionViews.swift"),
-    /case \.issues:\s*HarnessForm\(server: server, drafts: drafts\) \{ IssuesSections\(/,
-    "Mac : portée Issues",
+    hub,
+    /ForEach\(OSSystemDestination\.visible\(isAdmin: server\.isAdmin, autonomy: autonomy\.isServed\)\)/,
   );
-  assert.match(ios, /case \.issues: IssuesSections\(/, "iOS : portée Issues");
-  // Les écrans iOS passent par le cadre commun et rendent le contenu partagé (ConsoleUI).
-  for (const shared of ["VigieSections(", "SchedulesSections(", "IssuesSections(", "AdminSections("])
-    assert.ok(ios.includes(shared), `iOS ne rend pas ${shared}`);
-  // L'Administration est masquée hors admin : hub Système (partagé) et palettes des deux apps.
+  const mac = read("Sources", "OMPConsole", "OS", "OSSystemScreens.swift");
+  const ios = read("ios", "OMPConsoleIOS", "IOSSystemScreens.swift");
+  for (const [name, view] of [
+    ["vigie", "VigieSections"],
+    ["schedules", "SchedulesSections"],
+    ["issues", "IssuesSections"],
+    ["admin", "AdminSections"],
+  ] as const)
+    for (const [app, source] of [
+      ["Mac", mac],
+      ["iOS", ios],
+    ] as const)
+      assert.match(
+        source,
+        new RegExp(
+          `case \\.${name}:[^\\n]*\\n(?:(?!\\s*case )[^\\n]*\\n)*?[^\\n]*${view}\\(server: server, drafts: drafts\\)`,
+        ),
+        `${app} : .${name}`,
+      );
+  // La palette ⌘K (partagée) ne propose l'Administration qu'à un admin.
   assert.match(
-    read("Sources", "ConsoleUI", "SystemViews.swift"),
-    /ForEach\(SystemPage\.visible\(isAdmin: server\.isAdmin, autonomy: autonomy\.isServed\)/,
-  );
-  for (const palette of [
     read("Sources", "ConsoleUI", "CommandPalette.swift"),
-    read("ios", "OMPConsoleIOS", "IOSSearchScreen.swift"),
-  ])
-    assert.match(
-      palette,
-      /systemPages: SystemPage\.visible\(isAdmin: server\.isAdmin, autonomy: server\.autonomy\.isServed\)/,
-    );
-  // La consigne s'envoie depuis la page d'une feature, dans les deux apps (vue partagée).
+    /systemPages: SystemPage\.visible\(isAdmin: server\.isAdmin, autonomy: server\.autonomy\.isServed\)/,
+  );
+  // La consigne s'envoie du menu d'une feature dans la liste des fils (vue partagée), par sa feuille.
   assert.match(
-    read("Sources", "OMPConsole", "Server", "RunPageView.swift"),
-    /RunInstructionsComposer\(server: server, drafts: drafts, runId: run\.id\)/,
+    read("Sources", "ConsoleUI", "RunMenuItems.swift"),
+    /if run\.acceptsInstructions \{\s*Button\(ControlText\.instructionsAction, systemImage: ControlText\.instructionsSymbol\) \{ drafts\.instructionsRequest = run \}/,
   );
   assert.match(
-    read("ios", "OMPConsoleIOS", "IOSRunScreen.swift"),
-    /RunInstructionsComposer\(server: server, drafts: drafts, runId: runId\)/,
+    read("Sources", "ConsoleUI", "OS", "OSThreadList.swift"),
+    /RunMenuItems\(server: server, drafts: drafts, run: run\)/,
+  );
+  assert.match(
+    read("Sources", "ConsoleUI", "RunControlViews.swift"),
+    /\.sheet\(item: \$drafts\.instructionsRequest\)[\s\S]*?RunInstructionsComposer\(server: server, drafts: drafts, runId: run\.id\)/,
   );
 });
 

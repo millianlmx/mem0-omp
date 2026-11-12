@@ -95,7 +95,7 @@ public enum HarnessPalette {
         }
         var seen = Set<String>()
         let live = inbox.map { $0.batches.compactMap(\.run) + $0.awaiting + $0.runs } ?? []
-        for run in live + history.sorted(by: .updated) where seen.insert(run.id).inserted {
+        for run in live + history.sorted(by: { $0.updatedAt > $1.updatedAt }) where seen.insert(run.id).inserted {
             candidates.append(HarnessPaletteItem(title: run.title, subtitle: run.repo + " · " + run.statusLine, symbol: ConsoleSection.runs.systemImage, command: .run(run.id)))
         }
 

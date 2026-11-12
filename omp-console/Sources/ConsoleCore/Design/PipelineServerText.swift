@@ -36,13 +36,6 @@ public enum PipelineServerText {
     // MARK: - Sections
 
     public static let toDecide = L10n.text("À trancher")
-    public static let toDecideHint = L10n.text("Des décisions irréversibles que les agents n’ont pas prises. La feature reprend quand toutes ont leur réponse.")
-    public static let toValidateHint = L10n.text("Revue terminée : le serveur attend votre accord pour fusionner.")
-    public static let toReview = L10n.text("Décisions prises seules")
-    public static let toReviewHint = L10n.text("Chaque choix est un point de reprise. Le renverser fait reprendre la feature à cet endroit.")
-    public static let inProgress = L10n.text("Features en cours")
-    public static let nothingPending = L10n.text("Rien n’attend votre décision.")
-    public static let nothingInProgress = L10n.text("Aucune feature en cours.")
 
     // MARK: - Gestes
 
@@ -80,9 +73,6 @@ public enum PipelineServerText {
 
     // MARK: - Lignes
 
-    /// La proposition de l'agent, pour une escalade.
-    public static func proposal(_ text: String) -> String { L10n.format("Proposé par l’agent : %@", text) }
-
     /// L'option recommandée par l'agent, pour une escalade.
     public static func recommended(_ text: String) -> String { L10n.format("Recommandé : %@", text) }
 
@@ -93,7 +83,6 @@ public enum PipelineServerText {
     public static let trailSymbol = "folder"
     public static let contextTitle = L10n.text("Contexte")
     public static let contextSymbol = "text.alignleft"
-    public static let optionsTitle = L10n.text("Options")
     /// La raison de l'agent : pourquoi il recommande une option (escalade).
     public static let whyRecommended = L10n.text("Pourquoi l’agent recommande cette option")
     /// La raison de l'agent : pourquoi il a retenu une option (décision prise seule).
@@ -112,9 +101,6 @@ public enum PipelineServerText {
     public static func questionIndex(_ index: Int, of count: Int) -> String {
         L10n.format("Question %lld sur %lld", index, count)
     }
-
-    /// « Tout accepter : Export CSV », quand plusieurs features ont des décisions à relire.
-    public static func acceptAllLine(_ title: String) -> String { L10n.format("Tout accepter : %@", title) }
 
     /// La reprise différée d'une feature en file : « Reprise à 14:05 ».
     public static func resumeAt(_ time: String) -> String { L10n.format("Reprise à %@", time) }
@@ -181,7 +167,6 @@ public enum PipelineServerText {
     public static let sessionRawJSON = L10n.text("JSON brut")
     public static let sessionRawArguments = L10n.text("Arguments (JSON)")
     public static let sessionRawResult = L10n.text("Résultat (JSON)")
-    public static let sessionAgentsSymbol = "person.2"
     /// Les rubriques de la fiche d'un sous-agent.
     public static let sessionAgentTask = L10n.text("Mission")
     public static let sessionAgentNow = L10n.text("En ce moment")
@@ -347,15 +332,11 @@ public enum PipelineServerText {
 
     public static let notConfigured = L10n.text("Aucun serveur relié. Les pipelines tournent sur le serveur du VPS : reliez-le pour les voir et les lancer.")
     public static let configure = L10n.text("Relier le serveur…")
-    public static let specsToValidate = L10n.text("Specs à valider")
-    public static let specsToValidateHint = L10n.text("Les specs sont écrites : la feature attend votre accord avant /impl.")
-    public static let verdictsToValidate = L10n.text("Verdicts à valider")
 
     /// « 1 feature », « 3 features » : un compteur et son nom.
     public static func countLine(_ count: Int, one: String, many: String) -> String {
         count == 1 ? "1 \(one)" : "\(count) \(many)"
     }
-
 
     // MARK: - Specs
 
@@ -374,30 +355,15 @@ public enum PipelineServerText {
     public static let requestLabel = L10n.text("Demande")
     /// Les chemins que la feature touchera : ce sont eux qui décident du parallélisme.
     public static let modulesLabel = L10n.text("Modules touchés (facultatif, ex. src/api, docs)")
-    /// Un jeton en lecture seule : la boîte se lit, les gestes se font ailleurs.
-    public static let readOnly = L10n.text("Cet appareil a un accès en lecture seule : les gestes et les lancements se font depuis un appareil opérateur.")
     public static let launch = L10n.text("Lancer")
-    public static let allRuns = L10n.text("Toutes les features")
-    public static let noRun = L10n.text("Aucune feature sur ce serveur.")
 
     // MARK: - Projets
 
-    public static let projectsTitle = L10n.text("Projets")
     public static let launchProjectTitle = L10n.text("Nouveau projet")
     public static let launchProjectHint = L10n.text("Chaque feature part en pipeline ; celles dont les modules sont disjoints tournent en parallèle.")
     public static let projectTitleLabel = L10n.text("Nom du projet")
     public static let addFeature = L10n.text("Ajouter une feature")
     public static let removeFeature = L10n.text("Retirer")
-    public static let noProject = L10n.text("Aucun projet sur ce serveur.")
-    public static let projectDone = L10n.text("Terminé")
-    public static let projectActive = L10n.text("En cours")
-
-    /// « 3 features · 1 fusionnée »
-    public static func projectLine(total: Int, merged: Int) -> String {
-        let features = countLine(total, one: L10n.text("feature"), many: L10n.text("features"))
-        let mergedLine = countLine(merged, one: L10n.text("fusionnée"), many: L10n.text("fusionnées"))
-        return "\(features) · \(mergedLine)"
-    }
 
     // MARK: - Audits
 
@@ -405,29 +371,7 @@ public enum PipelineServerText {
     public static let launchAuditHint = L10n.text("Un agent lit la branche principale sans rien modifier, puis propose des faiblesses à corriger et des features.")
     public static let focusLabel = L10n.text("Périmètre")
     public static let focusPrompt = L10n.text("Vide : le dépôt entier")
-    public static let noAudit = L10n.text("Aucun audit sur ce serveur.")
-    public static let launchProposals = L10n.text("Lancer la sélection en projet")
-    public static let cancelAudit = L10n.text("Annuler l’audit")
-    public static let weakness = L10n.text("Faiblesse")
     public static let feature = L10n.text("Feature")
-    public static let wholeRepo = L10n.text("Dépôt entier")
-
-    public static func auditState(_ raw: String) -> String {
-        switch raw {
-        case "queued": L10n.text("En file")
-        case "analysing": L10n.text("Analyse en cours")
-        case "proposed": L10n.text("Propositions à trier")
-        case "launched": L10n.text("Lancé en projet")
-        case "failed": L10n.text("En échec")
-        case "cancelled": L10n.text("Annulé")
-        default: L10n.text("État inconnu")
-        }
-    }
-
-    /// Le titre par défaut du projet issu d'un audit.
-    public static func auditProjectTitle(_ focus: String) -> String {
-        focus.isEmpty ? L10n.text("Audit du dépôt") : L10n.format("Audit : %@", focus)
-    }
 
     // MARK: - Statistiques
 
@@ -614,56 +558,6 @@ public enum PipelineServerText {
         return parts.joined(separator: " · ")
     }
 
-    // MARK: - Historique des features
-
-    public static let historyTitle = L10n.text("Historique")
-    public static let historyHint = L10n.text("Toutes les features du serveur, terminées comprises.")
-    public static let searchRuns = L10n.text("Rechercher une feature")
-    public static let filterState = L10n.text("État")
-    public static let filterRepo = L10n.text("Dépôt")
-    public static let filterProject = L10n.text("Projet")
-    public static let filterAll = L10n.text("Tous")
-    public static let clearFilters = L10n.text("Effacer les filtres")
-    public static let sortLabel = L10n.text("Trier par")
-    public static let showMore = L10n.text("Afficher plus")
-    public static let noMatch = L10n.text("Aucune feature ne correspond à ces filtres.")
-    public static let presentationLabel = L10n.text("Présentation")
-    public static let tableView = L10n.text("Tableau")
-    public static let boardView = L10n.text("Kanban")
-    public static let boardHint = L10n.text("Glissez une feature sur une autre pour la faire passer devant elle.")
-    public static let columnFeature = L10n.text("Feature")
-    public static let columnUpdated = L10n.text("Dernière activité")
-    public static let columnCreated = L10n.text("Lancée")
-    public static let tableSymbol = "tablecells"
-    public static let boardSymbol = "rectangle.split.3x1"
-    public static let filterSymbol = "line.3.horizontal.decrease.circle"
-
-    /// L'ordre de la liste (`HarnessRunsSort`).
-    public static func sort(_ raw: String) -> String {
-        switch raw {
-        case "created": L10n.text("Lancement")
-        case "priority": L10n.text("Priorité")
-        case "title": L10n.text("Titre")
-        default: L10n.text("Dernière activité")
-        }
-    }
-
-    /// Une colonne du kanban (`HarnessKanbanColumn`).
-    public static func column(_ raw: String) -> String {
-        switch raw {
-        case "queued": L10n.text("En file")
-        case "running": L10n.text("En cours")
-        case "waiting": L10n.text("Attendent l’humain")
-        case "merged": L10n.text("Fusionnées")
-        default: L10n.text("Arrêtées")
-        }
-    }
-
-    /// Le compte de la page montrée.
-    public static func shown(_ shown: Int, of total: Int) -> String {
-        L10n.format("%lld sur %lld", shown, total)
-    }
-
     // MARK: - Options du lancement
 
     public static let launchOptionsTitle = L10n.text("Options du lancement")
@@ -714,8 +608,6 @@ public enum PipelineServerText {
     public static let paletteSection = L10n.text("Section")
     public static let paletteEmpty = L10n.text("Aucune commande ne correspond.")
     public static let newFeature = L10n.text("Nouvelle feature…")
-    public static let paletteSymbol = "command"
-    public static let searchSymbol = "magnifyingglass"
     public static let newFeatureSymbol = "plus"
     public static let questionSymbol = "questionmark.bubble"
     public static let validateSymbol = "checkmark.seal"

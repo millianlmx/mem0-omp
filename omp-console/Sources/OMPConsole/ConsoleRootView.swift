@@ -1,33 +1,18 @@
-// Racine de la fenêtre. Par défaut elle rend l'« OS agentique » (`OSRootView` : le Radar,
-// les fils, « Maintenant ») ; Présentation ▸ « Interface classique » (⌘⇧O, préférence
-// `ui.os`) rend la coque CLASSIQUE décrite ici : `NavigationSplitView` coordonne la
-// sélection de la `List` de la colonne latérale avec le panneau de détail (D4) — c'est
-// le composant système qui porte déjà le bouton de bascule de la barre latérale et qui
-// y pose le verre (Liquid Glass, aucun fond maison).
+// Racine de la fenêtre : elle rend l'« OS agentique » (`OSRootView` : le Radar, les fils,
+// le centre, « Comprendre ») et porte ce qui vaut pour toute la fenêtre — deux feuilles
+// (la préparation des composants, bloquante tant qu'OMP manque, et la configuration du
+// serveur de pipelines), les feuilles des gestes sur une feature, le poste et les
+// planifications (refus, relance, renversement, arrêt d'urgence, suppression), et le
+// socle des écrans partagés avec l'app iOS (`consoleShell` : le rendu Markdown, le direct
+// d'une session du Mac et la destination demandée).
 //
-// Organisation : barre latérale en trois temps — le travail (« À traiter », Features,
-// Poste), les « Outils » (Mémoire, Terminal, Fichiers), puis Système seul en bas.
-// Badges : ce qui attend l'humain sur « À traiter » (boîte et envois du poste), les
-// envois à approuver sur Poste, la vigie muette sur Système. Au PIED de la barre
-// latérale, une seule ligne de connexion (point du direct et hôte du serveur, qui
-// ouvre la feuille Serveur) au-dessus du badge d'état des composants embarqués (S-2) ;
-// titre de fenêtre = la section courante (ou la feature, la page de Système montrée),
-// jamais le nom de l'app (HIG Toolbars) ; TOUT vit dans cette fenêtre. Deux feuilles :
-// la préparation des composants (bloquante tant qu'OMP manque) et la configuration du
-// serveur de pipelines.
-//
-// La sélection est liée par une `Binding(get:set:)` construite à la main : le
-// modèle n'expose qu'un `select(_:)`.
-//
-// La racine pose aussi le socle des écrans partagés avec l'app iOS (`consoleShell` :
-// le rendu Markdown, le direct d'une session du Mac et la sélection de section), la
-// palette ⌘K/⌘F et la feuille ⌘N (`consolePalette`), ouvre les liens
-// `ompconsole://<section>` — `ompconsole://runs/<id>` ouvre la page d'une feature,
-// `ompconsole://system/<page>` une page de Système ; le popup de l'extension Chrome
-// ouvre `ompconsole://workstation` pour approuver — et l'endroit qu'une notification
-// touchée désigne (`consoleNotificationRoutes`). App en
-// arrière-plan, chaque événement du flux qui attend l'humain devient une notification
-// locale (`HarnessNotificationCenter`), avec les gestes de l'iPhone.
+// Elle ouvre les liens `ompconsole://<section>` — `ompconsole://runs/<id>` ouvre le fil
+// d'une feature, `ompconsole://system/<page>` un écran du hub Système, le popup de
+// l'extension Chrome ouvre `ompconsole://workstation` — et l'endroit qu'une notification
+// touchée désigne (`consoleNotificationRoutes`) : chacun devient une destination demandée
+// (`drafts.requestedSection`), que l'OS montre. App en arrière-plan, chaque événement du
+// flux qui attend l'humain devient une notification locale (`HarnessNotificationCenter`),
+// avec les gestes de l'iPhone.
 
 import AppKit
 import ConsoleClient
@@ -36,42 +21,21 @@ import ConsoleUI
 import SwiftUI
 
 struct ConsoleRootView: View {
-    @ObservedObject var model: ConsoleModel
     /// Le serveur de pipelines du VPS et les brouillons de ses écrans.
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
-    /// Le poste de travail du même serveur (`server.workstation`) : son badge.
-    @ObservedObject var workstation: WorkstationModel
-    /// Les propositions des signalements de collègues (`server.signals`) : badge d'« À traiter ».
-    @ObservedObject var signals: CorporateSignalsModel
-    /// Les commentaires Jira proposés par l'agent (`server.atlassian`) : badge d'« À traiter ».
-    @ObservedObject var atlassian: AtlassianModel
-    @ObservedObject var filesModel: FilesModel
     /// Le déroulé de la sortie (porté par le délégué) : le bouton « Quitter » de
     /// la feuille de préparation bloquante y passe, comme ⌘Q.
     let quit: QuitFlow
-    @ObservedObject var memoryModel: MemoryModel
-    @ObservedObject var memoryGraph: MemoryGraphModel
-    @ObservedObject var podmanCleanup: PodmanCleanupModel
+    /// La Mémoire du Mac : portée jusqu'à son écran, sans être observée ici.
+    let memory: OSMemoryModels
     /// La présence d'OMP : la feuille de préparation en dépend.
     @ObservedObject var presence: OmpPresenceModel
     @ObservedObject var setup: SetupModel
-    /// L'état des composants embarqués (S-1/S-2) : le badge du pied de la barre
-    /// latérale le montre et se recalcule sans redémarrage.
-    @ObservedObject var components: ComponentPresenceModel
-    let terminalModel: TerminalConsoleModel
-    let projectChooser: ProjectChooserModel
+    /// L'état des composants embarqués (S-1/S-2) : le badge au pied des fils le montre.
+    let components: ComponentPresenceModel
     /// Les notifications locales du Mac et la réponse à leurs actions.
     @ObservedObject var notifications: HarnessNotificationCenter
-
-    /// La `List` exige une `Binding<ConsoleSection?>` ; le modèle n'a pas de
-    /// `nil`, donc une valeur nulle est simplement ignorée à l'écriture.
-    private var selection: Binding<ConsoleSection?> {
-        Binding(
-            get: { model.selection },
-            set: { if let section = $0 { model.select(section) } }
-        )
-    }
 
     /// La préparation est due (`SetupSheetPolicy`).
     private var setupShown: Binding<Bool> {
@@ -83,64 +47,15 @@ struct ConsoleRootView: View {
         )
     }
 
-    /// Le geste du badge des composants (S-3) : rouvrir la feuille de
-    /// préparation quand un composant manque ; aucun quand tout est installé.
-    private var reopenSetup: (@MainActor () -> Void)? {
-        if components.presence.allInstalled { return nil }
-        return { setup.reopen() }
-    }
-
-    /// Le badge d'une section : ce qui attend l'humain (boîte, envois du poste et
-    /// propositions des signalements) sur « À traiter », les envois à approuver sur Poste,
-    /// la vigie muette sur Système.
-    private func badge(for section: ConsoleSection) -> Int {
-        switch section {
-        case .inbox: (server.inbox?.pendingCount ?? 0) + workstation.pendingCount + signals.pendingCount + atlassian.pendingCount
-        case .workstation: workstation.pendingCount
-        case .system: server.vigie.isSilent ? 1 : 0
-        default: 0
-        }
-    }
-
-    /// Le titre de la fenêtre : la feature ou la page de Système montrée, sinon la section.
-    private var windowTitle: String {
-        switch model.selection {
-        case .runs where drafts.runsScope == .features:
-            if let id = drafts.openedRun, let run = server.knownRun(id) { return run.title }
-        case .system:
-            if let page = drafts.systemPage, page != .server { return page.title }
-        default:
-            break
-        }
-        return model.selection.title
-    }
-
-    @ViewBuilder
-    private func row(_ section: ConsoleSection) -> some View {
-        let count = badge(for: section)
-        if count > 0 {
-            Label(section.title, systemImage: section.systemImage)
-                .badge(count)
-                .tag(section)
-        } else {
-            Label(section.title, systemImage: section.systemImage)
-                .tag(section)
-        }
-    }
-
-    /// Ouvre un lien `ompconsole://` : une section, la page d'une feature, une page de Système.
+    /// Ouvre un lien `ompconsole://` : une destination, le fil d'une feature, un écran du hub Système.
     private func open(_ url: URL) {
         // Un lien d'appairage (`ompconsole://pair…`, le QR code que ce Mac affiche) ne s'ouvre jamais ici :
-        // c'est l'iPhone qui appaire ; le Mac l'ignore, sans changer de section.
+        // c'est l'iPhone qui appaire ; le Mac l'ignore.
         guard !HarnessPairLink.isPairLink(url), let section = HarnessWidgetLink.section(of: url) else { return }
         let item = url.pathComponents.dropFirst().first
         switch section {
         case .runs:
-            if let item {
-                ConsoleNavigation.openRun(item, drafts: drafts, select: go)
-            } else {
-                go(.runs)
-            }
+            if let item { ConsoleNavigation.openRun(item, drafts: drafts, select: go) }
         case .system:
             if let item, let page = SystemPage(rawValue: item) {
                 ConsoleNavigation.open(page, drafts: drafts, select: go)
@@ -152,152 +67,51 @@ struct ConsoleRootView: View {
         }
     }
 
-    /// Va à une section. Dans l'« OS agentique », ce qui attend l'humain (« À traiter »,
-    /// Poste) ouvre le tri et une feature ouvre son fil (`drafts.openedRun`) ; une section
-    /// sans équivalent ramène l'interface classique.
+    /// Demande une destination à l'OS.
     private func go(_ section: ConsoleSection) {
-        guard osMode else {
-            model.select(section)
-            return
-        }
-        switch section {
-        case .inbox, .workstation:
-            osTriage = true
-        case .runs:
-            model.select(section)
-        default:
-            osMode = false
-            model.select(section)
-        }
+        drafts.requestedSection = section
     }
-
-    /// L'« OS agentique » est l'interface par défaut ; Présentation ▸ « Interface classique »
-    /// (⌘⇧O) rend la coque à barre latérale.
-    @AppStorage("ui.os") private var osMode = true
-    /// Un lien ou une notification demande ce qui attend l'humain : l'« OS agentique » ouvre le tri.
-    @State private var osTriage = false
 
     var body: some View {
-        Group {
-            if osMode {
-                OSRootView(server: server, drafts: drafts, triageRequested: $osTriage) { model.select($0) }
-            } else {
-                classic
+        OSRootView(server: server, drafts: drafts, memory: memory, components: components, setup: setup)
+            .sheet(isPresented: $drafts.serverSheetShown) {
+                ServerSheet(server: server, drafts: drafts)
             }
-        }
-        // La feuille du Serveur appartient à la racine, pas à la coque classique : la palette ⌘K et les
-        // liens l'ouvrent aussi depuis la nouvelle interface, qui n'a pas de barre latérale pour la porter.
-        .sheet(isPresented: $drafts.serverSheetShown) {
-            ServerSheet(server: server, drafts: drafts)
-        }
-        .sheet(isPresented: setupShown) {
-            // OMP absent : la feuille est bloquante — ni « Fermer » ni ⎋ (Doc-1) ;
-            // « Quitter » passe par le déroulé de la sortie.
-            SetupView(setup: setup, omp: presence.omp, quit: { quit.request() })
-                .interactiveDismissDisabled(!presence.canLaunch)
-        }
-        .task {
-            notifications.attach(server, postsLocally: { !NSApp.isActive })
-            await server.load()
-            server.startLive()
-        }
-        // L'état du poste et ses envois à approuver, les propositions des signalements
-        // (badges, « À traiter »), relus à chaque serveur relié, et la vigie (badge de
-        // Système) ; le flux de la boîte les tient ensuite à jour. Un serveur relié : la
-        // permission de notifier est demandée (le système ne la demande qu'une fois).
-        .task(id: server.address) {
-            await workstation.refresh()
-            await signals.refresh()
-            await atlassian.refresh()
-            await server.intakes.refresh()
-            await server.vigie.refresh()
-            if server.isConfigured { _ = await notifications.requestAuthorization() }
-        }
-        // Le jeton approbateur ou non : les actions d'un envoi du poste agissent ou ouvrent l'app.
-        .onReceive(server.$client) { _ in notifications.refreshCategories() }
-        .consoleNotificationRoutes(notifications, server: server, drafts: drafts) { go($0) }
-        .onOpenURL { open($0) }
-        .consoleShell(ConsoleShell(
-            markdown: { AnyView(MarkdownBlocksView(blocks: $0)) },
-            session: { [server] request in AnyView(HarnessSessionSheet(server: server, request: request)) },
-            select: { [model] in model.select($0) }
-        ))
-        .frame(minWidth: 760, minHeight: 480)
-    }
-
-    private var classic: some View {
-        NavigationSplitView {
-            List(selection: selection) {
-                Section {
-                    ForEach(ConsoleSectionGroup.work.sections) { row($0) }
-                }
-                Section(ConsoleSectionGroup.tools.title) {
-                    ForEach(ConsoleSectionGroup.tools.sections) { row($0) }
-                }
-                Section {
-                    ForEach(ConsoleSectionGroup.system.sections) { row($0) }
-                }
+            .sheet(isPresented: setupShown) {
+                // OMP absent : la feuille est bloquante — ni « Fermer » ni ⎋ (Doc-1) ;
+                // « Quitter » passe par le déroulé de la sortie.
+                SetupView(setup: setup, omp: presence.omp, quit: { quit.request() })
+                    .interactiveDismissDisabled(!presence.canLaunch)
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 220)
-            .safeAreaInset(edge: .bottom, alignment: .leading) {
-                VStack(alignment: .leading, spacing: 6) {
-                    ServerConnectionLine(server: server) { drafts.serverSheetShown = true }
-                        .padding(.leading, 14)
-                    ComponentBadge(status: components.presence.status, open: reopenSetup)
-                }
+            // Les feuilles des gestes : refus, relance et renversement d'une feature (carte de
+            // « Comprendre »), arrêt d'urgence et envois du poste, suppression d'une planification.
+            .harnessGestures(server: server, drafts: drafts)
+            .workstationGestures(workstation: server.workstation, drafts: drafts)
+            .controlGestures(server: server, drafts: drafts)
+            .task {
+                notifications.attach(server, postsLocally: { !NSApp.isActive })
+                await server.load()
+                server.startLive()
             }
-        } detail: {
-            SectionDetail(
-                section: model.selection,
-                server: server,
-                drafts: drafts,
-                filesModel: filesModel,
-                memoryModel: memoryModel,
-                memoryGraph: memoryGraph,
-                podmanCleanup: podmanCleanup,
-                terminalModel: terminalModel,
-                projectChooser: projectChooser
-            )
-            // Le titre de la fenêtre EST ce qu'elle montre (HIG Toolbars).
-            .navigationTitle(windowTitle)
-            .navigationSubtitle(windowTitle == model.selection.title ? "" : model.selection.title)
-            .consolePalette(server: server, drafts: drafts, sections: ConsoleSection.allCases, memory: true) { section in
-                model.select(section)
+            // L'état du poste, Jira, les demandes et la vigie, relus à chaque
+            // serveur relié ; le flux de la boîte les tient ensuite à jour. Un serveur relié : la
+            // permission de notifier est demandée (le système ne la demande qu'une fois).
+            .task(id: server.address) {
+                await server.workstation.refresh()
+                await server.atlassian.refresh()
+                await server.intakes.refresh()
+                await server.vigie.refresh()
+                if server.isConfigured { _ = await notifications.requestAuthorization() }
             }
-        }
-
-    }
-}
-
-/// Le pied de la barre latérale : le direct (point vert) et l'hôte du serveur relié, ou
-/// l'invitation à le relier. Un clic ouvre la feuille Serveur.
-struct ServerConnectionLine: View {
-    @ObservedObject var server: HarnessModel
-    let open: @MainActor () -> Void
-
-    var body: some View {
-        Button(action: open) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(server.isLive ? Color.green : Color.secondary)
-                    .frame(width: 7, height: 7)
-                    .accessibilityHidden(true)
-                Text(host)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(PipelineServerText.open)
-        .accessibilityLabel((server.isLive ? ShellText.live : ShellText.offline) + ", " + host)
-        .accessibilityIdentifier("server.open")
-    }
-
-    private var host: String {
-        guard let address = server.address else { return PipelineServerText.configure }
-        return URL(string: address)?.host ?? address
+            // Le jeton approbateur ou non : les actions d'un envoi du poste agissent ou ouvrent l'app.
+            .onReceive(server.$client) { _ in notifications.refreshCategories() }
+            .consoleNotificationRoutes(notifications, server: server, drafts: drafts) { go($0) }
+            .onOpenURL { open($0) }
+            .consoleShell(ConsoleShell(
+                markdown: { AnyView(MarkdownBlocksView(blocks: $0)) },
+                session: { [server] request in AnyView(HarnessSessionSheet(server: server, request: request)) },
+                select: { [drafts] in drafts.requestedSection = $0 }
+            ))
+            .frame(minWidth: 760, minHeight: 480)
     }
 }

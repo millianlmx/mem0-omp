@@ -54,7 +54,7 @@ struct AutonomyRuleLines: View {
     }
 }
 
-/// La page Système › Autonomie : lecture seule, rien d'autre à faire que lire et ouvrir.
+/// L'écran Système › Autonomie : lecture seule, rien d'autre à faire que lire et ouvrir.
 public struct AutonomySections: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var autonomy: HarnessAutonomy
@@ -108,8 +108,6 @@ public struct AutonomySections: View {
             }
         } header: {
             Text(AutonomyText.rulesTitle)
-        } footer: {
-            Text(AutonomyText.readOnlyHint)
         }
     }
 
@@ -143,8 +141,6 @@ public struct AutonomySections: View {
             }
         } header: {
             Text(AutonomyText.validationsTitle)
-        } footer: {
-            Text(AutonomyText.validationsHint)
         }
     }
 
@@ -178,8 +174,6 @@ public struct AutonomySections: View {
             }
         } header: {
             Text(AutonomyText.proposalsTitle)
-        } footer: {
-            Text(AutonomyText.proposalsHint)
         }
     }
 }

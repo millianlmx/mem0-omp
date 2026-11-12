@@ -1,5 +1,5 @@
-// Les textes du sélecteur de projet des états vides de Mémoire, Fichiers et
-// Terminal (S-1, S-2 de mac-etats-vides-sans-issue).
+// Les textes du sélecteur de projet de l'état vide de la Mémoire (S-1, S-2 de
+// mac-etats-vides-sans-issue).
 //
 // Aucun raccourci clavier n'est nommé ici (AC-6) : le libellé est le même sur un
 // clavier AZERTY ou QWERTY.

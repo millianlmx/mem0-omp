@@ -7,8 +7,8 @@
 //  - `projectId` (state.ts:73-89) — override `MEM0_PROJECT_ID`, racine PRINCIPALE,
 //    manifestes dans l'ordre, premier `*.xcodeproj`, puis `basename`.
 //
-// La racine principale n'est PAS recalculée ici : `TargetCatalog.primaryRoot`
-// (Files/FilesTarget.swift) est l'unique formule, celle qui résout le `.git`
+// La racine principale n'est PAS recalculée ici : `GitCLI.primaryRoot`
+// (Git/GitCLI.swift) est l'unique formule, celle qui résout le `.git`
 // FICHIER d'un worktree lié vers le dépôt principal — un worktree de feature ne
 // doit jamais ouvrir une seconde portée, sans quoi les souvenirs écrits depuis le
 // dépôt seraient introuvables depuis la feature.
@@ -33,7 +33,7 @@ enum MemoryScope {
         if let override = environment["MEM0_PROJECT_ID"], !override.isEmpty {
             return override
         }
-        guard let primary = try? await TargetCatalog.primaryRoot(git: git, projectRoot: projectRoot) else {
+        guard let primary = try? await git.primaryRoot(of: projectRoot) else {
             return nil
         }
         if let named = manifestName(in: primary) {
@@ -63,12 +63,10 @@ enum MemoryScope {
         guard let root = ProjectRoot.resolve(defaults: defaults, fileManager: fileManager) else {
             return nil
         }
-        switch GitBinary.resolve(environment: environment, path: root.path, fileManager: fileManager) {
-        case let .success(binary):
-            return await scope(projectRoot: root.path, environment: environment, git: GitCLI(binary: binary))
-        case .failure:
+        guard let binary = GitBinary.resolve(environment: environment, fileManager: fileManager) else {
             return nil
         }
+        return await scope(projectRoot: root.path, environment: environment, git: GitCLI(binary: binary))
     }
 
     // MARK: - Manifestes

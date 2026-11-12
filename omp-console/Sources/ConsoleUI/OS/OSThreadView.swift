@@ -369,40 +369,43 @@ public struct OSThreadView: View {
     /// AU TRAVAIL : l'étape, le pouls, la pause qui vient, le curseur d'autonomie, puis
     /// « Corriger… » et « Arrêter… ».
     private func liveCard(_ run: HarnessRun, gestures: OSRunGestures) -> some View {
-        TimelineView(.periodic(from: .now, by: 5)) { context in
-            OSCard(tint: .accentColor, emphasized: true) {
-                VStack(alignment: .leading, spacing: 8) {
-                    cardHead(.working, OSText.atWork, run: run, level: Self.liveLevel, steps: thread.liveRuns.count > 1)
-                    // Ce que fait l'agent, en ses mots ; l'outil qu'il manie se lit dans « Comprendre ».
-                    if let activity = pulse.current(.run(run.id), now: context.date) {
-                        Text(verbatim: "↳ " + activity.line)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                    // Une pause douce est posée : l'agent finit son étape avant de s'arrêter.
-                    if let state = pause.pause, state.paused, !state.now {
-                        Label {
-                            Text(OSDecideText.finishing)
-                        } icon: {
-                            Image(systemName: "pause.circle").foregroundStyle(.orange)
+        OSCard(tint: .accentColor, emphasized: true) {
+            VStack(alignment: .leading, spacing: 8) {
+                cardHead(.working, OSText.atWork, run: run, level: Self.liveLevel, steps: thread.liveRuns.count > 1)
+                // Ce que fait l'agent, en ses mots ; l'outil qu'il manie se lit dans « Comprendre ».
+                // Seule cette ligne suit l'horloge (la fraîcheur du pouls), pas la carte.
+                if pulse.activity[.run(run.id)] != nil {
+                    TimelineView(.periodic(from: .now, by: 5)) { context in
+                        if let activity = pulse.current(.run(run.id), now: context.date) {
+                            Text(verbatim: "↳ " + activity.line)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
                         }
                     }
-                    // Le curseur règle toutes les tâches vivantes du fil : il paraît une fois.
-                    if run.id == thread.liveRuns.first(where: { OSThreads.phase(of: $0, inbox: inbox) == .working })?.id {
-                        OSAutonomyPicker(server: server, runs: thread.liveRuns) { failure = server.failure }
+                }
+                // Une pause douce est posée : l'agent finit son étape avant de s'arrêter.
+                if let state = pause.pause, state.paused, !state.now {
+                    Label {
+                        Text(OSDecideText.finishing)
+                    } icon: {
+                        Image(systemName: "pause.circle").foregroundStyle(.orange)
                     }
-                    if gestures.amend || gestures.stop || run.fixes > 0 {
-                        OSLine(spacing: 8) {
-                            if gestures.amend {
-                                Button(OSDecideText.amend) { amend(run) }
-                            }
-                            if gestures.stop {
-                                Button(OSDecideText.stop) { stopping = run }
-                            }
-                            Spacer()
-                            if run.fixes > 0 {
-                                Text(OSText.fixes(run.fixes)).font(.caption).foregroundStyle(.secondary)
-                            }
+                }
+                // Le curseur règle toutes les tâches vivantes du fil : il paraît une fois.
+                if run.id == thread.liveRuns.first(where: { OSThreads.phase(of: $0, inbox: inbox) == .working })?.id {
+                    OSAutonomyPicker(server: server, runs: thread.liveRuns) { failure = server.failure }
+                }
+                if gestures.amend || gestures.stop || run.fixes > 0 {
+                    OSLine(spacing: 8) {
+                        if gestures.amend {
+                            Button(OSDecideText.amend) { amend(run) }
+                        }
+                        if gestures.stop {
+                            Button(OSDecideText.stop) { stopping = run }
+                        }
+                        Spacer()
+                        if run.fixes > 0 {
+                            Text(OSText.fixes(run.fixes)).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -515,21 +518,24 @@ public struct OSThreadView: View {
     private func requestCards(_ request: WorkstationRequest) -> some View {
         let phase = OSThreads.phase(of: request)
         if phase.isLive {
-            TimelineView(.periodic(from: .now, by: 5)) { context in
-                OSCard(tint: phase.color, emphasized: true) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            OSPhaseMark(phase: phase, size: 14)
-                            Text(phase == .working ? OSText.atWork : OSDecideText.cardWaiting).font(.headline)
-                            Text(OSText.poste).foregroundStyle(.secondary)
-                        }
-                        if phase == .queued {
-                            Text(OSDecideText.requestWaiting)
-                            Text(OSDecideText.leavesAlone).font(.callout).foregroundStyle(.secondary)
-                        } else if let activity = pulse.workstation(now: context.date)?.activity.line {
-                            Text(verbatim: "↳ " + activity)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
+            OSCard(tint: phase.color, emphasized: true) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        OSPhaseMark(phase: phase, size: 14)
+                        Text(phase == .working ? OSText.atWork : OSDecideText.cardWaiting).font(.headline)
+                        Text(OSText.poste).foregroundStyle(.secondary)
+                    }
+                    if phase == .queued {
+                        Text(OSDecideText.requestWaiting)
+                        Text(OSDecideText.leavesAlone).font(.callout).foregroundStyle(.secondary)
+                    } else {
+                        // Seule la ligne du pouls suit l'horloge.
+                        TimelineView(.periodic(from: .now, by: 5)) { context in
+                            if let activity = pulse.workstation(now: context.date)?.activity.line {
+                                Text(verbatim: "↳ " + activity)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
                         }
                     }
                 }

@@ -39,14 +39,14 @@ import zlib
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 
-# Les cinq sections de l'app iOS (rawValue de `-section`), dans l'ordre de `allCases`,
-# et le titre de leur barre de navigation.
+# Les cinq surfaces relevées et le titre de leur barre de navigation : quatre onglets
+# (rawValue de `-os.view`, dans l'ordre de la barre) et la Mémoire, poussée dans le Savoir.
 TITRES = {
-    "inbox": "À traiter",
-    "runs": "Features",
-    "workstation": "Poste",
+    "now": "Maintenant",
+    "threads": "Fils",
+    "decisions": "Décisions",
+    "knowledge": "Savoir",
     "memory": "Mémoire",
-    "system": "Système",
 }
 SURFACE_KEYS = list(TITRES)
 
@@ -78,7 +78,7 @@ PROTEGES_CIBLE_44 = {
     "id:ios.memoire.graphe.etiquette",
 }
 PROTEGES_ID_DUPLIQUE = {"id:ios.memoire.screen"}
-PROTEGES_BORD_CAPTURE = {"runs", "memory", "*"}
+PROTEGES_BORD_CAPTURE = {"threads", "memory", "*"}
 
 # Un simulateur jamais relié au serveur de pipelines montre « Configurer le
 # serveur » : la recette ne capture alors aucun dépôt réel.
@@ -169,11 +169,11 @@ def _marqueur_propre(surface, arbre):
         raise Echec("surface inconnue : " + surface)
     if surface == "memory":
         return any(i.startswith("ios.memoire.") for i in ids)
-    # Les écrans du serveur portent `ios.screen.<rawValue>` ; idb ne rend pas
+    # La racine d'un onglet porte `ios.os.screen.<rawValue>` ; idb ne rend pas
     # toujours les conteneurs, et la barre de navigation a pour identifiant son
     # titre (MESURÉ iOS 27, iPhone).
     titre = TITRES[surface]
-    return "ios.screen." + surface in ids or titre in titres or titre in ids
+    return "ios.os.screen." + surface in ids or titre in titres or titre in ids
 
 
 # Les écrans pleins de l'état de connexion partagé (IOSConnectionStateView, #118) :
@@ -191,7 +191,7 @@ ECRANS_NON_CONNECTES = (
 
 def marqueur(surface, arbre):
     """Vrai si l'arbre montre la surface annoncée (ni un écran plein « non connecté »
-    ou « connexion en cours », ni une autre section)."""
+    ou « connexion en cours », ni un autre onglet)."""
     ids = _ids(arbre)
     if any(i in ids for i in ECRANS_NON_CONNECTES):
         return False
@@ -544,7 +544,7 @@ def analyser(dossier, exceptions, rapport):
             raise Echec("surface non vérifiée : %s %s %s (marqueur absent)" % (surface, apparence, taille))
 
     for surface, _, _, base in nommes:
-        if surface == "runs" and ID_NON_RELIE not in _ids(arbres[base]):
+        if surface == "threads" and ID_NON_RELIE not in _ids(arbres[base]):
             raise Echec(MSG_RELIE)
 
     tous = []

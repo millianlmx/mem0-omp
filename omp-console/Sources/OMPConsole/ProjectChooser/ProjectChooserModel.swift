@@ -1,11 +1,10 @@
-// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal (S-2,
-// S-3 de mac-etats-vides-sans-issue) : il offre les projets déjà choisis et le
+// Le sélecteur de projet de l'état vide de la Mémoire (S-2, S-3 de
+// mac-etats-vides-sans-issue) : il offre les projets déjà choisis et le
 // panneau d'ouverture, et il écrit le choix dans la préférence partagée
 // (`ProjectRoot.defaultsKey`) — l'unique écrivain du projet choisi de l'app.
 //
-// Invariant : le modèle n'a AUCUNE référence à `ConsoleModel`. Il ne peut donc
-// ni lire ni changer la section affichée : choisir un projet remplit l'écran
-// courant, sans navigation.
+// Invariant : le modèle ne connaît pas la coque. Il ne peut donc ni lire ni changer
+// l'écran affiché : choisir un projet remplit l'écran courant, sans navigation.
 //
 // Le contenu d'un `Menu` SwiftUI est construit au rendu, pas à l'ouverture : la
 // liste vit dans `entries` (publié), rafraîchie à l'apparition de l'action.

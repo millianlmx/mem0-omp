@@ -270,11 +270,6 @@ const UNTRANSLATED: readonly Untranslated[] = [
     name: "providerKind",
     reason: "noms de marque des fournisseurs",
   },
-  {
-    file: "omp-console/Sources/OMPConsole/Terminal/TerminalViewText.swift",
-    name: "ompKind",
-    reason: "nom du programme",
-  },
   { file: "omp-console/ios/OMPConsoleIOS/IOSShellText.swift", name: "rootTitle", reason: "nom de l'app" },
   ...["title", "description", "appShortcuts"].map((name) => ({
     file: "omp-console/ios/OMPConsoleIOS/IOSSiriText.swift",

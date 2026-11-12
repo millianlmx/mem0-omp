@@ -286,23 +286,23 @@ test("autonomie-console/AC-3 : tout lecteur lit GET /v1/autonomy dans les deux a
     await close();
   }
 
-  // Le hub et les deux apps : une page de Système, masquée quand le serveur ne la sert pas.
+  // Le hub et les deux apps : une tuile de Système, masquée quand le serveur ne la sert pas.
   const section = read("Sources", "ConsoleCore", "Design", "ConsoleSection.swift");
   assert.match(
     section,
     /public static func visible\(isAdmin: Bool, autonomy: Bool\)[^}]*\(autonomy \|\| \$0 != \.autonomy\)/,
   );
+  const hub = read("Sources", "ConsoleUI", "OS", "OSSystemHub.swift");
+  assert.match(hub, /\(autonomy \|\| page != \.autonomy\)/);
+  assert.match(hub, /OSSystemDestination\.visible\(isAdmin: server\.isAdmin, autonomy: autonomy\.isServed\)/);
   assert.match(
-    read("Sources", "ConsoleUI", "SystemViews.swift"),
-    /SystemPage\.visible\(isAdmin: server\.isAdmin, autonomy: autonomy\.isServed\)/,
+    read("Sources", "OMPConsole", "OS", "OSSystemScreens.swift"),
+    /case \.autonomy:\s*OSSystemForm\(server: server\) \{ AutonomySections\(server: server, drafts: drafts\) \}/,
   );
   assert.match(
-    read("Sources", "OMPConsole", "Server", "SystemPages.swift"),
-    /case \.autonomy:\s*HarnessForm\(server: server, drafts: drafts\) \{ AutonomySections\(server: server, drafts: drafts\) \}/,
+    read("ios", "OMPConsoleIOS", "IOSSystemScreens.swift"),
+    /case \.autonomy:\s*page\(refresh: \{ await server\.autonomy\.refresh\(\) \}\) \{\s*AutonomySections\(server: server, drafts: drafts\)/,
   );
-  const ios = read("ios", "OMPConsoleIOS", "IOSHarnessScreens.swift");
-  assert.match(ios, /case \.autonomy: IOSAutonomyScreen\(server: server, drafts: drafts\)/);
-  assert.match(ios, /struct IOSAutonomyScreen[\s\S]*?AutonomySections\(server: server, drafts: drafts\)/);
   // La page ne montre aucune section vide.
   const page = read("Sources", "ConsoleUI", "AutonomyViews.swift");
   assert.match(page, /if !view\.proposals\.isEmpty \{/);

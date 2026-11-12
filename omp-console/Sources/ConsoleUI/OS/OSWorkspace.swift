@@ -1,6 +1,6 @@
 // L'« OS agentique », partagé par le Mac et l'iPhone/iPad : l'état de l'espace de travail
-// (ce que montre le détail — Maintenant, Propositions, Savoir, Automatismes, un espace ou
-// un fil —, feature comprise, niveau de zoom, tri, espace et lieu retenus) et le tri pur
+// (ce que montre le détail — Maintenant, Propositions, Savoir, Automatismes, Système, la
+// Mémoire, un espace ou un fil —, feature comprise, niveau de zoom, tri, espace et lieu retenus) et le tri pur
 // des fils par espace et par lieu (`OSThreadScope`). La coque de chaque app tient UN
 // `OSWorkspace` et le passe aux écrans de ce dossier.
 
@@ -49,13 +49,17 @@ public enum OSThreadScope {
 @MainActor
 public final class OSWorkspace: ObservableObject {
     /// La sélection de « Maintenant » (l'accueil), à la place d'un fil.
-    public static let now = "now"
+    public nonisolated static let now = "now"
     /// La sélection des « Automatismes » : ce que l'OS lance seul, et quand.
-    public static let automations = "automations"
+    public nonisolated static let automations = "automations"
     /// La sélection des « Propositions » : le travail que les agents proposent.
-    public static let proposals = "proposals"
+    public nonisolated static let proposals = "proposals"
     /// La sélection du « Savoir » : consignes permanentes, paliers d'autonomie, espaces.
-    public static let knowledge = "knowledge"
+    public nonisolated static let knowledge = "knowledge"
+    /// La sélection du hub « Système » ; l'écran ouvert vit dans `systemPath`.
+    public nonisolated static let system = "system"
+    /// La sélection de la « Mémoire » (le Mac la montre au centre).
+    public nonisolated static let memory = "memory"
     /// Le filtre de lieu « le Poste » (sinon un nom de dépôt).
     public nonisolated static let postePlace = "@poste"
     private static let spacePrefix = "space:"
@@ -85,6 +89,8 @@ public final class OSWorkspace: ObservableObject {
     @Published public private(set) var pendingRunId: String?
     /// ⌘⇧P : le Radar demande la confirmation de la pause, ou reprend si tout est suspendu.
     @Published public var pauseRequested = false
+    /// La pile du hub Système : l'écran ouvert (`OSSystemDestination`), puis ce qu'il pousse.
+    @Published public var systemPath = NavigationPath()
     public let pulse: OSPulse
 
     public init(server: HarnessModel) {
@@ -95,6 +101,12 @@ public final class OSWorkspace: ObservableObject {
         selection = threadId
         focusRunId = nil
         pendingRunId = nil
+    }
+
+    /// Ouvre un écran du hub Système, par-dessus le hub.
+    public func open(_ destination: OSSystemDestination) {
+        selection = Self.system
+        systemPath = NavigationPath([destination])
     }
 
     /// Ouvre le fil d'une feature ; s'il n'est pas encore parmi `threads`, il s'ouvrira au

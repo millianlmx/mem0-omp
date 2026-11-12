@@ -1,7 +1,7 @@
-// Preuves du sélecteur de projet des états vides (mac-etats-vides-sans-issue,
+// Preuves du sélecteur de projet de l'état vide de la Mémoire (mac-etats-vides-sans-issue,
 // lot BR-1) : la liste des projets déjà choisis, ses libellés, et l'écriture du
-// choix par l'unique écrivain du projet choisi de l'app — relu ensuite par
-// Fichiers, Terminal et Mémoire sur les MÊMES préférences.
+// choix par l'unique écrivain du projet choisi de l'app — relu ensuite par la
+// Mémoire sur les MÊMES préférences.
 
 import ConsoleCore
 import Foundation
@@ -40,11 +40,6 @@ private func isNoProject(_ state: MemoryModel.State) -> Bool {
 }
 
 @MainActor
-private func makeTerminal(defaults: UserDefaults) -> TerminalConsoleModel {
-    TerminalConsoleModel(defaults: defaults, environment: ["PATH": "/usr/bin:/bin"], git: filesGit())
-}
-
-@MainActor
 private func makeMemory(defaults: UserDefaults) -> MemoryModel {
     MemoryModel(
         service: ScriptedMemoryService(),
@@ -52,17 +47,6 @@ private func makeMemory(defaults: UserDefaults) -> MemoryModel {
         defaults: defaults,
         paths: AppPaths(supportRoot: URL(fileURLWithPath: "/nonexistent-omp-console-support", isDirectory: true)),
         omlxSession: StubURLProtocol.session()
-    )
-}
-
-@MainActor
-private func makeFiles(defaults: UserDefaults) -> FilesModel {
-    FilesModel(
-        projectRoot: nil,
-        git: filesGit(),
-        defaults: defaults,
-        fileManager: .default,
-        environment: ["PATH": "/usr/bin:/bin"]
     )
 }
 
@@ -121,47 +105,18 @@ func homonymsNameTheirParent() {
 // MARK: - Le choix devient celui de l'app
 
 @MainActor
-@Test("mac-etats-vides-sans-issue/AC-4 : un projet choisi depuis l'état vide devient celui de Fichiers, Terminal et Mémoire")
+@Test("mac-etats-vides-sans-issue/AC-4 : un projet choisi depuis l'état vide devient celui de la Mémoire")
 func chosenProjectIsTheAppProject() async throws {
-    let repo = try FilesFixture()
+    let repo = try GitFixture()
     let suite = emptyProjectSuite()
     let chooser = ProjectChooserModel(defaults: suite)
     chooser.select(projectRoot: URL(fileURLWithPath: repo.root, isDirectory: true))
-    let chosen = standardized(repo.root)
-    #expect(suite.string(forKey: ProjectRoot.defaultsKey) == chosen)
-
-    // Fichiers, sur les mêmes préférences, au rafraîchissement d'apparition.
-    let files = makeFiles(defaults: suite)
-    await files.refresh()
-    #expect(files.projectRoot?.path == chosen)
-    #expect(files.errorMessage == nil)
-
-    // Terminal : sur les mêmes préférences, il nomme ce projet.
-    let terminal = makeTerminal(defaults: suite)
-    terminal.followProjectRoot()
-    #expect(terminal.projectRoot?.path == chosen)
-    #expect(terminal.projectPath == chosen)
+    #expect(suite.string(forKey: ProjectRoot.defaultsKey) == standardized(repo.root))
 
     // Mémoire : la portée suit le projet, l'écran quitte « Aucun projet ouvert ».
     let memory = makeMemory(defaults: suite)
     await memory.refresh()
     #expect(!isNoProject(memory.state))
-}
-
-@MainActor
-@Test("mac-etats-vides-sans-issue/AC-4 : le Terminal déjà construit suit un projet choisi ailleurs dès qu'il relit la préférence")
-func terminalFollowsTheAppProject() throws {
-    let repo = try FilesFixture()
-    let suite = emptyProjectSuite()
-    let terminal = makeTerminal(defaults: suite)
-    #expect(terminal.projectRoot == nil)
-    #expect(terminal.projectPath == nil)
-
-    ProjectChooserModel(defaults: suite).select(projectRoot: URL(fileURLWithPath: repo.root, isDirectory: true))
-    #expect(terminal.projectRoot == nil, "la préférence n'émet rien : il faut la relire")
-    terminal.followProjectRoot()
-    #expect(terminal.projectRoot?.path == standardized(repo.root))
-    #expect(terminal.projectPath == standardized(repo.root))
 }
 
 @MainActor
@@ -185,63 +140,25 @@ func vanishedEntryWritesNothing() throws {
     #expect(!chooser.entries.contains(entry))
 }
 
-// MARK: - Les états vides (lot BR-2)
+// MARK: - L'état vide (lot BR-2)
 //
 // SwiftUI ne s'inspecte pas depuis la suite (aucun arbre AX hors d'un client
-// réel) : ce qui décide de l'écran vit dans `NoProjectState`,
-// `ProjectChooserForm` et `TerminalPlaceholder`, que ces tests confrontent aux
-// états RÉELS des trois modèles sans projet.
+// réel) : ce qui décide de l'écran vit dans `NoProjectState` et
+// `ProjectChooserForm`, que ces tests confrontent à l'état RÉEL du modèle sans projet.
 
 @MainActor
-@Test("mac-etats-vides-sans-issue/AC-1 : sans projet choisi, Mémoire, Fichiers et Terminal montrent « Aucun projet ouvert », leur phrase et le bouton « Choisir un projet… »")
-func threeEmptyStatesCarryTheChooser() async {
-    let suite = emptyProjectSuite()
-
-    // Les trois modèles, dans l'état réel « sans projet » qui rend l'état vide.
-    let memory = makeMemory(defaults: suite)
+@Test("mac-etats-vides-sans-issue/AC-1 : sans projet choisi, la Mémoire montre « Aucun projet ouvert », sa phrase et le bouton « Choisir un projet… »")
+func memoryEmptyStateCarriesTheChooser() async {
+    let memory = makeMemory(defaults: emptyProjectSuite())
     await memory.refresh()
     #expect(isNoProject(memory.state))
-    let files = makeFiles(defaults: suite)
-    await files.refresh()
-    #expect(files.projectRoot == nil)
-    #expect(files.errorMessage == nil)
-    let terminal = makeTerminal(defaults: suite)
-    #expect(TerminalPlaceholder.of(terminal) == .noProject)
-
-    // Ce que chacun de ces états montre.
     #expect(NoProjectState.memory == NoProjectState(
         title: "Aucun projet ouvert",
         description: "Choisissez le projet dont vous voulez consulter la mémoire.",
         chooserIdentifier: "memory.chooseProject"
     ))
-    #expect(NoProjectState.files == NoProjectState(
-        title: "Aucun projet ouvert",
-        description: "Choisissez le projet dont vous voulez parcourir les fichiers.",
-        chooserIdentifier: "files.chooseProject"
-    ))
-    #expect(NoProjectState.terminal == NoProjectState(
-        title: "Aucun projet ouvert",
-        description: "Choisissez le projet dans lequel ouvrir un terminal.",
-        chooserIdentifier: "terminal.chooseProject"
-    ))
     #expect(NoProjectState.systemImage == "folder.badge.questionmark")
     #expect(ProjectChooserText.choose == "Choisir un projet\u{2026}")
-}
-
-@MainActor
-@Test("mac-etats-vides-sans-issue/AC-1 : le Terminal ne montre l'état vide que sans shell, hors chargement et sans projet ; avec projet, il nomme le projet")
-func terminalPlaceholderFollowsTheProject() throws {
-    let repo = try FilesFixture()
-    let suite = emptyProjectSuite()
-    let terminal = makeTerminal(defaults: suite)
-    #expect(TerminalPlaceholder.of(terminal) == .noProject)
-
-    ProjectChooserModel(defaults: suite).select(projectRoot: URL(fileURLWithPath: repo.root, isDirectory: true))
-    terminal.followProjectRoot()
-    let name = (repo.root as NSString).lastPathComponent
-    #expect(TerminalPlaceholder.of(terminal) == .waiting(projectName: name))
-    #expect(terminal.statusText == "Choisissez un répertoire…")
-    #expect(TerminalViewText.projectNamed(name) == "Projet « \(name) »")
 }
 
 @MainActor
@@ -275,54 +192,26 @@ func noKnownProjectIsAPlainButton() {
 }
 
 @MainActor
-@Test("mac-etats-vides-sans-issue/AC-3 : un projet choisi depuis l'état vide remplit l'écran courant — Mémoire et Fichiers se rechargent, le Terminal ouvre sa feuille sur ce projet")
+@Test("mac-etats-vides-sans-issue/AC-3 : un projet choisi depuis l'état vide remplit l'écran courant — la Mémoire se recharge")
 func chosenProjectFillsTheCurrentScreen() async throws {
-    let repo = try FilesFixture()
+    let repo = try GitFixture()
     let suite = emptyProjectSuite()
-    let chosen = standardized(repo.root)
-
-    // Les trois écrans sont dans leur état vide, modèles construits AVANT le choix
-    // (comme dans l'app, où ils vivent à l'échelle de l'app).
+    // Le modèle est construit AVANT le choix, comme dans l'app où il vit à l'échelle de l'app.
     let memory = makeMemory(defaults: suite)
     await memory.refresh()
     #expect(isNoProject(memory.state))
-    let files = makeFiles(defaults: suite)
-    await files.refresh()
-    #expect(files.projectRoot == nil)
-    let terminal = makeTerminal(defaults: suite)
-    #expect(TerminalPlaceholder.of(terminal) == .noProject)
 
     ProjectChooserModel(defaults: suite).select(projectRoot: URL(fileURLWithPath: repo.root, isDirectory: true))
 
-    // Mémoire : `onChosen` = `refresh()` ; l'écran quitte « Aucun projet ouvert ».
+    // `onChosen` = `refresh()` ; l'écran quitte « Aucun projet ouvert ».
     await memory.refresh()
     #expect(!isNoProject(memory.state))
-
-    // Fichiers : `onChosen` = `refresh()` ; la cible et l'arbre du projet.
-    await files.refresh()
-    #expect(files.projectRoot?.path == chosen)
-    #expect(files.errorMessage == nil)
-    #expect(files.tree != nil)
-
-    // Terminal : `onChosen` = `openPicker()` ; la feuille liste le dépôt du projet.
-    terminal.openPicker()
-    #expect(terminal.isPickerPresented)
-    #expect(terminal.projectRoot?.path == chosen)
-    #expect(await awaitMainTrue(timeout: 8) { terminal.targetsState != .loading && !terminal.targets.isEmpty })
-    let primary = try #require(terminal.targets.first { $0.isPrimary })
-    #expect(realpathOr(primary.path) == realpathOr(chosen))
-
-    // « Annuler » : l'attente nomme le projet, plus d'état vide.
-    terminal.dismissPicker()
-    #expect(TerminalPlaceholder.of(terminal) == .waiting(projectName: (chosen as NSString).lastPathComponent))
 }
 
-@Test("mac-etats-vides-sans-issue/AC-6 : aucun texte des trois états vides ne cite de raccourci clavier, quelle que soit la disposition")
+@Test("mac-etats-vides-sans-issue/AC-6 : aucun texte de l'état vide ne cite de raccourci clavier, quelle que soit la disposition")
 func emptyStatesNameNoShortcut() {
     let texts = [
         MemoryText.noProjectTitle, MemoryText.noProjectDescription,
-        FilesText.noProjectTitle, FilesText.noProjectDescription,
-        TerminalViewText.noProjectTitle, TerminalViewText.noProjectDescription,
         ProjectChooserText.choose,
     ]
     for text in texts {

@@ -79,15 +79,15 @@ public final class HarnessDrafts: ObservableObject {
     @Published public var serverSheetShown = false
     /// La feuille « Appairer un iPhone » (QR code), ouverte depuis la feuille Serveur, est ouverte.
     @Published public var pairSheetShown = false
-    /// Le genre d'élément de « À traiter » où défiler (palette, notification) ; remis à
-    /// `nil` une fois le défilement fait.
-    @Published public var homeAnchor: HarnessHomeAnchor?
-    /// La feature montrée en page dans la section Features (`nil` : aucune).
+    /// La feature dont le fil s'ouvre (lien, notification, palette) ; la coque l'ouvre,
+    /// puis l'oublie.
     @Published public var openedRun: String?
-    /// La portée de la section Features : features, projets, audits ou issues.
-    @Published public var runsScope: RunsScope = .features
-    /// La page du hub Système montrée (`nil` : le hub lui-même).
+    /// La page du hub Système demandée (lien `system/<page>`, palette) ; la coque la
+    /// montre, puis l'oublie.
     @Published public var systemPage: SystemPage?
+    /// La destination demandée par un écran partagé, un lien ou une notification ; la
+    /// coque la montre, puis l'oublie.
+    @Published public var requestedSection: ConsoleSection?
     /// Les feuilles de création « Nouveau projet », « Nouvel audit » et « Nouvelle
     /// planification » (jamais un formulaire en tête d'écran).
     @Published public var projectSheetShown = false
@@ -119,8 +119,6 @@ public final class HarnessDrafts: ObservableObject {
     @Published public var features: [HarnessFeatureDraft] = [HarnessFeatureDraft()]
     /// Un audit à lancer : son périmètre (vide : le dépôt entier).
     @Published public var auditFocus = ""
-    /// Les propositions cochées, par audit.
-    @Published public var picks: [String: Set<Int>] = [:]
     /// Les specs relues (run → contenu de `specs.md`) et le refus en cours.
     @Published public var specs: [String: String] = [:]
     /// Le fournisseur en cours de saisie (sa feuille est ouverte), et celui dont le
@@ -139,16 +137,10 @@ public final class HarnessDrafts: ObservableObject {
     /// Les adresses et pseudos de l'utilisateur en cours de saisie (une par ligne) ;
     /// `nil` tant qu'il n'a rien touché : le champ montre alors celles du serveur.
     @Published public var workstationIdentities: String?
-    /// La proposition d'un signalement dont la feuille de confirmation est ouverte.
-    @Published public var signalShown: CorporateSignal?
     /// La feuille « Demande » est ouverte, sa saisie et le dépôt imposé (vide : déduit).
     @Published public var intakeSheetShown = false
     @Published public var intakeText = ""
     @Published public var intakeRepo = ""
-    /// Les réponses aux questions de clarification en cours de saisie, par demande.
-    @Published public var intakeAnswers: [String: String] = [:]
-    /// La demande dont le plan est en cours de modification (feuille ouverte).
-    @Published public var intakeEdit: HarnessIntake?
 
     /// Ouvre la feuille « Demande », saisie vide.
     public func openIntake() {
@@ -210,9 +202,6 @@ public final class HarnessDrafts: ObservableObject {
     @Published public var clientRepos: Set<String> = []
     /// Le client dont la révocation attend confirmation.
     @Published public var clientRevocation: HarnessManagedClient?
-    /// Le dépôt en cours de déclaration : son adresse et son nom court facultatif.
-    @Published public var repoURL = ""
-    @Published public var repoName = ""
     /// Le dépôt dont les issues sont montrées ; vide : le premier déclaré.
     @Published public var issuesRepo = ""
 
@@ -353,15 +342,6 @@ public final class HarnessDrafts: ObservableObject {
         features.removeAll { $0.id == id }
         if features.isEmpty { features = [HarnessFeatureDraft()] }
     }
-
-    /// Coche ou décoche une proposition d'audit.
-    public func togglePick(_ audit: HarnessAudit, _ index: Int) {
-        var set = picks[audit.id] ?? []
-        if set.contains(index) { set.remove(index) } else { set.insert(index) }
-        picks[audit.id] = set
-    }
-
-    public func isPicked(_ audit: HarnessAudit, _ index: Int) -> Bool { picks[audit.id]?.contains(index) ?? false }
 
     /// La réponse courante d'une escalade : la saisie, sinon l'option recommandée par l'agent.
     public func answer(for item: HarnessEscalation) -> String {

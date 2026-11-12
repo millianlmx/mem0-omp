@@ -18,8 +18,8 @@ import { declaredTexts, stripComments, swiftFiles } from "../support/swift-sourc
 /** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()`. */
 const shared = sharedRepo("design-ios-copie-");
 
-/** Les cinq sections de l'app iOS (`IOSSection.all`), dans l'ordre de `ConsoleSection.allCases`. */
-const SECTIONS = ["inbox", "runs", "workstation", "memory", "system"];
+/** Les cinq onglets de l'app iOS (`IOSOSTab.allCases`), dans l'ordre de la barre. */
+const TABS = ["now", "threads", "decisions", "proposals", "knowledge"];
 
 /** Les deux apparences de la matrice de captures. */
 const APPEARANCES = ["light", "dark"];
@@ -171,59 +171,21 @@ function typographyFaults(root: string): string[] {
   return faults;
 }
 
-/** Les mots partagés attendus, section par section (tableau de S-2) : l'écran qui
- * rend la section, son fichier, et le mot qu'il lit dans le noyau — l'état vide, ou,
- * pour le hub Système qui n'est jamais vide, son pied. */
-/** `words` : où vit le mot quand l'écran le tient d'une vue PARTAGÉE (ConsoleUI). */
-type SectionWord = {
-  screen: string;
-  file: string;
-  message: string;
-  constant: string;
-  core: string;
-  words?: { screen: string; file: string };
+/** L'écran PARTAGÉ avec le Mac (`ConsoleUI/OS`) que la racine de chaque onglet rend. */
+const TAB_SCREENS: Record<string, string> = {
+  now: "OSHomeView",
+  threads: "OSThreadList",
+  decisions: "OSTriageView",
+  proposals: "OSProposalsView",
+  knowledge: "OSKnowledgeView",
 };
 
-const SECTION_WORDS: Record<string, SectionWord> = {
-  inbox: {
-    screen: "IOSInboxScreen",
-    file: "IOSHarnessScreens.swift",
-    words: { screen: "InboxFeed", file: "InboxFeed.swift" },
-    message: "Rien ne vous attend",
-    constant: "ShellText.allClearTitle",
-    core: "Design/ShellText.swift",
-  },
-  runs: {
-    screen: "IOSFeaturesScreen",
-    file: "IOSHarnessScreens.swift",
-    words: { screen: "RunsListSections", file: "RunsHistoryViews.swift" },
-    message: "Aucune feature pour l’instant.",
-    constant: "ShellText.noRun",
-    core: "Design/ShellText.swift",
-  },
-  workstation: {
-    screen: "IOSWorkstationScreen",
-    file: "IOSWorkstationScreen.swift",
-    words: { screen: "WorkstationSections", file: "WorkstationSections.swift" },
-    message: "Aucune activité observée pour l’instant.",
-    constant: "WorkstationText.noActivity",
-    core: "Design/WorkstationText.swift",
-  },
-  memory: {
-    screen: "IOSMemoryScreen",
-    file: "IOSMemoryScreen.swift",
-    message: "Aucun projet ouvert",
-    constant: "MemoryText.noProjectTitle",
-    core: "Memory/MemoryText.swift",
-  },
-  system: {
-    screen: "IOSSystemScreen",
-    file: "IOSHarnessScreens.swift",
-    words: { screen: "SystemHubSections", file: "SystemViews.swift" },
-    message: "Ce qui se règle ou se consulte rarement.",
-    constant: "ShellText.systemHint",
-    core: "Design/ShellText.swift",
-  },
+/** Le mot d'état vide de la Mémoire, l'écran propre à l'app qui a le sien (tableau de S-2). */
+const MEMORY_WORD = {
+  file: "IOSMemoryScreen.swift",
+  message: "Aucun projet ouvert",
+  constant: "MemoryText.noProjectTitle",
+  core: "Memory/MemoryText.swift",
 };
 
 /** Le corps d'une déclaration `struct <name>` : jusqu'à la déclaration de premier niveau suivante. */
@@ -235,49 +197,52 @@ function structBody(source: string, name: string): string {
   return next === -1 ? source.slice(start) : source.slice(start, start + 1 + next);
 }
 
-/** Les manques des cinq écrans : aiguillage, mots partagés, cadre, composants employés. */
+/** Le corps du cas `case .<name>:` d'un aiguillage, jusqu'au cas suivant ou à la fin du `switch`. */
+function caseBody(source: string, name: string): string {
+  const start = source.search(new RegExp(`case \\.${name}:`));
+  if (start === -1) return "";
+  const rest = source.slice(start + 1);
+  const next = rest.search(/\bcase \.|\n {4}\}/);
+  return next === -1 ? source.slice(start) : source.slice(start, start + 1 + next);
+}
+
+/** Le source d'un écran partagé de `ConsoleUI/OS`, commentaires retirés, ou la chaîne vide. */
+function sharedScreen(root: string, name: string): string {
+  const file = path.join(root, "omp-console", "Sources", "ConsoleUI", "OS", `${name}.swift`);
+  return fs.existsSync(file) ? code(file) : "";
+}
+
+/** Les manques des écrans : aiguillage des onglets, cadres, mots partagés, composants employés. */
 function screenFaults(root: string): string[] {
   const faults: string[] = [];
-  const view = appFile(root, "IOSSectionView.swift");
-  if (view === "") faults.push("IOSSectionView.swift absent");
+  const shell = appFile(root, "IOSOSRootView.swift");
+  const rootsAt = shell.indexOf("func root(");
+  if (rootsAt === -1) faults.push("IOSOSRootView ne déclare pas root(_:), la racine de chaque onglet");
+  const roots = rootsAt === -1 ? "" : shell.slice(rootsAt);
 
-  for (const section of SECTIONS) {
-    const word = SECTION_WORDS[section];
-    // L'aiguillage nomme l'écran, ou une propriété de la vue qui le construit (la
-    // Mémoire, que Système pousse aussi sur iPhone, est bâtie une seule fois).
-    const routed = new RegExp(`case [^:]*\\.${section}\\b[^:]*:\\s*(\\w+)`).exec(view)?.[1];
-    const built =
-      routed === word.screen ||
-      (routed !== undefined && new RegExp(`var ${routed}: some View \\{\\s*${word.screen}\\(`).test(view));
-    if (!built) {
-      faults.push(`IOSSectionView n'aiguille pas .${section} vers ${word.screen}`);
+  // Chaque onglet rend l'écran partagé avec le Mac, dans le cadre de l'app (IOSOSScreen).
+  for (const tab of TABS) {
+    const screen = TAB_SCREENS[tab];
+    const body = caseBody(roots, tab);
+    if (body === "") faults.push(`IOSOSRootView n'aiguille pas .${tab}`);
+    else {
+      if (!body.includes("IOSOSScreen(")) faults.push(`.${tab} ne passe pas par le cadre IOSOSScreen`);
+      if (!body.includes(`${screen}(`)) faults.push(`.${tab} ne rend pas ${screen}`);
     }
-    const wordsFile = word.words?.file ?? word.file;
-    if (!appFile(root, wordsFile).includes(word.constant)) faults.push(`${wordsFile} ne cite pas ${word.constant}`);
-    const core = coreCode(root, word.core);
-    const member = word.constant.split(".")[1];
-    if (declaredTexts(core).get(member) !== word.message) {
-      faults.push(`${word.core} ne déclare pas ${member} = « ${word.message} »`);
-    }
+    if (structBody(sharedScreen(root, screen), screen) === "") faults.push(`${screen} absent de ConsoleUI/OS`);
   }
 
-  // Les quatre écrans servis par le serveur passent par le MÊME cadre, qui porte le bandeau
-  // d'échec du serveur (S-3) ; la Mémoire porte le bandeau de l'état de recette.
-  const harness = appFile(root, "IOSHarnessScreens.swift");
-  for (const section of SECTIONS.filter((s) => s !== "memory")) {
-    const { screen, file, words } = SECTION_WORDS[section];
-    const body = structBody(appFile(root, file), screen);
-    if (body === "") faults.push(`${screen} absent`);
-    else if (!body.includes("IOSHarnessScreen(")) faults.push(`${screen} ne passe pas par le cadre IOSHarnessScreen`);
-    // L'état vide vit dans une vue partagée : l'écran iOS doit bien la rendre.
-    if (words !== undefined) {
-      if (structBody(appFile(root, words.file), words.screen) === "") faults.push(`${words.screen} absent`);
-      else if (!body.includes(`${words.screen}(`)) faults.push(`${screen} ne rend pas ${words.screen}`);
+  // Les racines d'onglet et les pages du Système portent le bandeau d'échec du serveur (S-3) ;
+  // la Mémoire porte le bandeau de l'état de recette.
+  for (const [file, frame] of [
+    ["IOSOSScreens.swift", "IOSOSScreen"],
+    ["IOSSystemScreens.swift", "IOSSystemPage"],
+  ]) {
+    const body = structBody(appFile(root, file), frame);
+    if (body === "") faults.push(`${frame} absent`);
+    else if (!body.includes("server.failure") || !body.includes(".iosBanner(tone:")) {
+      faults.push(`le cadre ${frame} ne porte pas le bandeau d'échec`);
     }
-  }
-  const frame = structBody(harness, "IOSHarnessScreen");
-  if (!frame.includes("server.failure") || !frame.includes(".iosBanner(tone:")) {
-    faults.push("le cadre IOSHarnessScreen ne porte pas le bandeau d'échec");
   }
   const memory = appFile(root, "IOSMemoryScreen.swift");
   if (!memory.includes("recipe.banner") || !memory.includes("recipe.bannerMessage")) {
@@ -285,6 +250,26 @@ function screenFaults(root: string): string[] {
   }
   const state = appFile(root, "IOSScreenState.swift");
   if (!state.includes("tone: .danger")) faults.push("l'état d'erreur n'a pas le ton danger");
+
+  // Les états vides lisent leur mot dans le noyau : celui de la Mémoire, mot pour mot, et
+  // aucun `ContentUnavailableView` de l'app ou des écrans partagés n'a de titre en dur.
+  if (!appFile(root, MEMORY_WORD.file).includes(MEMORY_WORD.constant)) {
+    faults.push(`${MEMORY_WORD.file} ne cite pas ${MEMORY_WORD.constant}`);
+  }
+  const member = MEMORY_WORD.constant.split(".")[1];
+  if (declaredTexts(coreCode(root, MEMORY_WORD.core)).get(member) !== MEMORY_WORD.message) {
+    faults.push(`${MEMORY_WORD.core} ne déclare pas ${member} = « ${MEMORY_WORD.message} »`);
+  }
+  const emptyStates = [
+    ...appSources(root),
+    ...swiftFilesIn(path.join(root, "omp-console", "Sources", "ConsoleUI", "OS")).map((file) => ({
+      file,
+      code: code(file),
+    })),
+  ];
+  for (const { file, code: text } of emptyStates) {
+    if (/ContentUnavailableView\(\s*"/.test(text)) faults.push(`${rel(root, file)} : état vide au titre en dur`);
+  }
 
   // Aucun composant orphelin : chaque élément du kit est employé par un écran (hors
   // `Design/`), les surfaces emploient les métriques, la pastille emploie les tons.
@@ -306,11 +291,11 @@ function screenFaults(root: string): string[] {
 function expectedShotNames(): string[] {
   const names: string[] = [];
   for (const appearance of APPEARANCES) {
-    for (const section of SECTIONS) {
-      names.push(`iphone-${section}-${appearance}.png`);
-      names.push(`ipad-${section}-${appearance}.png`);
-      names.push(`iphone-${section}-${appearance}-ax.png`);
-      names.push(`ipad-${section}-${appearance}-ax.png`);
+    for (const view of TABS) {
+      names.push(`iphone-${view}-${appearance}.png`);
+      names.push(`ipad-${view}-${appearance}.png`);
+      names.push(`iphone-${view}-${appearance}-ax.png`);
+      names.push(`ipad-${view}-${appearance}-ax.png`);
     }
   }
   // ios-memoire-graphe : 3 états × {iPhone, iPad} × {clair, sombre}.
@@ -351,18 +336,18 @@ function shotsFaults(root: string): string[] {
   if (/ipad-landscape/.test(text.replace(/\/\/.*$/gm, ""))) {
     faults.push("ios-shots.sh porte encore une ligne paysage (retirée par arbitrage du 2026-10-06)");
   }
-  const listed = text.split("\n").find((line) => line.startsWith("sections=(")) ?? "";
-  for (const section of SECTIONS) {
-    if (!new RegExp(`\\b${section}\\b`).test(listed)) {
-      faults.push(`ios-shots.sh ne liste pas la section ${section}`);
+  const listed = text.split("\n").find((line) => line.startsWith("views=(")) ?? "";
+  for (const view of TABS) {
+    if (!new RegExp(`\\b${view}\\b`).test(listed)) {
+      faults.push(`ios-shots.sh ne liste pas l'onglet ${view}`);
     }
   }
   if (!/if \[ "\$width" -ge "\$height" \]/.test(text)) {
     faults.push("ios-shots.sh ne sonde pas la forme des captures");
   }
-  for (const section of SECTIONS) {
-    if (text.includes(`"${section}"`) || text.includes(`'${section}'`)) {
-      faults.push(`ios-shots.sh : littéral de section « ${section} »`);
+  for (const view of TABS) {
+    if (text.includes(`"${view}"`) || text.includes(`'${view}'`)) {
+      faults.push(`ios-shots.sh : littéral d'onglet « ${view} »`);
     }
   }
   const gitignore = fs.readFileSync(path.join(root, ".gitignore"), "utf8");
@@ -471,18 +456,15 @@ function recipeFaults(root: string): string[] {
   return faults;
 }
 
-/** Les manques de la coque macOS : mots partagés et noyau sans cadre (S-9, AC-10). */
+/** Les manques de la coque macOS : mêmes écrans partagés, noyau sans cadre (S-9, AC-10). */
 function macOSFaults(root: string): string[] {
   const faults: string[] = [];
-  const shell = [
-    ...swiftFilesIn(path.join(root, "omp-console", "Sources", "OMPConsole")),
-    ...swiftFilesIn(path.join(root, "omp-console", "Sources", "ConsoleUI")),
-  ]
+  const shell = swiftFilesIn(path.join(root, "omp-console", "Sources", "OMPConsole"))
     .map((file) => code(file))
     .join("\n");
-  // La coque macOS lit les MÊMES mots d'état vide que l'iPhone, jamais une copie.
-  for (const word of Object.values(SECTION_WORDS)) {
-    if (!shell.includes(word.constant)) faults.push(`la coque macOS ne lit pas ${word.constant}`);
+  // La coque macOS rend les MÊMES écrans que les onglets de l'iPhone, jamais une copie.
+  for (const screen of Object.values(TAB_SCREENS)) {
+    if (!shell.includes(`${screen}(`)) faults.push(`la coque macOS ne rend pas ${screen}`);
   }
   for (const file of swiftFilesIn(path.join(root, "omp-console", "Sources", "ConsoleCore"))) {
     const text = code(file);
@@ -495,7 +477,7 @@ function macOSFaults(root: string): string[] {
 // ---------------------------------------------------------------------------
 // Les tests, un par critère.
 
-test("design-ios/AC-1 : les cinq écrans portent le kit (surfaces, pastille, métriques)", () => {
+test("design-ios/AC-1 : les écrans portent le kit (surfaces, pastille, métriques)", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
@@ -507,7 +489,7 @@ test("design-ios/AC-1 : les cinq écrans portent le kit (surfaces, pastille, mé
   );
 });
 
-test("design-ios/AC-2 : aucun composant orphelin — les cinq sections rendent le bandeau d'erreur", () => {
+test("design-ios/AC-2 : aucun composant orphelin — chaque écran rend le bandeau d'erreur", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
@@ -523,14 +505,21 @@ test("design-ios/AC-3 : chaque état vide porte le mot partagé, mot pour mot", 
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "Sources", "ConsoleCore", "Design", "ShellText.swift");
+  const target = path.join(copy, "omp-console", "Sources", "ConsoleCore", "Memory", "MemoryText.swift");
+  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace('"Aucun projet ouvert"', '"Pas de projet"'));
+  assert.ok(
+    screenFaults(copy).some((f) => f.includes("noProjectTitle")),
+    "un mot réécrit doit faire rougir la garde",
+  );
+
+  const literal = shared.fresh();
   fs.writeFileSync(
-    target,
-    fs.readFileSync(target, "utf8").replace('"Aucune feature pour l’instant."', '"Aucune pipeline."'),
+    path.join(literal, "omp-console", "ios", "OMPConsoleIOS", "Vide.swift"),
+    'let vide = ContentUnavailableView("Rien", systemImage: "tray")\n',
   );
   assert.ok(
-    screenFaults(copy).some((f) => f.includes("noRun")),
-    "un mot réécrit doit faire rougir la garde",
+    screenFaults(literal).some((f) => f.includes("Vide.swift")),
+    "un état vide au titre en dur doit faire rougir la garde",
   );
 });
 
@@ -629,10 +618,13 @@ test("design-ios/AC-10 : les mots partagés gardent leur valeur et ConsoleCore r
   assert.deepEqual(macOSFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "Sources", "ConsoleUI", "RunsHistoryViews.swift");
-  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replaceAll("ShellText.noRun", '"Aucune feature."'));
+  const macShell = swiftFilesIn(path.join(copy, "omp-console", "Sources", "OMPConsole")).find((file) =>
+    fs.readFileSync(file, "utf8").includes("OSTriageView("),
+  );
+  assert.ok(macShell, "la coque macOS doit rendre OSTriageView");
+  fs.writeFileSync(macShell, fs.readFileSync(macShell, "utf8").replaceAll("OSTriageView(", "MacTriageView("));
   assert.ok(
-    macOSFaults(copy).some((f) => f.includes("noRun")),
-    "un mot réécrit dans la coque doit faire rougir la garde",
+    macOSFaults(copy).some((f) => f.includes("OSTriageView")),
+    "un écran recopié dans la coque doit faire rougir la garde",
   );
 });

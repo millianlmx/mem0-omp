@@ -1,30 +1,39 @@
 [
   {
-    "surface": "inbox",
+    "surface": "now",
     "apparence": "*",
     "taille": "*",
     "regle": "bord",
     "source": "ax",
-    "element": "id:À traiter",
-    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.inbox.title) : pleine largeur par construction, et son identifiant est le titre."
+    "element": "id:Maintenant",
+    "justification": "Barre de navigation système de la NavigationStack (titre IOSOSTab.now.title) : pleine largeur par construction, et son identifiant est le titre."
   },
   {
-    "surface": "runs",
+    "surface": "threads",
     "apparence": "*",
     "taille": "*",
     "regle": "bord",
     "source": "ax",
-    "element": "id:Features",
-    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.runs.title) : pleine largeur par construction, et son identifiant est le titre."
+    "element": "id:Fils",
+    "justification": "Barre de navigation système de la NavigationStack (titre IOSOSTab.threads.title) : pleine largeur par construction, et son identifiant est le titre."
   },
   {
-    "surface": "workstation",
+    "surface": "decisions",
     "apparence": "*",
     "taille": "*",
     "regle": "bord",
     "source": "ax",
-    "element": "id:Poste",
-    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.workstation.title) : pleine largeur par construction, et son identifiant est le titre."
+    "element": "id:Décisions",
+    "justification": "Barre de navigation système de la NavigationStack (titre IOSOSTab.decisions.title) : pleine largeur par construction, et son identifiant est le titre."
+  },
+  {
+    "surface": "knowledge",
+    "apparence": "*",
+    "taille": "*",
+    "regle": "bord",
+    "source": "ax",
+    "element": "id:Savoir",
+    "justification": "Barre de navigation système de la NavigationStack (titre IOSOSTab.knowledge.title) : pleine largeur par construction, et son identifiant est le titre."
   },
   {
     "surface": "memory",
@@ -34,14 +43,5 @@
     "source": "ax",
     "element": "id:Mémoire",
     "justification": "IOSMemoryScreen.swift, panel : .navigationTitle(ConsoleSection.memory.title) ; la barre de navigation système de la NavigationStack est pleine largeur par construction, et son identifiant est le titre."
-  },
-  {
-    "surface": "system",
-    "apparence": "*",
-    "taille": "*",
-    "regle": "bord",
-    "source": "ax",
-    "element": "id:Système",
-    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.system.title) : pleine largeur par construction, et son identifiant est le titre."
   }
 ]

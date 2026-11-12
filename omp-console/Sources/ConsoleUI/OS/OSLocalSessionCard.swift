@@ -46,47 +46,50 @@ public struct OSLocalSessionCard: View {
 
     public var body: some View {
         let busy = sessions.busy.contains(session.id)
-        TimelineView(.periodic(from: .now, by: 5)) { timeline in
-            OSCard(tint: phase.color, emphasized: session.isLive) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        OSPhaseMark(phase: phase, size: 14)
-                        Text(OSDecideText.localSession).font(.headline)
-                        OSTag(text: state, tint: phase.color)
-                        Spacer()
-                    }
-                    intent(now: timeline.date)
-                    Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
-                        fact(OSDecideText.machine, session.host)
-                        fact(OSDecideText.folder, session.cwd)
-                        fact(OSDecideText.branch, session.branch)
-                        fact(OSDecideText.model, session.model)
-                    }
-                    if failed, let failure = sessions.failure {
-                        ConsoleFailureBanner(failure: failure)
-                    }
-                    OSFlow(spacing: 8) {
-                        if session.canHandOff, server.canAct {
-                            Button(OSDecideText.handoff, systemImage: "arrow.up.forward.app", action: handOff)
-                                .buttonStyle(.borderedProminent)
-                        }
-                        if let command = OSLocalSessionCommand.resume(branch: session.branch) {
-                            Button(copied ? OSWatchText.copied : OSDecideText.copyResume, systemImage: copied ? "checkmark" : "doc.on.doc") {
-                                OSLocalSessionClipboard.copy(command)
-                                copied = true
-                            }
-                        }
-                        if server.canAct {
-                            Button(OSText.dismiss, role: .destructive, action: forget)
-                        }
-                    }
-                    // Sur l'iPhone et l'iPad, chaque geste porte le cadre du système, à la taille du doigt.
-                    #if os(iOS)
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    #endif
-                    .disabled(busy)
+        OSCard(tint: phase.color, emphasized: session.isLive) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    OSPhaseMark(phase: phase, size: 14)
+                    Text(OSDecideText.localSession).font(.headline)
+                    OSTag(text: state, tint: phase.color)
+                    Spacer()
                 }
+                if pulse.activity[.localSession(session.id)] != nil || session.isLive {
+                    // Seule la ligne du pouls suit l'horloge, pas la carte entière.
+                    TimelineView(.periodic(from: .now, by: 5)) { timeline in
+                        intent(now: timeline.date)
+                    }
+                }
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
+                    fact(OSDecideText.machine, session.host)
+                    fact(OSDecideText.folder, session.cwd)
+                    fact(OSDecideText.branch, session.branch)
+                    fact(OSDecideText.model, session.model)
+                }
+                if failed, let failure = sessions.failure {
+                    ConsoleFailureBanner(failure: failure)
+                }
+                OSFlow(spacing: 8) {
+                    if session.canHandOff, server.canAct {
+                        Button(OSDecideText.handoff, systemImage: "arrow.up.forward.app", action: handOff)
+                            .buttonStyle(.borderedProminent)
+                    }
+                    if let command = OSLocalSessionCommand.resume(branch: session.branch) {
+                        Button(copied ? OSWatchText.copied : OSDecideText.copyResume, systemImage: copied ? "checkmark" : "doc.on.doc") {
+                            OSLocalSessionClipboard.copy(command)
+                            copied = true
+                        }
+                    }
+                    if server.canAct {
+                        Button(OSText.dismiss, role: .destructive, action: forget)
+                    }
+                }
+                // Sur l'iPhone et l'iPad, chaque geste porte le cadre du système, à la taille du doigt.
+                #if os(iOS)
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                #endif
+                .disabled(busy)
             }
         }
     }

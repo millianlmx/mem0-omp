@@ -1,15 +1,8 @@
-// La carte « Services » et le rapport du matin, écrits une fois pour le Mac et
-// l'iPhone/iPad :
-//
-// - `ServicesSection` (Statistiques) : chaque service du serveur — sonde de santé
-//   (`GET /v1/health` : base, ordonnancement, disque), mémoire du projet et écritures
-//   perdues, service mem0 et sauvegardes (`GET /v1/status`), extension Chrome du poste
-//   — avec son niveau et ses chiffres ;
-// - `ServicesSummarySection` (Accueil) : une ligne, et les seuls services qui
-//   demandent un regard ;
-// - `DigestSection` (en tête de l'Accueil) : le rapport du matin (`GET /v1/digest`).
-//
-// Les deux cartes relisent les services à leur apparition puis chaque minute.
+// La carte « Services » des statistiques, écrite une fois pour le Mac et l'iPhone/iPad :
+// chaque service du serveur — sonde de santé (`GET /v1/health` : base, ordonnancement,
+// disque), mémoire du projet et écritures perdues, service mem0 et sauvegardes
+// (`GET /v1/status`), extension Chrome du poste — avec son niveau et ses chiffres. La
+// carte relit les services à son apparition puis chaque minute.
 
 import ConsoleClient
 import ConsoleCore
@@ -29,7 +22,7 @@ private struct ServicesPolling: ViewModifier {
     }
 }
 
-/// La carte complète (Statistiques).
+/// La carte des services (Statistiques et santé).
 public struct ServicesSection: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var workstation: WorkstationModel
@@ -46,43 +39,9 @@ public struct ServicesSection: View {
             }
         } header: {
             Label(MonitoringText.servicesTitle, systemImage: MonitoringText.servicesSymbol)
-        } footer: {
-            Text(MonitoringText.servicesHint)
         }
         .modifier(ServicesPolling(server: server))
         .consoleID("stats.services")
-    }
-}
-
-/// Le résumé de l'Accueil : tout va, ou les services qui demandent un regard.
-public struct ServicesSummarySection: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var workstation: WorkstationModel
-
-    public init(server: HarnessModel) {
-        self.server = server
-        self.workstation = server.workstation
-    }
-
-    public var body: some View {
-        let lines = server.serviceLines
-        let problems = lines.filter { $0.level >= .warning }
-        Section {
-            if problems.isEmpty {
-                Label(MonitoringText.servicesAllGood, systemImage: MonitoringText.serviceSymbol(HarnessServiceLine.Level.ok.rawValue))
-                    .foregroundStyle(.green)
-            } else {
-                Label(MonitoringText.servicesProblems(problems.count), systemImage: MonitoringText.serviceSymbol(HarnessServices.worst(problems).rawValue))
-                    .foregroundStyle(HarnessServices.worst(problems) == .down ? Color.red : Color.orange)
-                ForEach(problems) { line in
-                    ServiceLineView(line: line)
-                }
-            }
-        } header: {
-            Text(MonitoringText.servicesTitle)
-        }
-        .modifier(ServicesPolling(server: server))
-        .consoleID("home.services")
     }
 }
 
@@ -151,34 +110,5 @@ struct ServiceLineView: View {
         }
         if let error = line.error, !error.isEmpty { out.append(MonitoringText.lastError(error)) }
         return out
-    }
-}
-
-/// Le rapport du matin, en tête de l'Accueil : ce qui s'est fait seul depuis 24 h.
-public struct DigestSection: View {
-    @ObservedObject var server: HarnessModel
-
-    public init(server: HarnessModel) {
-        self.server = server
-    }
-
-    public var body: some View {
-        if let digest = server.digest {
-            Section {
-                DisclosureGroup {
-                    ConsoleMarkdown(markdown: digest.text)
-                        .padding(.vertical, 4)
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Label(MonitoringText.digestTitle, systemImage: MonitoringText.digestSymbol)
-                            .font(.headline)
-                        Text(MonitoringText.digestWindow(ConsoleFormat.dateTime(ms: digest.since)))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .consoleID("home.digest")
-            }
-        }
     }
 }

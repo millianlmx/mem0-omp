@@ -16,6 +16,7 @@
 // Aucun texte ici : les écrans traduisent `kind`, `status` et les codes des signaux
 // avec `PipelineServerText`.
 
+import Combine
 import Foundation
 
 /// Les sortes d'entrées du direct.
@@ -457,18 +458,54 @@ public struct HarnessSessionFeed: Equatable, Sendable {
     }
 
     /// Une entrée reçue : elle remplace celle de même `seq`, sinon prend sa place dans l'ordre.
+    /// Le cas courant ne coûte rien : le paragraphe en cours renvoyé (même `seq` que la
+    /// dernière), ou une entrée nouvelle à la fin ; une entrée en retard est placée par dichotomie.
     public mutating func apply(_ entry: HarnessSessionEntry) {
-        if let index = entries.lastIndex(where: { $0.seq == entry.seq }) {
+        guard let last = entries.last else {
+            entries.append(entry)
+            return
+        }
+        if last.seq == entry.seq {
+            entries[entries.count - 1] = entry
+            return
+        }
+        if last.seq < entry.seq {
+            entries.append(entry)
+            if entries.count > Self.keep { entries.removeFirst(entries.count - Self.keep) }
+            return
+        }
+        var low = 0
+        var high = entries.count
+        while low < high {
+            let middle = (low + high) / 2
+            if entries[middle].seq < entry.seq { low = middle + 1 } else { high = middle }
+        }
+        let index = low
+        if index < entries.count, entries[index].seq == entry.seq {
             entries[index] = entry
             return
         }
-        if let last = entries.last, last.seq > entry.seq {
-            let index = entries.firstIndex { $0.seq > entry.seq } ?? entries.endIndex
-            entries.insert(entry, at: index)
-        } else {
-            entries.append(entry)
-        }
+        entries.insert(entry, at: index)
         if entries.count > Self.keep { entries.removeFirst(entries.count - Self.keep) }
+    }
+
+    /// Les entrées en tronçons consécutifs de même étape, dans l'ordre : un en-tête d'étape par tronçon.
+    public var stepSegments: [HarnessSessionSegment] {
+        var segments: [HarnessSessionSegment] = []
+        var start = 0
+        for index in entries.indices where index > 0 && entries[index].step != entries[index - 1].step {
+            segments.append(HarnessSessionSegment(id: entries[start].seq, step: entries[start].step, range: start..<index))
+            start = index
+        }
+        if start < entries.count {
+            segments.append(HarnessSessionSegment(id: entries[start].seq, step: entries[start].step, range: start..<entries.count))
+        }
+        return segments
+    }
+
+    /// Les outils terminés : leur nombre fait relire les fichiers touchés (une écriture en est peut-être une).
+    public var toolsDone: Int {
+        entries.reduce(0) { $0 + ($1.isTool && !$1.isRunning ? 1 : 0) }
     }
 
     /// L'outil en cours, s'il y en a un : ce que l'agent fait à l'instant.
@@ -478,17 +515,84 @@ public struct HarnessSessionFeed: Equatable, Sendable {
     public var runningTest: HarnessTestJob? { tests.last(where: \.isRunning) }
 }
 
-extension HarnessRun {
-    /// La feature a un direct à suivre — ou à rejouer : le serveur garde sa session, même
-    /// fusionnée ou arrêtée. Seule une feature encore en file n'a rien dit.
-    public var canFollowSession: Bool {
-        phase != .queued || step != "req" || fixes > 0
-    }
+/// Un tronçon du direct : des entrées consécutives de même étape (`range`, des index de `entries`).
+public struct HarnessSessionSegment: Identifiable, Equatable, Sendable {
+    /// Le `seq` de sa première entrée.
+    public var id: Int
+    public var step: String?
+    public var range: Range<Int>
 }
 
-extension HarnessAudit {
-    /// L'analyse a un direct : en cours, ou à rejouer une fois rendue.
-    public var canFollowSession: Bool { state != "queued" }
+/// Le DIRECT suivi, publié à part de `HarnessModel` : ses entrées arrivent plusieurs fois
+/// par seconde, et seuls les écrans du direct l'observent — toute l'app ne se redessine
+/// plus à chaque paragraphe. La lecture rend toujours le dernier état ; la publication
+/// d'une entrée est regroupée (au plus une par `interval`), celle d'un changement d'état
+/// (ouverture, tampon relu, coupure, échec) part tout de suite.
+@MainActor
+public final class HarnessDirect: ObservableObject {
+    /// L'écart minimal entre deux publications d'entrées : quatre rendus par seconde au plus.
+    public static let interval: Duration = .milliseconds(250)
+
+    /// Le direct de la session suivie (`HarnessModel.followSession`), ou `nil`.
+    public private(set) var feed: HarnessSessionFeed?
+    /// Le flux du direct est ouvert : les entrées arrivent en temps réel.
+    public private(set) var isLive = false
+    /// Ce qui a arrêté le direct pour de bon (feature inconnue, serveur trop ancien,
+    /// jeton refusé) ; une coupure du réseau, elle, est reprise sans bruit.
+    public private(set) var failure: HarnessFailure?
+
+    private var pending: Task<Void, Never>?
+
+    init() {}
+
+    /// Un nouveau direct (ou aucun) : publié tout de suite.
+    func replace(_ feed: HarnessSessionFeed?) {
+        self.feed = feed
+        publishNow()
+    }
+
+    /// Change le direct en cours ; `urgent` : publié tout de suite s'il a changé (un tampon
+    /// relu à l'identique ne redessine rien), sinon regroupé.
+    func edit(urgent: Bool = false, _ change: (inout HarnessSessionFeed) -> Void) {
+        guard feed != nil else { return }
+        guard urgent else {
+            // Sans copie : l'entrée se pose en place (pas de copie des 2000 entrées gardées).
+            change(&feed!)
+            schedule()
+            return
+        }
+        let before = feed
+        change(&feed!)
+        if feed != before { publishNow() }
+    }
+
+    func setLive(_ live: Bool) {
+        guard isLive != live else { return }
+        isLive = live
+        publishNow()
+    }
+
+    func setFailure(_ failure: HarnessFailure?) {
+        guard self.failure != failure else { return }
+        self.failure = failure
+        publishNow()
+    }
+
+    private func publishNow() {
+        pending?.cancel()
+        pending = nil
+        objectWillChange.send()
+    }
+
+    private func schedule() {
+        guard pending == nil else { return }
+        pending = Task { [weak self] in
+            try? await Task.sleep(for: Self.interval)
+            guard !Task.isCancelled, let self else { return }
+            self.pending = nil
+            self.objectWillChange.send()
+        }
+    }
 }
 
 /// Un événement du flux SSE : son nom et ses données brutes (la ligne `data:`).

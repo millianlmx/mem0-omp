@@ -2,7 +2,7 @@
 // la seule entrée (⌘L) : ce qu'on y tape filtre les fils, et ⏎ le demande à l'OS (la
 // Demande du serveur). Puis l'espace (un client) et, dedans, le lieu ; les entrées fixes
 // — « Maintenant », les décisions à trier (⌘T), les propositions des agents, les
-// automatismes, le savoir — et les fils, de ce qui vous attend à ce qui est fini ; les
+// automatismes, le savoir, la mémoire et le système (Mac) — et les fils, de ce qui vous attend à ce qui est fini ; les
 // fils arrêtés restent repliés. Une session omp locale est un fil comme un autre. Le
 // style de la liste (barre latérale sur le Mac) est posé par la coque.
 
@@ -134,6 +134,10 @@ public struct OSThreadList: View {
                 .tag(OSWorkspace.automations)
             Label(OSWatchText.knowledge, systemImage: "books.vertical")
                 .tag(OSWorkspace.knowledge)
+            Label(OSWatchText.memory, systemImage: ConsoleSection.memory.systemImage)
+                .tag(OSWorkspace.memory)
+            Label(OSSystemText.title, systemImage: ConsoleSection.system.systemImage)
+                .tag(OSWorkspace.system)
             askRow
         }
         #endif
@@ -166,14 +170,14 @@ public struct OSThreadList: View {
     private func rows(_ items: [OSThread]) -> some View {
         ForEach(items) { thread in
             #if os(macOS)
-            OSThreadRow(thread: thread, pulse: pulse, browsers: browsers)
+            OSThreadRow(thread: thread, activity: thread.osActivity(pulse), browsers: browsers)
                 .tag(thread.id)
             #else
             Button {
                 workspace.open(thread.id)
             } label: {
                 HStack(spacing: 8) {
-                    OSThreadRow(thread: thread, pulse: pulse, browsers: browsers)
+                    OSThreadRow(thread: thread, activity: thread.osActivity(pulse), browsers: browsers)
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tertiary)
@@ -198,7 +202,7 @@ public struct OSThreadList: View {
                 workspace.understand(runId: run.id, level: .summary)
             }
             if let drafts {
-                RunMenuItems(server: server, drafts: drafts, run: run, includesOpen: false)
+                RunMenuItems(server: server, drafts: drafts, run: run)
             }
         }
     }
@@ -348,16 +352,18 @@ public struct OSAskComposer: View {
 }
 
 /// Une ligne de fil : son état, son titre, et ce qui s'y passe maintenant. Le fil d'une
-/// session omp locale porte un ordinateur portable, teinté par son état.
-public struct OSThreadRow: View {
+/// session omp locale porte un ordinateur portable, teinté par son état. Une valeur : la
+/// liste lui donne le pouls (`activity`), une ligne dont rien n'a changé ne se redessine pas.
+public struct OSThreadRow: View, Equatable {
     let thread: OSThread
-    @ObservedObject var pulse: OSPulse
+    let activity: String?
     let browsers: [String: String]
 
+    /// `activity` : ce que l'agent du fil fait à l'instant (`OSThread.osActivity`) ;
     /// `browsers` : le nom de chaque navigateur du poste, par identifiant.
-    public init(thread: OSThread, pulse: OSPulse, browsers: [String: String]) {
+    public init(thread: OSThread, activity: String?, browsers: [String: String]) {
         self.thread = thread
-        self.pulse = pulse
+        self.activity = activity
         self.browsers = browsers
     }
 
@@ -402,7 +408,7 @@ public struct OSThreadRow: View {
     /// « MacBook-Pro · feat/inscription · ↳ valide le courriel ».
     private var subtitle: String {
         if thread.isLocalSession, let session = thread.localSession {
-            let now = session.isLive ? thread.osActivity(pulse).map { "↳ " + $0 } : thread.updatedAt.osRelative
+            let now = session.isLive ? activity.map { "↳ " + $0 } : thread.updatedAt.osRelative
             return [session.host, session.branch, now].compactMap { $0 }.joined(separator: " · ")
         }
         let place: String
@@ -412,7 +418,7 @@ public struct OSThreadRow: View {
             place = thread.repo ?? OSText.vps
         }
         if thread.phase == .working {
-            if let activity = thread.osActivity(pulse) { return place + " · ↳ " + activity }
+            if let activity { return place + " · ↳ " + activity }
             if let run = thread.focusRun { return place + " · " + run.osState }
         }
         if thread.phase == .yours {

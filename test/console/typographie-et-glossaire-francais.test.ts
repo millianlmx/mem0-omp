@@ -266,7 +266,7 @@ const GLOSSAIRE = fs.existsSync(path.join(ROOT, GLOSSARY_PATH))
 const BASE = typographyFaults(SOURCES, GLOSSAIRE, EXCEPTIONS);
 
 const HOME_TEXT = "omp-console/Sources/ConsoleCore/Design/PipelineServerText.swift";
-const FILES_TEXT = "omp-console/Sources/OMPConsole/Files/FilesText.swift";
+const MAC_TEXT = "omp-console/Sources/OMPConsole/ProjectChooser/ProjectChooserText.swift";
 const CONNECTION_TEXT = "omp-console/ios/OMPConsoleIOS/IOSConnectionStateText.swift";
 
 /** Une copie des sources où `enum PlanteGarde { static let <name> = <literal> }` termine `file`. */
@@ -319,7 +319,7 @@ test("typographie-et-glossaire-francais/AC-1 : la garde passe sur tous les *Text
 
 test("typographie-et-glossaire-francais/AC-2 : une apostrophe droite échoue en nommant le fichier et le texte fautif", () => {
   assertSane();
-  for (const file of [HOME_TEXT, FILES_TEXT, CONNECTION_TEXT]) {
+  for (const file of [HOME_TEXT, MAC_TEXT, CONNECTION_TEXT]) {
     const faults = plantedFaults(file, '"Lecture de l\'appairage"');
     assert.ok(
       faults.includes(`${file}:${plantLine(file)} « Lecture de l'appairage » : apostrophe droite`),

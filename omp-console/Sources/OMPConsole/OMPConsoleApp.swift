@@ -1,32 +1,29 @@
 // Point d'entrée de la coque. Le fichier NE s'appelle PAS main.swift : `@main`
 // y est refusé (D5).
 //
-// UNE scène : la fenêtre principale. Par défaut elle montre l'« OS agentique » (le Radar,
-// les fils, « Maintenant » : `OSRootView`) ; l'interface classique à barre latérale reste
-// à un geste. « À traiter », Features, Poste et Système sont servis par le serveur de
-// pipelines du VPS (omp-harness) ; Mémoire, Terminal et Fichiers sont locaux. L'app reste
+// UNE scène : la fenêtre principale, qui montre l'« OS agentique » (le Radar, les fils,
+// le centre : `OSRootView`). Les agents, les features et le Poste sont servis par le
+// serveur de pipelines du VPS (omp-harness) ; la Mémoire est locale. L'app reste
 // utilisable en plein écran : aucune fenêtre annexe.
 //
-// Barre des menus : Présentation ▸ « Interface classique » (⌘⇧O), les sept sections de
-// l'interface classique (⌘1…⌘7) et « Actualiser » (⌘R) ; Fichier ▸ « Nouvelle
-// feature… » (⌘N), « Commandes… » (⌘K) et « Rechercher… » (⌘F).
+// Barre des menus : Présentation ▸ les écrans de l'OS (⌘1…⌘6) et « Actualiser » (⌘R) ;
+// Fichier ▸ « Nouvelle feature… » (⌘N), « Commandes… » (⌘K) et « Rechercher… » (⌘F).
 //
 // Les modèles vivent sur la structure `App` (`@StateObject`), donc à l'échelle de
-// l'app : fermer la fenêtre ne laisse pas de shell orphelin, et les accroches de
-// terminaison existent avant la première ouverture.
+// l'app : fermer la fenêtre ne perd ni la Mémoire ni la préparation.
 //
 // La terminaison passe par `applicationShouldTerminate` en DEUX temps (D3) : la
-// première demande est annulée le temps d'ATTENDRE la sortie des process hébergés,
-// puis la terminaison est redemandée et passe.
+// première demande est annulée le temps de fermer les feuilles attachées, puis la
+// terminaison est redemandée et passe.
 
 import AppKit
 import ConsoleClient
 import ConsoleCore
+import ConsoleUI
 import SwiftUI
 
 @main
 struct OMPConsoleApp: App {
-    @StateObject private var model = ConsoleModel()
     /// Le serveur de pipelines du VPS : UN modèle et UN jeu de brouillons pour la
     /// fenêtre, partagés par les sections du serveur (le poste de travail est porté par
     /// ce même modèle, `server.workstation`).
@@ -36,8 +33,6 @@ struct OMPConsoleApp: App {
         onPaired: { try? $0.writeShared(home: URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)) }
     )
     @StateObject private var drafts = HarnessDrafts()
-    @StateObject private var terminalModel = TerminalConsoleModel()
-    @StateObject private var filesModel = FilesModel()
     @StateObject private var memoryModel = MemoryModel()
     /// Le modèle du mode graphe de la mémoire (S-1) : à l'échelle de l'app, pour que
     /// la bascule liste ⇄ graphe ne perde ni la position, ni la sélection.
@@ -48,10 +43,9 @@ struct OMPConsoleApp: App {
     /// La préparation vit à l'échelle de l'app (S-5) : elle survit à la fermeture
     /// de sa feuille, et son `onReady` revérifie OMP.
     @StateObject private var setupModel: SetupModel
-    /// L'état des composants embarqués (S-1/S-2) : le badge du pied de la barre
-    /// latérale le montre.
+    /// L'état des composants embarqués (S-1/S-2) : le badge au pied des fils le montre.
     @StateObject private var componentsModel: ComponentPresenceModel
-    /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal.
+    /// Le sélecteur de projet de l'état vide de la Mémoire.
     @StateObject private var projectChooser = ProjectChooserModel()
     /// Les notifications : locales tant que l'app tourne en arrière-plan, et leurs gestes.
     @StateObject private var notifications = HarnessNotificationCenter()
@@ -81,86 +75,73 @@ struct OMPConsoleApp: App {
     }
 
     var body: some Scene {
-        // Sans titre de scène : la fenêtre porte celui de la section courante
-        // (`ConsoleRootView`), jamais le nom de l'app. L'identifiant sert à
+        // Sans titre de scène : la fenêtre porte celui de l'écran montré
+        // (`OSRootView`), jamais le nom de l'app. L'identifiant sert à
         // `MainWindow.reveal()` pour la retrouver.
         WindowGroup(id: MainWindow.sceneID) {
             ConsoleRootView(
-                model: model,
                 server: server,
                 drafts: drafts,
-                workstation: server.workstation,
-                signals: server.signals,
-                atlassian: server.atlassian,
-                filesModel: filesModel,
                 quit: appDelegate.quit,
-                memoryModel: memoryModel,
-                memoryGraph: memoryGraphModel,
-                podmanCleanup: podmanCleanup,
+                memory: OSMemoryModels(model: memoryModel, graph: memoryGraphModel, cleanup: podmanCleanup, chooser: projectChooser),
                 presence: presence,
                 setup: setupModel,
                 components: componentsModel,
-                terminalModel: terminalModel,
-                projectChooser: projectChooser,
                 notifications: notifications
             )
         }
         .commands {
-            SectionCommands(console: model)
+            DestinationCommands()
             RefreshCommands()
             PaletteCommands(drafts: drafts)
             // Présentation ▸ « Afficher la barre d'outils » / « Personnaliser la
             // barre d'outils… ».
             ToolbarCommands()
             QuitCommands(quit: appDelegate.quit)
-            OSCommands()
         }
     }
 }
 
-/// Présentation ▸ « Interface classique » (⌘⇧O) : coché, la fenêtre montre l'interface à
-/// barre latérale ; décoché (le défaut), l'« OS agentique ». Préférence `ui.os`.
-struct OSCommands: Commands {
-    @AppStorage("ui.os") private var osMode = true
+/// Menu Présentation ▸ les écrans de l'OS, dans l'ordre de la liste des fils : ⌘1…⌘6
+/// (`OSMacDestinations`). Ramène la fenêtre principale, puis y montre l'écran.
+struct DestinationCommands: Commands {
+    @FocusedObject private var workspace: OSWorkspace?
 
     var body: some Commands {
         CommandGroup(before: .sidebar) {
-            Toggle(OSText.classic, isOn: Binding(get: { !osMode }, set: { osMode = !$0 }))
-                .keyboardShortcut("o", modifiers: [.command, .shift])
-            Divider()
-        }
-    }
-}
-
-/// Menu Présentation ▸ les sections de l'interface classique, dans l'ordre de sa barre
-/// latérale : ⌘1…⌘9 au plus (sept aujourd'hui). Ramène la fenêtre principale, revient à
-/// l'interface classique, puis y sélectionne la section.
-struct SectionCommands: Commands {
-    let console: ConsoleModel
-    @AppStorage("ui.os") private var osMode = true
-
-    var body: some Commands {
-        CommandGroup(before: .sidebar) {
-            ForEach(Array(ConsoleSection.allCases.enumerated()), id: \.element) { index, section in
-                Button(section.title) {
+            ForEach(Array(OSMacDestinations.shortcuts.enumerated()), id: \.offset) { index, destination in
+                Button(destination.title) {
                     MainWindow.reveal()
-                    osMode = false
-                    console.select(section)
+                    workspace?.selection = destination.selection
                 }
-                .keyboardShortcut(Self.key(at: index).map { KeyboardShortcut(KeyEquivalent($0), modifiers: .command) })
+                .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                .disabled(workspace == nil)
             }
             Divider()
         }
     }
+}
 
-    /// La touche du raccourci de la section à `index` : 1…9, aucune au-delà.
-    static func key(at index: Int) -> Character? {
-        (0..<9).contains(index) ? Character(String(index + 1)) : nil
+/// L'actualisation de ce que l'OS montre : le menu Présentation ▸ « Actualiser » (⌘R)
+/// l'appelle. La coque la publie pour la scène ; aucun bouton ne la répète à l'écran.
+struct HarnessRefreshAction {
+    let isEnabled: Bool
+    let perform: @MainActor () async -> Void
+}
+
+private struct HarnessRefreshKey: FocusedValueKey {
+    typealias Value = HarnessRefreshAction
+}
+
+extension FocusedValues {
+    var harnessRefresh: HarnessRefreshAction? {
+        get { self[HarnessRefreshKey.self] }
+        set { self[HarnessRefreshKey.self] = newValue }
     }
 }
 
-/// Présentation ▸ « Actualiser » (⌘R) : relit ce que montre la section à l'écran (son
-/// cadre publie l'action, `HarnessRefreshAction`). Aucun bouton ne la répète à l'écran.
+/// Présentation ▸ « Actualiser » (⌘R) : relit ce que montre l'OS (la coque publie
+/// l'action, `HarnessRefreshAction`). Aucun bouton ne la répète à l'écran.
 struct RefreshCommands: Commands {
     @FocusedValue(\.harnessRefresh) private var refresh
 
@@ -219,17 +200,10 @@ struct QuitCommands: Commands {
     }
 }
 
-/// Délégué de terminaison : il ne connaît pas les process, il appelle les
-/// accroches que les modèles ont posées, par le déroulé unique `quit`
-/// (mac-quitter-sans-confirmation, S-4/S-5) — tous les chemins de sortie y passent.
+/// Délégué de terminaison : tous les chemins de sortie passent par le déroulé unique
+/// `quit` (mac-quitter-sans-confirmation, S-4/S-5).
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Posée par `TerminalConsoleModel.init` (S-8).
-    static var terminateTerminal: (() async -> Void)?
-    /// L'activité du Terminal au moment du Quitter (S-1). Posée par
-    /// `TerminalConsoleModel.init`.
-    static var terminalQuitActivity: (@MainActor () -> QuitActivity?)?
-
     /// Les jetons des observateurs de `MainMenuSeparators.observe()` (S-1).
     private var menuObservers: [NSObjectProtocol] = []
 
@@ -239,21 +213,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWindow.allowsAutomaticWindowTabbing = false
     }
 
-    /// Le déroulé de la sortie (S-4) : instantané des activités, AU PLUS une
-    /// alerte, puis accroches, fermeture des feuilles et terminaison redemandée.
-    lazy var quit: QuitFlow = makeQuitFlow()
-
-    private func makeQuitFlow() -> QuitFlow {
-        QuitFlow(
-            activities: { [Self.terminalQuitActivity?()].compactMap { $0 } },
-            confirm: QuitAlert.run,
-            runHooks: { @MainActor in
-                await Self.terminateTerminal?()
-            },
-            closeAttachedSheets: Self.closeAttachedSheets,
-            requestTermination: { NSApp.terminate(nil) }
-        )
-    }
+    /// Le déroulé de la sortie (S-4) : fermeture des feuilles, puis terminaison redemandée.
+    lazy var quit = QuitFlow(closeAttachedSheets: Self.closeAttachedSheets, requestTermination: { NSApp.terminate(nil) })
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // S-1 : plus de séparateur en tête, en fin ni en double dans la barre des
@@ -272,12 +233,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    /// L'Apple Event de quit (S-5.2). Annuler répond `userCanceledErr` (-128) :
-    /// le Dock ne quitte pas, loginwindow interrompt la fermeture de session.
+    /// L'Apple Event de quit (S-5.2) : le Dock et la fermeture de session passent par le
+    /// même déroulé.
     @objc func handleQuitAppleEvent(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
-        if quit.request() == .cancelled {
-            reply.setParam(NSAppleEventDescriptor(int32: Int32(userCanceledErr)), forKeyword: AEKeyword(keyErrorNumber))
-        }
+        quit.request()
     }
 
     /// S-6 : fermer la fenêtre qui porte une feuille ferme les deux, et laisse
@@ -294,7 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Toute demande à `NSApp.terminate` passe par le déroulé : seule la
-    /// redemande finale, accroches faites, termine.
+    /// redemande finale, feuilles fermées, termine.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         quit.shouldTerminate()
     }

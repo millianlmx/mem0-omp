@@ -19,8 +19,8 @@ marqueur `[test: <fonction>]` (une fonction de
 - Les trois surfaces iOS reprennent les rôles de
   `omp-console/Sources/OMPConsole/Design/ConsoleSurface.swift` (panneau, carte,
   bandeau), avec le rayon du tactile : 12 pt au lieu de 10. `[test: surfacesShareTactileRadius]`
-- La pastille d'état reprend `omp-console/Sources/OMPConsole/Design/StatusBadge.swift` :
-  un point teinté de 8 pt et le MOT de l'état, sur une capsule teintée à 15 %.
+- La pastille d'état (`IOSStatusChip`) : un point teinté de 8 pt et le MOT de l'état,
+  sur une capsule teintée à 15 %, comme sur le Mac.
   `[garde: design-ios/AC-2]`
 - Les six tons et l'état (`ConsoleTone`, `ConsoleStatus`) viennent de
   `omp-console/Sources/ConsoleCore/Design/ConsoleVocabulary.swift` : le noyau est
@@ -33,24 +33,27 @@ marqueur `[test: <fonction>]` (une fonction de
 
 ## Navigation (feature `ios-navigation-onglets-adaptables`)
 
-L'app a deux interfaces, chacune une barre d'onglets native (`TabView`, style
-`.sidebarAdaptable`) : la **nouvelle interface** (l'« OS agentique », le défaut,
-`IOSOSRootView`) et l'**interface classique** à sections (`RootView`). Les feuilles, les
-confirmations, la palette, les liens et les notifications sont posés une fois, à la
-racine, pour les deux.
-
-La nouvelle interface :
+Une seule coque, une barre d'onglets native (`TabView`, style `.sidebarAdaptable`,
+`IOSOSRootView`). Les feuilles, les confirmations, la palette, les liens et les
+notifications sont posés une fois, à la racine (`RootView`).
 
 - Cinq onglets, dans cet ordre : Maintenant (le Radar et sa pause en tête, puis le
   brief), Fils (le composeur, l'espace et le lieu, la liste), Décisions (le tri, une
   décision à la fois), Propositions et Savoir (consignes, paliers, espaces, Automatismes,
-  Mémoire, « Interface classique »). C'est l'interface du premier lancement.
-  `[test: newInterfaceIsTheDefault]`
+  Mémoire). Le lancement ouvre Maintenant. `[test: launchOpensNow]`
+- Sur iPad, la barre d'onglets du haut ouvre la barre latérale, titrée « OMP Console »,
+  qui liste les mêmes cinq onglets. `[garde: accessibilite-et-localisation-ios-residu/AC-8]`
 - Un fil, la page d'un espace, les Automatismes et la Mémoire se poussent dans la pile
   de l'onglet où on les ouvre ; le bouton retour rend la racine de l'onglet. Les écrans
   partagés avec le Mac demandent un écran par `OSWorkspace` : `IOSOSNavigation` le
   traduit en onglet et en page. `[test: sharedScreensDriveTheStacks]`
   `[test: fixedScreensOpenTheirTab]`
+- La roue en tête de la barre de chaque onglet (`ios.os.system`) pousse le hub Système
+  dans la pile de l'onglet : la grille de tuiles partagée avec le Mac (Poste, Dépôts,
+  Planifications, Autonomie, Vigie, Statistiques, Issues, Administration, Serveur), chaque
+  tuile avec son état en pastille. Une tuile pousse sa page par-dessus ; Serveur ouvre la
+  feuille du serveur. Dépôts et Administration ne se montrent qu'à un administrateur.
+  `[test: systemStacksInTheCurrentTab]`
 - « Comprendre » est un inspecteur : une colonne à côté de la pile sur iPad, une feuille
   sur iPhone, avec « Fermer » dans sa barre. Chaque barre porte « Demander à l'OS »
   (`ios.os.ask`), qui ouvre la feuille du composeur ; chaque écran se tire pour
@@ -59,50 +62,18 @@ La nouvelle interface :
   ouvertes ; VoiceOver lit le nom de l'onglet suivi du nombre en attente. L'onglet
   Propositions n'existe pas sur un serveur qui n'en sert pas.
   `[test: badgesCountWhatWaits]`
-- Un lien `ompconsole://now`, `decisions` ou `threads/<id>` et une notification touchée
-  ouvrent leur écran de la nouvelle interface : ce qui attend l'humain mène aux
-  Décisions, une feature à son fil, la Mémoire au Savoir ; une page du hub Système, qui
-  n'y a pas d'équivalent, montre l'interface classique pour cette fois.
-  `[test: destinationsReachTheirScreen]`
-- Savoir ▸ « Interface classique » et Système ▸ « Nouvelle interface »
-  (`ios.system.newInterface`) changent d'interface ; le choix est gardé d'un lancement
-  à l'autre (`ConsoleInterfacePreference`, jamais un magasin nommé dans l'app).
-  `[test: interfaceChoiceIsKept]`
-- Les crochets de recette `-section`, `-ios.state` et `-memoire.recipe` ouvrent toujours
-  l'interface classique ; `-os.view <now|threads|decisions|proposals|knowledge>`,
-  `-os.thread <fil ou feature>` et `-os.space <espace>` ouvrent un écran de la nouvelle.
-  `[test: classicRecipeHooksAlwaysOpenTheClassicShell]`
-  `[test: storedChoiceAndRecipeScreens]` `[test: recipeFindsAThreadByItsRun]`
+- Un lien `ompconsole://now`, `decisions`, `threads/<id>` ou `system/<page>` et une
+  notification touchée ouvrent leur écran : ce qui attend l'humain mène aux Décisions,
+  une feature à son fil, la Mémoire au Savoir, le Poste et les autres pages du Système à
+  leur page. `[test: destinationsReachTheirScreen]`
+- Crochets de recette : `-os.view <now|threads|decisions|proposals|knowledge>` ouvre un
+  onglet, `-os.thread <fil ou feature>` et `-os.space <espace>` un fil ou un espace,
+  `-os.system <page>` une page du Système ; `-ios.state` et `-memoire.recipe` ouvrent la
+  Mémoire dans le Savoir. `[test: recipeScreens]` `[test: recipeOpensASystemPage]`
+  `[test: memoryRecipeHooksOpenTheMemory]` `[test: recipeFindsAThreadByItsRun]`
 - `-os.server <adresse> -os.token <jeton>` relient un serveur de recette quand l'app
   n'en a enregistré aucun, sans rien écrire ni demander la permission de notifier
   (`scripts/recette/os-ios-shots.sh`). `[test: recipeServerNeedsBothArguments]`
-
-L'interface classique :
-
-- Sur iPhone, la racine est une barre d'onglets native (`TabView`, style
-  `.sidebarAdaptable`) de quatre sections — À traiter, Features, Poste, Système —
-  puis l'onglet de recherche (`Tab(role: .search)`, la palette) ; chaque onglet
-  ouvre son écran directement, sans bouton retour, et il n'y a aucun onglet « Autre ».
-  `[test: tabsAreTheSectionsThenSearch]`
-- La barre d'iOS 26 ne tient que cinq éléments recherche comprise : sur iPhone, la
-  Mémoire est la première rangée du hub Système, poussée dans sa pile ; son bouton
-  retour ramène au hub. `[test: memoryMovesUnderSystemOnIPhone]`
-- Sur iPad, la barre latérale est visible dès le lancement, groupée Travail (À
-  traiter, Features, Poste — servis par le serveur de pipelines du VPS), Outils
-  (Mémoire, servie par la mémoire du même serveur) et Système, puis la recherche ;
-  la barre d'onglets du haut n'apparaît que lorsqu'on masque la barre latérale.
-  `[test: groupedSections]`
-- Chaque onglet garde sa pile quand on change d'onglet : celle de Features suit la
-  feature ouverte, celle de Système la page montrée. Une section hors de l'app
-  (Terminal, Fichiers) demandée par la palette laisse l'onglet inchangé.
-  `[test: sectionsOutsideTheAppKeepTheTab]`
-- Les badges suivent ce qui attend : À traiter porte la boîte et les envois du
-  poste à approuver, Poste ces envois, Système 1 quand la vigie se tait.
-  `[test: badgesFollowWhatWaits]`
-- `-section <x>` ouvre l'onglet de la section ; sur iPhone, `memory` ouvre Système
-  avec la Mémoire déjà poussée. `[test: launchSelectsEachSection]`
-- ⌘1…⌘5 choisissent l'entrée de la barre latérale, dans l'ordre affiché.
-  `[test: keyboardSelectsTheSidebarEntry]`
 - L'app ne parle qu'au serveur du VPS, jamais à un Mac : aucune barre d'outils ne
   répète un bouton « Serveur » ni « Actualiser » ; la feuille du serveur s'ouvre par
   Système › Serveur, ou par « Relier le serveur » (`ios.server.configure`) sans
@@ -115,12 +86,13 @@ L'interface classique :
   la rangée qui porte sa propre surface, `iosCard()` pour une carte,
   `iosBanner(tone:)` pour un bandeau, `iosPanel()` pour le panneau d'une surface
   hors liste. `[garde: design-ios/AC-1]`
-- Un écran en liste — À traiter, Features, Poste, Système et ses pages, Mémoire
-  (mode Liste) — est une `List` de style `.insetGrouped`, posée par
-  `iosGroupedList()` : fond `systemGroupedBackground` jusqu'aux bords de l'écran,
+- Un écran en liste — les pages du Système (Poste, Planifications, Autonomie, Vigie,
+  Statistiques, Issues, Administration), la Mémoire (mode Liste) — est une `List`
+  de style `.insetGrouped`, posée par `iosGroupedList()` : fond
+  `systemGroupedBackground` jusqu'aux bords de l'écran,
   rangées en `secondarySystemGroupedBackground`, en-têtes de section et
   séparateurs du système, aucun `Divider()` tracé à la main, aucun panneau autour
-  des groupes. Les écrans du serveur partagent un seul cadre, `IOSHarnessScreen`.
+  des groupes. Les pages du Système partagent un seul cadre, `IOSSystemPage`.
   `[garde: design-ios/AC-2]` `[capture: iphone-*-dark]`
 - Une carte n'existe que là où le contenu est une carte. C'est la carte élevée,
   `iosCard(raised: true)` : fond `secondarySystemGroupedBackground`, distinct du
@@ -129,7 +101,7 @@ L'interface classique :
   `[test: raisedCardStandsOutOfTheGroupedBackground]`
 - Dans une liste, un bandeau ou l'état de connexion en bandeau occupent une
   rangée nue, `iosBareListRow()` : sans fond ni séparateur du système, sans marge
-  latérale, 8 pt entre deux rangées nues consécutives. `[capture: iphone-inbox-dark]`
+  latérale, 8 pt entre deux rangées nues consécutives. `[capture: iphone-decisions-dark]`
 - `iosPanel()` est réservé aux surfaces hors liste : le mode Graphe de la
   Mémoire. `[capture: iphone-memoire-graphe-*]`
 - Le panneau porte sa MARGE EXTÉRIEURE : `IOSMetrics.margin` (16 pt compact, 24 pt
@@ -138,7 +110,7 @@ L'interface classique :
   n'ajoute la sienne. `[capture: iphone-*-light]`
 - Un seul défilement par écran : la `List` de l'écran ; le mode Graphe de la
   Mémoire, hors de tout défilement, garde les gestes de son canevas.
-  `[capture: iphone-runs-light]`
+  `[capture: iphone-threads-light]`
 - Un bandeau est une surface de CONTENU : teinte du ton à 12 % d'opacité, rayon
   12, jamais un fond rouge plein écran. L'échec du dernier échange avec le serveur
   de pipelines s'affiche ainsi en tête de liste. `[garde: design-ios/AC-2]`
@@ -185,21 +157,23 @@ L'interface classique :
 - Aucun contrôle maison : ni `Button`, ni `onTapGesture` dans les sources de
   l'app — les seules cibles sont les lignes de `List` et la barre de navigation
   du système. `[garde: design-ios/AC-8]`
-- Clavier de l'iPad : ⌘1…⌘5 ouvrent les sections dans l'ordre affiché par la
-  barre latérale (À traiter, Features, Poste, Mémoire, Système), ⌘R relit l'écran
-  courant, ⌘F active la recherche de l'écran qui en a une. Les sept commandes vivent
-  dans la barre des menus de l'iPad (menu Présentation) avec leur libellé français,
-  toutes avec ⌘ seul : ⎋ et ↩ restent aux feuilles. Sous une feuille, une alerte ou un
-  `confirmationDialog`, elles sont sans effet. `[test: keyboardShortcutsFollowTheSidebar]`
+- Clavier de l'iPad : ⌘1…⌘5 ouvrent les cinq onglets dans l'ordre de la barre
+  (Maintenant, Fils, Décisions, Propositions, Savoir), ⌘R relit l'écran courant, ⌘F
+  active la recherche de l'écran qui en a une. Les sept commandes vivent dans la barre
+  des menus de l'iPad (menu Présentation) avec leur libellé français, toutes avec ⌘
+  seul : ⎋ et ↩ restent aux feuilles. Sous une feuille, une alerte ou un
+  `confirmationDialog`, elles sont sans effet. `[test: keyboardShortcutsFollowTheTabs]`
+  `[test: keyboardShortcutsAreFrenchAndCommandOnly]`
 
 ## Accessibilité et langue (feature `accessibilite-et-localisation-ios-residu`)
 
-- Un symbole décoratif, toujours doublé d'un texte visible qui porte le sens
-  (icône du serveur non relié, symbole d'un état vide), est masqué à VoiceOver
-  par `.accessibilityHidden(true)` sur l'`Image` : aucun élément `Image` lu sous
-  un nom de symbole (« Search Document »). Un symbole porteur de sens sans texte
-  visible porte un libellé français (le bouton « + », la rangée Serveur du hub
-  Système). `[capture: iphone-inbox-light]`
+- Un symbole décoratif, toujours doublé d'un texte visible qui porte le sens (état
+  d'une étape du direct, d'un agent), est masqué à VoiceOver par
+  `.accessibilityHidden(true)` ; l'écran d'un serveur non relié et les états vides sont
+  des `ContentUnavailableView`, dont le symbole se lit avec son titre : aucun élément
+  `Image` lu sous un nom de symbole (« Search Document »). Un symbole porteur de sens
+  sans texte visible porte un libellé français (« Demander », la roue du Système, le
+  « + » d'une planification). `[capture: iphone-now-light]`
 - L'app parle français, sa langue de développement, et anglais sur un appareil
   (ou une langue d'app, Réglages › OMP Console) réglé en anglais — décision du
   2026-10-25, qui remplace « française seulement » (feature `localisation-apps`).
@@ -270,23 +244,22 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 
 ## États vide et erreur (S-2, S-3)
 
-- Chaque section affiche son état vide RÉEL, avec le mot partagé du noyau, mot
-  pour mot celui de macOS (`PipelineServerText.nothingPending`, `.noRun`,
-  `.noProject`, `.noAudit`, `.noStats`, `MemoryText.noProjectTitle`) : aucune
-  donnée inventée. `[garde: design-ios/AC-3]`
-- Le titre d'un écran vient de `ConsoleSection` (ConsoleCore), posé par la barre
-  de navigation ; son icône aussi, par `IOSSection.systemImage(of:)`.
-  `[garde: ios-finitions-titres-icones/AC-4]`
-- Sans serveur relié, les écrans de pilotage disent « Aucun serveur relié » et
-  offrent « Relier le serveur… », qui ouvre la feuille du serveur.
-  `[capture: iphone-inbox-light]`
-- Un échec du serveur de pipelines s'affiche en bandeau en tête de liste, par la
+- Chaque écran affiche son état vide RÉEL par un `ContentUnavailableView` dont le
+  titre vient du noyau : les onglets rendent les écrans du Mac, les Statistiques disent
+  `PipelineServerText.noStats`, la Mémoire `MemoryText.noProjectTitle`. Aucune donnée
+  inventée. `[garde: design-ios/AC-3]`
+- Le titre et l'icône d'un onglet viennent d'`IOSOSTab` (mots du noyau, symboles
+  d'`IOSOSText`), posés par la barre ; une page du Système prend ceux
+  d'`OSSystemDestination`. `[garde: ios-finitions-titres-icones/AC-4]`
+- Sans serveur relié, chaque onglet dit « Aucun serveur relié » et offre « Relier le
+  serveur… », qui ouvre la feuille du serveur. `[capture: iphone-now-light]`
+- Un échec du serveur de pipelines s'affiche en bandeau en tête de l'écran, par la
   phrase de `HarnessFailure.message` (cause, puis remède), jamais le détail brut.
   `[garde: ios-erreurs-serveur-lisibles/AC-8]`
 - L'état d'erreur vient d'un chemin RÉEL : le crochet de recette
   `-ios.state error` — jamais une capture fabriquée. `[garde: design-ios/AC-4]`
-- Un repli silencieux (section inconnue ⇒ À traiter, sans message) reste
-  silencieux ; une valeur inconnue ne devient jamais une erreur.
+- Un repli silencieux (valeur de recette inconnue ⇒ écran par défaut, sans message)
+  reste silencieux ; une valeur inconnue ne devient jamais une erreur.
   `[test: resolveScreenState]`
 
 ## États de la mémoire (feature `etats-non-connecte-heterogenes-ios`)
@@ -320,7 +293,7 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
   sauf le texte d'un souvenir dans la liste de la Mémoire, plafonné par
   `IOSMetrics.memoryRowLines(_:)` et intégral dans la feuille.
   `[capture: iphone-*-dark-ax]`
-- L'iPad tient la même taille maximale, barre latérale à deux groupes comprise.
+- L'iPad tient la même taille maximale, barre latérale comprise.
   `[capture: ipad-*-light-ax]`
 - Les captures en taille maximale existent pour iPhone ET iPad, sur les deux
   apparences. `[capture: ipad-*-dark-ax]`
@@ -344,10 +317,10 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
 
 ## Preuve visuelle (S-6)
 
-- Quarante captures d'écran : 5 sections (À traiter, Features, Poste, Mémoire,
-  Système) × {iPhone portrait, iPad portrait} × {clair, sombre} à taille de texte
-  par défaut, plus 5 sections × {iPhone, iPad} × {clair, sombre} en Dynamic Type
-  maximum ; douze de plus pour le mode Graphe de la Mémoire, cinquante-deux en
+- Quarante captures d'écran : les 5 onglets (Maintenant, Fils, Décisions,
+  Propositions, Savoir) × {iPhone portrait, iPad portrait} × {clair, sombre} à taille
+  de texte par défaut, plus les 5 onglets × {iPhone, iPad} × {clair, sombre} en Dynamic
+  Type maximum ; douze de plus pour le mode Graphe de la Mémoire, cinquante-deux en
   tout. `[garde: design-ios/AC-6]`
 - Chaque capture est sondée en dimensions (`sips`) : toutes PORTRAIT — une
   capture inattendue ferait échouer le script. `[capture: iphone-*-light]`
@@ -362,70 +335,57 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
   `[garde: design-ios/AC-5]`
 - Aucun composant orphelin : chaque composant livré est employé par un écran.
   `[garde: design-ios/AC-2]`
-- Aucun changement visible côté coque macOS : mots et apparence identiques,
-  `ConsoleCore` modifié par ajout seulement. `[garde: design-ios/AC-10]`
+- Les onglets rendent les écrans du Mac (`ConsoleUI/OS`), jamais une copie ;
+  `ConsoleCore` reste sans cadre d'interface. `[garde: design-ios/AC-10]`
 
 ## Pilotage (serveur de pipelines du VPS)
 
-- À traiter, Features, Poste et Système lisent le serveur de pipelines (omp-harness)
+- Les onglets et les pages du Système lisent le serveur de pipelines (omp-harness)
   directement, par `HarnessModel` : un seul modèle pour l'app, tenu à jour par le
   flux d'événements du serveur, relu en tirant la liste.
   `[garde: design-ios/AC-1]`
-- À traiter est la file unique de ce qui attend l'humain, sans tuile ni graphique :
-  une ligne de pouls, puis chaque élément dans sa section (specs à valider rendues
-  par `IOSMarkdownView`, verdicts, questions en lot, décisions renversables,
-  alertes, audits à trier), rien de vide affiché ; file vide : « Rien ne vous
-  attend ». `[garde: ios-souvenir-markdown-altere/AC-4]`
-- Les propositions nées des signalements de collègues (`SignalProposalsSection`,
-  vue partagée de `ConsoleUI`) suivent les envois du poste dans À traiter et
-  s'ajoutent à son badge ; « Relire et confirmer » ouvre une feuille en `Form`
-  groupé, titrée, dont le dépôt se choisit dans un `Picker` natif et dont l'aperçu
-  de ce qui partira à la forge est relu après chaque modification. Un jeton
-  restreint n'en voit rien ; le refus d'un jeton non approbateur est dit dans la
-  feuille. `[garde: pont-corpo-console/AC-1]` `[garde: pont-corpo-console/AC-2]`
+- Les specs à valider s'affichent en Markdown, rendu sur iPhone et iPad par
+  `IOSMarkdownView` (posé une fois à la racine, par `consoleShell`).
+  `[garde: ios-souvenir-markdown-altere/AC-4]`
+- Les signalements de collègues deviennent des propositions : l'onglet Propositions les
+  montre, comme sur le Mac, et les compte dans sa pastille ; les accepter les confirme
+  vers leur dépôt, et le serveur refuse tout appareil autre que l'approbateur. Un jeton
+  restreint n'en voit rien. `[garde: pont-corpo-console/AC-1]`
+  `[garde: pont-corpo-console/AC-2]`
 - Les tuiles d'indicateurs et les quatre graphiques (ce qui vous attend par projet,
-  le débit, le coût des agents, la santé) vivent dans Système › Statistiques et
-  santé (`IOSStatsCharts.swift`), teintés par `IOSDataPalette`, chaque graphique en
-  `minHeight`. `[capture: iphone-system-light]`
-- Chaque question d'À traiter (escalade, décision prise seule, specs, verdict) est
+  le débit, le coût des agents, la santé) vivent dans Système › Statistiques
+  (`IOSStatsCharts.swift`), teintés par `IOSDataPalette`, chaque graphique en
+  `minHeight`. `[test: paletteAdaptsToAppearanceAndContrast]`
+- Chaque question des Décisions (escalade, décision prise seule, specs, verdict) est
   située (dépôt › feature › étape, demande d'origine repliée), sa situation rendue
   en Markdown, ses options avec leur impact — vues partagées de `ConsoleUI`.
-  `[capture: iphone-inbox-light]`
-- Une feature se lit en une ligne dense : point d'état, titre, `dépôt · étape ·
-  âge`, coût si connu ; les lignes sont groupées « À vous », « En cours », « En
-  file », « Terminées ». `[garde: design-ios/AC-2]`
-- Créer passe par une feuille ouverte par le « + » de la barre, jamais par un
-  formulaire en tête d'écran ; un lancement (feature, projet, audit) y choisit son
-  dépôt dans un `Picker` natif, parmi les dépôts que le serveur déclare.
+  `[capture: iphone-decisions-light]`
+- Créer passe par une feuille, jamais par un formulaire en tête d'écran : « Demander »
+  ouvre le composeur ; un lancement (feature, projet, audit) choisit son dépôt dans un
+  `Picker` natif, parmi les dépôts que le serveur déclare.
   `[garde: ios-finitions-composants/AC-8]`
-- Une proposition d'audit retenue porte la coche du symbole système, et le trait
-  « sélectionné » pour VoiceOver ; aucun caractère « ✓ ».
-  `[garde: ios-finitions-composants/AC-2]`
-- Toucher une ligne de feature pousse sa page (`IOSRunScreen`) : en-tête et jalons,
-  onglets segmentés Aperçu, Preuves (absent d'un serveur qui ne les sert pas),
-  Direct, Fichiers, Tests, Frise, consigne en pied, gestes dans le menu « … » ; elle
-  s'ouvre sur les Preuves quand sa revue attend votre validation, sur l'Aperçu quand
-  elle vous attend autrement, sur le Direct quand elle tourne.
-  `[test: runPageOpensOnTheRightTab]`
-- L'Aperçu d'une feature lancée depuis un signalement de collègue porte une section
-  Origine (canal, personne, lien du fil, extrait caviardé, issue) ; rien sans
-  origine ni pour un jeton restreint. `[garde: pont-corpo-console/AC-3]`
-- La feuille « Session en direct » ne sert plus qu'aux audits et aux jobs du poste ;
-  les différences d'un fichier se poussent dans la pile. Tous ses mots viennent de
-  `MonitoringText` et `PipelineServerText`. `[garde: design-ios/AC-5]`
-- Les alertes de la veille du serveur arrivent dans À traiter, en orange, et chaque
-  ligne de feature porte son coût ; Statistiques et santé ajoute la
-  consommation, les modèles, les tests instables et la santé du serveur. Toute durée
-  y garde ses chiffres à chasse fixe. `[garde: ios-finitions-composants/AC-6]`
+- Aucun caractère « ✓ » : un choix se retient par un contrôle système, qui dessine sa
+  marque et annonce son état à VoiceOver. `[garde: ios-finitions-composants/AC-2]`
+- Toucher un fil pousse sa page (`IOSOSThreadPage`) : le récit en cartes partagé avec
+  le Mac, « Comprendre » et « Demander » dans la barre ; un fil que le serveur ne
+  connaît plus le dit. `[test: sharedScreensDriveTheStacks]`
+- Le direct d'une feature se lit dans « Comprendre » (`IOSOSSessionPane`), celui d'un
+  audit ou d'un job du poste dans la feuille « Session en direct » ; les différences
+  d'un fichier se poussent dans la pile. Tous ses mots viennent de `MonitoringText` et
+  `PipelineServerText`. `[garde: design-ios/AC-5]`
+- Système › Statistiques montre aussi la consommation des agents, les modèles, les
+  tests instables, les services et la santé du serveur. Toute durée y garde ses chiffres
+  à chasse fixe. `[garde: ios-finitions-composants/AC-6]`
 - « Suivre sur l'écran verrouillé » démarre la Live Activity de la feature
   (extension `OMPConsoleWidgets`, troisième cible du projet) : écran verrouillé et
   Dynamic Island, symbole et teinte doublés par le texte de l'état. Elle démarre aussi
   seule (voir « Télécommande hors de l'app »). `[garde: coque-ios/AC-1]`
-- Le widget d'écran d'accueil « Boîte du serveur » (même extension) reprend le badge
-  d'À traiter en grand chiffre à chasse fixe, puis les features vivantes, celles qui
-  attendent l'humain d'abord, en orange ; sa date de lecture se lit en bas. Un
-  toucher ouvre le tri de ce qui attend (`ompconsole://decisions`), ou l'accueil quand
-  rien n'attend ; une feature des grands formats ouvre son fil. `[garde: coque-ios/AC-1]`
+- Le widget d'écran d'accueil « Boîte du serveur » (même extension) montre le nombre
+  de ce qui attend l'humain en grand chiffre à chasse fixe, puis les features vivantes,
+  celles qui attendent l'humain d'abord, en orange ; sa date de lecture se lit en bas.
+  Un toucher ouvre le tri de ce qui attend (`ompconsole://decisions`), ou Maintenant
+  quand rien n'attend ; une feature des grands formats ouvre son fil.
+  `[garde: coque-ios/AC-1]`
 
 ## Mémoire (feature `ios-memoire`)
 
@@ -463,7 +423,7 @@ code d'appairage collé dans la feuille Serveur. Aucun Mac sur le chemin.
   affiché, recherche en cours), c'est un bouton désactivé du système, sans teinte
   ni bulle.  `[garde: ios-gestes-et-retours-natifs/AC-13]`
 - L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
-  `[capture: iphone-memory-light.png]`
+  `[garde: ios-dynamic-type-ax-residuel/AC-2]`
 
 ## Le mode graphe de la Mémoire (feature `ios-memoire-graphe`)
 
@@ -592,10 +552,8 @@ dialogue de Siri), jamais en silence.
   table pure (`IOSSiriRemote.swift`). `[test: askSubmitsTheRequest]`
   `[test: pauseTable]` `[test: decisionsPhrase]`
 - **Liens** : `ompconsole://threads/<id>`, `ompconsole://decisions`,
-  `ompconsole://now`, en plus des sections (`HarnessWidgetLink.destination(of:)`).
-  Dans la nouvelle interface, ils ouvrent le fil, l'onglet Décisions et l'onglet
-  Maintenant ; dans l'interface classique, un fil est la page de sa feature, le tri est
-  « À traiter » à ce qui attend, « Maintenant » est l'accueil.
+  `ompconsole://now`, en plus des sections (`HarnessWidgetLink.destination(of:)`) :
+  ils ouvrent le fil, l'onglet Décisions et l'onglet Maintenant.
   `[test: linksOpenThreadsDecisionsAndNow]` `[test: destinationsReachTheirScreen]`
 - `OMPConsoleShared` porte les sources compilées à la fois par l'app et par
   l'extension de widgets : une `LiveActivityIntent` s'exécute dans le processus de

@@ -1,11 +1,10 @@
 // ATLASSIAN à l'écran, écrit une fois pour le Mac et l'iPhone/iPad : la page du Poste
 // (`WorkstationPage.atlassian`) — connexion OAuth du serveur, plan du jour, savoir de la
-// boîte — et les commentaires Jira proposés par l'agent dans « À traiter ».
+// boîte. Les commentaires Jira proposés par l'agent sont des décisions de l'OS.
 //
 // La connexion ouvre le lien d'autorisation dans le navigateur ; quand le retour arrive
 // sur une boucle locale (`pasteBack`), l'humain colle l'adresse de retour dans le champ.
 // Les gestes sont à l'appareil approbateur : sinon, `ApproverOnlyNotice` les remplace.
-// Rien de vide ne s'affiche dans « À traiter ».
 
 import ConsoleClient
 import ConsoleCore
@@ -236,80 +235,4 @@ struct AtlassianKnowledgeSection: View {
             Label(AtlassianText.knowledgeTitle, systemImage: AtlassianText.knowledgeSymbol)
         }
     }
-}
-
-// MARK: - À traiter
-
-/// Les commentaires Jira proposés par l'agent, seulement quand il y en a : chacun avec sa
-/// clé, son pourquoi et son texte modifiable, puis « Publier » et « Écarter ».
-public struct AtlassianProposalsSection: View {
-    @ObservedObject var atlassian: AtlassianModel
-
-    public init(atlassian: AtlassianModel) {
-        self.atlassian = atlassian
-    }
-
-    public var body: some View {
-        if atlassian.availability == .available, !atlassian.proposals.isEmpty {
-            Section {
-                if atlassian.failure == .approverOnly {
-                    ApproverOnlyNotice()
-                }
-                ForEach(atlassian.proposals) { write in
-                    AtlassianProposalRow(atlassian: atlassian, write: write)
-                }
-            } header: {
-                Label(AtlassianText.proposalsTitle, systemImage: AtlassianText.proposalsSymbol)
-                    .foregroundStyle(.orange)
-            } footer: {
-                Text(AtlassianText.proposalsHint)
-            }
-        }
-    }
-}
-
-struct AtlassianProposalRow: View {
-    @ObservedObject var atlassian: AtlassianModel
-    let write: AtlassianWrite
-    @State private var text: String
-
-    init(atlassian: AtlassianModel, write: AtlassianWrite) {
-        self.atlassian = atlassian
-        self.write = write
-        _text = State(initialValue: write.body)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(AtlassianText.commentOn(write.issueKey))
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(.orange)
-            if !write.why.isEmpty {
-                Text(write.why)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            TextField(AtlassianText.commentLabel, text: $text, axis: .vertical)
-                .lineLimit(3...12)
-                .consoleID("atlassian.comment.\(write.id)")
-            HStack(spacing: 12) {
-                Button(AtlassianText.publish, systemImage: AtlassianText.publishSymbol) {
-                    Task { await atlassian.approve(write.id, body: text) }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(busy || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .consoleID("atlassian.publish.\(write.id)")
-                Button(AtlassianText.dismiss, systemImage: AtlassianText.dismissSymbol) {
-                    Task { await atlassian.dismiss(write.id) }
-                }
-                .buttonStyle(.bordered)
-                .disabled(busy)
-                .consoleID("atlassian.dismiss.\(write.id)")
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private var busy: Bool { atlassian.busy.contains(write.id) }
 }

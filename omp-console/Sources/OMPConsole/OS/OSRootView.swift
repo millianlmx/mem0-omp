@@ -1,13 +1,12 @@
-// L'« OS agentique » sur le Mac : la COQUE de l'interface par défaut. Le Radar en haut ;
-// les fils à gauche (avec « Demander à l'OS… » en tête, l'espace et le lieu, les entrées
-// fixes) ; au centre « Maintenant », les Propositions, le Savoir, les Automatismes, la
-// page d'un espace ou le fil choisi ; « Comprendre » en inspecteur à droite ; le Tri des
-// décisions en feuille (⌘T). Les écrans eux-mêmes sont partagés avec l'iPhone/iPad
-// (`ConsoleUI/OS/`) : ce fichier ne porte que ce qui est propre au Mac — colonnes,
-// inspecteur, barre d'outils, raccourcis (⌘L composeur, ⌘T tri, ⌘⇧P pause, ⌥⌘I
-// inspecteur), presse-papiers, direct d'une session, variables de recette. L'interface
-// classique reste à un geste : Présentation ▸ « Interface classique » (⌘⇧O), préférence
-// `ui.os`.
+// L'« OS agentique » sur le Mac : la COQUE de l'app. Le Radar en haut ; les fils à gauche
+// (avec « Demander à l'OS… » en tête, l'espace et le lieu, les entrées fixes, et au pied
+// le badge des composants quand l'un manque) ; au centre « Maintenant », les Propositions,
+// les Automatismes, le Savoir, la Mémoire, le hub Système et ses écrans, la page d'un
+// espace ou le fil choisi ; « Comprendre » en inspecteur à droite ; le Tri des décisions
+// en feuille (⌘T). Les écrans eux-mêmes sont partagés avec l'iPhone/iPad (`ConsoleUI/OS/`) :
+// ce fichier ne porte que ce qui est propre au Mac — colonnes, inspecteur, barre d'outils,
+// raccourcis (⌘1…⌘6 destinations, ⌘L composeur, ⌘T tri, ⌘⇧P pause, ⌥⌘I inspecteur, ⌘R
+// actualiser), presse-papiers, direct d'une session, variables de recette.
 
 import AppKit
 import ConsoleClient
@@ -15,59 +14,96 @@ import ConsoleCore
 import ConsoleUI
 import SwiftUI
 
+/// Ce que devient une destination nommée (lien, notification, palette, écran partagé) dans
+/// l'OS du Mac. Pur : la coque l'applique, les tests le figent.
+enum OSMacRoute: Equatable {
+    /// Le tri des décisions (ce qui attend l'humain).
+    case triage
+    /// Une entrée fixe du centre (`OSWorkspace.memory`, `OSWorkspace.system`…).
+    case center(String)
+    /// Un écran du hub Système.
+    case system(OSSystemDestination)
+    /// La feuille du serveur.
+    case serverSheet
+    /// Rien à montrer de plus : le fil d'une feature s'ouvre par `drafts.openedRun`.
+    case none
+
+    static func of(_ section: ConsoleSection, page: SystemPage?) -> OSMacRoute {
+        switch section {
+        case .inbox: .triage
+        case .runs: .none
+        case .workstation: .system(.workstation)
+        case .memory: .center(OSWorkspace.memory)
+        case .system:
+            switch page {
+            case .server: .serverSheet
+            case let page?: .system(OSSystemDestination(page))
+            case nil: .center(OSWorkspace.system)
+            }
+        }
+    }
+}
+
+/// Les entrées fixes du centre, dans l'ordre des raccourcis ⌘1…⌘6 (menu Présentation).
+enum OSMacDestinations {
+    static let shortcuts: [(selection: String, title: String)] = [
+        (OSWorkspace.now, OSText.now),
+        (OSWorkspace.proposals, OSWatchText.proposals),
+        (OSWorkspace.automations, OSText.automations),
+        (OSWorkspace.knowledge, OSWatchText.knowledge),
+        (OSWorkspace.memory, OSWatchText.memory),
+        (OSWorkspace.system, OSSystemText.title),
+    ]
+}
+
 struct OSRootView: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
     @ObservedObject var workstation: WorkstationModel
-    @ObservedObject var intakes: HarnessIntakes
-    @ObservedObject var history: HarnessRunsHistory
-    @ObservedObject var vigie: HarnessVigie
-    @ObservedObject var atlassian: AtlassianModel
     @ObservedObject var spaces: HarnessSpacesModel
-    @ObservedObject var localSessions: HarnessLocalSessionsModel
+    /// Les fils et le compte des décisions, recalculés à part et publiés seulement s'ils
+    /// changent : la racine ne les reconstruit pas à chaque rendu.
+    @StateObject private var threadStore: OSThreadStore
     @StateObject private var workspace: OSWorkspace
-    @AppStorage("ui.os") private var osMode = true
-    /// Un lien ou une notification demande ce qui attend l'humain : le tri s'ouvre.
-    @Binding var triageRequested: Bool
-    /// Ouvre une section de l'interface classique (une commande de la palette qui n'a pas d'équivalent ici).
-    let select: @MainActor (ConsoleSection) -> Void
+    /// Portés sans être observés ici : leurs écrans les observent eux-mêmes.
+    private let intakes: HarnessIntakes
+    private let history: HarnessRunsHistory
+    private let vigie: HarnessVigie
+    private let atlassian: AtlassianModel
+    private let localSessions: HarnessLocalSessionsModel
+    /// La Mémoire du Mac, et la préparation des composants (badge au pied des fils) :
+    /// portées sans être observées ici.
+    let memory: OSMemoryModels
+    let components: ComponentPresenceModel
+    let setup: SetupModel
 
     /// Recette : `OMP_CONSOLE_OS_LEVEL` nomme un niveau de « Comprendre » par son mot
     /// français, quelle que soit la langue de l'app (ou par son code : `summary`, `story`…).
     private static let recipeLevels: [String: OSLevel] = ["Résumé": .summary, "Récit": .story, "Preuves": .proofs, "Brut": .raw]
     /// Recette : `OMP_CONSOLE_OS_VIEW` nomme l'écran du centre ; `space:<identifiant ou nom>`
-    /// ouvre la page d'un espace.
-    private static let recipeViews = ["now": OSWorkspace.now, "proposals": OSWorkspace.proposals, "knowledge": OSWorkspace.knowledge, "automations": OSWorkspace.automations]
+    /// ouvre la page d'un espace, `system:<écran>` un écran du hub Système.
+    private static let recipeViews = [
+        "now": OSWorkspace.now, "proposals": OSWorkspace.proposals, "knowledge": OSWorkspace.knowledge,
+        "automations": OSWorkspace.automations, "memory": OSWorkspace.memory, "system": OSWorkspace.system,
+    ]
     private static let recipeSpacePrefix = "space:"
+    private static let recipeSystemPrefix = "system:"
 
-    init(
-        server: HarnessModel, drafts: HarnessDrafts, triageRequested: Binding<Bool>,
-        select: @escaping @MainActor (ConsoleSection) -> Void
-    ) {
+    init(server: HarnessModel, drafts: HarnessDrafts, memory: OSMemoryModels, components: ComponentPresenceModel, setup: SetupModel) {
         self.server = server
         self.drafts = drafts
-        _triageRequested = triageRequested
-        self.select = select
+        self.memory = memory
+        self.components = components
+        self.setup = setup
         _workstation = ObservedObject(wrappedValue: server.workstation)
-        _intakes = ObservedObject(wrappedValue: server.intakes)
-        _history = ObservedObject(wrappedValue: server.history)
-        _vigie = ObservedObject(wrappedValue: server.vigie)
-        _atlassian = ObservedObject(wrappedValue: server.atlassian)
         _spaces = ObservedObject(wrappedValue: server.spaces)
-        _localSessions = ObservedObject(wrappedValue: server.localSessions)
+        intakes = server.intakes
+        history = server.history
+        vigie = server.vigie
+        atlassian = server.atlassian
+        localSessions = server.localSessions
+        _threadStore = StateObject(wrappedValue: OSThreadStore(server: server))
         _workspace = StateObject(wrappedValue: OSWorkspace(server: server))
-    }
-
-    private var threads: [OSThread] {
-        OSThreads.build(
-            runs: history.runs,
-            inbox: server.inbox,
-            projects: server.projects,
-            audits: server.audits,
-            requests: workstation.requests ?? [],
-            incidents: vigie.incidents,
-            localSessions: localSessions.sessions
-        )
     }
 
     /// Le nom de chaque navigateur du poste, par identifiant.
@@ -76,8 +112,8 @@ struct OSRootView: View {
     }
 
     var body: some View {
-        let threads = threads
-        let decisions = OSDecisions.all(server: server).count
+        let threads = threadStore.threads
+        let decisions = threadStore.decisionCount
         let space = spaces.spaces.first { $0.id == workspace.spaceId }
         VStack(spacing: 0) {
             OSRadar(server: server, workstation: workstation, vigie: vigie, pulse: workspace.pulse, workspace: workspace, threads: threads)
@@ -91,6 +127,9 @@ struct OSRootView: View {
                 )
                 .listStyle(.sidebar)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320)
+                .safeAreaInset(edge: .bottom, alignment: .leading) {
+                    ComponentBadge(components: components, setup: setup)
+                }
             } detail: {
                 detail(threads, decisions: decisions)
             }
@@ -118,18 +157,17 @@ struct OSRootView: View {
             }
         }
         .navigationTitle(title(threads))
-        // Les feuilles de création (nouvelle feature ⌘N, projet, audit, planification, Demande) et la
-        // palette ⌘K : celles de l'interface classique. Une commande vers une section classique y bascule.
-        .consolePalette(server: server, drafts: drafts, sections: ConsoleSection.allCases, memory: true) { section in
-            if section == .runs, drafts.openedRun != nil { return }
-            osMode = false
-            select(section)
-        }
+        // Les feuilles de création (nouvelle feature ⌘N, projet, audit, planification, Demande)
+        // et la palette ⌘K : chaque commande y est montrée dans l'OS.
+        .consolePalette(server: server, drafts: drafts, sections: ConsoleSection.allCases, memory: true) { go($0) }
         .sheet(isPresented: $workspace.triage) {
             OSTriageView(server: server, workstation: workstation, intakes: intakes, workspace: workspace)
                 .frame(width: 620)
                 .frame(minHeight: 360)
         }
+        // ⌘R (Présentation ▸ Actualiser) relit ce que l'OS montre ; ⌘1…⌘6 y choisissent l'écran.
+        .focusedSceneValue(\.harnessRefresh, HarnessRefreshAction(isEnabled: server.isConfigured && !server.isLoading) { await reload() })
+        .focusedSceneObject(workspace)
         .task(id: server.address) {
             guard server.isConfigured else { return }
             workspace.pulse.start()
@@ -143,7 +181,14 @@ struct OSRootView: View {
                 workspace.understanding = true
             }
             if environment["OMP_CONSOLE_OS_TRIAGE"] != nil { workspace.triage = true }
-            if let view = environment["OMP_CONSOLE_OS_VIEW"].flatMap({ Self.recipeViews[$0] }) { workspace.selection = view }
+            if let view = environment["OMP_CONSOLE_OS_VIEW"] {
+                if let selection = Self.recipeViews[view] {
+                    workspace.selection = selection
+                } else if view.hasPrefix(Self.recipeSystemPrefix),
+                          let destination = OSSystemDestination(rawValue: String(view.dropFirst(Self.recipeSystemPrefix.count))) {
+                    workspace.open(destination)
+                }
+            }
             await history.refresh()
             await workstation.load()
             await vigie.load()
@@ -169,13 +214,14 @@ struct OSRootView: View {
                 workspace.settle(threads)
             }
         }
-        .onChange(of: triageRequested, initial: true) {
-            guard triageRequested else { return }
-            triageRequested = false
-            workspace.triage = true
+        // Une destination demandée par la racine (lien, notification) ou un écran partagé.
+        .onChange(of: drafts.requestedSection, initial: true) {
+            guard let section = drafts.requestedSection else { return }
+            drafts.requestedSection = nil
+            go(section)
         }
         // Les liens propres à cette interface : `ompconsole://now`, `ompconsole://decisions`,
-        // `ompconsole://threads/<id>` (ceux des sections classiques passent par la racine).
+        // `ompconsole://threads/<id>` (ceux des destinations passent par la racine).
         .onOpenURL { url in
             switch url.host {
             case "now": workspace.selection = OSWorkspace.now
@@ -186,6 +232,51 @@ struct OSRootView: View {
             }
         }
         .onDisappear { workspace.pulse.stop() }
+    }
+
+    /// Montre une destination nommée dans l'OS (`OSMacRoute`).
+    private func go(_ section: ConsoleSection) {
+        let page = drafts.systemPage
+        drafts.systemPage = nil
+        switch OSMacRoute.of(section, page: page) {
+        case .triage: workspace.triage = true
+        case let .center(selection):
+            workspace.selection = selection
+            if selection == OSWorkspace.system { workspace.systemPath = NavigationPath() }
+        case let .system(destination): workspace.open(destination)
+        case .serverSheet: drafts.serverSheetShown = true
+        case .none: break
+        }
+    }
+
+    /// ⌘R : la boîte, le catalogue et l'historique, puis ce que montre le centre.
+    private func reload() async {
+        await server.refresh()
+        await server.refreshCatalog()
+        await history.refresh()
+        await workstation.load()
+        await vigie.load()
+        await intakes.refresh()
+        await localSessions.refresh()
+        switch workspace.selection {
+        case OSWorkspace.automations:
+            await server.schedules.refresh()
+            await atlassian.refresh()
+        case OSWorkspace.knowledge:
+            await server.rules.refresh()
+            await server.autonomy.refresh()
+            await spaces.refresh()
+        case OSWorkspace.proposals:
+            await server.proposals.refresh()
+        case OSWorkspace.memory:
+            await memory.model.refresh()
+        case OSWorkspace.system:
+            await server.schedules.refresh()
+            await server.autonomy.refresh()
+            if server.isAdmin { await server.admin.refresh() }
+        default:
+            break
+        }
     }
 
     /// L'espace qu'une variable de recette nomme, par identifiant ou par nom.
@@ -200,6 +291,8 @@ struct OSRootView: View {
         case OSWorkspace.automations: return OSText.automations
         case OSWorkspace.proposals: return OSWatchText.proposals
         case OSWorkspace.knowledge: return OSWatchText.knowledge
+        case OSWorkspace.memory: return OSWatchText.memory
+        case OSWorkspace.system: return OSSystemText.title
         default: break
         }
         if let id = OSWorkspace.spaceId(of: workspace.selection), let space = spaces.spaces.first(where: { $0.id == id }) {
@@ -217,14 +310,11 @@ struct OSRootView: View {
             } else if workspace.selection == OSWorkspace.proposals {
                 OSProposalsView(server: server, workspace: workspace, threads: threads)
             } else if workspace.selection == OSWorkspace.knowledge {
-                OSKnowledgeView(
-                    server: server, workspace: workspace,
-                    openMemory: {
-                        osMode = false
-                        select(.memory)
-                    },
-                    openClassic: { osMode = false }
-                )
+                OSKnowledgeView(server: server, workspace: workspace)
+            } else if workspace.selection == OSWorkspace.memory {
+                OSMemoryScreen(models: memory, drafts: drafts)
+            } else if workspace.selection == OSWorkspace.system {
+                OSSystemCenter(server: server, drafts: drafts, workspace: workspace)
             } else if let spaceId = OSWorkspace.spaceId(of: workspace.selection) {
                 OSSpacePage(server: server, spaceId: spaceId) { text in
                     NSPasteboard.general.clearContents()

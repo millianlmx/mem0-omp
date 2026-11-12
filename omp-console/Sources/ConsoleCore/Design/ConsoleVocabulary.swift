@@ -5,6 +5,7 @@
 // Fonctions PURES, dans `ConsoleCore` : les deux coques les partagent.
 
 import Foundation
+import Synchronization
 
 /// Le ton d'un état : la couleur du badge le double, le mot le porte.
 public enum ConsoleTone: String, Equatable, Sendable, Codable {
@@ -108,17 +109,24 @@ public enum ConsoleFormat {
     }
 
     /// « il y a 4 minutes », « hier » — relatif à `nowMs`, jamais à l'horloge du
-    /// process (Doc-10).
+    /// process (Doc-10). Un seul formateur, réglé une fois : chaque rangée d'une liste
+    /// l'appelle à chaque rendu.
     public static func relative(ms: Double, nowMs: Double) -> String {
+        relativeFormatter.withLock { formatter in
+            formatter.localizedString(
+                for: Date(timeIntervalSince1970: ms / 1000),
+                relativeTo: Date(timeIntervalSince1970: nowMs / 1000)
+            )
+        }
+    }
+
+    private static let relativeFormatter: Mutex<RelativeDateTimeFormatter> = {
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = locale
         formatter.unitsStyle = .full
         formatter.dateTimeStyle = .named
-        return formatter.localizedString(
-            for: Date(timeIntervalSince1970: ms / 1000),
-            relativeTo: Date(timeIntervalSince1970: nowMs / 1000)
-        )
-    }
+        return Mutex(formatter)
+    }()
 
     /// L'heure seule, « 14:05 ».
     public static func time(ms: Double) -> String {

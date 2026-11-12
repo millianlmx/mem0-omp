@@ -1,5 +1,5 @@
 // Les GARDES TEXTUELLES de la coque iOS (coque-ios) : le projet Xcode, les
-// sections dérivées du noyau partagé, la navigation, l'écran d'attente, la
+// sections tirées du noyau partagé, la barre d'onglets, l'écran d'attente, la
 // section « App iOS » de check.sh, le script de captures, la documentation et le
 // périmètre (ni réseau, ni magasin, ni badge, ni Terminal ni Fichiers).
 //
@@ -329,33 +329,26 @@ function sectionFaults(root: string): string[] {
       }
     }
   }
+  // La palette et les notifications reçoivent les sections du noyau, jamais une liste recopiée.
   const all = sources.map((s) => s.code).join("\n");
   if (!all.includes("ConsoleSection.allCases")) faults.push("ConsoleSection.allCases absent des sources iOS");
-  const declarations = all.match(/static let all\b/g) ?? [];
-  if (declarations.length !== 1) faults.push(`${declarations.length} déclarations de IOSSection.all (1 attendue)`);
-  if (!/static let all: \[ConsoleSection\] = ConsoleSection\.allCases\.filter/.test(all)) {
-    faults.push("IOSSection.all n'est pas dérivé de ConsoleSection.allCases");
-  }
   return faults;
 }
 
-/** Les tournures que la racine à onglets adaptable doit employer (S-3, AC-3 ; ios-navigation-onglets-adaptables S-7). */
-const TAB_SHELL = [
-  "TabView(selection:",
-  "TabSection(",
-  ".tabViewStyle(.sidebarAdaptable)",
-  ".defaultAdaptableTabBarPlacement(.sidebar)",
-  ".hidden(",
-];
+/** Les tournures que la barre d'onglets adaptable de la coque doit employer (S-3, AC-3). */
+const TAB_SHELL = ["TabView(selection:", ".tabViewStyle(.sidebarAdaptable)", ".hidden("];
 
-/** Les manques de la navigation (S-3, AC-3) : une barre d'onglets adaptable dans RootView, aucun NavigationSplitView. */
+/** Le fichier de la coque qui porte la barre d'onglets. */
+const TAB_SHELL_FILE = "IOSOSRootView.swift";
+
+/** Les manques de la navigation (S-3, AC-3) : une barre d'onglets adaptable dans la coque, aucun NavigationSplitView. */
 function navigationFaults(root: string): string[] {
   const faults: string[] = [];
   const sources = appSources(root);
-  const rootView = sources.find((s) => path.basename(s.file) === "RootView.swift");
-  if (!rootView) return ["RootView.swift absent"];
+  const shell = sources.find((s) => path.basename(s.file) === TAB_SHELL_FILE);
+  if (!shell) return [`${TAB_SHELL_FILE} absent`];
   for (const token of TAB_SHELL) {
-    if (!rootView.code.includes(token)) faults.push(`RootView.swift : ${token} absent`);
+    if (!shell.code.includes(token)) faults.push(`${TAB_SHELL_FILE} : ${token} absent`);
   }
   for (const s of sources) {
     if (s.code.includes("NavigationSplitView")) faults.push(`${path.basename(s.file)} : NavigationSplitView présent`);
@@ -363,11 +356,11 @@ function navigationFaults(root: string): string[] {
   return faults;
 }
 
-/** Les manques des sept écrans et de l'argument de lancement (coque-ios/AC-4). */
+/** Les manques des écrans réels et de l'argument de lancement (coque-ios/AC-4). */
 function waitingFaults(root: string): string[] {
   const faults: string[] = [];
   const appDir = path.join(root, "omp-console", "ios", "OMPConsoleIOS");
-  if (!fs.existsSync(path.join(appDir, "IOSSectionView.swift"))) faults.push("IOSSectionView.swift absent");
+  if (!fs.existsSync(path.join(appDir, TAB_SHELL_FILE))) faults.push(`${TAB_SHELL_FILE} absent`);
   if (fs.existsSync(path.join(appDir, "SectionPlaceholderView.swift"))) {
     faults.push("SectionPlaceholderView.swift toujours présent (l'écran d'attente a été remplacé)");
   }
@@ -425,7 +418,7 @@ function docFaults(root: string): string[] {
     "scripts/ios-build.sh",
     "scripts/recette/ios-shots.sh",
     "DEVELOPER_DIR",
-    "-section",
+    "-os.view",
     "omp-console/build/ios-shots/",
   ]) {
     if (!text.includes(token)) faults.push(`README console : « ${token} » absent`);
@@ -452,17 +445,12 @@ function tokenFaults(root: string): string[] {
         faults.push(`${path.relative(root, file)} : déclaration « ${declaration} »`);
     }
   }
-  // Terminal et Fichiers ne se nomment qu'au filtre de `IOSSection.all`, et dans le
-  // cas exhaustif de l'aiguillage, qui les range avec la Mémoire (jamais atteints).
+  // Terminal et Fichiers n'existent pas sur iOS : aucune source de l'app ne les nomme.
   for (const { file, code: text } of appSources(root)) {
     const name = path.basename(file);
     for (const excluded of [".terminal", ".files"]) {
       const count = text.split(excluded).length - 1;
-      const expected = name === "IOSSection.swift" || name === "IOSSectionView.swift" ? 1 : 0;
-      if (count !== expected) faults.push(`${name} : ${count} occurrence(s) de ${excluded} (${expected} attendue)`);
-    }
-    if (name === "IOSSectionView.swift" && !/case \.memory, \.terminal, \.files:/.test(text)) {
-      faults.push("IOSSectionView.swift : Terminal et Fichiers ne sont pas rangés avec la Mémoire");
+      if (count !== 0) faults.push(`${name} : ${count} occurrence(s) de ${excluded} (0 attendue)`);
     }
   }
   return faults;
@@ -553,17 +541,17 @@ test("coque-ios/AC-3 : une barre d'onglets adaptable, sans NavigationSplitView",
   );
 
   const plain = shared.fresh();
-  const rootFile = path.join(plain, "omp-console", "ios", "OMPConsoleIOS", "RootView.swift");
-  const rootCode = fs.readFileSync(rootFile, "utf8");
-  assert.ok(rootCode.includes(".tabViewStyle(.sidebarAdaptable)"), "la faute doit s'appliquer à la vraie RootView");
-  fs.writeFileSync(rootFile, rootCode.replace(".tabViewStyle(.sidebarAdaptable)", ".tabViewStyle(.automatic)"));
+  const shellFile = path.join(plain, "omp-console", "ios", "OMPConsoleIOS", TAB_SHELL_FILE);
+  const shellCode = fs.readFileSync(shellFile, "utf8");
+  assert.ok(shellCode.includes(".tabViewStyle(.sidebarAdaptable)"), "la faute doit s'appliquer à la vraie coque");
+  fs.writeFileSync(shellFile, shellCode.replace(".tabViewStyle(.sidebarAdaptable)", ".tabViewStyle(.automatic)"));
   assert.ok(
     navigationFaults(plain).some((f) => f.includes(".sidebarAdaptable")),
-    "une RootView sans .sidebarAdaptable doit faire rougir la garde",
+    "une coque sans .sidebarAdaptable doit faire rougir la garde",
   );
 });
 
-test("coque-ios/AC-4 : les sept écrans réels remplacent l'écran d'attente et l'argument de lancement reste lu", () => {
+test("coque-ios/AC-4 : les écrans réels remplacent l'écran d'attente et l'argument de lancement reste lu", () => {
   assert.deepEqual(waitingFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = shared.fresh();

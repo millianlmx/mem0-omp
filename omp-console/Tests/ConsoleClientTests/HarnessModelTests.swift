@@ -125,7 +125,7 @@ private func catalogServer(_ call: HarnessCall) -> HarnessReply {
     case ("GET", "/v1/projects"): ok(projectsJSON)
     case ("GET", "/v1/audits"): ok(auditsJSON)
     case ("GET", "/v1/stats"): ok(statsJSON)
-    case ("POST", "/v1/projects"), ("POST", "/v1/audits/a1/launch"): HarnessReply(status: 201, body: Data(#"{"projectId":"p2","runs":[]}"#.utf8))
+    case ("POST", "/v1/projects"): HarnessReply(status: 201, body: Data(#"{"projectId":"p2","runs":[]}"#.utf8))
     case ("POST", _): HarnessReply(status: 400, body: Data(#"{"error":"dépôt inconnu : x"}"#.utf8))
     default: ok(inboxJSON)
     }
@@ -143,7 +143,6 @@ struct HarnessModelTests {
         #expect(inbox.awaiting.first?.verdict?.isLowRisk == false)
         #expect(inbox.decisions.first?.alternatives == [";"])
         #expect(inbox.pendingCount == 2, "escalades et attentes seulement : les décisions prises seules ne bloquent rien")
-        #expect(inbox.decisionRunIds == ["r3"])
         #expect(inbox.cursor == 42)
         #expect(inbox.runs.last?.phase == nil, "un état apparu après cette version se lit sans échouer")
         #expect(inbox.active.map(\.id) == ["r4", "r5"])
@@ -586,7 +585,7 @@ struct HarnessModelTests {
         #expect(model.repos == [HarnessRepo(name: "demo", scope: "src")])
         #expect(model.projects.first?.runs.total == 2)
         #expect(model.audits.first?.isProposed == true)
-        #expect(model.audits.first?.proposals.first?.isWeakness == true)
+        #expect(model.audits.first?.proposals.first?.kind == "faiblesse")
         #expect(model.stats?.runs.mergeRate == 0.67)
         #expect(model.stats?.steps["impl"]?.failed == 1)
         #expect(model.stats?.scheduler.runner.capacity == 5)
@@ -607,14 +606,9 @@ struct HarnessModelTests {
         #expect(body?["repo"] as? String == "demo")
         #expect((body?["features"] as? [[String: Any]])?.compactMap { $0["title"] as? String } == ["A", "B"])
         #expect(transport.calls.contains { $0.path == "/v1/inbox" }, "la boîte est relue après le lancement")
-        #expect(transport.calls.last?.path == "/v1/stats", "le catalogue est relu après le lancement")
+        // Les quatre lectures du catalogue partent ensemble, dans un ordre quelconque.
+        #expect(Set(transport.calls.suffix(4).map(\.path)) == ["/v1/status", "/v1/projects", "/v1/audits", "/v1/stats"], "le catalogue est relu après le lancement")
         #expect(model.isLaunching == false)
-
-        #expect(await model.launchProposals(auditId: "a1", items: [2, 0], title: "Audit") == "p2")
-        let launch = try #require(transport.calls.last { $0.path == "/v1/audits/a1/launch" })
-        let picked = try JSONSerialization.jsonObject(with: try #require(launch.body)) as? [String: Any]
-        #expect(picked?["items"] as? [Int] == [0, 2])
-        #expect(model.busyAudits.isEmpty)
 
         #expect(await model.launchRun(repo: "x", title: "T", request: "r") == nil)
         #expect(model.failure == .rejected("dépôt inconnu : x"))

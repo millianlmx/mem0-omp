@@ -4,7 +4,7 @@
 //
 // Fonctions pures sur le texte source des écrans ; chaque faute est plantée EN
 // MÉMOIRE (`source.replace(…)`) : aucune copie du dépôt, aucun SwiftUI rendu. Les
-// écrans de pilotage partagent le cadre `IOSHarnessScreen` (IOSHarnessScreens.swift).
+// pages du hub Système partagent le cadre `IOSSystemPage` (IOSSystemScreens.swift).
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -30,18 +30,18 @@ function appSource(name: string): string {
 const count = (source: string, needle: string) => source.split(needle).length - 1;
 
 /** Les écrans rendus en liste groupée (S-3, S-4, S-5, S-6) : le cadre commun des
- *  écrans du serveur (À traiter, Features, Poste, Système et ses pages), et la Mémoire. */
-const LIST_SCREENS = ["IOSHarnessScreens.swift", "IOSMemoryScreen.swift"];
+ *  pages du Système (Poste, planifications, autonomie, vigie, statistiques, issues,
+ *  administration), et la Mémoire. */
+const LIST_SCREENS = ["IOSSystemScreens.swift", "IOSMemoryScreen.swift"];
 
-/** Le contenu PARTAGÉ (ConsoleUI) que le cadre commun range dans sa liste : rangées
- *  des features, file « À traiter », liste des features, lancement, services, Poste. */
+/** Le contenu PARTAGÉ (ConsoleUI) que le cadre commun range dans sa liste : le Poste,
+ *  les services, la tour de contrôle (vigie, planifications, issues, administration) et
+ *  l'autonomie. */
 const LIST_CONTENTS = [
-  "RunViews.swift",
-  "InboxFeed.swift",
-  "RunsHistoryViews.swift",
-  "LaunchViews.swift",
-  "ServicesViews.swift",
   "WorkstationSections.swift",
+  "ServicesViews.swift",
+  "ControlTowerSections.swift",
+  "AutonomyViews.swift",
 ];
 
 /** AC-2 / AC-10 : le contenu d'une liste n'apporte ni filet, ni défilement, ni carte, ni panneau. */
@@ -128,11 +128,13 @@ function sheetFaults(name: string, source: string): string[] {
 
 /** Les titres de barre attendus par fichier : un par écran, par page poussée et par feuille. */
 const TITLES: Record<string, number> = {
-  "IOSHarnessScreens.swift": 1,
+  // La racine d'un onglet, la page d'un fil, « Comprendre ».
+  "IOSOSScreens.swift": 3,
+  // Le cadre des pages du Système, et la page des dépôts, qui a sa propre liste.
+  "IOSSystemScreens.swift": 2,
   "IOSMemoryScreen.swift": 1,
   "IOSMemoryDetailView.swift": 1,
   "IOSServerSheet.swift": 1,
-  "IOSWorkstationScreen.swift": 0,
   "RunViews.swift": 2,
   // Une page poussée du Poste (`WorkstationPageView`) et la feuille de refus d'un envoi.
   "WorkstationSections.swift": 2,
@@ -140,28 +142,29 @@ const TITLES: Record<string, number> = {
   "MemoryEditSheet.swift": 1,
 };
 
+/** Le cadre des pages du Système. */
+const SYSTEM_PAGE = "struct IOSSystemPage<";
+
+/** Un titre d'écran recopié dans le contenu. */
+const REPEATED_TITLE = /Text\(\s*((section|tab|destination)\.title|title)\s*\)/;
+
 /**
  * AC-5 : un seul titre, celui de la barre de navigation (S-8) — un pour le cadre
- * des écrans du serveur (le titre de la section ou de la page du hub), un par
- * feuille ; ce titre n'est jamais répété dans le contenu.
+ * des pages du Système (le titre de la page), un par racine d'onglet, par page
+ * poussée et par feuille ; ce titre n'est jamais répété dans le contenu.
  */
 function titleFaults(name: string, source: string): string[] {
   const code = stripComments(source);
   const faults: string[] = [];
   const titles = count(code, ".navigationTitle(");
   if (titles !== TITLES[name]) faults.push(`${name} : .navigationTitle( ×${titles}, attendu ${TITLES[name]}`);
-  const repeated = /Text\(\s*(section\.title|title)\s*\)/;
-  if (
-    name === "IOSHarnessScreens.swift"
-      ? repeated.test(memberBody(code, "struct IOSHarnessScreen<"))
-      : repeated.test(code)
-  )
+  if (REPEATED_TITLE.test(name === "IOSSystemScreens.swift" ? memberBody(code, SYSTEM_PAGE) : code))
     faults.push(`${name} : le titre de l'écran est répété dans le contenu`);
   if (
-    name === "IOSHarnessScreens.swift" &&
-    count(memberBody(code, "struct IOSHarnessScreen<"), ".navigationTitle(title)") !== 1
+    name === "IOSSystemScreens.swift" &&
+    count(memberBody(code, SYSTEM_PAGE), ".navigationTitle(destination.title)") !== 1
   ) {
-    faults.push(`${name} : le cadre IOSHarnessScreen ne porte pas .navigationTitle(title)`);
+    faults.push(`${name} : le cadre IOSSystemPage ne porte pas .navigationTitle(destination.title)`);
   }
   return faults;
 }
@@ -230,16 +233,18 @@ function auditFaults(files: { surface: string; design: string; app: (name: strin
   if (raised === undefined || raised === "systemGroupedBackground" || raised === "tertiarySystemGroupedBackground") {
     faults.push(`C-1 : cardFill(raised: true) rend ${raised ?? "?"}, égal au fond groupé`);
   }
-  // C-2, C-3b : la liste des écrans du serveur n'est pas étirée sans défiler.
-  const frame = memberBody(stripComments(files.app("IOSHarnessScreens.swift")), "struct IOSHarnessScreen<");
+  // C-2, C-3b : la liste des pages du Système n'est pas étirée sans défiler.
+  const frame = memberBody(stripComments(files.app("IOSSystemScreens.swift")), SYSTEM_PAGE);
   const list = frame.slice(frame.indexOf("List {"), frame.indexOf(".refreshable"));
   if (/maxHeight:\s*\.infinity/.test(list))
-    faults.push("C-2/C-3b : la liste des écrans du serveur étire son contenu (maxHeight: .infinity)");
-  // C-3a (écarté) : le titre de section n'est pas répété dans le contenu.
+    faults.push("C-2/C-3b : la liste des pages du Système étire son contenu (maxHeight: .infinity)");
+  // C-3a (écarté) : le titre de la page n'est pas répété dans le contenu.
   if (
-    /Text\(\s*(ConsoleSection\.stats|section)\.title\s*\)/.test(stripComments(files.app("IOSHarnessScreens.swift")))
+    /Text\(\s*(OSSystemDestination\.\w+|destination)\.title\s*\)/.test(
+      stripComments(files.app("IOSSystemScreens.swift")),
+    )
   ) {
-    faults.push("C-3a : IOSHarnessScreens.swift répète le titre de section dans le contenu");
+    faults.push("C-3a : IOSSystemScreens.swift répète le titre de la page dans le contenu");
   }
   // C-4 : aucun filet tracé à la main dans la Mémoire et la feuille Souvenir.
   for (const name of ["IOSMemoryScreen.swift", "IOSMemoryDetailView.swift"]) {
@@ -258,7 +263,7 @@ function plant(source: string, change: (s: string) => string): string {
   return after;
 }
 
-test("ios-listes-groupees-natives/AC-2 : les écrans du serveur et la Mémoire (Liste) sont des List groupées, sans filet ni panneau", () => {
+test("ios-listes-groupees-natives/AC-2 : les pages du Système et la Mémoire (Liste) sont des List groupées, sans filet ni panneau", () => {
   for (const name of LIST_SCREENS) {
     assert.deepEqual(listScreenFaults(name, appSource(name)), [], name);
   }
@@ -275,36 +280,28 @@ test("ios-listes-groupees-natives/AC-2 : les écrans du serveur et la Mémoire (
     );
   }
 
-  // Une rangée de feature (RunListRow, partagée) redevenue carte ⇒ rouge.
-  const harness = "IOSHarnessScreens.swift";
-  const row = "RunViews.swift";
+  // Une rangée du Poste (partagée) redevenue carte ⇒ rouge.
+  const system = "IOSSystemScreens.swift";
+  const row = "WorkstationSections.swift";
   const card = plant(appSource(row), (s) =>
-    s.replace(
-      ".accessibilityElement(children: .combine)",
-      ".iosCard()\n            .accessibilityElement(children: .combine)",
-    ),
+    s.replace(/\bSection \{/, 'Section {\n            Text(verbatim: "").iosCard()'),
   );
   assert.ok(
     listContentFaults(row, card).some((f) => f.includes(".iosCard(")),
     "une carte doit rougir",
   );
 
-  // Un filet remis entre les questions d'un lot, côté iOS ⇒ rouge.
-  const inbox = "InboxFeed.swift";
-  const divider = plant(appSource(inbox), (s) =>
-    s.replace(
-      "ForEach(Array(batch.items.enumerated())",
-      "Divider()\n            ForEach(Array(batch.items.enumerated())",
-    ),
-  );
+  // Un filet remis entre deux rangées de l'autonomie, côté iOS ⇒ rouge.
+  const autonomy = "AutonomyViews.swift";
+  const divider = plant(appSource(autonomy), (s) => s.replace(/\bSection \{/, "Section {\n            Divider()"));
   assert.ok(
-    listContentFaults(inbox, divider).some((f) => f.includes("Divider()")),
-    "un filet dans la boîte doit rougir",
+    listContentFaults(autonomy, divider).some((f) => f.includes("Divider()")),
+    "un filet dans l'autonomie doit rougir",
   );
 
   // Le style de liste posé à la main, sans la surface groupée partagée ⇒ rouge.
-  const style = plant(appSource(harness), (s) => s.replace(".iosGroupedList()", ".listStyle(.insetGrouped)"));
-  assert.ok(listScreenFaults(harness, style).length > 0, "un .listStyle à la main doit rougir");
+  const style = plant(appSource(system), (s) => s.replace(".iosGroupedList()", ".listStyle(.insetGrouped)"));
+  assert.ok(listScreenFaults(system, style).length > 0, "un .listStyle à la main doit rougir");
 });
 
 test("ios-listes-groupees-natives/AC-10 : un panneau ou un ScrollView remis autour d'un écran en liste fait rougir la garde", () => {
@@ -348,22 +345,22 @@ test("ios-listes-groupees-natives/AC-5 : un seul titre par écran en liste et pa
     assert.deepEqual(titleFaults(name, appSource(name)), [], name);
   }
 
-  // Faute plantée : le titre de section répété dans le contenu ⇒ rouge.
-  const harness = "IOSHarnessScreens.swift";
-  const repeated = plant(appSource(harness), (s) =>
-    s.replace("content()\n", "Text(title)\n                    content()\n"),
+  // Faute plantée : le titre de la page répété dans le contenu ⇒ rouge.
+  const system = "IOSSystemScreens.swift";
+  const repeated = plant(appSource(system), (s) =>
+    s.replace("content()\n", "Text(destination.title)\n            content()\n"),
   );
   assert.ok(
-    titleFaults(harness, repeated).some((f) => f.includes("répété")),
+    titleFaults(system, repeated).some((f) => f.includes("répété")),
     "un second titre doit rougir",
   );
 
   // Faute plantée : un second `.navigationTitle(` ⇒ rouge.
-  const twice = plant(appSource(harness), (s) =>
-    s.replace(".iosGroupedList()", ".iosGroupedList()\n                .navigationTitle(title)"),
+  const twice = plant(appSource(system), (s) =>
+    s.replace(".iosGroupedList()", ".iosGroupedList()\n        .navigationTitle(destination.title)"),
   );
   assert.ok(
-    titleFaults(harness, twice).some((f) => f.includes("×2")),
+    titleFaults(system, twice).some((f) => f.includes("×3")),
     "deux titres de navigation doivent rougir",
   );
 
@@ -381,25 +378,22 @@ test("ios-listes-groupees-natives/AC-4 : en AX-XL, les rangées des écrans en l
     assert.deepEqual(dynamicTypeFaults(name, appSource(name)), [], name);
   }
 
-  // Faute plantée : une hauteur fixe sur une rangée de feature (RunListRow, partagée) ⇒ rouge.
-  const harness = "RunViews.swift";
-  const fixed = plant(appSource(harness), (s) =>
-    s.replace(
-      ".accessibilityElement(children: .combine)",
-      ".frame(height: 44)\n        .accessibilityElement(children: .combine)",
-    ),
+  // Faute plantée : une hauteur fixe sur une rangée du Poste (partagée) ⇒ rouge.
+  const workstation = "WorkstationSections.swift";
+  const fixed = plant(appSource(workstation), (s) =>
+    s.replace(/\bSection \{/, 'Section {\n            Text(verbatim: "").frame(height: 44)'),
   );
   assert.ok(
-    dynamicTypeFaults(harness, fixed).some((f) => f.includes(".frame(height:")),
+    dynamicTypeFaults(workstation, fixed).some((f) => f.includes(".frame(height:")),
     "une hauteur fixe doit rougir",
   );
 
-  // Faute plantée : le titre d'une feature plafonné à une ligne ⇒ rouge.
-  const capped = plant(appSource(harness), (s) =>
-    s.replace("Text(run.title)\n", "Text(run.title)\n                .lineLimit(1)\n"),
+  // Faute plantée : un libellé de rangée plafonné à une ligne ⇒ rouge.
+  const capped = plant(appSource(workstation), (s) =>
+    s.replace(/\bSection \{/, 'Section {\n            Text(verbatim: "").lineLimit(1)'),
   );
   assert.ok(
-    dynamicTypeFaults(harness, capped).some((f) => f.includes("lineLimit(")),
+    dynamicTypeFaults(workstation, capped).some((f) => f.includes("lineLimit(")),
     "un libellé tronqué doit rougir",
   );
 });
@@ -470,25 +464,25 @@ test("ios-listes-groupees-natives/AC-1 : les constats de l'audit HIG restés vra
     "une carte élevée égale au fond doit rougir",
   );
 
-  // Faute plantée (C-2) : la liste du serveur redevient un bloc étiré ⇒ rouge.
-  const harness = "IOSHarnessScreens.swift";
-  const stretched = plant(appSource(harness), (s) =>
+  // Faute plantée (C-2) : la liste du Système redevient un bloc étiré ⇒ rouge.
+  const system = "IOSSystemScreens.swift";
+  const stretched = plant(appSource(system), (s) =>
     s.replace(
       ".iosGroupedList()",
-      ".iosGroupedList()\n                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)",
+      ".iosGroupedList()\n        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)",
     ),
   );
   assert.ok(
-    auditFaults(replacing(harness, stretched)).some((f) => f.startsWith("C-2/C-3b")),
+    auditFaults(replacing(system, stretched)).some((f) => f.startsWith("C-2/C-3b")),
     "une liste étirée doit rougir",
   );
 
-  // Faute plantée (C-3a) : le titre de section répété dans le contenu ⇒ rouge.
-  const repeated = plant(appSource(harness), (s) =>
-    s.replace("content()\n", "Text(section.title)\n                    content()\n"),
+  // Faute plantée (C-3a) : le titre de la page répété dans le contenu ⇒ rouge.
+  const repeated = plant(appSource(system), (s) =>
+    s.replace("content()\n", "Text(destination.title)\n            content()\n"),
   );
   assert.ok(
-    auditFaults(replacing(harness, repeated)).some((f) => f.startsWith("C-3a")),
+    auditFaults(replacing(system, repeated)).some((f) => f.startsWith("C-3a")),
     "un second titre doit rougir",
   );
 });
