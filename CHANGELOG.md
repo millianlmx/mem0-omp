@@ -1,5 +1,15 @@
 # Journal des versions
 
+## omp-harness 1.41.0 — 2026-11-12
+
+- feat(console,harness): la liste des dépôts se dessine d'une seule lecture (forge et espace dans GET /v1/repos), coche d'envoi en symbole, et la release dit pourquoi elle ne publie rien (#463) (fb8fb80)
+- omp-console : une seule interface, fluide avec beaucoup de données, et l'écran Dépôts (#462) (9b88d2d)
+
+## omp-console 1.3.0 — 2026-11-12
+
+- feat(console,harness): la liste des dépôts se dessine d'une seule lecture (forge et espace dans GET /v1/repos), coche d'envoi en symbole, et la release dit pourquoi elle ne publie rien (#463) (fb8fb80)
+- omp-console : une seule interface, fluide avec beaucoup de données, et l'écran Dépôts (#462) (9b88d2d)
+
 ## omp-harness 1.40.2 — 2026-11-11
 
 - fix(harness): l'extrait de CI transmis au correcteur porte l'erreur de compilation, pas les lignes de code citées (#460) (a3b378a)
