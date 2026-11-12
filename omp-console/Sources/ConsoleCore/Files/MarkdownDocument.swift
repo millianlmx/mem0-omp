@@ -16,6 +16,7 @@
 // (Doc-5), donc ce parseur n'importe que Foundation et tourne aussi sur l'app.
 
 import Foundation
+import Synchronization
 
 /// Un bloc du document, prêt à rendre.
 public enum MarkdownBlock: Equatable, Sendable {
@@ -83,8 +84,40 @@ public struct MarkdownTable: Equatable, Sendable {
 
 public enum MarkdownDocument {
     /// Le document en blocs. Un échec de parse rend le texte brut en un seul
-    /// paragraphe ; un document vide rend une liste vide.
+    /// paragraphe ; un document vide rend une liste vide. Mémorisé par texte (borné) :
+    /// une vue qui se redessine ne réanalyse pas un texte qui n'a pas changé.
     public static func blocks(_ markdown: String) -> [MarkdownBlock] {
+        if let known = parsedBlocks.withLock({ $0[markdown] }) { return known }
+        let parsed = parseBlocks(markdown)
+        parsedBlocks.withLock { cache in
+            if cache.count >= blocksLimit { cache.removeAll(keepingCapacity: true) }
+            cache[markdown] = parsed
+        }
+        return parsed
+    }
+
+    /// Une ligne Markdown rendue en ligne (gras, italique, `code`, liens) : une
+    /// question, une option, un impact. Les sauts de ligne restent ; un échec de
+    /// parse rend le texte brut. Mémorisé par texte, comme `blocks`.
+    public static func inline(_ markdown: String) -> AttributedString {
+        if let known = parsedInlines.withLock({ $0[markdown] }) { return known }
+        let parsed = (try? AttributedString(
+            markdown: markdown,
+            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(markdown)
+        parsedInlines.withLock { cache in
+            if cache.count >= inlinesLimit { cache.removeAll(keepingCapacity: true) }
+            cache[markdown] = parsed
+        }
+        return parsed
+    }
+
+    private static let blocksLimit = 256
+    private static let inlinesLimit = 1024
+    private static let parsedBlocks = Mutex<[String: [MarkdownBlock]]>([:])
+    private static let parsedInlines = Mutex<[String: AttributedString]>([:])
+
+    private static func parseBlocks(_ markdown: String) -> [MarkdownBlock] {
         let attributed: AttributedString
         do {
             attributed = try AttributedString(
@@ -101,16 +134,6 @@ public enum MarkdownDocument {
             return MarkdownRun(text: text, stack: stack[...])
         }
         return blocks(from: runs[...])
-    }
-
-    /// Une ligne Markdown rendue en ligne (gras, italique, `code`, liens) : une
-    /// question, une option, un impact. Les sauts de ligne restent ; un échec de
-    /// parse rend le texte brut.
-    public static func inline(_ markdown: String) -> AttributedString {
-        (try? AttributedString(
-            markdown: markdown,
-            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )) ?? AttributedString(markdown)
     }
 
     // MARK: - Lecture de la pile d'intentions

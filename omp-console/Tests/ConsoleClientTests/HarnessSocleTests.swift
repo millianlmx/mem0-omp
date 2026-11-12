@@ -1,15 +1,15 @@
 // Les tests hermétiques du socle partagé Mac/iOS côté client : la saisie des options de
-// lancement, l'historique des features (`GET /v1/runs`, filtres, pages, groupes), la file
-// « À traiter », la palette de commandes, la carte des services et la remontée bornée
-// des erreurs.
+// lancement, l'historique des features (`GET /v1/runs`), la priorité, le compte de la
+// boîte, la palette de commandes, la carte des services et la remontée bornée des
+// erreurs.
 
 import ConsoleClient
 import ConsoleCore
 import Foundation
 import Testing
 
-private func run(_ id: String, state: String = "queued", priority: Int? = nil, title: String = "T", project: String? = nil, updated: Double = 0) -> HarnessRun {
-    HarnessRun(id: id, repo: "demo", slug: id, title: title, request: "r", state: state, priority: priority, projectId: project, createdAt: updated, updatedAt: updated)
+private func run(_ id: String, state: String = "queued", priority: Int? = nil, title: String = "T", updated: Double = 0) -> HarnessRun {
+    HarnessRun(id: id, repo: "demo", slug: id, title: title, request: "r", state: state, priority: priority, createdAt: updated, updatedAt: updated)
 }
 
 private final class RecordingTransport: HarnessTransport, @unchecked Sendable {
@@ -69,83 +69,46 @@ struct HarnessSocleTests {
         #expect(HarnessLaunchDraft(budget: "-3").problem == .budget)
     }
 
-    @Test("l'historique lit GET /v1/runs avec l'état et le dépôt, puis filtre projet et texte et pagine")
+    @Test("l'historique lit GET /v1/runs, sert une feature par son identifiant et suit le flux une fois demandé")
     func history() async throws {
-        let many = (0 ..< 120).map { #"{"id":"r\#($0)","repo":"demo","slug":"s","title":"Feature \#($0)","request":"r","state":"merged","fixes":0,"modules":[],"projectId":\#($0 % 2 == 0 ? "\"p1\"" : "null"),"createdAt":\#($0),"updatedAt":\#($0)}"# }
+        let many = (0 ..< 120).map { #"{"id":"r\#($0)","repo":"demo","slug":"s","title":"Feature \#($0)","request":"r","state":"merged","fixes":0,"modules":[],"createdAt":\#($0),"updatedAt":\#($0)}"# }
         let transport = RecordingTransport { call in
             switch call.path {
             case "/v1/inbox": HarnessReply(status: 200, body: Data(inbox.utf8))
-            default: HarnessReply(status: call.path.hasPrefix("/v1/runs") ? 200 : 404, body: Data(#"{"runs":[\#(many.joined(separator: ","))]}"#.utf8))
+            default: HarnessReply(status: call.path == "/v1/runs" ? 200 : 404, body: Data(#"{"runs":[\#(many.joined(separator: ","))]}"#.utf8))
             }
         }
         let server = model(transport)
         #expect(await server.configure(address: "vps.example", token: "t"))
         let history = server.history
+        #expect(!history.isWatched)
         await history.refresh()
-        #expect(history.page.count == HarnessRunsHistory.pageSize)
-        #expect(history.hasMore)
-        #expect(history.page.first?.id == "r119", "les plus récemment changées d'abord")
-        history.showMore()
-        history.showMore()
-        #expect(history.page.count == 120 && !history.hasMore)
-        history.projectId = "p1"
-        #expect(history.filtered.count == 60)
-        history.query = "feature 11"
-        #expect(Set(history.filtered.map(\.id)) == ["r110", "r112", "r114", "r116", "r118"])
-        #expect(HarnessRunsHistory.path(states: [.merged, .failed], repo: "mon dépôt") == "/v1/runs?state=failed,merged&repo=mon%20d%C3%A9p%C3%B4t")
-        #expect(HarnessRunsHistory.path(states: [], repo: nil) == "/v1/runs")
+        #expect(history.isWatched)
+        #expect(history.runs.count == 120)
+        #expect(history.run("r42")?.title == "Feature 42")
+        #expect(transport.calls.contains { $0.path == "/v1/runs" })
     }
 
-    @Test("les groupes : ce qui vous attend, puis ce qui tourne, la file par priorité, le fini du plus récent ; la boîte prime et complète l'historique")
-    func groups() {
-        let old = run("w1", state: "awaiting_human", updated: 10)
-        let recent = run("w2", state: "escalated", updated: 20)
-        let high = run("q1", priority: 5)
-        let low = run("q2", priority: 0)
-        let merged = run("m1", state: "merged", updated: 30)
-        let failed = run("f1", state: "failed", updated: 40)
-        // L'historique croit q2 en file ; la boîte la sait déjà en cours, et connaît une
-        // feature lancée depuis la lecture de l'historique.
-        let fresh = run("q2", state: "running", updated: 50)
-        let launched = run("n1", state: "queued", priority: 1)
-        let groups = HarnessRunGroups.groups([recent, merged, low, old, failed, high], live: [fresh, launched])
-        #expect(groups.map(\.group) == [.needsYou, .running, .queued, .done])
-        #expect(groups[0].runs.map(\.id) == ["w1", "w2"], "la plus vieille attente d'abord")
-        #expect(groups[1].runs.map(\.id) == ["q2"])
-        #expect(groups[2].runs.map(\.id) == ["q1", "n1"], "l'ordre d'admission")
-        #expect(groups[3].runs.map(\.id) == ["f1", "m1"])
-        #expect(HarnessRunGroups.groups([merged]).map(\.group) == [.done], "aucun groupe vide")
-        #expect(!merged.acceptsPriority && high.acceptsPriority)
+    @Test("la priorité se change tant que la feature n'est pas terminée")
+    func acceptsPriority() {
+        #expect(run("q1", priority: 5).acceptsPriority)
+        #expect(run("w1", state: "awaiting_human").acceptsPriority)
+        #expect(!run("m1", state: "merged").acceptsPriority)
+        #expect(!run("f1", state: "failed").acceptsPriority)
     }
 
-    @Test("la file « À traiter » : les portes de la plus vieille à la plus récente, puis alertes, audits et décisions par feature ; une question d'une feature terminée n'y est plus")
-    func inboxFeed() {
+    @Test("le compte de la boîte : une question d'une feature terminée ne compte plus")
+    func inboxPending() {
         let specs = run("s", state: "awaiting_human", updated: 30)
         var verdict = run("v", state: "awaiting_human", updated: 10)
         verdict.step = "review"
-        var waitingSpecs = specs
-        waitingSpecs.step = "specs"
         let asked = run("q", state: "escalated", updated: 20)
         let batch = HarnessEscalationBatch(run: asked, items: [HarnessEscalation(id: 1, runId: "q", category: "reversible", question: "?", options: ["a", "b"])])
         let empty = HarnessEscalationBatch(run: run("e", state: "escalated"), items: [])
         // Un serveur plus ancien sert encore la question d'une feature annulée : plus rien ne l'attend.
         let stale = HarnessEscalationBatch(run: run("c", state: "cancelled"), items: [HarnessEscalation(id: 9, runId: "c", category: "reversible", question: "?", options: ["a"])])
-        let decisions = [
-            HarnessDecision(id: 1, runId: "d", seq: 1, question: "?", options: ["a"], chosen: "a", rationale: "r", createdAt: 5),
-            HarnessDecision(id: 2, runId: "d", seq: 2, question: "?", options: ["a"], chosen: "a", rationale: "r", createdAt: 6),
-        ]
-        let inbox = HarnessInbox(
-            batches: [batch, empty, stale], awaiting: [waitingSpecs, verdict], decisions: decisions,
-            audits: [HarnessAudit(id: "a1", repo: "demo", state: "proposed"), HarnessAudit(id: "a2", repo: "demo", state: "analysing")],
-            alerts: [HarnessAlert(runId: "x", kind: "stalled", since: 1)]
-        )
-        let items = HarnessInboxFeed.items(inbox)
-        #expect(items.map(\.id) == ["verdict/v", "questions/q", "specs/s", "alert/x/stalled", "audit/a1", "decisions/d"])
-        let gates = items.prefix(3).filter(\.isGate).count
-        #expect(gates == 3)
-        #expect(HarnessInboxFeed.first(.specs, in: items)?.runId == "s")
+        let inbox = HarnessInbox(batches: [batch, empty, stale], awaiting: [specs, verdict])
         #expect(inbox.pendingCount == 3, "une question et deux validations ; la question orpheline ne compte pas")
-        #expect(HarnessInboxFeed.items(HarnessInbox()).isEmpty, "une boîte vide ne montre rien")
     }
 
     @Test("une annulation n'est pas une panne : changer d'écran n'allume pas le bandeau « injoignable »")
@@ -193,7 +156,7 @@ struct HarnessSocleTests {
         #expect(lines.map(\.kind) == [.server, .database, .scheduler, .disk, .oracle])
         #expect(lines.first(where: { $0.kind == .scheduler })?.level == .warning)
         #expect(lines.first(where: { $0.kind == .oracle })?.level == .warning)
-        #expect(HarnessServices.worst(lines) == .warning)
+        #expect(lines.map(\.level).max() == .warning)
         let down = HarnessServices.lines(health: nil, status: nil, workstation: nil, reachable: false)
         #expect(down.map(\.level) == [.down])
         let memory = HarnessStatus(memory: HarnessMemoryStatus(configured: true, ok: false), backups: HarnessBackupsStatus(lastAt: 10, lastError: "disque plein", lastErrorAt: 20))

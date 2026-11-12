@@ -1,6 +1,6 @@
-// Feature onglet-preuves : l'onglet « Preuves » de la page d'une feature (Mac et iOS)
-// côté client — l'onglet d'ouverture, le découpage en tours de revue, l'avant/après
-// apparié par critère, le rapport de tests par critère, l'onglet absent sur un 404,
+// Feature onglet-preuves : les preuves d'une feature (Mac et iOS) côté client — le
+// découpage en tours de revue, l'avant/après apparié par critère, le rapport de tests
+// par critère, rien sur un 404,
 // l'échec visible sur une réponse illisible, et le nombre de preuves dans la
 // notification locale d'un verdict. Sur la doublure de transport, avec les formes
 // JSON que le serveur écrit (omp-harness/proofs.ts, test-report.ts).
@@ -32,12 +32,6 @@ private final class Transport: HarnessTransport, @unchecked Sendable {
 private func ok(_ json: String, status: Int = 200) -> HarnessReply { HarnessReply(status: status, body: Data(json.utf8)) }
 
 private let inbox = #"{"cursor":0,"batches":[],"awaiting":[],"decisions":[],"runs":[]}"#
-
-private func run(state: String, step: String?) throws -> HarnessRun {
-    let step = step.map { #""\#($0)""# } ?? "null"
-    let json = #"{"id":"r1","repo":"demo","slug":"a","title":"A","request":"a","state":"\#(state)","step":\#(step),"fixes":0,"modules":[],"createdAt":0,"updatedAt":0}"#
-    return try JSONDecoder().decode(HarnessRun.self, from: Data(json.utf8))
-}
 
 private func timeline(_ steps: [(kind: String, at: Int)]) -> String {
     let rows = steps.enumerated().map { index, step in
@@ -79,17 +73,8 @@ private let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]
 @Suite("Onglet Preuves — client")
 @MainActor
 struct OngletPreuvesTests {
-    @Test("onglet-preuves/AC-90 : une feature qui attend la validation de sa revue s'ouvre sur ses preuves — vignettes, avant/après côte à côte par critère, rapport de tests par critère")
-    func opensOnProofsWithPairsAndReport() async throws {
-        let review = try run(state: "awaiting_human", step: nil)
-        #expect(HarnessRunOpening.of(review, pending: true, running: false, proofsShown: true) == .proofs)
-        // Sans preuves servies, ou pour des specs à valider, l'Aperçu reste l'onglet d'ouverture.
-        #expect(HarnessRunOpening.of(review, pending: true, running: false, proofsShown: false) == .overview)
-        let specs = try run(state: "awaiting_human", step: "specs")
-        #expect(HarnessRunOpening.of(specs, pending: true, running: false, proofsShown: true) == .overview)
-        let running = try run(state: "running", step: "impl")
-        #expect(HarnessRunOpening.of(running, pending: false, running: true, proofsShown: true) == .live)
-
+    @Test("onglet-preuves/AC-90 : une feature qui attend la validation de sa revue montre ses preuves — vignettes, avant/après côte à côte par critère, rapport de tests par critère")
+    func showsProofsWithPairsAndReport() async throws {
         let listed = [
             proof(1, "test_report", at: 10),
             proof(2, "screenshot", at: 11, acRef: "AC-2", side: "before"),
@@ -112,7 +97,6 @@ struct OngletPreuvesTests {
         let server = await connected(transport)
         let proofs = HarnessRunProofs(harness: server, runId: "r1")
         await proofs.load()
-        #expect(proofs.showsTab)
         guard case .loaded(let rounds) = proofs.availability else {
             Issue.record("preuves non lues : \(proofs.availability)")
             return
@@ -178,23 +162,20 @@ struct OngletPreuvesTests {
         #expect(single.current.proofs.count == 4 && single.previous.isEmpty)
     }
 
-    @Test("onglet-preuves/AC-92 : un serveur qui ne sert pas les preuves (404) cache l'onglet, sans aucune erreur")
-    func absentRouteHidesTheTab() async throws {
+    @Test("onglet-preuves/AC-92 : un serveur qui ne sert pas les preuves (404) n'en montre aucune, sans aucune erreur")
+    func absentRouteShowsNothing() async throws {
         let transport = Transport { call in
             call.path == "/v1/inbox" ? ok(inbox) : ok(#"{"error":"route inconnue"}"#, status: 404)
         }
         let server = await connected(transport)
         let proofs = HarnessRunProofs(harness: server, runId: "r1")
-        #expect(!proofs.showsTab && !proofs.isResolved)
+        #expect(proofs.availability == .loading)
         await proofs.load()
         #expect(proofs.availability == .absent)
-        #expect(proofs.isResolved && !proofs.showsTab)
         #expect(server.failure == nil)
-        let review = try run(state: "awaiting_human", step: nil)
-        #expect(HarnessRunOpening.of(review, pending: true, running: false, proofsShown: proofs.showsTab) == .overview)
     }
 
-    @Test("onglet-preuves/AC-93 : une réponse indécodable ne cache pas l'onglet — elle s'y montre comme un échec")
+    @Test("onglet-preuves/AC-93 : une réponse indécodable se montre comme un échec")
     func unreadableAnswerIsShown() async throws {
         let transport = Transport { call in
             switch call.path {
@@ -208,7 +189,6 @@ struct OngletPreuvesTests {
         let proofs = HarnessRunProofs(harness: server, runId: "r1")
         await proofs.load()
         #expect(proofs.availability == .failed(.unreadable))
-        #expect(proofs.showsTab)
         #expect(HarnessFailure.unreadable.message == PipelineServerText.unreadable)
     }
 

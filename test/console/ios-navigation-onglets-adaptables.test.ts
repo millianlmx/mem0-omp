@@ -1,8 +1,9 @@
 // La GARDE DOCUMENTAIRE de la feature `ios-navigation-onglets-adaptables` (S-7,
 // AC-13) : `omp-console/ios/DESIGN.md` décrit la coque à onglets (barre d'onglets
-// de l'iPhone, barre latérale de l'iPad) et plus aucune puce de l'ancienne coque
-// (pile repliée, liste racine) ; aucune source de l'app n'emploie plus
-// l'identifiant `ios.section.` de l'ancienne liste racine.
+// de l'iPhone, barre latérale de l'iPad, hub Système poussé dans la pile) et plus
+// aucune puce d'une coque disparue (pile repliée, liste racine, onglet « Plus ») ;
+// aucune source de l'app n'emploie plus l'identifiant `ios.section.` de l'ancienne
+// liste racine.
 //
 // Ce que la garde NE refait pas : la validité des marqueurs de chaque puce
 // (`[test:]`/`[capture:]`/`[garde:]`, design-ios/AC-9), l'absence de
@@ -32,10 +33,10 @@ function plant(sources: Sources, rel: string, from: string, to: string): Sources
 
 /** Les tests Swift que la section « Navigation » de DESIGN.md doit citer (S-7). */
 const NAVIGATION_MARKERS = [
-  "[test: tabsAreTheSectionsThenSearch]",
-  "[test: memoryMovesUnderSystemOnIPhone]",
-  "[test: groupedSections]",
-  "[test: launchSelectsEachSection]",
+  "[test: launchOpensNow]",
+  "[test: recipeScreens]",
+  "[test: systemStacksInTheCurrentTab]",
+  "[test: badgesCountWhatWaits]",
 ];
 
 /** Les tournures de l'ancienne coque qui ne doivent plus figurer dans DESIGN.md. */
@@ -106,10 +107,10 @@ test("ios-navigation-onglets-adaptables/AC-13 : DESIGN.md décrit la barre d'ong
     designFaults(stack).some((f) => f.includes("pile")),
     "une puce sur la pile repliée doit faire rougir la garde",
   );
-  const unmarked = plant(sources, DESIGN, "[test: memoryMovesUnderSystemOnIPhone]", "[test: groupedSections]");
+  const unmarked = plant(sources, DESIGN, "[test: systemStacksInTheCurrentTab]", "[test: launchOpensNow]");
   assert.ok(
-    designFaults(unmarked).some((f) => f.includes("memoryMovesUnderSystemOnIPhone")),
-    "une puce « Mémoire sous Système » sans son test doit faire rougir la garde",
+    designFaults(unmarked).some((f) => f.includes("systemStacksInTheCurrentTab")),
+    "une puce « hub Système dans la pile » sans son test doit faire rougir la garde",
   );
   const plus = plant(sources, DESIGN, "## Les six tons", "- Un onglet « Plus » range le reste.\n\n## Les six tons");
   assert.ok(
@@ -122,10 +123,10 @@ test("ios-navigation-onglets-adaptables/AC-13 : DESIGN.md décrit la barre d'ong
     "une section Navigation absente doit faire rougir la garde",
   );
 
-  const rootView = path.join(APP, "RootView.swift");
-  const oldId = plant(sources, rootView, '"ios.tab." + section.rawValue', '"ios.section." + section.rawValue');
+  const shell = path.join(APP, "IOSOSRootView.swift");
+  const oldId = plant(sources, shell, '"ios.os.tab." + tab.rawValue', '"ios.section." + tab.rawValue');
   assert.ok(
-    identifierFaults(oldId).some((f) => f.includes("RootView.swift")),
+    identifierFaults(oldId).some((f) => f.includes("IOSOSRootView.swift")),
     "un identifiant ios.section. doit faire rougir la garde",
   );
 });

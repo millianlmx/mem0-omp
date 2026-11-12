@@ -1,7 +1,5 @@
-// Une FEATURE à l'écran, écrite une fois pour le Mac et l'iPhone/iPad : sa LIGNE dans la
-// liste (point d'état, titre, dépôt · étape · âge — une ligne dense, comme une session
-// dans la barre latérale d'un terminal), le menu de sa priorité, et les feuilles et
-// confirmations de ses gestes (`harnessGestures`).
+// Une FEATURE à l'écran, écrite une fois pour le Mac et l'iPhone/iPad : le menu de sa
+// priorité, et les feuilles et confirmations de ses gestes (`harnessGestures`).
 //
 // Les gestes qui changent le sort d'une feature (arrêt, relance, annulation d'une
 // fusion) passent TOUJOURS par une confirmation (`drafts.stopRequest`, `retryRequest`,
@@ -11,101 +9,6 @@
 import ConsoleClient
 import ConsoleCore
 import SwiftUI
-
-/// La ligne d'une feature : aucun bouton dedans, tout geste est dans son menu ou sa page.
-public struct RunListRow: View {
-    let run: HarnessRun
-    let cost: Double?
-    let alerts: Int
-
-    public init(run: HarnessRun, cost: Double? = nil, alerts: Int = 0) {
-        self.run = run
-        self.cost = cost
-        self.alerts = alerts
-    }
-
-    public var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            RunStateDot(run: run)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(run.title)
-                        .font(.body.weight(HarnessRunGroup.of(run) == .needsYou ? .semibold : .regular))
-                        .denseLines(2)
-                    Spacer(minLength: 4)
-                    Text(ConsoleFormat.relative(ms: run.updatedAt, nowMs: Date().timeIntervalSince1970 * 1000))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .denseLines(1)
-                }
-                Text(meta)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .denseLines(1)
-                if let note {
-                    Text(note)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .denseLines(2)
-                }
-            }
-        }
-        .padding(.vertical, 2)
-        .accessibilityElement(children: .combine)
-        .consoleID("runs.row")
-    }
-
-    /// `dépôt · état · étape · coût` : ce qu'un coup d'œil doit savoir.
-    private var meta: String {
-        var parts = [run.repo, run.statusLine]
-        if run.fixes > 0 { parts.append(ShellText.fixes(run.fixes)) }
-        if let cost, cost > 0 { parts.append(MonitoringText.cost(cost)) }
-        return parts.joined(separator: " · ")
-    }
-
-    /// Ce qui mérite l'œil : ce qui retient la feature en file, sa dernière panne, ses alertes.
-    private var note: String? {
-        if let reason = run.queueReason { return reason }
-        if let detail = run.detailLine() { return detail }
-        if alerts > 0 { return MonitoringText.alertsTitle }
-        return nil
-    }
-}
-
-extension View {
-    /// La ligne d'une feature reste dense sur le Mac ; sur l'iPhone et l'iPad, elle grandit
-    /// avec le texte (Dynamic Type) plutôt que de le tronquer.
-    @ViewBuilder
-    func denseLines(_ count: Int) -> some View {
-        #if os(macOS)
-        lineLimit(count)
-        #else
-        self
-        #endif
-    }
-}
-
-/// Le point d'état d'une feature : sa teinte, pleine quand elle travaille ou vous attend.
-public struct RunStateDot: View {
-    let run: HarnessRun
-
-    public init(run: HarnessRun) {
-        self.run = run
-    }
-
-    public var body: some View {
-        let group = HarnessRunGroup.of(run)
-        Circle()
-            .fill(run.tone.consoleTint.opacity(group == .done || group == .queued ? 0.55 : 1))
-            .overlay {
-                if group == .running {
-                    Circle().strokeBorder(run.tone.consoleTint.opacity(0.35), lineWidth: 3).scaleEffect(1.8)
-                }
-            }
-            .frame(width: 9, height: 9)
-            .accessibilityLabel(run.statusLine)
-    }
-}
 
 extension HarnessRun {
     /// La feature tourne ou attend : elle peut être arrêtée.
@@ -156,12 +59,10 @@ public struct PriorityMenu: View {
 extension View {
     /// Les feuilles et confirmations des gestes du serveur : refus (specs ou verdict),
     /// renversement d'une décision, direct d'une session, arrêt, relance avec consigne,
-    /// consigne et budget d'une feature, annulation d'une fusion, et confirmation d'une
-    /// proposition née d'un signalement de collègue.
+    /// consigne et budget d'une feature, annulation d'une fusion.
     public func harnessGestures(server: HarnessModel, drafts: HarnessDrafts) -> some View {
         modifier(HarnessGestures(server: server, drafts: drafts))
             .modifier(RunControlSheets(server: server, drafts: drafts))
-            .modifier(SignalGestures(server: server, drafts: drafts))
     }
 }
 

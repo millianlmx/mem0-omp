@@ -12,8 +12,8 @@ import SwiftUI
 
 extension View {
     /// Pose la palette et la feuille « Nouvelle feature » sous la racine d'une app.
-    /// `sections` : les sections de l'app ; `memory` : l'app a une section Mémoire ;
-    /// `select` montre une section.
+    /// `sections` : les destinations de l'app ; `memory` : l'app a un écran Mémoire ;
+    /// `select` montre une destination.
     public func consolePalette(
         server: HarnessModel, drafts: HarnessDrafts, sections: [ConsoleSection], memory: Bool,
         select: @escaping @MainActor (ConsoleSection) -> Void
@@ -49,9 +49,6 @@ private struct PalettePresenter: ViewModifier {
             .sheet(isPresented: $drafts.intakeSheetShown) {
                 IntakeSheet(server: server, drafts: drafts)
             }
-            .sheet(item: $drafts.intakeEdit) { intake in
-                IntakePlanSheet(server: server, drafts: drafts, intake: intake)
-            }
     }
 
     private func runPending() {
@@ -79,9 +76,8 @@ public enum ConsolePaletteActions {
             ConsoleNavigation.openRun(id, drafts: drafts, select: select)
         case .newFeature:
             drafts.launchSheetShown = true
-        case .inbox(let anchor):
+        case .inbox:
             select(.inbox)
-            drafts.homeAnchor = anchor
         case .refresh:
             Task {
                 await server.refresh()

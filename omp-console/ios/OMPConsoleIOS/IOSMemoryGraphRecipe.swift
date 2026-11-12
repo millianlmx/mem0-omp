@@ -1,5 +1,5 @@
 // Le crochet de RECETTE `-memoire.recipe <graphe|zoom|fiche|liste|clavier|injoignable|service-ancien>`
-// (BR-7) : il force le mode graphe de la section Mémoire sur la fixture PARTAGÉE
+// (BR-7) : il force le mode graphe de l'écran Mémoire sur la fixture PARTAGÉE
 // `MemoryGraphParity` (ConsoleCore), sans réseau et sans écran fabriqué — les API réelles
 // du modèle (`apply`, `magnify`, `drag`, `select`) sont employées telles quelles. La recette
 // `liste` (feuilles-ios-presentation-et-depots) charge la même fixture SANS montrer le
@@ -11,7 +11,7 @@
 // sur `IOSMemoryFailureReader` : `injoignable` garde la liste face à un serveur injoignable,
 // `serviceAncien` montre le graphe face à un service mémoire trop ancien.
 //
-// Sans l'argument : aucun effet. Comme `IOSSection.resolve` et `IOSHomeRecipe`, la
+// Sans l'argument : aucun effet. Comme `IOSShellLaunch.resolve`, la
 // DERNIÈRE paire reconnue gagne ; une valeur inconnue est ignorée.
 //
 // Le fichier ne nomme AUCUN type du magasin (jeton interdit des sources iOS) et

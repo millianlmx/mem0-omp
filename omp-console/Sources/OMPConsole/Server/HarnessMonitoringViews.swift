@@ -309,8 +309,6 @@ struct HarnessUsageSection: View {
             }
         } header: {
             Text(MonitoringText.usageTitle)
-        } footer: {
-            Text(MonitoringText.usageHint)
         }
     }
 }
@@ -339,8 +337,6 @@ struct HarnessModelsSection: View {
             }
         } header: {
             Text(MonitoringText.modelsTitle)
-        } footer: {
-            Text(MonitoringText.modelsHint)
         }
     }
 }
@@ -368,8 +364,6 @@ struct HarnessFlakySection: View {
             }
         } header: {
             Text(MonitoringText.flakyTitle)
-        } footer: {
-            Text(MonitoringText.flakyHint)
         }
     }
 }

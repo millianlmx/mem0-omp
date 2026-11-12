@@ -4,8 +4,8 @@
 //
 // Fonctions pures sur le texte source de l'app iOS et de DESIGN.md ; chaque faute
 // est plantée EN MÉMOIRE (`source.replace(…)`) : aucune copie du dépôt, aucun
-// SwiftUI rendu. Les écrans de pilotage sont ceux du serveur de pipelines
-// (`IOSHarnessScreens.swift`), la Mémoire est celle du Mac.
+// SwiftUI rendu. Les écrans se lisent dans deux cadres, la racine d'un onglet
+// (`IOSOSScreen`) et la page du Système (`IOSSystemPage`) ; la Mémoire est celle du serveur.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -104,37 +104,42 @@ function toolbarRefreshFaults(name: string, source: string): string[] {
     .map(() => `${name} : un bouton ↻ (arrow.clockwise) dans une ToolbarItem`);
 }
 
-const HARNESS = "IOSHarnessScreens.swift";
+/** Les cadres qui se tirent : fichier, en-tête du cadre. */
+const FRAMES: Array<[string, string]> = [
+  ["IOSOSScreens.swift", "struct IOSOSScreen<"],
+  ["IOSSystemScreens.swift", "struct IOSSystemPage<"],
+];
+const SHELL = "IOSOSRootView.swift";
+const SYSTEM = "IOSSystemScreens.swift";
 const MEMORY_PULL = ".refreshable { await model.refresh() }";
 
 /**
- * AC-2 (S-2) : le cadre commun des écrans du serveur et la liste de la Mémoire se
+ * AC-2 (S-2) : la racine d'un onglet, la page du Système et la liste de la Mémoire se
  * tirent ; le graphe ne se tire pas ; aucun ↻ de barre ni identifiant de ↻ ne survit.
  */
-function pullFaults(files: { harness: string; memory: string; all: Map<string, string> }): string[] {
+function pullFaults(all: Map<string, string>): string[] {
   const faults: string[] = [];
-  const harness = stripComments(files.harness);
-  const frame = memberBody(harness, "struct IOSHarnessScreen<");
-  const pulls = blocksOf(frame, ".refreshable {");
-  // Le geste relit par `reload()`, que ⌘R partage : c'est elle qui relit le serveur.
-  const reload = memberBody(frame, "private func reload()");
-  if (pulls.length !== 1 || !pulls[0].includes("await reload()") || !reload.includes("await server.refresh()")) {
-    faults.push(`${HARNESS} : le cadre IOSHarnessScreen sans « .refreshable { await reload() } » qui relit le serveur`);
+  // Le geste relit par `reload()`, que ⌘R partage : c'est elle qui relit le serveur. La
+  // racine d'un onglet reçoit la relecture de la coque.
+  const shellReload = memberBody(stripComments(all.get(SHELL) ?? ""), "private func reload()");
+  for (const [name, head] of FRAMES) {
+    const frame = memberBody(stripComments(all.get(name) ?? ""), head);
+    const pulls = blocksOf(frame, ".refreshable {");
+    const reload = memberBody(frame, "private func reload()") || shellReload;
+    if (pulls.length !== 1 || !pulls[0].includes("await reload()") || !reload.includes("await server.refresh()")) {
+      faults.push(`${name} : le cadre ${head} sans « .refreshable { await reload() } » qui relit le serveur`);
+    }
+    faults.push(...toolbarRefreshFaults(name, all.get(name) ?? ""));
   }
-  if (count(harness, ".refreshable") !== 1)
-    faults.push(`${HARNESS} : ${count(harness, ".refreshable")} .refreshable (attendu 1, le cadre commun)`);
 
-  const memory = stripComments(files.memory);
+  const memory = stripComments(all.get("IOSMemoryScreen.swift") ?? "");
   if (count(memberBody(memory, "private var surface"), MEMORY_PULL) !== 1)
     faults.push(`IOSMemoryScreen.swift : la liste de surface sans « ${MEMORY_PULL} »`);
   if (count(memory, ".refreshable") !== 1)
     faults.push(`IOSMemoryScreen.swift : ${count(memory, ".refreshable")} .refreshable (attendu 1, la liste seule)`);
+  faults.push(...toolbarRefreshFaults("IOSMemoryScreen.swift", all.get("IOSMemoryScreen.swift") ?? ""));
 
-  faults.push(
-    ...toolbarRefreshFaults(HARNESS, files.harness),
-    ...toolbarRefreshFaults("IOSMemoryScreen.swift", files.memory),
-  );
-  for (const [name, source] of files.all) {
+  for (const [name, source] of all) {
     const code = stripComments(source);
     for (const id of ["PipelinesAccessibility.refresh", "IOSMemoryAccessibility.refresh"]) {
       if (new RegExp(`${id.replace(".", "\\.")}\\b`).test(code))
@@ -163,11 +168,10 @@ function memoryBarFaults(memory: string): string[] {
 
 /**
  * AC-5 (S-4) : la rangée de la Mémoire rend `IOSContextMenuItems` nourri par
- * `IOSContextMenu.<surface>` ; la ligne d'une feature (`RunListRow`, posée par la liste
- * partagée `RunsListSections`) porte un seul menu, `RunMenuItems`, dont les gestes
- * destructifs (arrêt, annulation de la fusion) ne font que demander confirmation
- * (`drafts.*Request`), jamais exécutés du menu ; les écrans iOS n'ajoutent aucun
- * autre menu de feature.
+ * `IOSContextMenu.<surface>` ; la rangée d'un fil (`OSThreadList`, partagée) porte un
+ * seul menu, `RunMenuItems`, dont les gestes destructifs (arrêt, annulation de la
+ * fusion) ne font que demander confirmation (`drafts.*Request`), jamais exécutés du
+ * menu ; les écrans iOS n'ajoutent aucun autre menu de feature.
  */
 function menuFaults(all: Map<string, string>): string[] {
   const faults: string[] = [];
@@ -183,18 +187,22 @@ function menuFaults(all: Map<string, string>): string[] {
       faults.push("IOSMemoryScreen.swift : un .contextMenu ne rend pas IOSContextMenuItems(actions: IOSContextMenu.…)");
     }
   }
-  for (const name of [HARNESS, "IOSRunScreen.swift", RUN_ROW]) {
+  for (const name of ["IOSOSScreens.swift", SHELL, SYSTEM]) {
     const n = count(stripComments(all.get(name) ?? ""), ".contextMenu");
-    if (n !== 0) faults.push(`${name} : ${n} .contextMenu (attendu 0, le menu vit dans RunsListSections)`);
+    if (n !== 0) faults.push(`${name} : ${n} .contextMenu (attendu 0, le menu vit dans OSThreadList)`);
   }
-  const list = stripComments(all.get(RUN_MENU) ?? "");
-  const rowMenus = blocksOf(memberBody(list, "struct RunsListSections"), ".contextMenu {");
-  if (rowMenus.length !== 1 || count(list, ".contextMenu") !== 1 || !rowMenus[0].includes("RunMenuItems(")) {
+  const list = stripComments(all.get(THREAD_LIST) ?? "");
+  const rowMenus = blocksOf(list, ".contextMenu {");
+  if (
+    rowMenus.length !== 1 ||
+    count(list, ".contextMenu") !== 1 ||
+    !memberBody(list, "private func menu(").includes("RunMenuItems(")
+  ) {
     faults.push(
-      `${RUN_MENU} : ${count(list, ".contextMenu")} .contextMenu (attendu 1, RunMenuItems dans struct RunsListSections)`,
+      `${THREAD_LIST} : ${count(list, ".contextMenu")} .contextMenu (attendu 1, RunMenuItems dans la rangée d'un fil)`,
     );
   }
-  const items = memberBody(list, "struct RunMenuItems");
+  const items = memberBody(stripComments(all.get(RUN_MENU) ?? ""), "struct RunMenuItems");
   if (!/role: \.destructive\) \{ drafts\.stopRequest = run \}/.test(items))
     faults.push(`${RUN_MENU} : le menu d'une feature ne demande pas l'arrêt confirmé (drafts.stopRequest)`);
   if (/await server\.|Task \{/.test(items))
@@ -202,8 +210,8 @@ function menuFaults(all: Map<string, string>): string[] {
   return faults;
 }
 
-const RUN_ROW = "RunViews.swift";
-const RUN_MENU = "RunsHistoryViews.swift";
+const THREAD_LIST = path.join("OS", "OSThreadList.swift");
+const RUN_MENU = "RunMenuItems.swift";
 
 /** Aucune action par balayage dans l'app (B-3 : hors périmètre). */
 function swipeFaults(all: Map<string, string>): string[] {
@@ -214,25 +222,24 @@ function swipeFaults(all: Map<string, string>): string[] {
 
 // MARK: - AC-9, AC-10, AC-11, AC-12
 
-/** Les surfaces de texte sélectionnable (S-6), une pose chacune : les specs à
- *  valider de « À traiter », les specs lisibles de la page d'une feature, la fiche
- *  d'un souvenir, le direct d'une session et ce même direct dans « Comprendre »
- *  (nouvelle interface, `IOSOSSessionPane`). */
+/** Les surfaces de texte sélectionnable (S-6), avec leur nombre de poses : les specs à
+ *  valider, la fiche d'un souvenir, le direct d'une session et ce même direct dans
+ *  « Comprendre » (`IOSOSSessionPane`), la clé de déploiement et les commandes d'un dépôt. */
 const SPECS = "InboxFeed.swift";
-const SELECTABLE = [
-  SPECS,
-  "IOSRunScreen.swift",
-  "IOSMemoryDetailView.swift",
-  "IOSSessionSheet.swift",
-  "IOSOSScreens.swift",
-];
+const SELECTABLE: Record<string, number> = {
+  [SPECS]: 1,
+  "IOSMemoryDetailView.swift": 1,
+  "IOSSessionSheet.swift": 1,
+  "IOSOSScreens.swift": 1,
+  "RepoSettingsViews.swift": 2,
+};
 
 /** AC-9 (S-6) : `.textSelection(.enabled)` une fois par surface, nulle part ailleurs. */
 function selectionFaults(all: Map<string, string>): string[] {
   const faults: string[] = [];
   for (const [name, source] of all) {
     const n = count(stripComments(source), ".textSelection(.enabled)");
-    const expected = SELECTABLE.includes(name) ? 1 : 0;
+    const expected = SELECTABLE[name] ?? 0;
     if (n !== expected) faults.push(`${name} : ${n} .textSelection(.enabled) (attendu ${expected})`);
   }
   const detail = stripComments(all.get("IOSMemoryDetailView.swift") ?? "");
@@ -290,17 +297,19 @@ function motionFaults(all: Map<string, string>): string[] {
   return faults;
 }
 
-/** Les symboles décoratifs de S-9 : fichier → début d'`Image` → occurrences attendues. */
+/** Les symboles décoratifs de S-9 : fichier → début d'`Image` → occurrences attendues. L'état
+ *  d'une étape du direct et d'un agent se lit dans le texte qui suit le symbole. */
 const DECORATIVE: { name: string; image: string; times: number }[] = [
-  { name: HARNESS, image: "Image(systemName: IOSShellText.serverSymbol)", times: 1 },
-  { name: HARNESS, image: "Image(systemName: ConsoleSection.memory.systemImage)", times: 1 },
+  { name: "IOSSessionSheet.swift", image: "Image(systemName: PipelineServerText.sessionEntrySymbol(", times: 2 },
+  { name: "IOSToolViews.swift", image: "Image(systemName: PipelineServerText.agentStatusSymbol(", times: 1 },
 ];
 
 /**
- * AC-12 (S-9) : chaque symbole décoratif est suivi de `.accessibilityHidden(true)`
- * à trois lignes au plus. L'état que portait la coche d'une proposition d'audit est
- * désormais celui d'un `Toggle` système, annoncé par VoiceOver
- * (`ios-finitions-composants/AC-2`).
+ * AC-12 (S-9) : chaque symbole décoratif est masqué par `.accessibilityHidden(true)`,
+ * posé sur lui ou sur le groupe qui le contient, à cinq lignes au plus. L'état que
+ * portait la coche d'une proposition d'audit est désormais celui d'un `Toggle` système,
+ * annoncé par VoiceOver (`ios-finitions-composants/AC-2`) ; l'écran d'un serveur non relié
+ * est un `ContentUnavailableView`, dont le symbole ne se lit pas seul.
  */
 function symbolFaults(all: Map<string, string>): string[] {
   const faults: string[] = [];
@@ -311,12 +320,15 @@ function symbolFaults(all: Map<string, string>): string[] {
     lines.forEach((line, i) => {
       if (!line.includes(image)) return;
       found++;
-      if (!lines.slice(i + 1, i + 4).some((next) => next.includes(".accessibilityHidden(true)"))) {
+      if (!lines.slice(i + 1, i + 6).some((next) => next.includes(".accessibilityHidden(true)"))) {
         faults.push(`${name} l.${i + 1} : ${image} lu par VoiceOver (pas de .accessibilityHidden(true))`);
       }
     });
     if (found !== times) faults.push(`${name} : ${found} × ${image} (attendu ${times})`);
   }
+  const prompt = memberBody(stripComments(all.get("IOSOSScreens.swift") ?? ""), "struct IOSServerPrompt");
+  if (!prompt.includes("ContentUnavailableView") || prompt.includes("Image(systemName"))
+    faults.push("IOSOSScreens.swift : l'écran d'un serveur non relié n'est pas un ContentUnavailableView");
   return faults;
 }
 
@@ -435,45 +447,43 @@ function designFaults(design: string): string[] {
 
 test("ios-gestes-et-retours-natifs/AC-2 : les écrans du serveur et la liste de la Mémoire se tirent pour actualiser, aucune barre ne porte de ↻", () => {
   const all = swiftSources(APP);
-  const files = () => ({ harness: all.get(HARNESS)!, memory: all.get("IOSMemoryScreen.swift")!, all });
-  assert.deepEqual(pullFaults(files()), []);
+  assert.deepEqual(pullFaults(all), []);
 
-  // Faute plantée : le cadre du serveur perd son tirage ⇒ rouge.
-  const frame = plant(files().harness, (s) => s.replace(".refreshable {", ".onAppear {"));
+  // Faute plantée : la page du Système perd son tirage ⇒ rouge.
+  const frame = plant(all.get(SYSTEM)!, (s) => s.replaceAll(".refreshable {", ".onAppear {"));
   assert.ok(
-    pullFaults({ ...files(), harness: frame }).some((f) => f.includes("IOSHarnessScreen")),
-    "un écran du serveur sans tirage doit rougir",
+    pullFaults(withFile(all, SYSTEM, frame)).some((f) => f.includes("IOSSystemPage")),
+    "une page du Système sans tirage doit rougir",
   );
 
   // Faute plantée : la liste de la Mémoire perd son tirage ⇒ rouge.
-  const list = plant(files().memory, (s) => s.replace(MEMORY_PULL, ""));
+  const list = plant(all.get("IOSMemoryScreen.swift")!, (s) => s.replace(MEMORY_PULL, ""));
   assert.ok(
-    pullFaults({ ...files(), memory: list }).some((f) => f.includes("IOSMemoryScreen.swift")),
+    pullFaults(withFile(all, "IOSMemoryScreen.swift", list)).some((f) => f.includes("IOSMemoryScreen.swift")),
     "une liste Mémoire sans tirage doit rougir",
   );
 
-  // Faute plantée : un ↻ remis dans la barre du serveur ⇒ rouge.
-  const bar = plant(files().harness, (s) =>
+  // Faute plantée : un ↻ remis dans la barre d'une page du Système ⇒ rouge.
+  const bar = plant(all.get(SYSTEM)!, (s) =>
     s.replace(
-      "Label(PipelineServerText.newFeature, systemImage: PipelineServerText.newFeatureSymbol)",
-      'Label(PipelineServerText.newFeature, systemImage: "arrow.clockwise")',
+      "Label(ShellText.newSchedule, systemImage: IOSShellText.addSymbol)",
+      'Label(ShellText.newSchedule, systemImage: "arrow.clockwise")',
     ),
   );
   assert.ok(
-    pullFaults({ ...files(), harness: bar }).some((f) => f.includes("arrow.clockwise")),
+    pullFaults(withFile(all, SYSTEM, bar)).some((f) => f.includes("arrow.clockwise")),
     "un ↻ de barre doit rougir",
   );
 
   // Faute plantée : l'identifiant du ↻ de la Mémoire revient ⇒ rouge.
-  const id = plant(files().memory, (s) =>
+  const id = plant(all.get("IOSMemoryScreen.swift")!, (s) =>
     s.replace(
       ".accessibilityIdentifier(IOSMemoryAccessibility.summary)",
       ".accessibilityIdentifier(IOSMemoryAccessibility.refresh)",
     ),
   );
-  const withId = withFile(all, "IOSMemoryScreen.swift", id);
   assert.ok(
-    pullFaults({ ...files(), memory: id, all: withId }).some((f) => f.includes("IOSMemoryAccessibility.refresh")),
+    pullFaults(withFile(all, "IOSMemoryScreen.swift", id)).some((f) => f.includes("IOSMemoryAccessibility.refresh")),
     "l'identifiant du ↻ doit rougir",
   );
 });
@@ -579,12 +589,12 @@ test("ios-gestes-et-retours-natifs/AC-11 : toute animation déclenchée par l'ap
   const all = swiftSources(APP);
   assert.deepEqual(motionFaults(all), []);
 
-  // Faute plantée : une animation nue sur un écran du serveur ⇒ rouge.
-  const harness = plant(all.get(HARNESS)!, (s) =>
-    s.replace("drafts.launchSheetShown = true", "withAnimation { drafts.launchSheetShown = true }"),
+  // Faute plantée : une animation nue sur une page du Système ⇒ rouge.
+  const system = plant(all.get(SYSTEM)!, (s) =>
+    s.replace("drafts.scheduleSheetShown = true", "withAnimation { drafts.scheduleSheetShown = true }"),
   );
   assert.ok(
-    motionFaults(withFile(all, HARNESS, harness)).some((f) => f.startsWith(HARNESS)),
+    motionFaults(withFile(all, SYSTEM, system)).some((f) => f.startsWith(SYSTEM)),
     "un withAnimation nu doit rougir",
   );
 
@@ -601,20 +611,31 @@ test("ios-gestes-et-retours-natifs/AC-12 : les symboles décoratifs sont masqué
   const all = swiftSources(APP);
   assert.deepEqual(symbolFaults(all), []);
 
-  // Faute plantée : le symbole du serveur non relié redevient lu ⇒ rouge.
-  const hidden = plant(all.get(HARNESS)!, (s) => s.replace(".accessibilityHidden(true)", ""));
+  // Faute plantée : le symbole de l'état d'un agent redevient lu ⇒ rouge.
+  const tools = "IOSToolViews.swift";
+  const hidden = plant(all.get(tools)!, (s) => s.replace(".accessibilityHidden(true)", ""));
   assert.ok(
-    symbolFaults(withFile(all, HARNESS, hidden)).some((f) => f.includes("lu par VoiceOver")),
+    symbolFaults(withFile(all, tools, hidden)).some((f) => f.includes("lu par VoiceOver")),
     "un symbole lu doit rougir",
   );
 
-  // Faute plantée : le symbole de la rangée Mémoire du hub redevient lu ⇒ rouge.
-  const row = plant(all.get(HARNESS)!, (s) =>
-    s.replace(/(Image\(systemName: ConsoleSection\.memory\.systemImage\)[\s\S]*?)\.accessibilityHidden\(true\)/, "$1"),
+  // Faute plantée : le symbole d'une étape du direct redevient lu ⇒ rouge.
+  const session = "IOSSessionSheet.swift";
+  const row = plant(all.get(session)!, (s) =>
+    s.replace(/(Image\(systemName: PipelineServerText\.sessionEntrySymbol[\s\S]*?)\.accessibilityHidden\(true\)/, "$1"),
   );
   assert.ok(
-    symbolFaults(withFile(all, HARNESS, row)).some((f) => f.includes("ConsoleSection.memory.systemImage")),
-    "un symbole de rangée lu doit rougir",
+    symbolFaults(withFile(all, session, row)).some((f) => f.includes("sessionEntrySymbol")),
+    "un symbole d'étape lu doit rougir",
+  );
+
+  // Faute plantée : l'écran d'un serveur non relié redevient une image nue ⇒ rouge.
+  const prompt = plant(all.get("IOSOSScreens.swift")!, (s) =>
+    s.replace("ContentUnavailableView {", "VStack {\n            Image(systemName: IOSShellText.serverSymbol)"),
+  );
+  assert.ok(
+    symbolFaults(withFile(all, "IOSOSScreens.swift", prompt)).some((f) => f.includes("ContentUnavailableView")),
+    "une image nue du serveur non relié doit rougir",
   );
 });
 

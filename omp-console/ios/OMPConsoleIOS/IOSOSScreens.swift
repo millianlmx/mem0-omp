@@ -3,21 +3,25 @@ import ConsoleCore
 import ConsoleUI
 import SwiftUI
 
-// Les écrans de la coque de la nouvelle interface (`IOSOSRootView`) : le cadre de la racine
-// d'un onglet, la page d'un fil, « Comprendre » et le direct d'une feature qu'il montre, et
-// le bouton « Demander » de chaque barre. Les contenus sont partagés avec le Mac
-// (`ConsoleUI/OS/`) ; les mots viennent du noyau (`OSText`, `PipelineServerText`) et de
-// `IOSOSText` : aucun libellé en dur ici (`design-ios/AC-5`).
+// Les écrans de la coque de l'app (`IOSOSRootView`) : le cadre de la racine d'un onglet,
+// l'écran d'un serveur non relié, la page d'un fil, « Comprendre » et le direct d'une
+// feature qu'il montre, et le bouton « Demander » de chaque barre. Les contenus sont
+// partagés avec le Mac (`ConsoleUI/OS/`) ; les mots viennent du noyau (`OSText`,
+// `PipelineServerText`) et de `IOSOSText` : aucun libellé en dur ici (`design-ios/AC-5`).
 
 /// Le cadre de la racine d'un onglet : relier le serveur s'il ne l'est pas, sinon le
-/// contenu, avec l'échec du dernier échange en tête, le titre de l'onglet, « Demander »
-/// dans la barre et le tirer-pour-actualiser.
+/// contenu, avec l'échec du dernier échange en tête, le titre de l'onglet, la roue du
+/// Système et « Demander » dans la barre, le tirer-pour-actualiser et ⌘R.
 struct IOSOSScreen<Content: View>: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
     let tab: IOSOSTab
     let reload: @MainActor () async -> Void
+    /// La roue de la barre : le hub Système, poussé dans la pile de l'onglet.
+    let openSystem: @MainActor () -> Void
     @ViewBuilder let content: () -> Content
+
+    private var identifier: String { "ios.os.screen." + tab.rawValue }
 
     var body: some View {
         Group {
@@ -42,12 +46,40 @@ struct IOSOSScreen<Content: View>: View {
         }
         .navigationTitle(tab.title)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    openSystem()
+                } label: {
+                    Label(ConsoleSection.system.title, systemImage: IOSOSText.systemSymbol)
+                }
+                .accessibilityIdentifier("ios.os.system")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 IOSOSAskButton(server: server, drafts: drafts)
             }
         }
+        // ⌘R relit l'écran comme le geste « tirer pour actualiser ».
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(owner: identifier, isEnabled: server.isConfigured) {
+            Task { await reload() }
+        })
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("ios.os.screen." + tab.rawValue)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// L'écran d'un serveur non relié : un symbole, ce qu'il manque, et le geste qui ouvre la
+/// feuille Serveur.
+struct IOSServerPrompt: View {
+    let drafts: HarnessDrafts
+
+    var body: some View {
+        ContentUnavailableView {
+            Label(PipelineServerText.notConfigured, systemImage: IOSShellText.serverSymbol)
+        } actions: {
+            Button(PipelineServerText.configure) { drafts.serverSheetShown = true }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("ios.server.configure")
+        }
     }
 }
 
@@ -116,6 +148,9 @@ struct IOSOSThreadPage: View {
                 IOSOSAskButton(server: server, drafts: drafts)
             }
         }
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(owner: "ios.os.screen.thread", isEnabled: server.isConfigured) {
+            Task { await reload() }
+        })
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.os.screen.thread")
     }

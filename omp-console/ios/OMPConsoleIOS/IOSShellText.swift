@@ -17,10 +17,6 @@ enum IOSShellText {
     /// Le mot qui suit le nombre d'un badge visible dans le libellé d'un onglet.
     static let rowPending = L10n.text("en attente")
 
-    /// Le résumé de la rangée Mémoire du hub Système (iPhone, où la Mémoire n'a pas
-    /// d'onglet).
-    static let memorySummary = L10n.text("Les souvenirs des agents, en liste, en graphe ou par recherche.")
-
     /// Le libellé d'accessibilité d'un onglet de section : le titre, suivi du badge
     /// QUAND il est visible (`badge > 0`).
     static func sectionRowLabel(_ title: String, badge: Int) -> String {

@@ -16,12 +16,9 @@ public enum WorkstationText {
 
     public static let online = L10n.text("Extension en ligne")
     public static let offline = L10n.text("Extension hors ligne")
-    public static let onlineSymbol = "dot.radiowaves.left.and.right"
-    public static let offlineSymbol = "wifi.slash"
     public static let neverSeen = L10n.text("L’extension Chrome ne s’est encore jamais connectée : appairez-la avec le code du serveur.")
     public static let statusTitle = L10n.text("Extension et agent 24/24")
     public static let observedTitle = L10n.text("Observation")
-    public static let observedHint = L10n.text("En mode Auto, l’agent 24/24 commence à agir une fois le seuil atteint.")
     public static let absent = L10n.text("Ce serveur ne connaît pas encore le poste de travail : mettez omp-harness à jour.")
 
     // MARK: - Page principale et pages poussées
@@ -118,7 +115,6 @@ public enum WorkstationText {
     // MARK: - À approuver
 
     public static let approvalsTitle = L10n.text("Envois à approuver")
-    public static let approvalsHint = L10n.text("L’agent attend votre accord avant d’envoyer ces messages. Sans réponse, l’envoi expire et vaut refus.")
     public static let approve = L10n.text("Approuver l’envoi")
     public static let refuseTitle = L10n.text("Refuser l’envoi")
     public static let refuseHint = L10n.text("La raison, facultative, est gardée au journal des décisions.")
@@ -195,7 +191,6 @@ public enum WorkstationText {
     // MARK: - Journal des décisions
 
     public static let journalTitle = L10n.text("Journal des décisions")
-    public static let journalHint = L10n.text("Chaque action et chaque décision, avec sa raison, la plus récente d’abord.")
     public static let noAction = L10n.text("Aucune décision au journal.")
     public static let originSession = L10n.text("Session")
     public static let originAgent = L10n.text("Agent 24/24")
@@ -284,97 +279,5 @@ public enum WorkstationText {
     /// « 42 segments transcrits ».
     public static func segments(_ count: Int) -> String {
         count == 1 ? L10n.text("1 segment transcrit") : L10n.format("%lld segments transcrits", count)
-    }
-}
-
-/// Le vocabulaire du pont corpo ↔ usine : les signalements des collègues devenus
-/// propositions dans « À traiter », leur feuille de confirmation, et l’origine d’une
-/// feature lancée depuis l’une d’elles. Les codes du serveur (canal, sorte, politique)
-/// se traduisent ici ; un code inconnu de cette version se rend tel quel.
-public enum SignalText {
-    // MARK: - À traiter
-
-    public static let sectionTitle = L10n.text("Signalements de collègues")
-    public static let sectionHint = L10n.text("Chaque proposition vient du message d’un collègue. Rien n’est créé sur la forge avant votre confirmation.")
-    public static let sectionSymbol = "person.bubble"
-    public static let review = L10n.text("Relire et confirmer")
-    public static let reviewSymbol = "doc.text.magnifyingglass"
-    /// « Ouvrir une issue et lancer un correctif dans demo ».
-    public static func proposal(repo: String?) -> String {
-        guard let repo, !repo.isEmpty else { return L10n.text("Ouvrir une issue et lancer un correctif") }
-        return L10n.format("Ouvrir une issue et lancer un correctif dans %@", repo)
-    }
-
-    /// « Signalé par paul@exemple.fr ».
-    public static func reportedBy(_ person: String) -> String { L10n.format("Signalé par %@", person) }
-    /// La dernière confirmation a échoué : le motif du serveur, tel quel.
-    public static func lastError(_ error: String) -> String { L10n.format("La dernière confirmation a échoué : %@", error) }
-    public static let approverOnly = L10n.text("Seul l’appareil approbateur peut confirmer ou écarter une proposition : appairez cette app avec le code approbateur (harness.sh approver sur le VPS).")
-
-    // MARK: - Feuille de confirmation
-
-    public static let sheetTitle = L10n.text("Proposition d’issue")
-    public static let messageHeader = L10n.text("Message du collègue")
-    public static let draftHeader = L10n.text("Votre texte")
-    public static let repoLabel = L10n.text("Dépôt")
-    public static let titleLabel = L10n.text("Titre")
-    public static let bodyLabel = L10n.text("Description")
-    public static let sentHeader = L10n.text("Ce qui partira à la forge")
-    public static let sentHint = L10n.text("Le serveur caviarde votre texte : voici exactement le titre et la description que la forge recevra.")
-    public static let previewing = L10n.text("Lecture de l’aperçu…")
-    public static let confirm = L10n.text("Confirmer")
-    public static let dismiss = L10n.text("Écarter la proposition")
-    public static let dismissHint = L10n.text("Une proposition écartée n’est jamais reproposée pour ce fil.")
-    /// « Issue n° 12 déjà créée dans demo ».
-    public static func issueExists(repo: String, number: Int) -> String {
-        L10n.format("Issue n° %lld déjà créée dans %@ : elle n’est pas renvoyée à la forge.", number, repo)
-    }
-
-    /// La politique `issues.corporate` appliquée au dépôt.
-    public static func policy(_ applied: String) -> String {
-        switch applied {
-        case "redacted": L10n.text("Texte caviardé")
-        case "full": L10n.text("Texte complet (dépôt privé)")
-        default: applied
-        }
-    }
-
-    /// La sorte de la proposition.
-    public static func kind(_ raw: String) -> String {
-        switch raw {
-        case "bug": L10n.text("Bogue")
-        case "feature": L10n.text("Nouvelle feature")
-        default: raw
-        }
-    }
-
-    // MARK: - Origine d’une feature
-
-    public static let originTitle = L10n.text("Origine")
-    public static let channelLabel = L10n.text("Canal")
-    public static let personLabel = L10n.text("Signalé par")
-    public static let threadLabel = L10n.text("Fil")
-    public static let excerptLabel = L10n.text("Extrait")
-    public static let issueLabel = L10n.text("Issue")
-    public static let openThreadSymbol = "arrow.up.right.square"
-    /// « Confirmé par app-approbateur · 8 nov. 2026 à 14:05 ».
-    public static func confirmed(by: String?, at: String?) -> String {
-        switch (by, at) {
-        case let (by?, at?): L10n.format("Confirmé par %@ · %@", by, at)
-        case let (by?, nil): L10n.format("Confirmé par %@", by)
-        case let (nil, at?): L10n.format("Confirmé · %@", at)
-        case (nil, nil): L10n.text("Confirmé")
-        }
-    }
-
-    /// Le canal d’un signalement.
-    public static func channel(_ raw: String) -> String {
-        switch raw {
-        case "slack": L10n.text("Slack")
-        case "gmail": L10n.text("Gmail")
-        case "chrome": L10n.text("Page lue dans Chrome")
-        case "manual": L10n.text("Demande au poste")
-        default: raw
-        }
     }
 }

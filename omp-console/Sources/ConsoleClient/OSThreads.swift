@@ -8,6 +8,7 @@
 // Pur : aucune vue, aucun réseau. Les écrans lisent `OSThreads.build`.
 
 import Foundation
+import Synchronization
 
 /// Où en est un fil, dans l'ordre de lecture : ce qui vous attend d'abord.
 public enum OSPhase: Int, Comparable, Sendable {
@@ -84,8 +85,23 @@ public enum OSThreads {
 
     /// Un titre lisible : sans « Suite de « … » » ni « Découpage de « … » », sans préfixe
     /// d'issue ni de commit conventionnel, sans compteur `×N` ni identifiant de runner. Rend
-    /// aussi le numéro d'issue retiré et si le titre d'origine était tronqué.
+    /// aussi le numéro d'issue retiré et si le titre d'origine était tronqué. Mémorisé par
+    /// titre : un titre ne change pas, et chaque construction des fils les relit tous.
     public static func clean(_ raw: String) -> (title: String, issue: Int?, truncated: Bool) {
+        if let known = cleanedTitles.withLock({ $0[raw] }) { return known }
+        let cleaned = cleaning(raw)
+        cleanedTitles.withLock { cache in
+            if cache.count >= cleanedTitlesLimit { cache.removeAll(keepingCapacity: true) }
+            cache[raw] = cleaned
+        }
+        return cleaned
+    }
+
+    /// Assez pour tout un historique : au-delà, la mémoire se vide et chaque titre se renettoie.
+    private static let cleanedTitlesLimit = 32_768
+    private static let cleanedTitles = Mutex<[String: (title: String, issue: Int?, truncated: Bool)]>([:])
+
+    private static func cleaning(_ raw: String) -> (title: String, issue: Int?, truncated: Bool) {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         var truncated = false
         while let wrapper = ["Suite de « ", "Découpage de « "].first(where: { text.hasPrefix($0) }) {
@@ -97,13 +113,17 @@ public enum OSThreads {
             }
         }
         var issue: Int?
-        if let match = text.firstMatch(of: #/^Issue #(\d+) : /#) {
-            issue = Int(match.1)
-            text = String(text[match.range.upperBound...])
+        if text.hasPrefix("Issue #") {
+            let digits = text.dropFirst("Issue #".count).prefix { $0.isASCII && $0.isNumber }
+            let rest = text.dropFirst("Issue #".count + digits.count)
+            if !digits.isEmpty, rest.hasPrefix(" : ") {
+                issue = Int(digits)
+                text = String(rest.dropFirst(3))
+            }
         }
-        text = text.replacing(#/ — omp-runner-\S+/#, with: "")
-        text = text.replacing(#/ ×\d+/#, with: "")
-        text = text.replacing(#/^[a-z]+(\([^)]*\))?!?: /#, with: "")
+        text = removingRunnerSuffix(text)
+        text = removingCounters(text)
+        text = removingCommitPrefix(text)
         text = text.trimmingCharacters(in: .whitespaces)
         if let first = text.first, first.isLowercase {
             text = first.uppercased() + text.dropFirst()
@@ -111,11 +131,64 @@ public enum OSThreads {
         return (text.isEmpty ? raw : text, issue, truncated)
     }
 
+    // Les nettoyages d'un titre, à la main : une `Regex` par titre et par construction coûtait
+    // l'essentiel du calcul des fils sur un long historique.
+
+    /// Sans « — omp-runner-<id> » (jusqu'à l'espace suivante).
+    private static func removingRunnerSuffix(_ text: String) -> String {
+        var text = text
+        while let marker = text.range(of: " — omp-runner-") {
+            let end = text[marker.upperBound...].firstIndex(where: \.isWhitespace) ?? text.endIndex
+            guard text[marker.upperBound..<end].isEmpty == false else { break }
+            text.removeSubrange(marker.lowerBound..<end)
+        }
+        return text
+    }
+
+    /// Sans compteur « ×N ».
+    private static func removingCounters(_ text: String) -> String {
+        guard text.contains(" ×") else { return text }
+        var result = ""
+        var index = text.startIndex
+        while index < text.endIndex {
+            if text[index...].hasPrefix(" ×") {
+                let digitsStart = text.index(index, offsetBy: 2)
+                let digitsEnd = text[digitsStart...].firstIndex { !($0.isASCII && $0.isNumber) } ?? text.endIndex
+                if digitsEnd > digitsStart {
+                    index = digitsEnd
+                    continue
+                }
+            }
+            result.append(text[index])
+            index = text.index(after: index)
+        }
+        return result
+    }
+
+    /// Sans préfixe de commit conventionnel (`feat: `, `fix(api)!: `…).
+    private static func removingCommitPrefix(_ text: String) -> String {
+        let kind = text.prefix { $0.isASCII && $0.isLowercase }
+        guard !kind.isEmpty else { return text }
+        var rest = text.dropFirst(kind.count)
+        if rest.first == "(" {
+            guard let close = rest.firstIndex(of: ")") else { return text }
+            rest = rest[rest.index(after: close)...]
+        }
+        if rest.first == "!" { rest = rest.dropFirst() }
+        guard rest.hasPrefix(": ") else { return text }
+        return String(rest.dropFirst(2))
+    }
+
     // MARK: Phases
 
     /// La phase d'une feature ; avec la boîte, une feature qui attend un geste est à vous.
     public static func phase(of run: HarnessRun, inbox: HarnessInbox?) -> OSPhase {
-        if let inbox, pending(of: run.id, inbox: inbox) > 0 { return .yours }
+        phase(of: run, pending: inbox.map { pending(of: run.id, inbox: $0) } ?? 0)
+    }
+
+    /// La phase d'une feature dont on sait ce qu'elle attend de l'humain.
+    public static func phase(of run: HarnessRun, pending: Int) -> OSPhase {
+        if pending > 0 { return .yours }
         switch run.phase {
         case .queued: return .queued
         case .running, .merging: return .working
@@ -132,6 +205,16 @@ public enum OSThreads {
         let questions = inbox.openBatches.filter { $0.id == runId }.reduce(0) { $0 + $1.items.count }
         let waiting = inbox.awaiting.contains { $0.id == runId } ? 1 : 0
         return questions + waiting
+    }
+
+    /// `pending(of:inbox:)` pour toutes les features d'un coup : une passe sur la boîte.
+    public static func pendingByRun(_ inbox: HarnessInbox?) -> [String: Int] {
+        guard let inbox else { return [:] }
+        var counts: [String: Int] = [:]
+        for batch in inbox.openBatches { counts[batch.id, default: 0] += batch.items.count }
+        var waiting = Set<String>()
+        for run in inbox.awaiting where waiting.insert(run.id).inserted { counts[run.id, default: 0] += 1 }
+        return counts
     }
 
     public static func phase(of request: WorkstationRequest) -> OSPhase {
@@ -171,7 +254,10 @@ public enum OSThreads {
 
     // MARK: Regroupement
 
-    /// Les fils, de ce qui vous attend à ce qui est fini, les plus récents d'abord.
+    /// Les fils, de ce qui vous attend à ce qui est fini, les plus récents d'abord (à égalité,
+    /// par identifiant : l'ordre ne bouge pas d'une construction à l'autre). Presque linéaire :
+    /// la boîte est indexée une fois (attentes et décisions par feature), les titres nettoyés
+    /// sont mémorisés, et chaque feature retrouve son fil par un index.
     public static func build(
         runs: [HarnessRun],
         inbox: HarnessInbox?,
@@ -188,27 +274,29 @@ public enum OSThreads {
         for run in (inbox?.runs ?? []) + (inbox?.awaiting ?? []) + (inbox?.batches.compactMap(\.run) ?? []) {
             byId[run.id] = run
         }
-        let all = byId.values.sorted { $0.createdAt < $1.createdAt }
+        let all = byId.values.sorted { $0.createdAt != $1.createdAt ? $0.createdAt < $1.createdAt : $0.id < $1.id }
 
         var groups = UnionFind(all.map(\.id))
         var cleaned: [String: (title: String, issue: Int?, truncated: Bool)] = [:]
+        var lowered: [String: String] = [:]
         var firstByProject: [String: String] = [:]
         var firstByTitle: [String: String] = [:]
         for run in all {
-            let clean = clean(run.title)
-            cleaned[run.id] = clean
+            let cleanTitle = clean(run.title)
+            let lower = cleanTitle.title.lowercased()
+            cleaned[run.id] = cleanTitle
+            lowered[run.id] = lower
             if let parent = run.afterRun, byId[parent] != nil { groups.union(run.id, parent) }
             if let project = run.projectId {
                 if let first = firstByProject[project] { groups.union(run.id, first) } else { firstByProject[project] = run.id }
             }
-            let key = run.repo + "|" + clean.title.lowercased()
+            let key = run.repo + "|" + lower
             if let first = firstByTitle[key] { groups.union(run.id, first) } else { firstByTitle[key] = run.id }
         }
         // Un titre de suite tronqué rejoint le fil dont le titre le prolonge.
         for run in all {
-            guard let clean = cleaned[run.id], clean.truncated else { continue }
-            let prefix = clean.title.lowercased()
-            if let other = all.first(where: { $0.id != run.id && $0.repo == run.repo && cleaned[$0.id]?.title.lowercased().hasPrefix(prefix) == true }) {
+            guard cleaned[run.id]?.truncated == true, let prefix = lowered[run.id] else { continue }
+            if let other = all.first(where: { $0.id != run.id && $0.repo == run.repo && lowered[$0.id]?.hasPrefix(prefix) == true }) {
                 groups.union(run.id, other.id)
             }
         }
@@ -227,6 +315,9 @@ public enum OSThreads {
         let vigieByRun = Dictionary(incidents.compactMap { incident in incident.fixRunId.map { ($0, incident) } }, uniquingKeysWith: { first, _ in first })
         let projectsById = Dictionary(projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let auditByProject = Dictionary(audits.compactMap { audit in audit.projectId.map { ($0, audit) } }, uniquingKeysWith: { first, _ in first })
+        let waitingByRun = Self.pendingByRun(inbox)
+        var autonomousByRun: [String: Int] = [:]
+        for decision in inbox?.decisions ?? [] { autonomousByRun[decision.runId, default: 0] += 1 }
 
         var threads: [OSThread] = members.map { root, runs in
             let first = runs[0]
@@ -243,7 +334,7 @@ public enum OSThreads {
             else { origin = .person(intake?.by ?? first.createdBy) }
             let title = intake?.plan?.title ?? project.map { clean($0.title).title } ?? cleaned[first.id]?.title ?? first.title
             // `Self.` : la constante `phase` déclarée juste après masque la fonction pour un compilateur plus ancien.
-            let phases = runs.map { Self.phase(of: $0, inbox: inbox) }
+            let phases = runs.map { Self.phase(of: $0, pending: waitingByRun[$0.id] ?? 0) }
             let phase: OSPhase
             if let live = phases.filter(\.isLive).min() {
                 phase = live
@@ -252,12 +343,12 @@ public enum OSThreads {
             } else {
                 phase = phases.last ?? .stopped
             }
-            let pending = inbox.map { inbox in runs.reduce(0) { $0 + Self.pending(of: $1.id, inbox: inbox) } } ?? 0
-            let autonomous = inbox.map { inbox in inbox.decisions.filter { decision in runs.contains { $0.id == decision.runId } }.count } ?? 0
+            let waiting = runs.reduce(0) { $0 + (waitingByRun[$1.id] ?? 0) }
+            let autonomous = runs.reduce(0) { $0 + (autonomousByRun[$1.id] ?? 0) }
             let cost = runs.reduce(0) { $0 + (inbox?.costs[$1.id] ?? 0) }
             return OSThread(
                 id: "r:" + root, title: title, repo: first.repo, origin: origin, runs: runs, requests: [], audit: audit,
-                intake: intake, phase: phase, pending: pending, autonomous: autonomous, cost: cost,
+                intake: intake, phase: phase, pending: waiting, autonomous: autonomous, cost: cost,
                 createdAt: first.createdAt, updatedAt: runs.map(\.updatedAt).max() ?? first.updatedAt
             )
         }
@@ -293,8 +384,12 @@ public enum OSThreads {
 
         // Une session omp locale est un fil : celui de la feature qui a repris son travail
         // (passage de relais), sinon le sien.
+        var threadOfRun: [String: Int] = [:]
+        for (index, thread) in threads.enumerated() {
+            for run in thread.runs { threadOfRun[run.id] = index }
+        }
         for session in localSessions.sorted(by: { $0.startedAt < $1.startedAt }) {
-            if let runId = session.runId, let index = threads.firstIndex(where: { thread in thread.runs.contains { $0.id == runId } }) {
+            if let runId = session.runId, let index = threadOfRun[runId] {
                 threads[index].localSession = session
                 threads[index].origin = .local(session.host)
                 threads[index].createdAt = min(threads[index].createdAt, session.startedAt)
@@ -313,7 +408,8 @@ public enum OSThreads {
         return threads.sorted { lhs, rhs in
             if lhs.phase.isLive != rhs.phase.isLive { return lhs.phase.isLive }
             if lhs.phase.isLive, lhs.phase != rhs.phase { return lhs.phase < rhs.phase }
-            return lhs.updatedAt > rhs.updatedAt
+            if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+            return lhs.id < rhs.id
         }
     }
 
@@ -362,7 +458,22 @@ public enum OSThreads {
     }
 
     /// La première ligne non vide d'un texte, sans balisage Markdown de tête.
+    /// Mémorisée par texte (bornée) : les rangées la relisent à chaque rendu.
     public static func firstLine(_ text: String) -> String {
+        if let known = firstLines.withLock({ $0[text] }) { return known }
+        let cleaned = firstLineUncached(text)
+        firstLines.withLock { cache in
+            if cache.count >= cleanedTitlesLimit { cache.removeAll(keepingCapacity: true) }
+            cache[text] = cleaned
+        }
+        return cleaned
+    }
+
+    private static let firstLines = Mutex<[String: String]>([:])
+
+    /// `firstLine` sans mémoire : pour un texte vu une seule fois (le pouls, qui ne doit pas
+    /// remplir la mémoire des rangées de paragraphes qui grandissent).
+    static func firstLineUncached(_ text: String) -> String {
         let line = text.split(whereSeparator: \.isNewline).lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
         return line.replacing(#/^[#>*\-\s]+/#, with: "").replacingOccurrences(of: "**", with: "")
     }

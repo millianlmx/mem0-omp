@@ -1,12 +1,12 @@
 import ConsoleCore
 
-/// L'état d'écran de la coque iOS (S-3, BR-3), lu sur l'argument de lancement
+/// L'état de l'écran Mémoire (S-3, BR-3), lu sur l'argument de lancement
 /// `-ios.state <ready|error>`.
 ///
 /// Le crochet `-ios.state error` est un CROCHET DE RECETTE, pas une
 /// fonctionnalité : il n'existe que pour prouver, capture à l'appui, que le
 /// bandeau d'erreur s'affiche par un chemin de code réel (AC-4). Même famille et
-/// même tolérance que `IOSSection.resolve` : la DERNIÈRE paire reconnue gagne,
+/// même tolérance que `IOSShellLaunch.resolve` : la DERNIÈRE paire reconnue gagne,
 /// et une valeur absente, vide ou inconnue vaut `ready` — jamais une erreur.
 enum IOSScreenState: Equatable {
     case ready
@@ -28,8 +28,8 @@ enum IOSScreenState: Equatable {
         return resolved
     }
 
-    /// Le bandeau de l'état, `nil` quand tout va bien : c'est la forme que
-    /// `IOSSectionContent` transporte.
+    /// Le bandeau de l'état, `nil` quand tout va bien : c'est la forme que l'écran
+    /// Mémoire montre en tête (`IOSMemoryScreen.recipeBanner`).
     var banner: ConsoleStatus? {
         guard case .error(let message) = self else { return nil }
         return ConsoleStatus(text: message, tone: .danger)

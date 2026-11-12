@@ -10,6 +10,7 @@
 // (`DecisionCardViews.swift`, `SessionGraphViews.swift`).
 
 import Foundation
+import Synchronization
 
 // MARK: - Carte d'une question
 
@@ -281,18 +282,30 @@ public struct HarnessGraphMap: Equatable, Sendable {
 
     /// La carte entière ; l'état du run donne l'avancement de la dernière étape.
     /// `focus` non vide : seulement les voies et dossiers qui touchent ces nœuds.
+    /// Linéaire : nœuds, arêtes et fichiers sont rangés une fois, par étape, origine et dossier.
     public static func of(_ graph: HarnessGraph, runState: String?, focus: Set<String> = []) -> HarnessGraphMap {
         let byId = Dictionary(graph.nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let steps = graph.nodes.filter { $0.kind == "step" }
         let last = steps.last?.id
         let phase = runState.flatMap(HarnessRunState.init(rawValue:))
+        var actionsByStep: [String: [HarnessGraphNode]] = [:]
+        var filesByDir: [String: [HarnessGraphNode]] = [:]
+        for node in graph.nodes {
+            if node.kind != "step", let step = node.step { actionsByStep[step, default: []].append(node) }
+            if node.kind == "file", let parent = node.parent { filesByDir[parent, default: []].append(node) }
+        }
+        var edgesByOrigin: [String: [Int]] = [:]
+        for (index, edge) in graph.edges.enumerated() { edgesByOrigin[edge.from, default: []].append(index) }
         var lanes: [HarnessGraphLane] = steps.map { step in
-            let actions = graph.nodes.filter { $0.step == step.id && $0.kind != "step" }
-            let edits = Set(actions.filter { $0.kind == "edit" }.map(\.id))
+            let actions = actionsByStep[step.id] ?? []
+            let edits = actions.filter { $0.kind == "edit" }.map(\.id)
+            // Les arêtes lues de l'étape et celles de ses modifications, dans l'ordre du graphe.
+            var indices = (edgesByOrigin[step.id] ?? []).filter { graph.edges[$0].kind == "read" }
+            for edit in Set(edits) { indices += (edgesByOrigin[edit] ?? []).filter { graph.edges[$0].kind == "edited" } }
+            indices.sort()
             var seen = Set<String>()
-            let reads = graph.edges
-                .filter { ($0.from == step.id && $0.kind == "read") || (edits.contains($0.from) && $0.kind == "edited") }
-                .compactMap { byId[$0.to] }
+            let reads = indices
+                .compactMap { byId[graph.edges[$0].to] }
                 .filter { seen.insert($0.id).inserted }
             let progress: HarnessGraphProgress
             if step.id != last {
@@ -308,7 +321,7 @@ public struct HarnessGraphMap: Equatable, Sendable {
         }
         var folders: [HarnessGraphFolder] = graph.nodes
             .filter { $0.kind == "dir" }
-            .map { dir in HarnessGraphFolder(node: dir, files: graph.nodes.filter { $0.kind == "file" && $0.parent == dir.id }) }
+            .map { dir in HarnessGraphFolder(node: dir, files: filesByDir[dir.id] ?? []) }
             .filter { $0.canExpand || $0.node.grouped || $0.node.reads > 0 || $0.node.edits > 0 }
             .sorted { ($0.node.path ?? $0.node.label) < ($1.node.path ?? $1.node.label) }
         if !focus.isEmpty {
@@ -334,38 +347,79 @@ public struct HarnessGraphMap: Equatable, Sendable {
 
 /// L'entrée du direct qui correspond à un nœud du graphe, quand le lien existe.
 public enum HarnessGraphLink {
-    /// Le rang (`seq`) de l'entrée du direct où le nœud est né, ou `nil` sans lien sûr.
+    /// L'entrée du direct de chaque nœud qui en a une — son rang (`seq`), par identifiant
+    /// de nœud ; un nœud sans lien sûr n'y est pas :
     /// - étape : la première entrée de sa n-ième plage d'entrées de même étape ;
     /// - recherche, fichier, dossier : le premier outil dont l'appel cite son motif ou son chemin ;
     /// - test : le premier `run_tests` ; décision, escalade : le premier appel `decision` qui cite son libellé ;
     /// - modification : le premier outil d'écriture ; toujours dans la plage de son étape quand elle est connue.
-    public static func entry(for node: HarnessGraphNode, in graph: HarnessGraph, entries: [HarnessSessionEntry]) -> Int? {
-        let segments = segments(of: entries)
-        let steps = graph.nodes.filter { $0.kind == "step" }
-        func segment(of stepId: String?) -> ArraySlice<HarnessSessionEntry>? {
-            guard let stepId, let step = steps.first(where: { $0.id == stepId }) else { return nil }
-            let rank = steps.prefix { $0.id != stepId }.filter { $0.label == step.label }.count
-            let matching = segments.filter { $0.first?.step == step.label }
-            return rank < matching.count ? matching[rank] : nil
+    /// La dernière table est gardée : chaque pastille d'un même rendu la relit sans rien recalculer.
+    public static func links(in graph: HarnessGraph, entries: [HarnessSessionEntry]) -> [String: Int] {
+        if let known = memo.withLock({ $0 }), known.graph == graph, known.entries == entries { return known.links }
+        let table = computeLinks(graph: graph, entries: entries)
+        memo.withLock { $0 = Memo(graph: graph, entries: entries, links: table) }
+        return table
+    }
+
+    private struct Memo: Sendable {
+        var graph: HarnessGraph
+        var entries: [HarnessSessionEntry]
+        var links: [String: Int]
+    }
+
+    private static let memo = Mutex<Memo?>(nil)
+
+    private static func computeLinks(graph: HarnessGraph, entries: [HarnessSessionEntry]) -> [String: Int] {
+        var segmentsByLabel: [String: [ArraySlice<HarnessSessionEntry>]] = [:]
+        for segment in segments(of: entries) {
+            if let step = segment.first?.step { segmentsByLabel[step, default: []].append(segment) }
         }
-        if node.kind == "step" { return segment(of: node.id)?.first?.seq }
-        let scope = segment(of: node.step) ?? entries[...]
-        let tools = scope.filter(\.isTool)
-        func citing(_ needle: String?) -> Int? {
-            guard let needle, !needle.isEmpty else { return nil }
-            return tools.first { ($0.call ?? "").contains(needle) || $0.text.contains(needle) }?.seq
+        // La plage de chaque étape : la n-ième de son libellé, n étant le rang de l'étape parmi celles de même libellé.
+        var segmentOfStep: [String: ArraySlice<HarnessSessionEntry>] = [:]
+        var stepIds = Set<String>()
+        var rankByLabel: [String: Int] = [:]
+        for step in graph.nodes where step.kind == "step" {
+            let rank = rankByLabel[step.label, default: 0]
+            rankByLabel[step.label] = rank + 1
+            guard stepIds.insert(step.id).inserted else { continue }
+            let matching = segmentsByLabel[step.label] ?? []
+            if rank < matching.count { segmentOfStep[step.id] = matching[rank] }
         }
-        switch node.kind {
-        case "search": return citing(node.pattern)
-        case "file", "dir": return citing(node.path)
-        case "test": return tools.first { $0.tool == "run_tests" }?.seq
-        case "edit": return tools.first { ["edit", "write", "apply_patch"].contains($0.tool ?? "") }?.seq
-        case "decision", "escalation":
-            let decisions = tools.filter { $0.tool == "decision" }
-            let head = String(node.label.prefix(40))
-            return (decisions.first { !head.isEmpty && (($0.call ?? "").contains(head) || $0.text.contains(head)) } ?? decisions.first)?.seq
-        default: return nil
+        var toolsByScope: [Int: [HarnessSessionEntry]] = [:]
+        func tools(of stepId: String?) -> [HarnessSessionEntry] {
+            let scope = stepId.flatMap { segmentOfStep[$0] } ?? entries[...]
+            let key = stepId.flatMap { segmentOfStep[$0] } == nil ? -1 : scope.startIndex
+            if let known = toolsByScope[key] { return known }
+            let found = scope.filter(\.isTool)
+            toolsByScope[key] = found
+            return found
         }
+        var table: [String: Int] = [:]
+        for node in graph.nodes {
+            if node.kind == "step" {
+                if let seq = segmentOfStep[node.id]?.first?.seq { table[node.id] = seq }
+                continue
+            }
+            let candidates = tools(of: node.step)
+            func citing(_ needle: String?) -> Int? {
+                guard let needle, !needle.isEmpty else { return nil }
+                return candidates.first { ($0.call ?? "").contains(needle) || $0.text.contains(needle) }?.seq
+            }
+            let seq: Int?
+            switch node.kind {
+            case "search": seq = citing(node.pattern)
+            case "file", "dir": seq = citing(node.path)
+            case "test": seq = candidates.first { $0.tool == "run_tests" }?.seq
+            case "edit": seq = candidates.first { ["edit", "write", "apply_patch"].contains($0.tool ?? "") }?.seq
+            case "decision", "escalation":
+                let decisions = candidates.filter { $0.tool == "decision" }
+                let head = String(node.label.prefix(40))
+                seq = (decisions.first { !head.isEmpty && (($0.call ?? "").contains(head) || $0.text.contains(head)) } ?? decisions.first)?.seq
+            default: seq = nil
+            }
+            if let seq { table[node.id] = seq }
+        }
+        return table
     }
 
     /// Les plages d'entrées consécutives de même étape.

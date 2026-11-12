@@ -1,12 +1,12 @@
-// Les PREUVES d'une feature vues par les apps (onglet « Preuves » de sa page, Mac et
-// iOS) : la liste servie par `GET /v1/runs/{id}/proofs`, rangée par tour de revue
+// Les PREUVES d'une feature vues par les apps (Captures de « Comprendre » et carte de
+// décision, Mac et iOS) : la liste servie par `GET /v1/runs/{id}/proofs`, rangée par tour de revue
 // (`currentRound` d'omp-harness/proofs.ts), puis, dans un tour, les captures avant et
 // après appariées par critère, les autres captures, les rapports de tests, les
 // journaux et les vidéos. Le contenu d'une preuve (`/proofs/{n}`) se lit à la demande
 // et se garde le temps de la page.
 //
-// Un serveur qui ne sert pas les preuves (404) cache l'onglet sans rien dire ; une
-// réponse illisible ou un serveur injoignable se montre dans l'onglet.
+// Un serveur qui ne sert pas les preuves (404) ne montre rien, sans rien dire ; une
+// réponse illisible ou un serveur injoignable se montre.
 
 import Foundation
 
@@ -124,17 +124,6 @@ public final class HarnessRunProofs: ObservableObject {
         self.runId = runId
     }
 
-    /// L'onglet existe : le serveur sert les preuves (une lecture en échec se montre).
-    public var showsTab: Bool {
-        switch availability {
-        case .loading, .absent: false
-        case .failed, .loaded: true
-        }
-    }
-
-    /// La lecture est tranchée : servie, absente ou en échec.
-    public var isResolved: Bool { availability != .loading }
-
     /// Relit la liste et la frise. Une frise illisible n'empêche rien : tout forme un tour.
     public func load() async {
         do {
@@ -197,17 +186,4 @@ public enum HarnessProofContent: Equatable, Sendable {
 extension HarnessRun {
     /// La feature attend la validation de sa REVUE (un verdict, pas des specs).
     public var awaitsVerdict: Bool { phase == .awaitingHuman && !awaitsSpecs }
-}
-
-/// L'onglet d'ouverture de la page d'une feature, commun au Mac et à l'iPhone.
-public enum HarnessRunOpening: Equatable, Sendable {
-    case proofs, overview, live
-
-    /// Les preuves quand la feature attend la validation de sa revue et que le serveur
-    /// les sert ; l'Aperçu quand elle vous attend autrement ; le Direct quand elle tourne.
-    public static func of(_ run: HarnessRun, pending: Bool, running: Bool, proofsShown: Bool) -> HarnessRunOpening {
-        if run.awaitsVerdict, proofsShown { return .proofs }
-        if pending { return .overview }
-        return running ? .live : .overview
-    }
 }

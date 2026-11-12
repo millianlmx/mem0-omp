@@ -2,18 +2,18 @@
 // test par critère `ios-statistiques-et-graphe-accessibles/AC-<n>`, et c'est le SEUL
 // fichier qui porte ce slug (invariant `criteria/AC-13`).
 //
-// Fonctions pures sur le texte source de l'app, de DESIGN.md et de la recette ;
-// chaque faute est plantée EN MÉMOIRE (`source.replace(…)`) : aucune copie du dépôt,
-// aucun SwiftUI rendu. Le comportement (barres, descripteurs, éléments VoiceOver,
-// étiquettes décollées, palette résolue) est prouvé par les tests Swift
-// d'OMPConsoleIOSTests ; la preuve visuelle est la recette de captures
-// `scripts/recette/ios-statistiques-graphe-recette.sh`.
+// Fonctions pures sur le texte source de l'app et de DESIGN.md ; chaque faute est
+// plantée EN MÉMOIRE (`source.replace(…)`) : aucune copie du dépôt, aucun SwiftUI
+// rendu. Le comportement (barres, descripteurs, éléments VoiceOver, étiquettes
+// décollées, palette résolue) est prouvé par les tests Swift d'OMPConsoleIOSTests ;
+// la preuve visuelle du graphe est le groupe `memoire-graphe` de
+// `scripts/recette/ios-shots.sh`.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT } from "../support/repo.ts";
-import { stripComments, stripHashComments, swiftFiles, swiftSources } from "../support/swift-source.ts";
+import { stripComments, swiftFiles, swiftSources } from "../support/swift-source.ts";
 
 const APP = path.join(ROOT, "omp-console", "ios", "OMPConsoleIOS");
 const TESTS = path.join(ROOT, "omp-console", "ios", "OMPConsoleIOSTests");
@@ -161,108 +161,6 @@ test("ios-statistiques-et-graphe-accessibles/AC-10 : aucune teinte HSB fixe dans
   assert.ok(
     paletteFaults(plain).some((f) => f.includes("« .brown »")),
     "une couleur non adaptative doit rougir",
-  );
-});
-
-// MARK: - Recette de captures (S-8)
-
-const RECIPE = path.join(ROOT, "scripts", "recette", "ios-statistiques-graphe-recette.sh");
-
-/** Les jetons qu'une recette de captures privée, signée et avant/après doit porter hors commentaire (S-8). */
-const RECIPE_TOKENS = [
-  "simctl create",
-  "simctl delete",
-  "zz-statgraphe-tel",
-  "zz-statgraphe-tab",
-  "CODE_SIGN_IDENTITY=-",
-  "codesign -dv",
-  "--avant",
-  "appearance",
-  "increase_contrast",
-];
-
-/** Les 4 jeux d'arguments de lancement (S-8), en tuples Python littéraux. */
-const RECIPE_LAUNCHES = [
-  ["stats", "-stats.recipe", "pleine"],
-  ["stats", "-stats.recipe", "vide"],
-  ["memory", "-memoire.recipe", "graphe"],
-  ["memory", "-memoire.recipe", "zoom"],
-].map(([section, flag, value]) => `("-section", "${section}", "${flag}", "${value}")`);
-
-/** Les critères contrôlés par la recette, une ligne `AC-n` chacun (S-8). */
-const RECIPE_CRITERIA = [2, 4, 5, 8, 9, 11];
-
-/** Ce qui volerait le focus du Mac, toucherait l'app Mac de l'utilisateur ou fusionnerait la PR — interdit partout, commentaires compris. */
-const RECIPE_FORBIDDEN = ["open -a", "osascript", "OMP Console", "run-console.sh", "gh pr merge"];
-
-/** AC-11 : simulateurs privés supprimés, app signée, matrice clair/sombre/contraste accru, contrôles AC, aucune intrusion. */
-function recipeScriptFaults(script: string): string[] {
-  const faults: string[] = [];
-  const code = stripHashComments(script);
-  for (const token of [...RECIPE_TOKENS, ...RECIPE_LAUNCHES]) {
-    if (!code.includes(token)) faults.push(`recette : jeton absent hors commentaire « ${token} »`);
-  }
-  for (const n of RECIPE_CRITERIA) {
-    if (!new RegExp(`\\bAC-${n}\\b`).test(code)) faults.push(`recette : aucune ligne AC-${n}`);
-  }
-  for (const token of RECIPE_FORBIDDEN) {
-    if (script.includes(token)) faults.push(`recette : « ${token} » interdit`);
-  }
-  if (code.includes("Simulator.app")) faults.push("recette : Simulator.app hors commentaire");
-  return faults;
-}
-
-test("ios-statistiques-et-graphe-accessibles/AC-11 : la recette avant/après capture clair, sombre et contraste accru sur des simulateurs privés supprimés, sans voler le focus ni fusionner", () => {
-  assert.ok(fs.existsSync(RECIPE), `${path.relative(ROOT, RECIPE)} absent (écrit par le lot BR-6)`);
-  const script = fs.readFileSync(RECIPE, "utf8");
-  assert.deepEqual(recipeScriptFaults(script), []);
-
-  // Faute plantée : la recette ne supprime plus ses simulateurs ⇒ rouge.
-  const kept = plant(script, (s) => s.replaceAll("simctl delete", "simctl shutdown"));
-  assert.ok(
-    recipeScriptFaults(kept).some((f) => f.includes("simctl delete")),
-    "des simulateurs conservés doivent rougir",
-  );
-
-  // Faute plantée : la construction n'est plus signée ⇒ rouge.
-  const unsigned = plant(script, (s) => s.replaceAll("CODE_SIGN_IDENTITY=-", ""));
-  assert.ok(
-    recipeScriptFaults(unsigned).some((f) => f.includes("CODE_SIGN_IDENTITY=-")),
-    "une app non signée doit rougir",
-  );
-
-  // Faute plantée : le contraste accru sort de la matrice ⇒ rouge.
-  const noContrast = plant(script, (s) => s.replaceAll("increase_contrast", "appearance"));
-  assert.ok(
-    recipeScriptFaults(noContrast).some((f) => f.includes("increase_contrast")),
-    "une matrice sans contraste accru doit rougir",
-  );
-
-  // Faute plantée : le graphe zoomé sort de la matrice ⇒ rouge.
-  const noZoom = plant(script, (s) =>
-    s.replace('("-section", "memory", "-memoire.recipe", "zoom")', '("-section", "memory")'),
-  );
-  assert.ok(
-    recipeScriptFaults(noZoom).some((f) => f.includes("zoom")),
-    "un lancement absent doit rougir",
-  );
-
-  // Faute plantée : le Simulateur ouvert au premier plan, l'app Mac relancée, la PR fusionnée ⇒ rouge.
-  for (const intrusion of [
-    'open -a Simulator --args -CurrentDeviceUDID "$udid"',
-    'open "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app"',
-    "osascript -e 'quit app \"OMP Console\"'",
-    "bash scripts/run-console.sh",
-    "gh pr merge --squash",
-  ]) {
-    const intrusive = plant(script, (s) => s.replace("trap cleanup EXIT", `trap cleanup EXIT\n${intrusion}`));
-    assert.ok(recipeScriptFaults(intrusive).length > 0, `« ${intrusion} » doit rougir`);
-  }
-
-  // Simulator.app cité en commentaire reste admis (le script explique ce qu'il ne fait pas).
-  assert.deepEqual(
-    recipeScriptFaults(script.replace("trap cleanup EXIT", "# Simulator.app n'est jamais lancé.\ntrap cleanup EXIT")),
-    [],
   );
 });
 

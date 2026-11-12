@@ -21,7 +21,7 @@ public struct ConsoleShell: Sendable {
     /// Les gestes de la plateforme sur une feature (iPhone : la suivre sur l'écran
     /// verrouillé), ajoutés à son menu.
     public var runActions: @MainActor @Sendable (HarnessRun) -> AnyView
-    /// Montrer une section : la racine de l'app tient la sélection.
+    /// Montrer une destination : la coque de l'app la traduit en écran de l'OS.
     public var select: @MainActor @Sendable (ConsoleSection) -> Void
 
     public init(
@@ -52,12 +52,11 @@ extension EnvironmentValues {
     }
 }
 
-/// Les déplacements communs aux deux apps : ouvrir la page d'une feature, une page du
-/// hub Système, une portée de Features. `select` est celui de la racine.
+/// Les déplacements communs aux deux apps : ouvrir le fil d'une feature, une page du
+/// hub Système. `select` est celui de la coque.
 public enum ConsoleNavigation {
     @MainActor
     public static func openRun(_ id: String, drafts: HarnessDrafts, select: @MainActor (ConsoleSection) -> Void) {
-        drafts.runsScope = .features
         drafts.openedRun = id
         select(.runs)
     }
@@ -71,13 +70,6 @@ public enum ConsoleNavigation {
         }
         drafts.systemPage = page
         select(.system)
-    }
-
-    @MainActor
-    public static func open(_ scope: RunsScope, drafts: HarnessDrafts, select: @MainActor (ConsoleSection) -> Void) {
-        drafts.runsScope = scope
-        drafts.openedRun = nil
-        select(.runs)
     }
 }
 

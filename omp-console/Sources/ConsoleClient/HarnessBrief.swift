@@ -232,28 +232,30 @@ public final class HarnessBriefModel: ObservableObject {
     /// ou tous) ; un serveur antérieur (404) n'en a pas, sans échec.
     public func refresh(since: Double? = nil) async {
         window = since
-        await reload()
-    }
-
-    private func reload() async {
         guard harness.isConfigured else { return }
         isLoading = true
         defer { isLoading = false }
+        await reload()
+    }
+
+    /// La lecture sans rien en dire (le flux) ; rien n'est republié à l'identique.
+    private func reload() async {
+        guard harness.isConfigured else { return }
         do {
             let read: HarnessScopedRead<HarnessBriefReply> = try await harness.readScoped(Self.path(since: window))
             guard let reply = read.value else {
-                availability = .absent
-                brief = nil
-                failure = nil
+                update(\.availability, .absent)
+                update(\.brief, nil)
+                update(\.failure, nil)
                 return
             }
             // Un serveur qui ne borne pas le brief à un espace : ses listes le sont ici, par dépôt.
-            brief = OSSpaces.brief(reply.brief, in: read.filter)
-            availability = .available
-            failure = nil
+            update(\.brief, OSSpaces.brief(reply.brief, in: read.filter))
+            update(\.availability, .available)
+            update(\.failure, nil)
         } catch {
-            availability = HarnessControlFailure.availability(after: error, current: availability)
-            failure = HarnessModel.failure(of: error)
+            update(\.availability, HarnessControlFailure.availability(after: error, current: availability))
+            update(\.failure, HarnessModel.failure(of: error))
         }
     }
 

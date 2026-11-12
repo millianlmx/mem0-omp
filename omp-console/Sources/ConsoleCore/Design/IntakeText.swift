@@ -19,27 +19,10 @@ public enum IntakeText {
     public static let unsupported = L10n.text("Ce serveur ne connaît pas encore la Demande : mettez omp-harness à jour.")
     public static let approverOnly = L10n.text("Seul l’appareil approbateur peut confirmer une demande au poste : appairez cette app avec le code approbateur (harness.sh approver sur le VPS).")
 
-    // MARK: - À traiter
+    // MARK: - Gestes
 
-    public static let classifying = L10n.text("Classement en cours…")
-    public static let clarifying = L10n.text("Question du serveur")
-    public static let planned = L10n.text("Plan prêt")
-    public static let answered = L10n.text("Réponse")
-    public static let failed = L10n.text("Échec du classement")
-    public static let failedFallback = L10n.text("Le classement a échoué.")
-    public static let classifyingSymbol = "hourglass"
-    public static let clarifyingSymbol = "questionmark.bubble"
-    public static let plannedSymbol = "checklist"
-    public static let answeredSymbol = "text.bubble"
-    public static let failedSymbol = "exclamationmark.triangle"
     public static let confirm = L10n.text("Confirmer")
-    public static let modify = L10n.text("Modifier")
-    public static let cancel = L10n.text("Annuler")
-    public static let dismiss = L10n.text("Écarter")
-    public static let reply = L10n.text("Répondre")
     public static let replyPrompt = L10n.text("Votre réponse")
-    public static let noRepo = L10n.text("Sans dépôt")
-    public static let createsLabel = L10n.text("Sera créé")
 
     /// Le type d'un plan, en français.
     public static func kind(_ kind: String) -> String {

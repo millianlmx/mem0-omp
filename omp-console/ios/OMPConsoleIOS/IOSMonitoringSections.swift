@@ -6,7 +6,7 @@ import SwiftUI
 // Le monitoring de la page Statistiques et santé (hub Système) : la consommation des
 // agents, la comparaison des modèles, les tests instables et la santé du serveur,
 // relue toutes les `sampleSec` secondes tant que l'écran est affiché. Les alertes
-// d'une feature vivent dans « À traiter » et sur sa page. Les mots viennent du noyau
+// d'une feature vivent dans les Décisions et sur son fil. Les mots viennent du noyau
 // (`MonitoringText`) : aucun libellé en dur ici.
 
 /// La consommation des agents : depuis le début, sur 7 jours, et jour par jour.
@@ -40,8 +40,6 @@ struct IOSUsageSection: View {
             }
         } header: {
             Text(MonitoringText.usageTitle)
-        } footer: {
-            Text(MonitoringText.usageHint)
         }
     }
 }
@@ -72,8 +70,6 @@ struct IOSModelsSection: View {
             }
         } header: {
             Text(MonitoringText.modelsTitle)
-        } footer: {
-            Text(MonitoringText.modelsHint)
         }
     }
 }
@@ -100,8 +96,6 @@ struct IOSFlakySection: View {
             }
         } header: {
             Text(MonitoringText.flakyTitle)
-        } footer: {
-            Text(MonitoringText.flakyHint)
         }
     }
 }

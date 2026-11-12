@@ -23,7 +23,13 @@ public final class HarnessModel: ObservableObject {
     @Published public private(set) var inbox: HarnessInbox?
     /// Le dernier échec, effacé par le prochain échange réussi.
     @Published public private(set) var failure: HarnessFailure?
+    /// Une lecture demandée par l'humain (ouverture, « Actualiser ») est en cours ; les
+    /// relectures du flux, elles, passent sans le dire.
     @Published public private(set) var isLoading = false
+    /// Le curseur du journal le plus récent lu (boîte comprise) : le flux reprend de là.
+    /// Gardé à part de `inbox`, dont le curseur change à chaque événement : une boîte
+    /// identique au curseur près n'est pas republiée.
+    private(set) var eventCursor = 0
     /// Le flux d'événements est ouvert : la boîte se met à jour seule.
     @Published public private(set) var isLive = false
     /// Les runs dont un geste attend la réponse du serveur.
@@ -36,8 +42,6 @@ public final class HarnessModel: ObservableObject {
     @Published public private(set) var projects: [HarnessProject] = []
     @Published public private(set) var audits: [HarnessAudit] = []
     @Published public private(set) var stats: HarnessStats?
-    /// Les audits dont un geste attend la réponse du serveur.
-    @Published public private(set) var busyAudits: Set<String> = []
     /// Un lancement (feature, projet, audit) attend la réponse du serveur.
     @Published public private(set) var isLaunching = false
     /// Le client de ce jeton (`/v1/me`) : son rôle dit si les gestes sont permis.
@@ -52,13 +56,11 @@ public final class HarnessModel: ObservableObject {
     @Published public private(set) var loginProviders: [HarnessLoginProvider]?
     /// La connexion d'abonnement en cours, ou la dernière finie tant qu'elle n'est pas refermée.
     @Published public private(set) var login: HarnessLogin?
-    /// Le direct de la session suivie (`followSession`), ou `nil`.
-    @Published public private(set) var session: HarnessSessionFeed?
-    /// Le flux du direct est ouvert : les entrées arrivent en temps réel.
-    @Published public private(set) var isSessionLive = false
-    /// Ce qui a arrêté le direct pour de bon (feature inconnue, serveur trop ancien,
-    /// jeton refusé) ; une coupure du réseau, elle, est reprise sans bruit.
-    @Published public private(set) var sessionFailure: HarnessFailure?
+    /// Le direct de la session suivie, publié à part (`HarnessDirect`) : un écran du direct
+    /// observe `direct`, pas ce modèle, qui ne republie rien à chaque entrée.
+    public let direct: HarnessDirect
+    /// Le direct de la session suivie (`followSession`), ou `nil` ; lu dans `direct`.
+    public var session: HarnessSessionFeed? { direct.feed }
     /// La dernière version du graphe de session annoncée par l'événement `graph`, par feature suivie.
     @Published public private(set) var graphVersions: [String: Int] = [:]
     /// La santé du serveur au fil du temps, lue à la demande de l'écran des statistiques.
@@ -91,9 +93,6 @@ public final class HarnessModel: ObservableObject {
     /// Le navigateur du serveur du poste (écran Poste du Mac) : connexion interactive d'un
     /// compte, réservée à l'appareil approbateur, en secours de la copie du profil Chrome.
     public private(set) lazy var serverBrowser = ServerBrowserModel(harness: self)
-    /// Les signalements des collègues devenus propositions, et l'origine d'une feature
-    /// (pont corpo ↔ usine) : même échange, même flux.
-    public private(set) lazy var signals = CorporateSignalsModel(harness: self, reloadDelay: refreshDelay)
     /// Atlassian (Jira, Confluence) : connexion OAuth du serveur, plan du jour, savoir de la
     /// boîte et commentaires Jira proposés par l'agent : même échange, même flux.
     public private(set) lazy var atlassian = AtlassianModel(harness: self, reloadDelay: refreshDelay)
@@ -173,7 +172,12 @@ public final class HarnessModel: ObservableObject {
     /// serveur et rendue après ne remplit pas les modèles du suivant (`readBound`).
     private(set) var serverEpoch = 0
     private var liveTask: Task<Void, Never>?
+    /// La relecture regroupée du flux, et les noms d'événements qu'elle n'a pas encore lus :
+    /// un événement arrivé PENDANT une relecture en replanifie une, il n'est jamais perdu.
     private var refreshTask: Task<Void, Never>?
+    private var pendingEvents: Set<String> = []
+    /// La dernière lecture des statistiques : le flux les relit au plus une fois par `statsPeriod`.
+    private var statsReadAt: ContinuousClock.Instant?
     /// Un écran a demandé le catalogue : le flux le relit avec la boîte.
     private var wantsCatalog = false
     /// `/v1/me` a été demandé pour ce serveur (une fois : un serveur ancien ne l'a pas).
@@ -190,13 +194,14 @@ public final class HarnessModel: ObservableObject {
         preferences: any ClientPreferences,
         tokens: any TokenStore,
         retryDelay: Duration = .seconds(5),
-        refreshDelay: Duration = .milliseconds(300),
+        refreshDelay: Duration = .milliseconds(500),
         loginPollDelay: Duration = .seconds(1),
         sessionPollDelay: Duration = .seconds(2),
         fallback: @escaping @Sendable () -> (address: String, token: String)? = { nil },
         onPaired: @escaping @Sendable (HarnessPairing) -> Void = { _ in },
         reporter: HarnessErrorReporter = HarnessErrorReporter()
     ) {
+        direct = HarnessDirect()
         self.reporter = reporter
         self.transport = transport
         self.preferences = preferences
@@ -308,10 +313,10 @@ public final class HarnessModel: ObservableObject {
             }
             server = candidate
             address = normalized
-            inbox = fetched
+            receive(inbox: fetched)
             client = nil
             clientAsked = false
-            failure = nil
+            update(\.failure, nil)
             resetServerState()
             if let pairing { onPaired(pairing) }
             await readClient()
@@ -335,12 +340,14 @@ public final class HarnessModel: ObservableObject {
         server = nil
         address = nil
         inbox = nil
+        eventCursor = 0
         client = nil
         clientAsked = false
-        repos = []
-        projects = []
-        audits = []
+        update(\.repos, [])
+        update(\.projects, [])
+        update(\.audits, [])
         stats = nil
+        statsReadAt = nil
         providerCatalog = nil
         wantsProviders = false
         loginTask?.cancel()
@@ -368,7 +375,6 @@ public final class HarnessModel: ObservableObject {
         spaceConnectionWatch = [:]
         workstation.reset()
         serverBrowser.reset()
-        signals.reset()
         atlassian.reset()
         intakes.reset()
         history.reset()
@@ -393,18 +399,37 @@ public final class HarnessModel: ObservableObject {
 
     // MARK: - Lecture
 
-    /// Relit la boîte. Un échec garde la dernière boîte reçue.
+    /// Relit la boîte, à la demande de l'humain (`isLoading` le dit). Un échec garde la
+    /// dernière boîte reçue.
     public func refresh() async {
-        guard let server else { return }
+        guard server != nil else { return }
         isLoading = true
         defer { isLoading = false }
+        await refreshInbox()
+    }
+
+    /// Relit la boîte sans rien dire de la lecture : le flux, un geste, une reprise.
+    /// Rien n'est republié si la boîte et l'échec n'ont pas changé.
+    func refreshInbox() async {
+        guard let server else { return }
         do {
-            inbox = try await perform(HarnessCall(method: "GET", path: "/v1/inbox"), on: server)
-            failure = nil
+            receive(inbox: try await perform(HarnessCall(method: "GET", path: "/v1/inbox"), on: server))
+            update(\.failure, nil)
         } catch {
-            failure = Self.failure(of: error)
+            update(\.failure, Self.failure(of: error))
         }
         if !clientAsked { await readClient() }
+    }
+
+    /// Une boîte lue : son curseur est retenu, elle n'est publiée que si elle a changé
+    /// au-delà du curseur (qui avance à chaque événement du journal).
+    private func receive(inbox fetched: HarnessInbox) {
+        eventCursor = fetched.cursor
+        if var shown = inbox {
+            shown.cursor = fetched.cursor
+            if shown == fetched { return }
+        }
+        inbox = fetched
     }
 
     /// Lit le client de ce jeton (`/v1/me`). Un serveur antérieur aux clients multiples
@@ -413,28 +438,53 @@ public final class HarnessModel: ObservableObject {
         guard let server else { return }
         clientAsked = true
         if let me: HarnessMe = try? await perform(HarnessCall(method: "GET", path: "/v1/me"), on: server) {
-            client = me.client
+            update(\.client, me.client)
         }
     }
 
-    /// Relit le catalogue : dépôts, projets, audits, statistiques. Dès le premier appel,
-    /// le flux le relit aussi à chaque événement.
+    /// Relit le catalogue : dépôts, projets, audits, statistiques, en parallèle. Dès le
+    /// premier appel, le flux le relit aussi, sur les seuls événements qui le changent.
     public func refreshCatalog() async {
         wantsCatalog = true
-        guard let server else { return }
+        await readCatalog(CatalogParts.all)
+    }
+
+    /// Les parties du catalogue qu'une relecture lit.
+    struct CatalogParts: OptionSet {
+        let rawValue: Int
+        static let status = CatalogParts(rawValue: 1 << 0)
+        static let projects = CatalogParts(rawValue: 1 << 1)
+        static let audits = CatalogParts(rawValue: 1 << 2)
+        static let stats = CatalogParts(rawValue: 1 << 3)
+        static let all: CatalogParts = [.status, .projects, .audits, .stats]
+    }
+
+    /// Les statistiques (coût du jour, taux de fusion) bougent à chaque étape : le flux ne
+    /// les relit qu'une fois par période, pas à chaque événement.
+    static let statsPeriod: Duration = .seconds(60)
+
+    /// Lit les parties demandées en même temps ; un échec n'en retient aucune.
+    private func readCatalog(_ parts: CatalogParts) async {
+        guard let server, !parts.isEmpty else { return }
+        async let readStatus: HarnessStatus? = parts.contains(.status) ? perform(HarnessCall(method: "GET", path: "/v1/status"), on: server) : nil
+        async let readProjects: HarnessProjects? = parts.contains(.projects) ? perform(HarnessCall(method: "GET", path: "/v1/projects"), on: server) : nil
+        async let readAudits: HarnessAudits? = parts.contains(.audits) ? perform(HarnessCall(method: "GET", path: "/v1/audits"), on: server) : nil
+        async let readStats: HarnessStats? = parts.contains(.stats) ? perform(HarnessCall(method: "GET", path: "/v1/stats"), on: server) : nil
         do {
-            let readStatus: HarnessStatus = try await perform(HarnessCall(method: "GET", path: "/v1/status"), on: server)
-            let readProjects: HarnessProjects = try await perform(HarnessCall(method: "GET", path: "/v1/projects"), on: server)
-            let readAudits: HarnessAudits = try await perform(HarnessCall(method: "GET", path: "/v1/audits"), on: server)
-            let readStats: HarnessStats = try await perform(HarnessCall(method: "GET", path: "/v1/stats"), on: server)
-            repos = readStatus.repos
-            status = readStatus
-            projects = readProjects.projects
-            audits = readAudits.audits
-            stats = readStats
-            failure = nil
+            let (status, projects, audits, stats) = try await (readStatus, readProjects, readAudits, readStats)
+            if let status {
+                update(\.repos, status.repos)
+                update(\.status, status)
+            }
+            if let projects { update(\.projects, projects.projects) }
+            if let audits { update(\.audits, audits.audits) }
+            if let stats {
+                statsReadAt = .now
+                update(\.stats, stats)
+            }
+            update(\.failure, nil)
         } catch {
-            failure = Self.failure(of: error)
+            update(\.failure, Self.failure(of: error))
         }
     }
 
@@ -443,16 +493,16 @@ public final class HarnessModel: ObservableObject {
         guard let server, let id = runId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
         do {
             let view: HarnessRunView = try await perform(HarnessCall(method: "GET", path: "/v1/runs/\(id)"), on: server)
-            failure = nil
+            update(\.failure, nil)
             return view
         } catch {
-            failure = Self.failure(of: error)
+            update(\.failure, Self.failure(of: error))
             return nil
         }
     }
 
-    /// Ouvre le flux d'événements : chaque événement relit la boîte (regroupés), une
-    /// coupure est reprise après `retryDelay`. Idempotent ; sans serveur configuré,
+    /// Ouvre le flux d'événements : chaque événement fait relire ce qu'il change (regroupés),
+    /// une coupure est reprise après `retryDelay`. Idempotent ; sans serveur configuré,
     /// rien ne part (l'appel qui suit une configuration réussie l'ouvrira).
     public func startLive() {
         guard liveTask == nil, server != nil else { return }
@@ -467,7 +517,8 @@ public final class HarnessModel: ObservableObject {
         liveTask = nil
         refreshTask?.cancel()
         refreshTask = nil
-        isLive = false
+        pendingEvents = []
+        update(\.isLive, false)
     }
 
     private func liveLoop() async {
@@ -475,18 +526,17 @@ public final class HarnessModel: ObservableObject {
         defer { if !Task.isCancelled { liveTask = nil } }
         while !Task.isCancelled {
             guard let server else { return }
-            let cursor = inbox?.cursor ?? 0
+            let cursor = eventCursor
             do {
                 let stream = try await transport.events(HarnessCall(method: "GET", path: "/v1/events?after=\(cursor)"), server: server)
-                isLive = true
+                update(\.isLive, true)
                 var parser = HarnessEventParser()
                 for try await chunk in stream {
                     let events = parser.consumeEvents(chunk)
                     if !events.isEmpty {
                         let names = events.map(\.name)
-                        scheduleRefresh()
+                        scheduleRefresh(names)
                         workstation.receive(names)
-                        signals.receive(names)
                         atlassian.receive(names)
                         for connection in spaceConnections.values { connection.receive(names) }
                         intakes.receive(names)
@@ -503,13 +553,13 @@ public final class HarnessModel: ObservableObject {
                     }
                 }
             } catch {
-                if let failure = error as? HarnessFailure, failure == .unauthorized { self.failure = failure }
+                if let failure = error as? HarnessFailure, failure == .unauthorized { update(\.failure, failure) }
             }
-            isLive = false
+            update(\.isLive, false)
             if Task.isCancelled { return }
             try? await Task.sleep(for: retryDelay)
             if Task.isCancelled { return }
-            await refresh()
+            await refreshInbox()
         }
     }
 
@@ -537,7 +587,7 @@ public final class HarnessModel: ObservableObject {
         if session?.target == target, sessionTask != nil { return }
         stopSession()
         guard server != nil else { return }
-        session = HarnessSessionFeed(target: target)
+        direct.replace(HarnessSessionFeed(target: target))
         sessionTask = Task { [weak self] in
             await self?.sessionLoop(target)
         }
@@ -547,9 +597,9 @@ public final class HarnessModel: ObservableObject {
     public func stopSession() {
         sessionTask?.cancel()
         sessionTask = nil
-        session = nil
-        isSessionLive = false
-        sessionFailure = nil
+        direct.replace(nil)
+        direct.setLive(false)
+        direct.setFailure(nil)
     }
 
     /// La page d'entrées qui précède la première reçue (une session se rejoue de bout en bout).
@@ -559,7 +609,7 @@ public final class HarnessModel: ObservableObject {
         else { return }
         let call = HarnessCall(method: "GET", path: feed.target.sessionPath(id, query: ["before=\(first.seq)", "limit=200"]))
         guard let page: HarnessSessionView = try? await perform(call, on: server), session?.target == feed.target else { return }
-        session?.prepend(page)
+        direct.edit(urgent: true) { $0.prepend(page) }
     }
 
     /// Une entrée du direct et son détail (arguments complets et sortie entière d'un outil,
@@ -591,12 +641,12 @@ public final class HarnessModel: ObservableObject {
                 if !shown {
                     let early: HarnessSessionView = try await perform(HarnessCall(method: "GET", path: target.sessionPath(id, query: [])), on: server)
                     guard !Task.isCancelled else { return }
-                    session?.load(early)
-                    sessionFailure = nil
+                    direct.edit(urgent: true) { $0.load(early) }
+                    direct.setFailure(nil)
                 }
                 // Puis le flux, et le tampon relu une fois le flux ouvert : une entrée née entre
                 // les deux n'est jamais perdue (elle attend dans le flux et remplace celle du tampon).
-                let cursor = inbox?.cursor ?? 0
+                let cursor = eventCursor
                 let stream = try await transport.events(
                     HarnessCall(method: "GET", path: "/v1/events?\(streamQuery)&live=1&after=\(cursor)"),
                     server: server
@@ -604,45 +654,45 @@ public final class HarnessModel: ObservableObject {
                 let view: HarnessSessionView = try await perform(HarnessCall(method: "GET", path: target.sessionPath(id, query: [])), on: server)
                 guard !Task.isCancelled else { return }
                 // À l'ouverture, les pages plus anciennes déjà demandées restent ; après une coupure, le tampon fait foi.
-                if shown { session?.load(view) } else { session?.merge(view) }
+                direct.edit(urgent: true) { shown ? $0.load(view) : $0.merge(view) }
                 shown = true
                 // La sortie des derniers jobs de tests d'une feature (un serveur plus ancien n'en a pas).
                 if case .run = target,
                    let tests: HarnessLiveTests = try? await perform(HarnessCall(method: "GET", path: "/v1/runs/\(id)/tests/live"), on: server) {
-                    session?.tests = tests.jobs
+                    direct.edit(urgent: true) { $0.tests = tests.jobs }
                 }
-                sessionFailure = nil
-                isSessionLive = true
+                direct.setFailure(nil)
+                direct.setLive(true)
                 var parser = HarnessEventParser()
                 for try await chunk in stream {
                     var stale = false
                     for event in parser.consumeEvents(chunk) {
                         if let entry = event.sessionEntry {
-                            session?.apply(entry)
+                            direct.edit { $0.apply(entry) }
                         } else if let output = event.testOutput {
-                            session?.tests.apply(output)
+                            direct.edit { $0.tests.apply(output) }
                         } else if let version = event.graphVersion {
                             // Le graphe de session a changé : la Carte de la feature le relit.
-                            if case let .run(runId) = target { graphVersions[runId] = version }
+                            if case let .run(runId) = target, graphVersions[runId] != version { graphVersions[runId] = version }
                         } else if Self.sessionStateEvents.contains(event.name) {
                             stale = true
                         }
                     }
                     if stale, let fresh: HarnessSessionView = try? await perform(HarnessCall(method: "GET", path: target.sessionPath(id)), on: server) {
                         guard !Task.isCancelled else { return }
-                        session?.merge(fresh)
+                        direct.edit(urgent: true) { $0.merge(fresh) }
                     }
                 }
             } catch {
                 let failure = Self.failure(of: error)
                 // Seules les coupures se reprennent : un refus ne guérit pas en réessayant.
                 if failure != .unreachable, failure != .timedOut {
-                    isSessionLive = false
-                    if !Task.isCancelled { sessionFailure = failure }
+                    direct.setLive(false)
+                    if !Task.isCancelled { direct.setFailure(failure) }
                     return
                 }
             }
-            isSessionLive = false
+            direct.setLive(false)
             if Task.isCancelled { return }
             try? await Task.sleep(for: retryDelay)
         }
@@ -660,15 +710,15 @@ public final class HarnessModel: ObservableObject {
                 let query = since.map { ["since=\($0)"] } ?? []
                 let view: HarnessSessionView = try await perform(HarnessCall(method: "GET", path: target.sessionPath(id, query: query)), on: server)
                 guard !Task.isCancelled else { return }
-                if loaded { session?.merge(view) } else { session?.load(view) }
+                direct.edit(urgent: true) { loaded ? $0.merge(view) : $0.load(view) }
                 loaded = true
-                sessionFailure = nil
-                isSessionLive = true
+                direct.setFailure(nil)
+                direct.setLive(true)
             } catch {
                 let failure = Self.failure(of: error)
-                isSessionLive = false
+                direct.setLive(false)
                 if failure != .unreachable, failure != .timedOut {
-                    if !Task.isCancelled { sessionFailure = failure }
+                    if !Task.isCancelled { direct.setFailure(failure) }
                     return
                 }
             }
@@ -728,7 +778,8 @@ public final class HarnessModel: ObservableObject {
 
     /// Relit la santé du serveur (`GET /v1/metrics`) ; un serveur plus ancien la laisse `nil`.
     public func refreshMetrics() async {
-        metrics = await read("/v1/metrics")
+        let fresh: HarnessMetrics? = await read("/v1/metrics")
+        update(\.metrics, fresh)
     }
 
     /// Enregistre le jeton push d'une Live Activity : le serveur la met à jour app fermée.
@@ -813,19 +864,61 @@ public final class HarnessModel: ObservableObject {
         id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
     }
 
-    /// Une relecture regroupée : une rafale d'événements ne coûte qu'un appel.
-    private func scheduleRefresh() {
+    /// Une relecture regroupée : une rafale d'événements ne coûte qu'un tour de lectures, et
+    /// un événement arrivé PENDANT ce tour en replanifie un autre (rien n'est perdu). Chaque
+    /// tour ne relit que ce que ses événements changent.
+    private func scheduleRefresh(_ names: [String]) {
+        pendingEvents.formUnion(names)
         guard refreshTask == nil else { return }
         let delay = refreshDelay
         refreshTask = Task { [weak self] in
-            try? await Task.sleep(for: delay)
-            guard !Task.isCancelled else { return }
-            await self?.refresh()
-            if self?.wantsCatalog == true { await self?.refreshCatalog() }
-            if self?.wantsProviders == true { await self?.refreshProviders() }
-            if self?.history.isWatched == true { await self?.history.refresh() }
-            self?.refreshTask = nil
+            while !Task.isCancelled {
+                try? await Task.sleep(for: delay)
+                guard !Task.isCancelled, let self else { return }
+                let names = self.pendingEvents
+                self.pendingEvents = []
+                await self.refresh(after: names)
+                if self.pendingEvents.isEmpty || Task.isCancelled {
+                    if !Task.isCancelled { self.refreshTask = nil }
+                    return
+                }
+            }
         }
+    }
+
+    /// Un tour de relecture : la boîte, le catalogue, les fournisseurs et l'historique, en
+    /// parallèle, chacun seulement si un événement du tour le concerne.
+    private func refresh(after names: Set<String>) async {
+        async let inboxRead: Void = names.contains(where: Self.changesInbox) ? refreshInbox() : ()
+        async let catalogRead: Void = wantsCatalog ? readCatalog(catalogParts(after: names)) : ()
+        async let providersRead: Void = wantsProviders && names.contains("providers_changed") ? refreshProviders() : ()
+        async let historyRead: Void = history.isWatched && names.contains(where: HarnessRunsHistory.changes) ? history.reload() : ()
+        _ = await (inboxRead, catalogRead, providersRead, historyRead)
+    }
+
+    /// Les événements qui ne touchent jamais la boîte : ceux des modèles voisins (poste,
+    /// vigie, planifications, Atlassian, Demandes, propositions…), relus par eux seuls.
+    private nonisolated static let foreignPrefixes = ["workstation_", "vigie_", "schedule_", "atlassian", "heavy_"]
+    private nonisolated static let foreignEvents: Set<String> = [
+        "local_session", "intake_state", "signal", "standing_rule", "proposals", "pause",
+        "client_error", "backup_failed", "notify_failed", "dream_state", "providers_changed",
+    ]
+
+    nonisolated static func changesInbox(_ name: String) -> Bool {
+        !foreignEvents.contains(name) && !foreignPrefixes.contains { name.hasPrefix($0) }
+    }
+
+    /// Les parties du catalogue que ces événements changent : les projets avancent avec
+    /// leurs features, les audits avec leur analyse ; les statistiques, une fois par période.
+    private func catalogParts(after names: Set<String>) -> CatalogParts {
+        var parts: CatalogParts = []
+        if names.contains(where: { $0.hasPrefix("project_") || $0 == "run_created" || $0 == "run_state" || $0 == "merged" }) {
+            parts.insert(.projects)
+        }
+        if names.contains("audit_state") || names.contains("project_created") { parts.insert(.audits) }
+        if names.contains("providers_changed") { parts.insert(.status) }
+        if statsReadAt.map({ ContinuousClock.now - $0 >= Self.statsPeriod }) ?? true { parts.insert(.stats) }
+        return parts
     }
 
     // MARK: - Gestes
@@ -999,26 +1092,6 @@ public final class HarnessModel: ObservableObject {
         return reply?.audit
     }
 
-    /// Les propositions retenues d'un audit (index) partent en projet.
-    @discardableResult
-    public func launchProposals(auditId: String, items: [Int], title: String) async -> String? {
-        guard let id = auditId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
-        busyAudits.insert(auditId)
-        defer { busyAudits.remove(auditId) }
-        let reply: HarnessProjectReply? = await launch("/v1/audits/\(id)/launch", body: ProposalsBody(items: items.sorted(), title: title))
-        return reply?.projectId
-    }
-
-    /// Annule un audit (en file, en analyse, ou dont les propositions attendent).
-    @discardableResult
-    public func cancelAudit(_ auditId: String) async -> Bool {
-        guard let id = auditId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return false }
-        busyAudits.insert(auditId)
-        defer { busyAudits.remove(auditId) }
-        let reply: HarnessAuditReply? = await launch("/v1/audits/\(id)/cancel", body: EmptyBody())
-        return reply != nil
-    }
-
     private func launch<Body: Encodable, Reply: Decodable>(_ path: String, body: Body) async -> Reply? {
         guard let server else { return nil }
         guard let encoded = try? JSONEncoder().encode(body) else {
@@ -1029,12 +1102,12 @@ public final class HarnessModel: ObservableObject {
         defer { isLaunching = false }
         do {
             let reply: Reply = try await perform(HarnessCall(method: "POST", path: path, body: encoded), on: server)
-            failure = nil
-            await refresh()
+            update(\.failure, nil)
+            await refreshInbox()
             await refreshCatalog()
             return reply
         } catch {
-            failure = Self.failure(of: error)
+            update(\.failure, Self.failure(of: error))
             return nil
         }
     }
@@ -1060,18 +1133,18 @@ public final class HarnessModel: ObservableObject {
         let headers = (rev ?? knownRun(runId)?.rev).map { ["If-Match": "\"\($0)\""] } ?? [:]
         do {
             let reply: Reply = try await perform(HarnessCall(method: method, path: "/v1/runs/\(id)\(path)", body: encoded, headers: headers), on: server)
-            failure = nil
-            await refresh()
-            if history.isWatched { await history.refresh() }
+            update(\.failure, nil)
+            await refreshInbox()
+            if history.isWatched { await history.reload() }
             return reply
         } catch {
             let failed = Self.failure(of: error)
             if failed == .stale {
-                await refresh()
-                if history.isWatched { await history.refresh() }
+                await refreshInbox()
+                if history.isWatched { await history.reload() }
             }
             // Relue ou non, la boîte ne doit pas effacer la raison de l'échec.
-            failure = failed
+            update(\.failure, failed)
             return nil
         }
     }
@@ -1090,15 +1163,16 @@ public final class HarnessModel: ObservableObject {
     // MARK: - Fournisseurs (admin)
 
     /// Relit les fournisseurs et les chaînes de modèles. Dès le premier appel, le flux
-    /// les relit aussi à chaque événement (un autre appareil admin a pu les changer).
+    /// les relit aussi quand ils changent (`providers_changed` : un autre appareil admin).
     public func refreshProviders() async {
         wantsProviders = true
         guard let server else { return }
         do {
-            providerCatalog = try await perform(HarnessCall(method: "GET", path: "/v1/providers"), on: server)
-            failure = nil
+            let catalog: HarnessProviderCatalog = try await perform(HarnessCall(method: "GET", path: "/v1/providers"), on: server)
+            update(\.providerCatalog, catalog)
+            update(\.failure, nil)
         } catch {
-            failure = Self.failure(of: error)
+            update(\.failure, Self.failure(of: error))
         }
     }
 
@@ -1241,9 +1315,10 @@ public final class HarnessModel: ObservableObject {
     // MARK: - Échange
 
     /// Un échange décodé ; un statut inattendu ou un corps illisible est remonté au
-    /// serveur (`HarnessErrorReporter`) avant de devenir l'échec de l'appelant.
+    /// serveur (`HarnessErrorReporter`) avant de devenir l'échec de l'appelant. Le corps
+    /// se décode hors du fil principal (`decodeOffMain`).
     func perform<T: Decodable>(_ call: HarnessCall, on server: HarnessServer) async throws -> T {
-        try decode(try await transport.send(call, server: server), for: call)
+        try await decodeOffMain(try await transport.send(call, server: server), for: call)
     }
 
     /// Un échange décodé avec le serveur relié (`unreachable` sans serveur).
@@ -1274,6 +1349,26 @@ public final class HarnessModel: ObservableObject {
             reportIfUnexpected(reply, for: call)
             throw error
         }
+    }
+
+    /// `decode(_:for:)`, le corps décodé HORS du fil principal : une grosse réponse (la boîte,
+    /// l'historique, les statistiques) ne fige plus les écrans le temps d'être lue.
+    func decodeOffMain<T: Decodable>(_ reply: HarnessReply, for call: HarnessCall) async throws -> T {
+        do {
+            return try await Self.decodedInBackground(reply)
+        } catch HarnessFailure.unreadable {
+            reportUnreadable(call, type: T.self)
+            throw HarnessFailure.unreadable
+        } catch {
+            reportIfUnexpected(reply, for: call)
+            throw error
+        }
+    }
+
+    /// `decoded(_:)` sur l'exécuteur global (une fonction asynchrone `nonisolated` ne
+    /// tourne pas sur l'acteur principal) ; la valeur rendue est neuve, donc transmissible.
+    private nonisolated static func decodedInBackground<T: Decodable>(_ reply: HarnessReply) async throws -> sending T {
+        try decoded(reply)
     }
 
     /// Le corps décodé d'une réponse réussie (200, 201, 202), sinon l'échec qu'elle dit.
@@ -1429,11 +1524,6 @@ private struct ProjectBody: Encodable {
 private struct AuditBody: Encodable {
     var repo: String
     var focus: String
-}
-
-private struct ProposalsBody: Encodable {
-    var items: [Int]
-    var title: String
 }
 
 /// `instructions` absent du JSON quand il est `nil` : une relance sans consigne garde le corps d'avant.

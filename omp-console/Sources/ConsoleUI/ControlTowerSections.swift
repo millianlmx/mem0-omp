@@ -1,8 +1,8 @@
 // Les sections d'EXPLOITATION de la tour de contrôle, écrites une fois pour le Mac et
 // l'iPhone/iPad : la Vigie (mode, plafonds, battement, incidents), les Planifications
-// (liste, création, activer, déclencher, supprimer), l'Administration (clients, dépôts,
-// rechargement, erreurs des clients — admin seulement) et les Issues (lues et
-// corrigées par le MCP du serveur).
+// (liste, création, activer, déclencher, supprimer), l'Administration (clients,
+// rechargement, erreurs des clients — admin seulement ; les dépôts ont leur écran,
+// `RepoSettingsList`) et les Issues (lues et corrigées par le MCP du serveur).
 //
 // Chaque app les pose dans son cadre (formulaire du Mac, liste groupée d'iOS). Un
 // serveur qui ne sert pas une fonction le dit en clair (`ControlText.absent`), un jeton
@@ -530,7 +530,6 @@ public struct AdminSections: View {
                 ConsoleFailureBanner(failure: failure)
             }
             clientsSection
-            reposSection
             reloadSection
             errorsSection
         }
@@ -607,65 +606,6 @@ public struct AdminSections: View {
             get: { drafts.clientRepos.contains(name) },
             set: { on in if on { drafts.clientRepos.insert(name) } else { drafts.clientRepos.remove(name) } }
         )
-    }
-
-    private var reposSection: some View {
-        Section {
-            ForEach(admin.repos) { repo in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(repo.name).font(.headline)
-                    Text([repo.scope, repo.mainBranch, repo.merge].compactMap { $0 }.joined(separator: " · "))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            TextField(ControlText.repoURL, text: $drafts.repoURL, prompt: Text(ControlText.repoURLPrompt))
-                .consolePlainInput()
-                .consoleID("admin.repo.url")
-            TextField(ControlText.repoShortName, text: $drafts.repoName)
-                .consolePlainInput()
-                .consoleID("admin.repo.name")
-            Button(ControlText.repoAdd) {
-                let url = drafts.repoURL
-                let name = drafts.repoName
-                Task {
-                    if let declared = await admin.declareRepo(url: url, name: name), declared.added {
-                        drafts.repoURL = ""
-                        drafts.repoName = ""
-                    }
-                }
-            }
-            .disabled(admin.isSaving || drafts.repoURL.trimmingCharacters(in: .whitespaces).isEmpty)
-            .consoleID("admin.repo.add")
-            if let declared = admin.declared {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(ControlText.repoDeclared(declared.repo, added: declared.added))
-                        .font(.headline)
-                    if !declared.message.isEmpty {
-                        Text(declared.message)
-                            .font(.caption)
-                            .consoleReadable()
-                    }
-                    if let key = declared.deployKey {
-                        Text(ControlText.deployKey)
-                            .font(.subheadline.weight(.semibold))
-                        Text(key.publicKey)
-                            .font(.caption.monospaced())
-                            .consoleReadable()
-                            .fixedSize(horizontal: false, vertical: true)
-                            .consoleID("admin.repo.deployKey")
-                        Text(ControlText.deployKeyHint)
-                            .font(.caption)
-                        if let page = key.url.flatMap(URL.init(string:)) {
-                            Link(ControlText.deployKeyOpen, destination: page)
-                        }
-                    }
-                }
-                .consoleBanner(tone: declared.added ? .success : .attention)
-            }
-        } header: {
-            Text(ControlText.reposTitle)
-        }
     }
 
     private var reloadSection: some View {

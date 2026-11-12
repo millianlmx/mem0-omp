@@ -31,13 +31,13 @@ func recetteManuelleRendLaMemoireDuProjet() async throws {
     print("[recette] service     : \(config.baseURL.absoluteString) (jeton \(config.token.isEmpty ? "absent" : "posé"))")
     print("[recette] projet      : \(project)")
 
-    guard case let .success(binary) = GitBinary.resolve(environment: environment, path: project) else {
+    guard let binary = GitBinary.resolve(environment: environment) else {
         print("[recette] git introuvable — recette abandonnée")
         return
     }
     let git = GitCLI(binary: binary)
     guard let scope = await MemoryScope.scope(projectRoot: project, environment: environment, git: git) else {
-        print("[recette] portée non calculable — la section afficherait « Aucun projet ouvert »")
+        print("[recette] portée non calculable — l'écran afficherait « Aucun projet ouvert »")
         return
     }
     print("[recette] portée      : \(scope)")

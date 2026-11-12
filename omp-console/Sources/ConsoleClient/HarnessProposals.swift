@@ -126,21 +126,27 @@ public final class HarnessProposalsModel: ObservableObject {
         guard harness.isConfigured else { return }
         isLoading = true
         defer { isLoading = false }
+        await reload()
+    }
+
+    /// `refresh()` sans rien dire de la lecture (le flux) ; rien n'est republié à l'identique.
+    func reload() async {
+        guard harness.isConfigured else { return }
         do {
             let read: HarnessScopedRead<HarnessProposalList> = try await harness.readScoped("/v1/proposals")
             guard let list = read.value else {
-                availability = .absent
-                proposals = []
-                failure = nil
+                update(\.availability, .absent)
+                update(\.proposals, [])
+                update(\.failure, nil)
                 return
             }
             // Un serveur qui ne borne pas les propositions à un espace : elles le sont ici, par dépôt.
-            proposals = OSSpaces.proposals(list.proposals, in: read.filter)
-            availability = .available
-            failure = nil
+            update(\.proposals, OSSpaces.proposals(list.proposals, in: read.filter))
+            update(\.availability, .available)
+            update(\.failure, nil)
         } catch {
-            availability = HarnessControlFailure.availability(after: error, current: availability)
-            failure = HarnessModel.failure(of: error)
+            update(\.availability, HarnessControlFailure.availability(after: error, current: availability))
+            update(\.failure, HarnessModel.failure(of: error))
         }
     }
 
@@ -196,7 +202,7 @@ public final class HarnessProposalsModel: ObservableObject {
     /// L'événement `proposals` (l'ensemble a changé) fait relire.
     func receive(_ names: [String]) {
         guard availability == .available, names.contains("proposals") else { return }
-        reloader.schedule { [weak self] in await self?.refresh() }
+        reloader.schedule { [weak self] in await self?.reload() }
     }
 
     /// La portée a changé : les propositions de l'ancienne ne restent pas à l'écran, celles de la nouvelle sont lues.

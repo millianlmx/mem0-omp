@@ -242,6 +242,7 @@ struct WorkstationAskSection: View {
         Section {
             TextField(ControlText.requestsTitle, text: $drafts.workstationRequestText, prompt: Text(ControlText.requestPrompt), axis: .vertical)
                 .lineLimit(2...6)
+                .labelsHidden()
                 .consoleID("workstation.request.text")
             if status.browsers.count > 1 {
                 BrowserPicker(browsers: status.browsers, selection: $drafts.workstationRequestBrowser)
@@ -271,8 +272,6 @@ struct WorkstationAskSection: View {
             }
         } header: {
             Text(WorkstationText.askTitle)
-        } footer: {
-            Text(ControlText.requestsHint)
         }
     }
 
@@ -300,8 +299,6 @@ struct WorkstationRequestsListSection: View {
             ForEach(requests) { request in
                 WorkstationRequestRow(workstation: workstation, request: request)
             }
-        } footer: {
-            Text(ControlText.requestsHint)
         }
     }
 }
@@ -428,8 +425,6 @@ struct WorkstationAutomationsSection: View {
                     }
                 }
             }
-        } footer: {
-            Text(ControlText.automationsHint)
         }
     }
 
@@ -462,8 +457,6 @@ struct WorkstationSessionsSection: View {
                 }
                 .consoleID("workstation.session.\(job.rawValue)")
             }
-        } footer: {
-            Text(ControlText.sessionsHint)
         }
     }
 }

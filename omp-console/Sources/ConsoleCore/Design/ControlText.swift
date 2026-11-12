@@ -14,15 +14,8 @@
 public enum ControlText {
     // MARK: - Sections
 
-    public static let groupTitle = L10n.text("Exploitation")
-    public static let vigieTitle = L10n.text("Vigie")
     public static let schedulesTitle = L10n.text("Planifications")
     public static let issuesTitle = L10n.text("Issues")
-    public static let adminTitle = L10n.text("Administration")
-    public static let vigieSymbol = "binoculars"
-    public static let schedulesSymbol = "calendar.badge.clock"
-    public static let issuesSymbol = "exclamationmark.bubble"
-    public static let adminSymbol = "person.badge.key"
     /// Une fonction que le serveur relié ne connaît pas encore.
     public static let absent = L10n.text("Ce serveur ne connaît pas encore cette fonction : mettez omp-harness à jour.")
     public static let adminOnly = L10n.text("Réservé aux administrateurs du serveur : ce jeton ne les voit pas.")
@@ -71,9 +64,6 @@ public enum ControlText {
 
     // MARK: - File d'admission
 
-    public static let queueTitle = L10n.text("File d’attente")
-    public static let queueSymbol = "hourglass"
-
     /// Le nom d'une cause qui retient une feature en file.
     public static func waitCause(_ raw: String) -> String {
         switch raw {
@@ -87,18 +77,12 @@ public enum ControlText {
         }
     }
 
-    /// « 3 features retenues en file ».
-    public static func held(_ count: Int) -> String {
-        count == 1 ? L10n.text("1 feature retenue en file") : L10n.format("%lld features retenues en file", count)
-    }
-
     // MARK: - Poste : arrêt d'urgence
 
     public static let stop = L10n.text("Arrêt d’urgence")
     public static let stopSymbol = "stop.circle.fill"
     public static let stopConfirm = L10n.text("Arrêter le poste maintenant ?")
     public static let stopMessage = L10n.text("Le poste passe en pause, toute action en file, en cours ou à approuver est annulée, et l’agent 24/24 s’interrompt. Seul l’appareil approbateur peut le reprendre.")
-    public static let stopHint = L10n.text("Toujours permis, quel que soit le jeton de cet appareil.")
     public static let resume = L10n.text("Reprendre le poste")
 
     /// « Arrêté le 7 nov. 2026 à 22:05 par mac-millian ».
@@ -106,16 +90,13 @@ public enum ControlText {
 
     // MARK: - Poste : détail d'une action
 
-    public static let actionTitle = L10n.text("Action du poste")
     public static let actionOpen = L10n.text("Détail")
     public static let actionCancel = L10n.text("Annuler l’action")
-    public static let actionCancelConfirm = L10n.text("Annuler cette action ?")
     public static let actionParams = L10n.text("Paramètres")
     public static let actionResult = L10n.text("Résultat")
     public static let actionData = L10n.text("Données")
     public static let actionCapture = L10n.text("Capture")
     public static let noCapture = L10n.text("Aucune capture gardée pour cette action (elles s’effacent après quelques heures).")
-    public static let actionLoading = L10n.text("Lecture de l’action…")
     public static let captureLabel = L10n.text("Capture d’écran de l’onglet")
 
     /// « Action n° 42 ».
@@ -136,7 +117,6 @@ public enum ControlText {
     // MARK: - Poste : sessions des jobs
 
     public static let sessionsTitle = L10n.text("Sessions de l’agent 24/24")
-    public static let sessionsHint = L10n.text("Ce que l’agent du poste lit et décide, comme le direct d’une feature.")
 
     /// Le nom d'un job du poste.
     public static func job(_ raw: String) -> String {
@@ -172,7 +152,6 @@ public enum ControlText {
     public static let requestPrompt = L10n.text("Par exemple : télécharge la dernière facture du fournisseur")
     public static let requestSend = L10n.text("Demander")
     public static let requestCancel = L10n.text("Annuler la demande")
-    public static let requestsHint = L10n.text("L’agent mène chaque demande dans votre navigateur, une à la fois ; un envoi à un tiers attend toujours votre approbation.")
     public static let noRequest = L10n.text("Aucune demande pour l’instant.")
     public static let requestReport = L10n.text("Compte rendu")
     public static let requestSymbol = "text.badge.plus"
@@ -192,7 +171,6 @@ public enum ControlText {
     // MARK: - Poste : automatisations
 
     public static let automationsTitle = L10n.text("Automatisations")
-    public static let automationsHint = L10n.text("Une tâche répétitive du profil gardée comme consigne : lancée à la demande, ou à chaque échéance de son expression cron.")
     public static let noAutomation = L10n.text("Aucune automatisation : automatisez une tâche répétitive du profil.")
     public static let automate = L10n.text("Automatiser")
     public static let automationLaunch = L10n.text("Lancer")
@@ -379,14 +357,7 @@ public enum ControlText {
     public static let clientTokenHint = L10n.text("Copiez-le maintenant : il ne sera plus jamais montré.")
     public static let approverBadge = L10n.text("Approbateur")
     public static let pilotBadge = L10n.text("Pilote")
-    public static let reposTitle = L10n.text("Dépôts déclarés")
-    public static let repoURL = L10n.text("Adresse du dépôt")
     public static let repoURLPrompt = L10n.text("git@github.com:moi/projet.git")
-    public static let repoShortName = L10n.text("Nom court (facultatif)")
-    public static let repoAdd = L10n.text("Ajouter le dépôt")
-    public static let deployKey = L10n.text("Clé de déploiement à poser")
-    public static let deployKeyHint = L10n.text("Posez cette clé publique, en écriture, sur le dépôt, puis ajoutez-le de nouveau.")
-    public static let deployKeyOpen = L10n.text("Ouvrir la page des clés")
     public static let reloadTitle = L10n.text("Configuration")
     public static let reload = L10n.text("Recharger la configuration")
     public static let reloadHint = L10n.text("Relit le fichier de configuration du serveur ; invalide, rien ne change.")
@@ -414,11 +385,6 @@ public enum ControlText {
         case "vigie": L10n.text("Vigie")
         default: raw
         }
-    }
-
-    /// « Ajouté : demo » ou « Pas encore servi : demo ».
-    public static func repoDeclared(_ name: String, added: Bool) -> String {
-        added ? L10n.format("Ajouté : %@", name) : L10n.format("Pas encore servi : %@", name)
     }
 
     /// « Servis : a, b · ajoutés : c · retirés : d ».

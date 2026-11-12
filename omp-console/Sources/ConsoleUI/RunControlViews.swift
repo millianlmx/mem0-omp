@@ -1,7 +1,7 @@
 // La feature EN DIRECT, écrite une fois pour le Mac et l'iPhone/iPad : la consigne à
 // l'agent qui y travaille (depuis la session en direct et le menu de la feature), le
 // budget propre de la feature, la relance avec consigne, et ce qui retient une feature
-// en file — dit en clair sur sa rangée et, pour la file entière, sur l'Accueil.
+// en file.
 //
 // La consigne part avec la révision de la feature (`If-Match`) : un autre appareil qui
 // l'a changée entre-temps fait refuser l'envoi, et la boîte relue le montre.
@@ -52,40 +52,6 @@ public struct RunQueueReason: View {
             .foregroundStyle(.orange)
             .accessibilityElement(children: .combine)
             .consoleID("run.queueReason")
-        }
-    }
-}
-
-/// La file d'admission en tête de la liste des features : combien de features dues sont
-/// retenues, et pourquoi (rien quand aucune ne l'est).
-public struct QueueSummarySection: View {
-    @ObservedObject var server: HarnessModel
-
-    public init(server: HarnessModel) {
-        self.server = server
-    }
-
-    public var body: some View {
-        if let queue = server.status?.queue, queue.held > 0 {
-            Section {
-                Label(ControlText.held(queue.held), systemImage: ControlText.queueSymbol)
-                    .font(.headline)
-                if let dominant = queue.dominant {
-                    Text(ControlText.waitCause(dominant.cause))
-                        .font(.callout.weight(.semibold))
-                    Text(dominant.text)
-                        .font(.callout)
-                        .consoleReadable()
-                }
-                ForEach(queue.byCause.sorted { $0.value > $1.value }, id: \.key) { cause, count in
-                    Text(ControlText.countLine(ControlText.waitCause(cause), count: count))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } header: {
-                Text(ControlText.queueTitle)
-            }
-            .consoleID("runs.queue")
         }
     }
 }

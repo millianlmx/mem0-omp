@@ -19,7 +19,7 @@ import { ROOT, tmpdir } from "../support/repo.ts";
 const ANALYSEUR = path.join(ROOT, "scripts", "recette", "ios-recette-ui-analyse.py");
 const EXCEPTIONS_VERSIONNEES = path.join(ROOT, "scripts", "recette", "ios-recette-ui-exceptions.json");
 
-const SURFACES = ["inbox", "runs", "workstation", "memory", "system"];
+const SURFACES = ["now", "threads", "decisions", "memory", "knowledge"];
 const CONFIGS: Array<[string, string]> = [
   ["clair", "defaut"],
   ["sombre", "defaut"],
@@ -104,19 +104,19 @@ const cadre = (x: number, y: number, width: number, height: number): Frame => ({
 function marqueurPropre(surface: string): Element[] {
   const f = cadre(20, 120, 200, 44);
   switch (surface) {
-    case "runs":
+    case "threads":
       return [
-        { type: "StaticText", AXUniqueId: "ios.screen.runs", frame: f },
+        { type: "StaticText", AXUniqueId: "ios.os.screen.threads", frame: f },
         bouton("ios.server.configure", cadre(20, 200, 200, 44)),
       ];
-    case "workstation":
-      return [{ type: "Heading", AXLabel: "Poste", frame: f }];
-    case "system":
-      return [{ type: "Heading", AXLabel: "Système", frame: f }];
+    case "decisions":
+      return [{ type: "Heading", AXLabel: "Décisions", frame: f }];
+    case "knowledge":
+      return [{ type: "Heading", AXLabel: "Savoir", frame: f }];
     case "memory":
       return [{ type: "StaticText", AXUniqueId: "ios.memoire.mode", frame: f }];
     default:
-      return [{ type: "StaticText", AXUniqueId: `ios.screen.${surface}`, frame: f }];
+      return [{ type: "StaticText", AXUniqueId: `ios.os.screen.${surface}`, frame: f }];
   }
 }
 
@@ -156,7 +156,7 @@ function releves(perso: Personnalisation = {}): string {
 
 type Exception = Record<string, unknown>;
 const exception = (surcharge: Exception = {}): Exception => ({
-  surface: "inbox",
+  surface: "now",
   apparence: "clair",
   taille: "defaut",
   regle: "cible-44",
@@ -221,14 +221,14 @@ test("ios-recette-ui-automatisee-idb/AC-5 : un bouton de 20 pt sort en 1 et sa l
   const p = analyser(
     releves({
       marqueur: (s, a, t) =>
-        s === "inbox" && a === "clair" && t === "defaut"
-          ? [...marqueurPropre("inbox"), bouton("ios.server.open", cadre(289.7, 136.7, 96.3, 20.3))]
+        s === "now" && a === "clair" && t === "defaut"
+          ? [...marqueurPropre("now"), bouton("ios.server.open", cadre(289.7, 136.7, 96.3, 20.3))]
           : undefined,
     }),
   );
   assert.equal(p.status, 1, p.stderr);
   assert.deepEqual(p.lignes, [
-    "SIGNALÉ\tsurface=inbox\tapparence=clair\ttaille=defaut\tregle=cible-44\tsource=ax\telement=id:ios.server.open\tcadre=289.7,136.7,96.3x20.3",
+    "SIGNALÉ\tsurface=now\tapparence=clair\ttaille=defaut\tregle=cible-44\tsource=ax\telement=id:ios.server.open\tcadre=289.7,136.7,96.3x20.3",
   ]);
   assert.match(p.stdout, /^rapport : .*rapport\.txt$/m);
   assert.match(p.stdout, /^1 signalé\(s\), 0 excepté\(s\)$/m);
@@ -238,9 +238,9 @@ test("ios-recette-ui-automatisee-idb/AC-3 : « Serveur » et « Configurer le se
   const p = analyser(
     releves({
       marqueur: (s, a, t) =>
-        s === "inbox" && a === "clair" && t === "defaut"
+        s === "now" && a === "clair" && t === "defaut"
           ? [
-              ...marqueurPropre("inbox"),
+              ...marqueurPropre("now"),
               bouton("ios.server.open", cadre(289.7, 136.7, 96.3, 20.3), { AXLabel: "Serveur" }),
               bouton("ios.server.configure", cadre(40, 300, 104.7, 20.3), { AXLabel: "Configurer le serveur" }),
             ]
@@ -253,7 +253,7 @@ test("ios-recette-ui-automatisee-idb/AC-3 : « Serveur » et « Configurer le se
   for (const id of ["ios.server.open", "ios.server.configure"]) {
     const l = lignes.find((x) => x.includes(`element=id:${id}\t`));
     assert.ok(l, `ligne pour ${id}`);
-    assert.ok(l.startsWith(`SIGNALÉ\t${CTX("inbox")}\t`), l);
+    assert.ok(l.startsWith(`SIGNALÉ\t${CTX("now")}\t`), l);
     assert.ok(l.endsWith("x20.3"), `hauteur 20.3 dans ${l}`);
   }
 });
@@ -261,7 +261,7 @@ test("ios-recette-ui-automatisee-idb/AC-3 : « Serveur » et « Configurer le se
 test("bornes cible-44 : 44,0 x 44,0 passe, 43,9 est signalé, un StaticText de 20 pt passe", () => {
   const p = analyser(
     releves({
-      elements: sur("inbox", "clair", "defaut", [
+      elements: sur("now", "clair", "defaut", [
         bouton("ok.exact", cadre(20, 300, 44, 44)),
         bouton("ko.hauteur", cadre(20, 360, 60, 43.9)),
         bouton("ko.largeur", cadre(20, 420, 43.9, 60)),
@@ -298,7 +298,7 @@ test("ios-recette-ui-automatisee-idb/AC-4 : deux éléments portant le même ide
 test("id-duplique : un identifiant vide ou null n'est jamais un doublon", () => {
   const p = analyser(
     releves({
-      elements: sur("inbox", "clair", "defaut", [
+      elements: sur("now", "clair", "defaut", [
         { type: "StaticText", AXUniqueId: "", frame: cadre(20, 300, 100, 44) },
         { type: "StaticText", AXUniqueId: "", frame: cadre(20, 360, 100, 44) },
         { type: "StaticText", AXUniqueId: null, frame: cadre(20, 420, 100, 44) },
@@ -314,7 +314,7 @@ test("id-duplique : un identifiant vide ou null n'est jamais un doublon", () => 
 test("bord ax : x = 0 signalé, x = 0,6 non signalé, bord droit signalé", () => {
   const p = analyser(
     releves({
-      elements: sur("system", "clair", "defaut", [
+      elements: sur("knowledge", "clair", "defaut", [
         { type: "Group", AXUniqueId: "colle.gauche", frame: cadre(0, 300, 100, 44) },
         { type: "Group", AXUniqueId: "libre.gauche", frame: cadre(0.6, 360, 100, 44) },
         { type: "Group", AXUniqueId: "colle.droite", frame: cadre(300, 420, 102, 44) },
@@ -327,24 +327,24 @@ test("bord ax : x = 0 signalé, x = 0,6 non signalé, bord droit signalé", () =
   assert.deepEqual(
     p.lignes.map((l) => l.split("\t").slice(1, 7).join("|")),
     [
-      "surface=system|apparence=clair|taille=defaut|regle=bord|source=ax|element=id:colle.gauche",
-      "surface=system|apparence=clair|taille=defaut|regle=bord|source=ax|element=id:colle.droite",
+      "surface=knowledge|apparence=clair|taille=defaut|regle=bord|source=ax|element=id:colle.gauche",
+      "surface=knowledge|apparence=clair|taille=defaut|regle=bord|source=ax|element=id:colle.droite",
     ],
   );
 });
 
-test("ios-recette-ui-automatisee-idb/AC-2 : une bande de bord de 44 pt sur Features et Mémoire est signalée avec l'élément le plus à gauche", () => {
+test("ios-recette-ui-automatisee-idb/AC-2 : une bande de bord de 44 pt sur Fils et Mémoire est signalée avec l'élément le plus à gauche", () => {
   const conteneur = (id: string): Element => ({ type: "Group", AXUniqueId: id, frame: cadre(16, 100, 370, 700) });
   const ecrans: Record<string, string> = {
-    runs: "ios.screen.runs",
+    threads: "ios.os.screen.threads",
     memory: "ios.memoire.screen",
   };
   const p = analyser(
     releves({
-      // Sur Features, le conteneur remplace le marqueur (même identifiant : sinon id-duplique).
+      // Sur Fils, le conteneur remplace le marqueur (même identifiant : sinon id-duplique).
       marqueur: (s, a, t) =>
-        s === "runs" && a === "clair" && t === "defaut"
-          ? [conteneur(ecrans.runs), ...marqueurPropre("runs").slice(1)]
+        s === "threads" && a === "clair" && t === "defaut"
+          ? [conteneur(ecrans.threads), ...marqueurPropre("threads").slice(1)]
           : undefined,
       elements: (s, a, t) => (s === "memory" && a === "clair" && t === "defaut" ? [conteneur(ecrans.memory)] : []),
       bandes: (s, a, t) =>
@@ -358,7 +358,7 @@ test("ios-recette-ui-automatisee-idb/AC-2 : une bande de bord de 44 pt sur Featu
   assert.deepEqual(
     bord.map((l) => l.split("\t").slice(1, 2).concat(l.split("\t").slice(6, 8)).join("|")),
     [
-      "surface=runs|element=id:ios.screen.runs|cadre=0.0,100.0,0.3x644.0",
+      "surface=threads|element=id:ios.os.screen.threads|cadre=0.0,100.0,0.3x644.0",
       "surface=memory|element=id:ios.memoire.screen|cadre=0.0,100.0,0.3x644.0",
     ],
   );
@@ -370,18 +370,18 @@ test("bord capture : 44 pt signalé, 43 pt non, écart de 6 non, côté droit en
     a === "clair" && t === "defaut" ? (parSurface[s] ?? []) : [];
   const p = analyser(
     releves({
-      elements: sur("workstation", "clair", "defaut", [
+      elements: sur("decisions", "clair", "defaut", [
         { type: "Group", AXUniqueId: "proche", frame: cadre(10, 100, 100, 100) },
         { type: "Group", AXUniqueId: "loin", frame: cadre(50, 100, 100, 100) },
         { type: "Group", AXUniqueId: "pleine.largeur", frame: cadre(0, 100, 402, 100) },
       ]),
       bandes: bandes({
-        workstation: [
+        decisions: [
           { cote: "gauche", y0: 100, y1: 144, couleur: [220, 220, 225] },
           { cote: "droite", y0: 300, y1: 344, couleur: [220, 220, 225] },
         ],
-        inbox: [{ cote: "gauche", y0: 100, y1: 143, couleur: [220, 220, 225] }],
-        system: [{ cote: "gauche", y0: 100, y1: 400, couleur: [249, 249, 249] }],
+        now: [{ cote: "gauche", y0: 100, y1: 143, couleur: [220, 220, 225] }],
+        knowledge: [{ cote: "gauche", y0: 100, y1: 400, couleur: [249, 249, 249] }],
         memory: [{ cote: "gauche", y0: 100, y1: 400, couleur: [248, 248, 248] }],
       }),
     }),
@@ -393,8 +393,8 @@ test("bord capture : 44 pt signalé, 43 pt non, écart de 6 non, côté droit en
     return [c[1], c[6], c[7]].join("|");
   });
   assert.deepEqual(resume, [
-    "surface=workstation|element=id:proche|cadre=0.0,100.0,0.3x44.0",
-    "surface=workstation|element=type:capture|cadre=401.7,300.0,0.3x44.0",
+    "surface=decisions|element=id:proche|cadre=0.0,100.0,0.3x44.0",
+    "surface=decisions|element=type:capture|cadre=401.7,300.0,0.3x44.0",
     "surface=memory|element=id:ios.memoire.mode|cadre=0.0,100.0,0.3x300.0",
   ]);
 });
@@ -403,14 +403,14 @@ test("ordre du rapport : surfaces, puis configurations, puis règles, puis ordre
   const p = analyser(
     releves({
       elements: (s, a, t) => {
-        if (s === "system" && a === "clair" && t === "ax-xl") return [bouton("stats.court", cadre(20, 300, 30, 30))];
-        if (s === "inbox" && a === "sombre")
+        if (s === "knowledge" && a === "clair" && t === "ax-xl") return [bouton("stats.court", cadre(20, 300, 30, 30))];
+        if (s === "now" && a === "sombre")
           return [
             { type: "Group", AXUniqueId: "colle", frame: cadre(0, 300, 50, 50) },
             bouton("zz.court", cadre(20, 400, 30, 30)),
             bouton("aa.court", cadre(20, 460, 30, 30)),
           ];
-        if (s === "inbox" && a === "clair" && t === "defaut") return [bouton("home.clair", cadre(20, 400, 30, 30))];
+        if (s === "now" && a === "clair" && t === "defaut") return [bouton("home.clair", cadre(20, 400, 30, 30))];
         return [];
       },
     }),
@@ -425,11 +425,11 @@ test("ordre du rapport : surfaces, puis configurations, puis règles, puis ordre
         .replace(/\|(ax)\|/, "|$1|"),
     ),
     [
-      "inbox|clair|defaut|cible-44|ax|id:home.clair",
-      "inbox|sombre|defaut|cible-44|ax|id:zz.court",
-      "inbox|sombre|defaut|cible-44|ax|id:aa.court",
-      "inbox|sombre|defaut|bord|ax|id:colle",
-      "system|clair|ax-xl|cible-44|ax|id:stats.court",
+      "now|clair|defaut|cible-44|ax|id:home.clair",
+      "now|sombre|defaut|cible-44|ax|id:zz.court",
+      "now|sombre|defaut|cible-44|ax|id:aa.court",
+      "now|sombre|defaut|bord|ax|id:colle",
+      "knowledge|clair|ax-xl|cible-44|ax|id:stats.court",
     ],
   );
 });
@@ -444,7 +444,7 @@ test("des relevés propres sortent en 0 avec un rapport vide", () => {
 // ── Exceptions et verdict ─────────────────────────────────────────────────────
 
 const avecBoutonFixture = releves({
-  elements: sur("inbox", "clair", "defaut", [bouton("ios.home.fixture", cadre(20, 300, 100, 30))]),
+  elements: sur("now", "clair", "defaut", [bouton("ios.home.fixture", cadre(20, 300, 100, 30))]),
 });
 
 test("ios-recette-ui-automatisee-idb/AC-7 : retirer l'exception qui couvre un signalement émis fait sortir en 1 et le rapport nomme ce signalement", () => {
@@ -453,14 +453,14 @@ test("ios-recette-ui-automatisee-idb/AC-7 : retirer l'exception qui couvre un si
   assert.equal(avec.lignes.length, 1);
   assert.equal(
     avec.lignes[0],
-    `EXCEPTÉ\t${CTX("inbox")}\tregle=cible-44\tsource=ax\telement=id:ios.home.fixture\tcadre=20.0,300.0,100.0x30.0\texception=1\tjustification=bouton de fixture sans correctif`,
+    `EXCEPTÉ\t${CTX("now")}\tregle=cible-44\tsource=ax\telement=id:ios.home.fixture\tcadre=20.0,300.0,100.0x30.0\texception=1\tjustification=bouton de fixture sans correctif`,
   );
   assert.match(avec.stdout, /^0 signalé\(s\), 1 excepté\(s\)$/m);
 
   const sans = analyser(avecBoutonFixture, []);
   assert.equal(sans.status, 1);
   assert.deepEqual(sans.lignes, [
-    `SIGNALÉ\t${CTX("inbox")}\tregle=cible-44\tsource=ax\telement=id:ios.home.fixture\tcadre=20.0,300.0,100.0x30.0`,
+    `SIGNALÉ\t${CTX("now")}\tregle=cible-44\tsource=ax\telement=id:ios.home.fixture\tcadre=20.0,300.0,100.0x30.0`,
   ]);
 });
 
@@ -502,7 +502,7 @@ test("exceptions : justification vide ou absente, clé inconnue, source capture 
     assert.match(v.stderr, attendu);
     assert.equal(v.stdout, "");
     // la même entrée fait aussi sortir l'analyse complète en 2, avant tout relevé
-    assert.equal(analyser(releves({ sans: ["inbox-clair-defaut.png"] }), [entree]).status, 2);
+    assert.equal(analyser(releves({ sans: ["now-clair-defaut.png"] }), [entree]).status, 2);
   }
   const numero = valider([exception(), exception({ justification: "" })]);
   assert.match(numero.stderr, /^exception 2 invalide : justification /);
@@ -531,7 +531,7 @@ test("exceptions protégées : une par famille d'audit sort en 2 avec le message
     exception({ element: "id:ios.memoire.retry" }),
     exception({ element: "id:ios.memoire.graphe.etiquette" }),
     exception({ regle: "id-duplique", element: "id:ios.memoire.screen", surface: "memory" }),
-    exception({ regle: "bord", source: "capture", surface: "runs", element: "id:ios.screen.runs" }),
+    exception({ regle: "bord", source: "capture", surface: "threads", element: "id:ios.os.screen.threads" }),
     exception({ regle: "bord", source: "capture", surface: "memory", element: "id:ios.memoire.screen" }),
     exception({ regle: "bord", source: "capture", surface: "*", element: "type:capture" }),
   ];
@@ -545,8 +545,8 @@ test("exceptions protégées : une par famille d'audit sort en 2 avec le message
   }
   // les voisins légitimes restent permis
   for (const permise of [
-    exception({ regle: "bord", source: "capture", surface: "inbox", element: "id:ios.home.root" }),
-    exception({ regle: "bord", source: "ax", surface: "runs", element: "id:ios.screen.runs" }),
+    exception({ regle: "bord", source: "capture", surface: "now", element: "id:ios.home.root" }),
+    exception({ regle: "bord", source: "ax", surface: "threads", element: "id:ios.os.screen.threads" }),
     exception({ regle: "cible-44", element: "id:ios.server.configure" }),
     exception({ regle: "id-duplique", element: "id:autre.titre" }),
   ]) {
@@ -567,40 +567,40 @@ test("la liste d'exceptions versionnée est valide", () => {
 
 // ── Relevés incomplets ou faux ────────────────────────────────────────────────
 
-test("relevés : une paire manquante, un JSON illisible, un marqueur absent ou Features relié au serveur font sortir en 2", () => {
+test("relevés : une paire manquante, un JSON illisible, un marqueur absent ou Fils relié au serveur font sortir en 2", () => {
   const manquante = analyser(releves({ sans: ["memory-sombre-defaut.png"] }));
   assert.equal(manquante.status, 2);
   assert.equal(manquante.stderr.trim(), "relevé manquant : memory-sombre-defaut.png");
 
   const dossier = releves();
-  fs.writeFileSync(path.join(dossier, "system-clair-ax-xl.json"), "[{pas du json");
+  fs.writeFileSync(path.join(dossier, "knowledge-clair-ax-xl.json"), "[{pas du json");
   const illisible = analyser(dossier);
   assert.equal(illisible.status, 2);
-  assert.equal(illisible.stderr.trim(), "relevé invalide : system-clair-ax-xl.json");
+  assert.equal(illisible.stderr.trim(), "relevé invalide : knowledge-clair-ax-xl.json");
 
   const sansApp = releves();
   fs.writeFileSync(
-    path.join(sansApp, "inbox-clair-defaut.json"),
+    path.join(sansApp, "now-clair-defaut.json"),
     JSON.stringify([{ type: "Button", frame: cadre(0, 0, 10, 10) }]),
   );
-  assert.equal(analyser(sansApp).stderr.trim(), "relevé invalide : inbox-clair-defaut.json");
+  assert.equal(analyser(sansApp).stderr.trim(), "relevé invalide : now-clair-defaut.json");
 
   const racine = analyser(
     releves({
       marqueur: (s, a) =>
-        s === "workstation" && a === "sombre"
-          ? [{ type: "StaticText", AXUniqueId: "ios.tab.workstation", frame: cadre(20, 100, 100, 44) }]
+        s === "decisions" && a === "sombre"
+          ? [{ type: "StaticText", AXUniqueId: "ios.os.tab.decisions", frame: cadre(20, 100, 100, 44) }]
           : undefined,
     }),
   );
   assert.equal(racine.status, 2);
-  assert.equal(racine.stderr.trim(), "surface non vérifiée : workstation sombre defaut (marqueur absent)");
+  assert.equal(racine.stderr.trim(), "surface non vérifiée : decisions sombre defaut (marqueur absent)");
 
   const relie = analyser(
     releves({
       marqueur: (s) =>
-        s === "runs"
-          ? [{ type: "StaticText", AXUniqueId: "ios.screen.runs", frame: cadre(20, 100, 100, 44) }]
+        s === "threads"
+          ? [{ type: "StaticText", AXUniqueId: "ios.os.screen.threads", frame: cadre(20, 100, 100, 44) }]
           : undefined,
     }),
   );
@@ -612,7 +612,7 @@ test("relevés : une paire manquante, un JSON illisible, un marqueur absent ou F
   assert.equal(relie.rapport, "", "aucun rapport écrit quand la recette ne conclut pas");
 });
 
-test("marqueur : vrai sur la surface annoncée, faux sur l'écran d'une autre section ou sur un écran plein « non connecté » ou « connexion en cours »", () => {
+test("marqueur : vrai sur la surface annoncée, faux sur l'écran d'un autre onglet ou sur un écran plein « non connecté » ou « connexion en cours »", () => {
   const sonde = (surface: string, elements: Element[]) => {
     const f = path.join(frais("marqueur"), "releve.json");
     fs.writeFileSync(f, JSON.stringify([application(), ...elements]));
@@ -629,39 +629,34 @@ test("marqueur : vrai sur la surface annoncée, faux sur l'écran d'une autre se
     "ios.connexion.attente",
   ]) {
     assert.equal(
-      sonde("inbox", [
-        ...marqueurPropre("inbox"),
-        { type: "StaticText", AXUniqueId: id, frame: cadre(20, 100, 300, 60) },
-      ]),
+      sonde("now", [...marqueurPropre("now"), { type: "StaticText", AXUniqueId: id, frame: cadre(20, 100, 300, 60) }]),
       1,
       id,
     );
   }
   const bandeau: Element = { type: "StaticText", AXUniqueId: "ios.connexion.message", frame: cadre(20, 100, 300, 60) };
   assert.equal(
-    sonde("inbox", [...marqueurPropre("inbox"), bandeau]),
+    sonde("now", [...marqueurPropre("now"), bandeau]),
     0,
     "un bandeau au-dessus des données n'exclut pas la surface",
   );
-  assert.equal(sonde("runs", marqueurPropre("inbox")), 1, "l'écran d'une autre section");
+  assert.equal(sonde("threads", marqueurPropre("now")), 1, "l'écran d'un autre onglet");
   assert.equal(
-    sonde("workstation", [{ type: "StaticText", AXLabel: "Poste", frame: cadre(20, 100, 100, 44) }]),
+    sonde("decisions", [{ type: "StaticText", AXLabel: "Décisions", frame: cadre(20, 100, 100, 44) }]),
     1,
     "libellé sans type Heading",
   );
   assert.equal(
-    sonde("workstation", [
-      { type: "StaticText", AXUniqueId: "ios.screen.workstation", frame: cadre(20, 100, 100, 44) },
-    ]),
+    sonde("decisions", [{ type: "StaticText", AXUniqueId: "ios.os.screen.decisions", frame: cadre(20, 100, 100, 44) }]),
     0,
   );
   assert.equal(
-    sonde("workstation", [{ type: "Other", AXUniqueId: "Poste", frame: cadre(0, 50, 402, 44) }]),
+    sonde("decisions", [{ type: "Other", AXUniqueId: "Décisions", frame: cadre(0, 50, 402, 44) }]),
     0,
     "la barre de navigation",
   );
   assert.equal(
-    sonde("system", [{ type: "StaticText", AXUniqueId: "ios.screen.system", frame: cadre(20, 100, 100, 44) }]),
+    sonde("knowledge", [{ type: "StaticText", AXUniqueId: "ios.os.screen.knowledge", frame: cadre(20, 100, 100, 44) }]),
     0,
   );
   const inconnue = spawnSync("python3", [ANALYSEUR, "marqueur", "autre", "x.json"], { encoding: "utf8" });

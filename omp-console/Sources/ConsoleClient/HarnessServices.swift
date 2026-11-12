@@ -80,8 +80,6 @@ public struct HarnessStatus: Decodable, Equatable, Sendable {
     public var memory: HarnessMemoryStatus?
     /// Les sauvegardes (serveurs récents) : absentes d'un serveur plus ancien.
     public var backups: HarnessBackupsStatus?
-    /// Les features dues que l'admission retient en file, par cause (serveurs récents).
-    public var queue: HarnessQueueStatus?
     /// Tout est suspendu (« Tout suspendre ») ; faux d'un serveur antérieur à la pause.
     public var paused: Bool = false
     /// Ce qui, dans la configuration, mêle la mémoire de plusieurs dépôts ou borne une alerte
@@ -90,7 +88,7 @@ public struct HarnessStatus: Decodable, Equatable, Sendable {
 
     public init(
         repos: [HarnessRepo] = [], oracle: HarnessOracleStatus? = nil, scheduler: HarnessStats.Scheduler? = nil,
-        memory: HarnessMemoryStatus? = nil, backups: HarnessBackupsStatus? = nil, queue: HarnessQueueStatus? = nil, paused: Bool = false,
+        memory: HarnessMemoryStatus? = nil, backups: HarnessBackupsStatus? = nil, paused: Bool = false,
         warnings: [String] = []
     ) {
         self.repos = repos
@@ -98,12 +96,11 @@ public struct HarnessStatus: Decodable, Equatable, Sendable {
         self.scheduler = scheduler
         self.memory = memory
         self.backups = backups
-        self.queue = queue
         self.paused = paused
         self.warnings = warnings
     }
 
-    private enum CodingKeys: String, CodingKey { case repos, oracle, scheduler, memory, backups, queue, paused, warnings }
+    private enum CodingKeys: String, CodingKey { case repos, oracle, scheduler, memory, backups, paused, warnings }
 
     /// Les dépôts sont requis ; chaque bloc de service est lu à part : un bloc absent
     /// (serveur ancien) ou d'une autre forme laisse `nil`, sans perdre les dépôts.
@@ -114,7 +111,6 @@ public struct HarnessStatus: Decodable, Equatable, Sendable {
         scheduler = (try? container.decodeIfPresent(HarnessStats.Scheduler.self, forKey: .scheduler)) ?? nil
         memory = (try? container.decodeIfPresent(HarnessMemoryStatus.self, forKey: .memory)) ?? nil
         backups = (try? container.decodeIfPresent(HarnessBackupsStatus.self, forKey: .backups)) ?? nil
-        queue = (try? container.decodeIfPresent(HarnessQueueStatus.self, forKey: .queue)) ?? nil
         paused = (try? container.decodeIfPresent(Bool.self, forKey: .paused)) ?? false
         warnings = (try? container.decodeIfPresent([String].self, forKey: .warnings)) ?? []
     }
@@ -321,11 +317,6 @@ public enum HarnessServices {
             lines.append(HarnessServiceLine(kind: .workstation, level: workstation.online ? .ok : .warning, version: workstation.extensionVersion, at: workstation.lastSeenAt))
         }
         return lines
-    }
-
-    /// Le pire niveau des lignes, `ok` sans ligne.
-    public static func worst(_ lines: [HarnessServiceLine]) -> HarnessServiceLine.Level {
-        lines.map(\.level).max() ?? .ok
     }
 }
 

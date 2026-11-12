@@ -23,25 +23,6 @@ public enum DashboardText {
 
     // MARK: - Tuiles
 
-    public static let kpiPending = L10n.text("À traiter")
-    public static let kpiToReview = L10n.text("À relire")
-    public static let kpiActive = L10n.text("En cours")
-    public static let kpiOldest = L10n.text("Plus vieille attente")
-    public static let kpiCost = L10n.text("Coût sur 7 jours")
-    public static let kpiMerged = PipelineServerText.mergedWeek
-    public static let kpiMergeRate = PipelineServerText.mergeRate
-    public static let kpiLeadTime = PipelineServerText.leadTime
-    public static let kpiAlerts = MonitoringText.alertsTitle
-    public static let kpiAudits = L10n.text("Audits à trier")
-    public static let auditsSymbol = "checklist"
-    public static let pendingSymbol = "tray.full"
-    public static let toReviewSymbol = "arrow.uturn.backward.circle"
-    public static let activeSymbol = "gearshape.2"
-    public static let oldestSymbol = "hourglass"
-    public static let mergedSymbol = "checkmark.seal"
-    public static let mergeRateSymbol = "percent"
-    public static let leadTimeSymbol = "clock"
-    public static let costSymbol = "dollarsign.circle"
     public static let alertsSymbol = "exclamationmark.triangle"
 
     // MARK: - Séries et axes
@@ -59,7 +40,6 @@ public enum DashboardText {
     public static let axisFailures = L10n.text("Part en échec")
     public static let axisSeries = L10n.text("Série")
     public static let activeBySteps = L10n.text("En cours par étape")
-    public static let costByDay = L10n.text("Jour par jour")
     public static let costByRepo = L10n.text("Par projet, sur 7 jours")
     public static let stepFailures = L10n.text("Échecs par étape")
     public static let capacity = L10n.text("Occupation")

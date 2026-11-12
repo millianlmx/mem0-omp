@@ -1,11 +1,9 @@
-// La DEMANDE à l'écran, écrite une fois pour le Mac et l'iPhone/iPad : le bouton
-// permanent d'« À traiter », la feuille de saisie (un champ multiligne : la dictée est
-// celle du clavier du système), les cartes des demandes ouvertes — classement en
-// cours, question avec « Répondre », plan avec Confirmer / Modifier / Annuler, réponse
-// directe ou échec avec « Écarter » — et la feuille « Modifier le plan ».
+// La DEMANDE à l'écran, écrite une fois pour le Mac et l'iPhone/iPad : la feuille de
+// saisie (un champ multiligne : la dictée est celle du clavier du système) et la feuille
+// « Modifier le plan », ouverte depuis la carte d'une demande dans les décisions de l'OS.
 //
 // Rien n'est créé avant « Confirmer » : le serveur classe, l'humain décide. Un refus
-// du serveur est dit sur la carte ou dans la feuille qui l'a provoqué.
+// du serveur est dit dans la feuille qui l'a provoqué.
 
 import ConsoleClient
 import ConsoleCore
@@ -29,183 +27,10 @@ func intakeMessage(_ failure: HarnessIntakeFailure) -> String {
     }
 }
 
-// MARK: - À traiter
-
-/// Le bouton Demande, toujours là, puis une section par demande ouverte.
-public struct IntakeInboxSection: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var intakes: HarnessIntakes
-    @ObservedObject var drafts: HarnessDrafts
-
-    public init(server: HarnessModel, drafts: HarnessDrafts) {
-        self.server = server
-        self.intakes = server.intakes
-        self.drafts = drafts
-    }
-
-    public var body: some View {
-        Section {
-            Button(IntakeText.title, systemImage: IntakeText.titleSymbol) { drafts.openIntake() }
-                .buttonStyle(.borderedProminent)
-                .disabled(!server.isConfigured || !server.canAct)
-                .consoleID("inbox.intake")
-        }
-        ForEach(intakes.open) { intake in
-            Section {
-                IntakeCard(server: server, intakes: intakes, drafts: drafts, intake: intake)
-                    .disabled(!server.canAct)
-            } header: {
-                header(intake)
-            }
-            .id("intake/" + intake.id)
-        }
-    }
-
-    private func header(_ intake: HarnessIntake) -> some View {
-        let (word, symbol): (String, String) =
-            switch intake.state {
-            case "clarifying": (IntakeText.clarifying, IntakeText.clarifyingSymbol)
-            case "planned": (IntakeText.planned, IntakeText.plannedSymbol)
-            case "answered": (IntakeText.answered, IntakeText.answeredSymbol)
-            case "failed": (IntakeText.failed, IntakeText.failedSymbol)
-            default: (IntakeText.classifying, IntakeText.classifyingSymbol)
-            }
-        return HStack(spacing: 6) {
-            Label(word, systemImage: symbol)
-                .foregroundStyle(intake.isClarifying || intake.isPlanned ? Color.orange : Color.secondary)
-                .fixedSize()
-            Text("· " + IntakeText.title + " · " + ConsoleFormat.relative(ms: intake.createdAt, nowMs: Date().timeIntervalSince1970 * 1000))
-                .denseLines(1)
-        }
-    }
-}
-
-/// Une demande ouverte : la phrase, puis ce qu'elle attend de l'humain.
-struct IntakeCard: View {
-    @ObservedObject var server: HarnessModel
-    @ObservedObject var intakes: HarnessIntakes
-    @ObservedObject var drafts: HarnessDrafts
-    let intake: HarnessIntake
-    @State private var failure: HarnessIntakeFailure?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(intake.statement)
-                .font(intake.isPlanned ? .callout : .headline)
-                .foregroundStyle(intake.isPlanned ? Color.secondary : Color.primary)
-                .consoleReadable()
-            content
-            if let failure {
-                Text(intakeMessage(failure))
-                    .font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .consoleBanner(tone: .attention)
-                    .consoleID("intake.failure")
-            }
-        }
-        .padding(.vertical, 4)
-        .disabled(intakes.busy.contains(intake.id))
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if intake.isPlanned, let plan = intake.plan {
-            planView(plan)
-            ViewThatFits(in: .horizontal) {
-                HStack { planButtons }
-                VStack(alignment: .leading, spacing: 8) { planButtons }
-            }
-        } else if intake.isClarifying {
-            Text(intake.question ?? "")
-                .font(.headline)
-                .consoleReadable()
-            TextField(IntakeText.replyPrompt, text: answerBinding, axis: .vertical)
-                .lineLimit(1...6)
-                .consoleID("intake.reply.field")
-            HStack {
-                Button(IntakeText.reply) { act { try await intakes.answer(intake, text: answerText) ; drafts.intakeAnswers[intake.id] = nil } }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .consoleID("intake.reply")
-                Button(IntakeText.cancel) { act { try await intakes.cancel(intake) } }
-                    .buttonStyle(.bordered)
-                    .consoleID("intake.cancel")
-            }
-        } else if intake.isSettled {
-            if intake.state == "answered" {
-                ConsoleMarkdown(markdown: intake.answer ?? "")
-            } else {
-                Text(intake.reason ?? IntakeText.failedFallback)
-                    .font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .consoleBanner(tone: .attention)
-            }
-            Button(IntakeText.dismiss) { act { try await intakes.cancel(intake) } }
-                .buttonStyle(.bordered)
-                .consoleID("intake.dismiss")
-        } else {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(IntakeText.classifying).foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                Button(IntakeText.cancel) { act { try await intakes.cancel(intake) } }
-                    .buttonStyle(.bordered)
-                    .consoleID("intake.cancel")
-            }
-        }
-    }
-
-    /// Type, dépôt, puis ce qui sera créé, tel que le serveur le rédige.
-    private func planView(_ plan: HarnessIntakePlan) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(IntakeText.kind(plan.kind) + " · " + (plan.repo ?? IntakeText.noRepo))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.orange)
-            Text(plan.title)
-                .font(.headline)
-                .consoleReadable()
-            if let creates = plan.creates {
-                LabeledContent(IntakeText.createsLabel) { Text(creates).multilineTextAlignment(.trailing) }
-                    .font(.callout)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var planButtons: some View {
-        Button(IntakeText.confirm) { act { try await intakes.confirm(intake) } }
-            .buttonStyle(.borderedProminent)
-            .consoleID("intake.confirm")
-        Button(IntakeText.modify) { drafts.intakeEdit = intake }
-            .buttonStyle(.bordered)
-            .consoleID("intake.modify")
-        Button(IntakeText.cancel) { act { try await intakes.cancel(intake) } }
-            .buttonStyle(.bordered)
-            .consoleID("intake.cancel")
-    }
-
-    private var answerText: String { drafts.intakeAnswers[intake.id] ?? "" }
-
-    private var answerBinding: Binding<String> {
-        Binding(get: { drafts.intakeAnswers[intake.id] ?? "" }, set: { drafts.intakeAnswers[intake.id] = $0 })
-    }
-
-    private func act(_ gesture: @escaping @MainActor () async throws -> Void) {
-        failure = nil
-        Task {
-            do {
-                try await gesture()
-            } catch let failed as HarnessIntakeFailure {
-                failure = failed
-            } catch {}
-        }
-    }
-}
-
 // MARK: - Feuille de saisie
 
 /// La feuille « Demande » : une phrase libre, le dépôt facultatif, « Envoyer ». Elle se
-/// referme à l'envoi ; la demande vit ensuite dans « À traiter ».
+/// referme à l'envoi ; la demande vit ensuite dans les fils de l'OS.
 struct IntakeSheet: View {
     @ObservedObject var server: HarnessModel
     @ObservedObject var drafts: HarnessDrafts
@@ -285,15 +110,14 @@ struct IntakeSheet: View {
 /// périmètre ou planification ; « Confirmer » envoie la correction avec la confirmation.
 struct IntakePlanSheet: View {
     @ObservedObject var server: HarnessModel
-    @ObservedObject var drafts: HarnessDrafts
     let intake: HarnessIntake
+    @Environment(\.dismiss) private var dismiss
     @State private var plan: HarnessIntakePlan
     @State private var failure: HarnessIntakeFailure?
     @State private var isSending = false
 
-    init(server: HarnessModel, drafts: HarnessDrafts, intake: HarnessIntake) {
+    init(server: HarnessModel, intake: HarnessIntake) {
         self.server = server
-        self.drafts = drafts
         self.intake = intake
         _plan = State(initialValue: intake.plan ?? HarnessIntakePlan(kind: "feature", repo: nil, title: "", statement: intake.statement))
     }
@@ -352,7 +176,7 @@ struct IntakePlanSheet: View {
             .consoleInlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(PipelineServerText.cancel) { drafts.intakeEdit = nil }
+                    Button(PipelineServerText.cancel) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(IntakeText.confirm) { confirm() }
@@ -419,7 +243,7 @@ struct IntakePlanSheet: View {
             defer { isSending = false }
             do {
                 try await server.intakes.confirm(intake, plan: corrected)
-                drafts.intakeEdit = nil
+                dismiss()
             } catch let failed as HarnessIntakeFailure {
                 failure = failed
             } catch {}

@@ -1,4 +1,4 @@
-// Le contenu de la section « Poste », écrit une fois pour le Mac et l'iPhone/iPad : le
+// Le contenu de l'écran « Poste » du hub Système, écrit une fois pour le Mac et l'iPhone/iPad : le
 // poste de travail observé par l'extension Chrome et l'agent 24/24 du serveur.
 //
 // Une page principale calme, dans l'ordre : l'état (extension, dernier contact,
@@ -122,16 +122,13 @@ struct WorkstationHeaderSection: View {
                 } label: {
                     Label(ControlText.stop, systemImage: ControlText.stopSymbol)
                         .font(.headline)
+                        .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
                 .disabled(workstation.isStopping)
                 .consoleID("workstation.stop")
-            }
-        } footer: {
-            if status.stopped == nil {
-                Text(ControlText.stopHint)
             }
         }
     }
@@ -361,8 +358,6 @@ struct WorkstationSettingsSections: View {
             }
         } header: {
             Text(WorkstationText.statusTitle)
-        } footer: {
-            Text(WorkstationText.observedHint)
         }
 
         Section {
@@ -446,8 +441,8 @@ struct WorkstationSettingsSections: View {
 
 // MARK: - Envois à approuver
 
-/// Les envois qui attendent l'humain, seulement quand il y en a (ils expirent) : en tête
-/// de « À traiter » et de la page principale du Poste. Chacun avec ses destinataires et
+/// Les envois qui attendent l'humain, seulement quand il y en a (ils expirent), sur la
+/// page principale du Poste. Chacun avec ses destinataires et
 /// le message, et les deux gestes : approuver, ou refuser avec une raison facultative.
 public struct WorkstationHomeApprovals: View {
     @ObservedObject var workstation: WorkstationModel
@@ -469,8 +464,6 @@ public struct WorkstationHomeApprovals: View {
                 }
             } header: {
                 Text(WorkstationText.approvalsTitle)
-            } footer: {
-                Text(WorkstationText.approvalsHint)
             }
         }
     }
@@ -776,8 +769,6 @@ struct WorkstationJournalSection: View {
             ForEach(journal) { action in
                 WorkstationJournalEntry(drafts: drafts, action: action, compact: false)
             }
-        } footer: {
-            Text(WorkstationText.journalHint)
         }
     }
 }

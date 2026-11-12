@@ -1,7 +1,7 @@
 // Les `argv` podman de la migration unique et du nettoyage confirmé de l'ancien
 // moteur (S-4, S-6, S-7) — des générateurs PURS, jamais de lancement :
 // `PodmanLegacy` est le seul à exécuter, et les tests figent ici chaque commande
-// au caractère près, comme `GitCommand` (Files/GitCLI.swift) le fait pour git.
+// au caractère près.
 //
 // La pile podman d'avant mem0-rs vivait dans la machine dédiée `omp-console`
 // (conteneurs `omp-console-qdrant` / `omp-console-mem0-http`) ; l'app ne la

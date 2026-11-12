@@ -28,7 +28,7 @@ extension HarnessModel {
         let call = HarnessCall(method: "GET", path: path)
         let reply = try await exchange(call)
         if reply.status == 404 { return nil }
-        return try decode(reply, for: call)
+        return try await decodeOffMain(reply, for: call)
     }
 
     /// Une écriture JSON décodée.
@@ -92,23 +92,29 @@ public final class HarnessVigie: ObservableObject {
         guard harness.isConfigured else { return }
         isLoading = true
         defer { isLoading = false }
+        await reread()
+    }
+
+    /// La relecture elle-même : rien n'est republié de ce qui n'a pas changé, si bien qu'une
+    /// relecture du flux qui rend la même chose ne redessine aucun écran.
+    private func reread() async {
         do {
             guard let read: VigieView = try await harness.readIfServed("/v1/vigie") else {
-                availability = .absent
-                view = nil
-                incidents = []
+                update(\.availability, .absent)
+                update(\.view, nil)
+                update(\.incidents, [])
                 return
             }
-            view = read
-            availability = .available
+            update(\.view, read)
+            update(\.availability, .available)
             if isWatched {
                 let list: VigieIncidentList = try await harness.fetch(HarnessCall(method: "GET", path: Self.incidentsPath(status: statusFilter)))
-                incidents = list.incidents
+                update(\.incidents, list.incidents)
             }
-            failure = nil
+            update(\.failure, nil)
         } catch {
-            availability = HarnessControlFailure.availability(after: error, current: availability)
-            failure = HarnessModel.failure(of: error)
+            update(\.availability, HarnessControlFailure.availability(after: error, current: availability))
+            update(\.failure, HarnessModel.failure(of: error))
         }
     }
 
@@ -135,10 +141,11 @@ public final class HarnessVigie: ObservableObject {
         }
     }
 
-    /// Les événements du flux : un incident ou le silence de la vigie la font relire.
+    /// Les événements du flux : un incident ou le silence de la vigie la font relire, sans
+    /// indicateur de chargement.
     func receive(_ names: [String]) {
-        guard names.contains(where: { $0.hasPrefix("vigie_") }), availability != .absent else { return }
-        Task { await refresh() }
+        guard names.contains(where: { $0.hasPrefix("vigie_") }), availability != .absent, harness.isConfigured else { return }
+        Task { await reread() }
     }
 
     func reset() {
@@ -278,19 +285,24 @@ public final class HarnessSchedules: ObservableObject {
         guard harness.isConfigured else { return }
         isLoading = true
         defer { isLoading = false }
+        await reread()
+    }
+
+    /// La relecture elle-même : rien n'est republié de ce qui n'a pas changé.
+    private func reread() async {
         do {
             guard let list: HarnessScheduleList = try await harness.readIfServed("/v1/schedules") else {
-                availability = .absent
-                schedules = []
+                update(\.availability, .absent)
+                update(\.schedules, [])
                 return
             }
-            schedules = list.schedules
-            timezone = list.timezone
-            availability = .available
-            failure = nil
+            update(\.schedules, list.schedules)
+            update(\.timezone, list.timezone)
+            update(\.availability, .available)
+            update(\.failure, nil)
         } catch {
-            availability = HarnessControlFailure.availability(after: error, current: availability)
-            failure = HarnessModel.failure(of: error)
+            update(\.availability, HarnessControlFailure.availability(after: error, current: availability))
+            update(\.failure, HarnessModel.failure(of: error))
         }
     }
 
@@ -358,10 +370,10 @@ public final class HarnessSchedules: ObservableObject {
         }
     }
 
-    /// Les événements des planifications font relire la liste observée.
+    /// Les événements des planifications font relire la liste observée, sans indicateur de chargement.
     func receive(_ names: [String]) {
-        guard isWatched, availability != .absent, names.contains(where: { $0.hasPrefix("schedule_") }) else { return }
-        Task { await refresh() }
+        guard isWatched, availability != .absent, harness.isConfigured, names.contains(where: { $0.hasPrefix("schedule_") }) else { return }
+        Task { await reread() }
     }
 
     func reset() {
@@ -394,12 +406,14 @@ struct HarnessRepoBody: Encodable {
     var name: String?
 }
 
-/// L'ADMINISTRATION du serveur (admin seulement) : clients, dépôts, rechargement de la
-/// configuration, erreurs remontées par les clients.
+/// L'ADMINISTRATION du serveur (admin seulement) : clients, dépôts (déclarés, réglés, retirés),
+/// rechargement de la configuration, erreurs remontées par les clients.
 @MainActor
 public final class HarnessAdmin: ObservableObject {
     /// Les erreurs des clients lues d'un coup.
     public nonisolated static let errorsLimit = 200
+    /// La capacité (`GET /v1/health`) qui ouvre la lecture complète, le changement et le retrait d'un dépôt.
+    public nonisolated static let repoSettingsFeature = "repo-settings"
 
     @Published public private(set) var clients: [HarnessManagedClient] = []
     @Published public private(set) var repos: [HarnessServedRepo] = []
@@ -409,8 +423,14 @@ public final class HarnessAdmin: ObservableObject {
     @Published public var errorSource: String? { didSet { if errorSource != oldValue { Task { await refresh() } } } }
     /// Le client tout juste créé et son jeton, montré UNE fois.
     @Published public var created: HarnessClientCreated?
-    /// Le dernier dépôt déclaré (et la clé à poser s'il le faut).
-    @Published public var declared: HarnessRepoDeclared?
+    /// Les réglages lus de chaque dépôt, par nom.
+    @Published public private(set) var repoSettings: [String: HarnessRepoSettingsReply] = [:]
+    /// Le serveur lit, change et retire un dépôt (`repo-settings`) ; sinon la liste se lit et un dépôt se déclare.
+    @Published public private(set) var editsRepos = false
+    /// Les dépôts dont un réglage ou le retrait attend la réponse du serveur.
+    @Published public private(set) var savingRepos: Set<String> = []
+    /// Le dernier dépôt retiré.
+    @Published public private(set) var removed: HarnessRepoRemoved?
     /// Le dernier rechargement de la configuration.
     @Published public private(set) var reloaded: HarnessReloadSummary?
     @Published public private(set) var failure: HarnessFailure?
@@ -475,6 +495,95 @@ public final class HarnessAdmin: ObservableObject {
         return reply != nil
     }
 
+    /// Relit les dépôts servis, et ce que le serveur sait en faire (`repo-settings`).
+    public func loadRepos() async {
+        guard harness.isConfigured, harness.isAdmin else { return }
+        await harness.loadCapabilities()
+        editsRepos = harness.capabilities?.contains(Self.repoSettingsFeature) ?? false
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let served: HarnessServedRepoList = try await harness.fetch(HarnessCall(method: "GET", path: "/v1/repos"))
+            repos = served.repos
+            let names = Set(served.repos.map(\.name))
+            repoSettings = repoSettings.filter { names.contains($0.key) }
+            failure = nil
+        } catch {
+            failure = HarnessModel.failure(of: error)
+        }
+    }
+
+    /// Lit les réglages d'un dépôt ; `reuse` : ceux déjà lus suffisent.
+    @discardableResult
+    public func loadRepo(_ name: String, reuse: Bool = false) async -> HarnessRepoSettingsReply? {
+        if reuse, let known = repoSettings[name] { return known }
+        guard editsRepos else { return nil }
+        do {
+            let reply: HarnessRepoSettingsReply = try await harness.fetch(
+                HarnessCall(method: "GET", path: "/v1/repos/\(HarnessModel.pathComponent(name))")
+            )
+            repoSettings[name] = reply
+            return reply
+        } catch {
+            failure = HarnessModel.failure(of: error)
+            return nil
+        }
+    }
+
+    /// Change les réglages d'un dépôt : seuls les champs du patch partent. Ils s'affichent
+    /// aussitôt ; un refus du serveur (400, 409) remet les précédents et devient l'échec montré.
+    @discardableResult
+    public func updateRepo(_ name: String, _ patch: HarnessRepoSettingsPatch) async -> HarnessRepoSettings? {
+        guard editsRepos, !patch.isEmpty else { return nil }
+        let before = repoSettings[name]
+        if let before { repoSettings[name]?.repo = before.repo.applying(patch) }
+        savingRepos.insert(name)
+        defer { savingRepos.remove(name) }
+        do {
+            let reply: HarnessRepoSettingsReply = try await harness.write(
+                "PATCH", "/v1/repos/\(HarnessModel.pathComponent(name))", body: patch
+            )
+            repoSettings[name] = reply
+            if let index = repos.firstIndex(where: { $0.name == name }) {
+                let repo = reply.repo
+                repos[index] = HarnessServedRepo(
+                    name: name, scope: repo.scope, mainBranch: repo.mainBranch, merge: repo.merge,
+                    maxParallel: repo.maxParallel, judge: repo.tests.judge
+                )
+            }
+            failure = nil
+            if patch.changesCatalog { await harness.refreshCatalog() }
+            return reply.repo
+        } catch {
+            repoSettings[name] = before
+            failure = HarnessModel.failure(of: error)
+            return nil
+        }
+    }
+
+    /// Retire un dépôt de la configuration (`?confirm=1`) ; un dépôt rangé dans un espace est
+    /// refusé (409). Son clone et sa clé restent sur le serveur.
+    @discardableResult
+    public func removeRepo(_ name: String) async -> HarnessRepoRemoved? {
+        guard editsRepos else { return nil }
+        savingRepos.insert(name)
+        defer { savingRepos.remove(name) }
+        do {
+            let reply: HarnessRepoRemoved = try await harness.write(
+                "DELETE", "/v1/repos/\(HarnessModel.pathComponent(name))?confirm=1", body: nil as NoBody?
+            )
+            removed = reply
+            repoSettings[name] = nil
+            failure = nil
+            await loadRepos()
+            await harness.refreshCatalog()
+            return reply
+        } catch {
+            failure = HarnessModel.failure(of: error)
+            return nil
+        }
+    }
+
     /// Déclare un dépôt par son adresse (SSH ou HTTPS) : la clé de déploiement à poser
     /// revient si la forge refuse la lecture ou l'écriture.
     @discardableResult
@@ -483,10 +592,7 @@ public final class HarnessAdmin: ObservableObject {
         guard !address.isEmpty else { return nil }
         let short = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let reply: HarnessRepoDeclared? = await save("POST", "/v1/repos", body: HarnessRepoBody(url: address, name: short.isEmpty ? nil : short))
-        if let reply {
-            declared = reply
-            await harness.refreshCatalog()
-        }
+        if reply != nil { await harness.refreshCatalog() }
         return reply
     }
 
@@ -520,7 +626,10 @@ public final class HarnessAdmin: ObservableObject {
         repos = []
         clientErrors = nil
         created = nil
-        declared = nil
+        repoSettings = [:]
+        editsRepos = false
+        savingRepos = []
+        removed = nil
         reloaded = nil
         failure = nil
     }

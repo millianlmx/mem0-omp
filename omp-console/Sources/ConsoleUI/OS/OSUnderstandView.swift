@@ -161,13 +161,17 @@ public struct OSUnderstandView: View {
     @ViewBuilder
     private func story(_ run: HarnessRun) -> some View {
         if graph.showsTab {
+            // La table nœud → entrée du direct, calculée une fois par rendu (et gardée tant que
+            // graphe et direct ne changent pas), au lieu d'une recherche par pastille.
+            let links: [String: Int] = if let read = graph.graph, let feed = server.session, feed.target == .run(run.id) {
+                HarnessGraphLink.links(in: read, entries: feed.entries)
+            } else {
+                [:]
+            }
             Form {
                 RunGraphSections(
                     graph: graph, runState: run.state,
-                    link: { node in
-                        guard let read = graph.graph, let feed = server.session, feed.target == .run(run.id) else { return nil }
-                        return HarnessGraphLink.entry(for: node, in: read, entries: feed.entries)
-                    },
+                    link: { node in links[node.id] },
                     open: { seq in
                         followsEnd = false
                         focus = seq

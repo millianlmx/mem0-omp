@@ -299,23 +299,29 @@ public final class HarnessSpacesModel: ObservableObject {
         guard harness.isConfigured else { return }
         isLoading = true
         defer { isLoading = false }
+        await reload()
+    }
+
+    /// `refresh()` sans rien dire de la lecture (le flux) ; rien n'est republié à l'identique.
+    func reload() async {
+        guard harness.isConfigured else { return }
         do {
             guard let list: HarnessSpaceList = try await harness.readBound("/v1/spaces") else {
-                availability = .absent
-                spaces = []
-                failure = nil
+                update(\.availability, .absent)
+                update(\.spaces, [])
+                update(\.failure, nil)
                 harness.spacesRead([])
                 return
             }
-            spaces = Self.sorted(list.spaces)
-            availability = .available
-            failure = nil
+            update(\.spaces, Self.sorted(list.spaces))
+            update(\.availability, .available)
+            update(\.failure, nil)
             // La portée suit ce qui vient d'être lu : restaurée, rafraîchie, ou tombée avec son espace.
             harness.spacesRead(spaces)
             await harness.loadCapabilities()
         } catch {
-            availability = HarnessControlFailure.availability(after: error, current: availability)
-            failure = HarnessModel.failure(of: error)
+            update(\.availability, HarnessControlFailure.availability(after: error, current: availability))
+            update(\.failure, HarnessModel.failure(of: error))
         }
     }
 
@@ -535,7 +541,7 @@ public final class HarnessSpacesModel: ObservableObject {
     /// navigateur rattaché ou détaché (`poste`, étanchéité), sa connexion Atlassian.
     func receive(_ names: [String]) {
         guard availability == .available, names.contains(where: Self.events.contains) else { return }
-        reloader.schedule { [weak self] in await self?.refresh() }
+        reloader.schedule { [weak self] in await self?.reload() }
     }
 
     static let events: Set<String> = ["space", "workstation_browser", "atlassian"]

@@ -9,11 +9,15 @@
 // Sortie : UNE ligne JSON `{url, token, runId, runs}` sur stdout, puis le serveur tourne jusqu'à
 // SIGTERM/SIGINT. Usage : `node --experimental-strip-types scripts/recette/os-demo-serveur.ts`.
 import { randomBytes } from "node:crypto";
+import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { Client } from "../../omp-harness/auth.ts";
 import { repoDefaults } from "../../omp-harness/config.ts";
 import { createHandler } from "../../omp-harness/http.ts";
+import { ConfigAdmin } from "../../omp-harness/repos.ts";
 import { OK, type FakeWorld, fakeWorld, harnessRepo, waitFor } from "../../test/support/harness-fixtures.ts";
 import { DEMO_RUN, GRAPH_RUN, demoWorld } from "./mac-shots-serveur.ts";
 
@@ -317,7 +321,12 @@ export async function osDemoWorld(): Promise<{
 if (import.meta.main) {
   const { world, runs, stop } = await osDemoWorld();
   const token = randomBytes(32).toString("hex");
-  const server = http.createServer(createHandler({ orchestrator: world.orchestrator, token }));
+  // Le fichier de configuration du monde, écrit tel qu'il sert : l'écran Dépôts le lit et le règle.
+  const configFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "os-demo-config-")), "config.json");
+  const { dataDir, worktreesDir, repos } = world.config;
+  fs.writeFileSync(configFile, `${JSON.stringify({ dataDir, worktreesDir, repos }, null, 2)}\n`);
+  const admin = new ConfigAdmin(configFile, world.orchestrator, { git: world.deps.git });
+  const server = http.createServer(createHandler({ orchestrator: world.orchestrator, token, admin }));
   server.listen(Number(process.env.OS_DEMO_PORT ?? 0), "127.0.0.1", () => {
     const { port } = server.address() as AddressInfo;
     process.stdout.write(

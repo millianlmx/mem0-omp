@@ -89,15 +89,12 @@ public enum AutonomyText {
 
     // MARK: - Page Système › Autonomie
 
-    public static let readOnlyHint = L10n.text("Lecture seule : les règles se changent dans la configuration du serveur.")
     public static let rulesTitle = L10n.text("Règles par dépôt")
     public static let noRule = L10n.text("Aucun dépôt n’a de règle : chaque porte attend l’humain.")
     /// « Sans règle : demo, docs » : les dépôts dont chaque porte attend l’humain.
     public static func withoutRule(_ list: String) -> String { L10n.format("Sans règle, chaque porte attend l’humain : %@", list) }
     public static let validationsTitle = L10n.text("Validations prises seules")
-    public static let validationsHint = L10n.text("Celles de la fenêtre d’apprentissage, les plus récentes d’abord.")
     public static let proposalsTitle = L10n.text("Propositions de palier")
-    public static let proposalsHint = L10n.text("Calculées sur les gestes humains ; rien n’est appliqué : la modification se fait dans la configuration du serveur.")
     public static let changesTitle = L10n.text("Modification suggérée")
 
     /// « Bogue · revue : passer à l’autonomie ».

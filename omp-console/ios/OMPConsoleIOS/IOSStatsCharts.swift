@@ -1,8 +1,6 @@
-// Les GRAPHIQUES de la page Statistiques et santé (hub Système) — pendant de
-// `Sources/OMPConsole/Server/HarnessStatsCharts.swift` : quatre sections tracées
+// Les GRAPHIQUES de la page Système › Statistiques et santé : quatre sections tracées
 // (Swift Charts) — ce qui vous attend par projet, le débit sur 14 jours, le coût des
-// agents, la santé du serveur. « À traiter » n'en porte plus aucun : une seule ligne
-// de pouls y suffit.
+// agents, la santé du serveur — sous leur seul titre : le graphique se lit sans phrase.
 //
 // Les séries viennent de `HarnessDashboard` (client partagé), les mots de
 // `DashboardText`, les teintes d'`IOSDataPalette` (couleurs système dynamiques).
@@ -22,32 +20,24 @@ struct IOSStatsCharts: View {
             waiting
         } header: {
             Text(DashboardText.waitingTitle)
-        } footer: {
-            Text(DashboardText.waitingHint)
         }
 
         Section {
             throughput
         } header: {
             Text(DashboardText.throughputTitle)
-        } footer: {
-            Text(DashboardText.throughputHint)
         }
 
         Section {
             cost
         } header: {
             Text(DashboardText.costTitle)
-        } footer: {
-            Text(DashboardText.costHint)
         }
 
         Section {
             health
         } header: {
             Text(DashboardText.healthTitle)
-        } footer: {
-            Text(DashboardText.healthHint)
         }
     }
 

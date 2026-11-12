@@ -206,13 +206,6 @@ func ac6PrerequisiteTextsAreFrozen() {
         MemoryText.omlxUnauthorizedDiagnostic(url: "http://127.0.0.1:8000/models")
             == "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN.\nhttp://127.0.0.1:8000/models"
     )
-
-    // git : la spec ne fait que FIGER que son message existant nomme le
-    // prérequis au moment de l'usage — aucun comportement nouveau ici.
-    let git = FilesError.gitNotFound(searched: ["/nowhere/git"], override: nil, path: "/tmp/projet").diagnostic
-    #expect(git.contains("git est introuvable"))
-    #expect(git.contains("/tmp/projet"))
-
 }
 
 // MARK: - État « pas la pile d'OMP Console » (S-2, S-4, S-5, BR-9)

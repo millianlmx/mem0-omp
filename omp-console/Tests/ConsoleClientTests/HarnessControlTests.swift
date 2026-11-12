@@ -79,14 +79,10 @@ struct HarnessControlTests {
         #expect(transport.body(of: "/v1/runs/r1/retry")?["instructions"] == nil, "sans consigne, le corps d'avant")
     }
 
-    @Test("un run en file porte la cause qui le retient, et le statut la file par cause")
+    @Test("un run en file porte la cause qui le retient")
     func queueReason() throws {
         let held = try JSONDecoder().decode(HarnessRun.self, from: Data(#"{"id":"r","repo":"d","slug":"s","title":"T","request":"r","state":"queued","fixes":0,"modules":[],"reason":"slots runner pleins 5/5","waitCause":"slots","createdAt":0,"updatedAt":0}"#.utf8))
         #expect(held.waitCause == "slots" && held.reason == "slots runner pleins 5/5")
-        let status = try JSONDecoder().decode(HarnessStatus.self, from: Data(#"{"repos":[],"queue":{"held":3,"byCause":{"slots":2,"memory":1},"dominant":{"cause":"slots","text":"slots runner pleins 5/5"}}}"#.utf8))
-        #expect(status.queue == HarnessQueueStatus(held: 3, byCause: ["slots": 2, "memory": 1], dominant: HarnessQueueWait(cause: "slots", text: "slots runner pleins 5/5")))
-        let old = try JSONDecoder().decode(HarnessStatus.self, from: Data(#"{"repos":[]}"#.utf8))
-        #expect(old.queue == nil, "un serveur antérieur n'a pas de file")
     }
 
     @Test("le poste : arrêt d'urgence, annulation, commande, demande, navigation gardée, navigateur par défaut et capture")
@@ -232,6 +228,82 @@ struct HarnessControlTests {
         #expect(target.repo == "")
         #expect(target.automationId == "au-1")
         #expect(ControlText.scheduleKind("automation") != "automation")
+    }
+
+    @Test("les réglages d'un dépôt se lisent, s'écrivent champ par champ (null explicite pour le défaut), se retirent avec confirmation ; un refus remet la valeur d'avant et garde le motif du serveur")
+    func repoSettings() async throws {
+        let settings = #"{"name":"demo","mainBranch":"main","scope":"demo","merge":"local","forge":null,"forgeInUse":"github","maxParallel":null,"git":null,"corporate":"redacted","atlassian":false,"privacy":null,"providers":null,"models":null,"tests":{"touched":"npm test -- {files}","full":"npm test","pattern":null,"judge":"local","ciTimeoutSec":3600},"checks":{"lint":"bash scripts/lint.sh"},"testImage":null,"preview":false,"autonomyRules":0,"remoteUrl":"git@github.com:o/demo.git","deployKey":{"publicKey":"ssh-ed25519 AAAA","url":"https://github.com/o/demo/settings/keys"}}"#
+        let patched = settings.replacingOccurrences(of: #""merge":"local""#, with: #""merge":"gh""#)
+            .replacingOccurrences(of: #""maxParallel":null"#, with: #""maxParallel":2"#)
+        let transport = Transport { call in
+            switch (call.method, call.path) {
+            case (_, "/v1/inbox"): ok(inbox)
+            case ("GET", "/v1/me"): ok(#"{"client":{"name":"admin","role":"admin","repos":"*","createdAt":0,"approver":false}}"#)
+            case ("GET", "/v1/health"): ok(#"{"ok":true,"features":["repo-settings"],"checks":{"db":{"ok":true},"scheduler":{"ok":true,"ageSec":1},"disk":{"ok":true,"freeMiB":1000}}}"#)
+            case ("GET", "/v1/repos"): ok(#"{"repos":[{"name":"demo","scope":"demo","mainBranch":"main","merge":"local","maxParallel":null,"judge":"local"}]}"#)
+            case ("GET", "/v1/repos/demo"): ok(#"{"repo":\#(settings),"spaces":["Acme"]}"#)
+            case ("PATCH", "/v1/repos/demo"):
+                if let body = call.body, String(decoding: body, as: UTF8.self).contains("forge") {
+                    ok(#"{"error":"réglage refusé, rien ne change : merge gh sans forge"}"#, status: 400)
+                } else {
+                    ok(#"{"repo":\#(patched),"judge":"local","ciTimeoutSec":3600,"spaces":["Acme"]}"#)
+                }
+            case ("DELETE", "/v1/repos/demo?confirm=1"): ok(#"{"repo":"demo","kept":false,"reload":{"repos":[],"added":[],"removed":["demo"],"kept":[]}}"#)
+            default: ok("{}", status: 404)
+            }
+        }
+        let server = model(transport)
+        #expect(await server.configure(address: "vps.example", token: "t"))
+        let admin = server.admin
+
+        await admin.loadRepos()
+        #expect(admin.editsRepos)
+        #expect(admin.repos.first?.judge == "local")
+        let read = try #require(await admin.loadRepo("demo"))
+        #expect(read.spaces == ["Acme"])
+        #expect(read.repo.forge == nil && read.repo.forgeInUse == "github")
+        #expect(read.repo.checks == ["lint": "bash scripts/lint.sh"] && read.repo.deployKey?.publicKey == "ssh-ed25519 AAAA")
+
+        let written = await admin.updateRepo("demo", HarnessRepoSettingsPatch(merge: .value("gh"), maxParallel: .value(2), git: .reset, judge: .reset, ciTimeoutSec: .value(600)))
+        #expect(written?.merge == "gh" && written?.maxParallel == 2)
+        #expect(admin.repos.first?.merge == "gh", "la liste suit la réponse")
+        let body = try #require(transport.body(of: "/v1/repos/demo"))
+        #expect(Set(body.keys) == ["merge", "maxParallel", "git", "tests"], "seuls les champs posés partent")
+        #expect(body["git"] is NSNull, "le retour au défaut part en null explicite")
+        let tests = try #require(body["tests"] as? [String: Any])
+        #expect(tests["judge"] is NSNull && tests["ciTimeoutSec"] as? Int == 600)
+
+        let refused = await admin.updateRepo("demo", HarnessRepoSettingsPatch(forge: .value("none")))
+        #expect(refused == nil)
+        #expect(admin.failure == .rejected("réglage refusé, rien ne change : merge gh sans forge"))
+        #expect(admin.repoSettings["demo"]?.repo.forge == nil, "un refus remet la valeur d'avant")
+        #expect(admin.repoSettings["demo"]?.repo.merge == "gh")
+
+        let removed = try #require(await admin.removeRepo("demo"))
+        #expect(removed.kept == false && removed.reload.removed == ["demo"])
+        #expect(transport.calls.contains { $0.method == "DELETE" && $0.path == "/v1/repos/demo?confirm=1" })
+        #expect(admin.repoSettings["demo"] == nil)
+    }
+
+    @Test("sans la capacité repo-settings, la liste se lit mais aucun réglage ne part")
+    func repoSettingsAbsent() async {
+        let transport = Transport { call in
+            switch (call.method, call.path) {
+            case (_, "/v1/inbox"): ok(inbox)
+            case ("GET", "/v1/me"): ok(#"{"client":{"name":"admin","role":"admin","repos":"*","createdAt":0,"approver":false}}"#)
+            case ("GET", "/v1/health"): ok(#"{"ok":true,"features":[],"checks":{"db":{"ok":true},"scheduler":{"ok":true,"ageSec":1},"disk":{"ok":true,"freeMiB":1000}}}"#)
+            case ("GET", "/v1/repos"): ok(#"{"repos":[{"name":"demo","scope":"demo","mainBranch":"main","merge":"local","maxParallel":null,"judge":"ci"}]}"#)
+            default: ok("{}", status: 404)
+            }
+        }
+        let server = model(transport)
+        #expect(await server.configure(address: "vps.example", token: "t"))
+        await server.admin.loadRepos()
+        #expect(server.admin.repos.map(\.name) == ["demo"])
+        #expect(!server.admin.editsRepos)
+        #expect(await server.admin.loadRepo("demo") == nil)
+        #expect(await server.admin.updateRepo("demo", HarnessRepoSettingsPatch(mainBranch: "trunk")) == nil)
+        #expect(!transport.calls.contains { $0.path.hasPrefix("/v1/repos/") })
     }
 
     @Test("un outil du MCP en échec devient l'échec de l'écran, avec son texte")

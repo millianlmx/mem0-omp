@@ -1,4 +1,4 @@
-// La section « Mémoire » (BR-3) : la recherche, le sommaire et le rafraîchissement
+// L'écran « Mémoire » de l'OS (BR-3) : la recherche, le sommaire et le rafraîchissement
 // dans la barre d'outils de la fenêtre ; la liste à gauche, le détail à droite.
 //
 // Aucun attribut macro n'est employé ici (`@State`, `@Preview` ne compilent pas sous
@@ -16,13 +16,11 @@ import ConsoleCore
 import ConsoleUI
 import SwiftUI
 
-struct MemoryView: ConsoleSectionView {
-    static let section = ConsoleSection.memory
-
+struct MemoryView: View {
     @ObservedObject var model: MemoryModel
     /// Le modèle du MODE GRAPHE (S-1) : il vit à l'échelle de l'app, comme celui de
     /// la liste, pour que la position, la sélection et les filtres survivent au
-    /// passage d'une section à l'autre.
+    /// passage d'un écran à l'autre.
     @ObservedObject var graph: MemoryGraphModel
     /// Le sélecteur de projet de l'état « Aucun projet ouvert » (S-1 de
     /// mac-etats-vides-sans-issue), à l'échelle de l'app.

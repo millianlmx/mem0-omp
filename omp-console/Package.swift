@@ -53,10 +53,10 @@ let package = Package(
         // l'autre. Dépendance UNIQUE : ConsoleCore — ni AppKit, ni UIKit, ni Cocoa
         // (garde « Noyau partagé » de check.sh).
         .target(name: "ConsoleClient", dependencies: ["ConsoleCore"], path: "Sources/ConsoleClient"),
-        // Cible PARTAGÉE macOS/iOS des ÉCRANS écrits une seule fois : la boîte de
-        // l'humain, le Poste, l'historique des features, le lancement avec options,
-        // la priorité, la palette de commandes, la carte des services et la feuille
-        // d'un souvenir. SwiftUI et Charts seulement (ni AppKit, ni UIKit : garde
+        // Cible PARTAGÉE macOS/iOS des ÉCRANS écrits une seule fois : l'« OS
+        // agentique » (fils, décisions, Comprendre, Savoir, hub Système), le Poste,
+        // les dépôts, le lancement avec options, la palette de commandes, la carte des
+        // services et la feuille d'un souvenir. SwiftUI et Charts seulement (ni AppKit, ni UIKit : garde
         // « Noyau partagé » de check.sh) ; ce qui diffère d'une plateforme à l'autre
         // (rendu Markdown, direct d'une session, Live Activity) est fourni par l'app
         // dans l'environnement (`ConsoleShell`). Tout réseau passe par ConsoleClient.

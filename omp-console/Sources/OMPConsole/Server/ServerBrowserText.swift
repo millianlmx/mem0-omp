@@ -21,9 +21,6 @@ enum ServerBrowserText {
     static let sectionSymbol = "globe"
     static let online = L10n.text("En ligne")
     static let offline = L10n.text("Hors ligne")
-    static let sectionHint = L10n.text("Le serveur garde ses propres sessions, dont l’agent se sert sans passer par votre Chrome. Seul l’appareil approbateur choisit la source de la copie ou s’y connecte.")
-    static let mirrorHint = L10n.text("L’extension du navigateur choisi copie en continu tout le profil Chrome dans le navigateur du serveur, tous sites confondus. La connexion reste le secours quand un compte apparaît Bloqué.")
-    static let loginHint = L10n.text("Vous remplissez vous-même la page de connexion, ouverte dans le navigateur du serveur, validation en deux étapes comprise.")
 
     // MARK: - Comptes
 

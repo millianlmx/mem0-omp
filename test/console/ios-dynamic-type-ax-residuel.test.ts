@@ -5,13 +5,14 @@
 // Fonctions pures sur le texte source ; chaque faute est plantée EN MÉMOIRE :
 // aucune copie du dépôt, aucun SwiftUI rendu. La preuve visuelle (rangées qui
 // s'empilent, texte qui grandit jusqu'à accessibility-extra-extra-extra-large)
-// relève des tests Swift `IOSDynamicTypeAXTests` et de la recette de captures.
+// relève des tests Swift `IOSDynamicTypeAXTests` et des captures `-ax` de
+// `scripts/recette/ios-shots.sh`.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT } from "../support/repo.ts";
-import { stripHashComments, swiftSources } from "../support/swift-source.ts";
+import { swiftSources } from "../support/swift-source.ts";
 
 const APP = path.join(ROOT, "omp-console", "ios", "OMPConsoleIOS");
 
@@ -36,7 +37,7 @@ function capFaults(sources: Map<string, string>): string[] {
 test("ios-dynamic-type-ax-residuel/AC-2 : aucun plafond de taille de texte dans l'app iOS", () => {
   const sources = swiftSources(APP);
   assert.ok(
-    sources.has("IOSHarnessScreens.swift") && sources.has(path.join("Design", "IOSAdaptiveRow.swift")),
+    sources.has("IOSSystemScreens.swift") && sources.has(path.join("Design", "IOSAdaptiveRow.swift")),
     "les sources de l'app doivent être lues, sous-dossiers compris",
   );
   assert.deepEqual(capFaults(sources), [], "l'arbre réel doit être sain");
@@ -52,13 +53,13 @@ test("ios-dynamic-type-ax-residuel/AC-2 : aucun plafond de taille de texte dans 
   };
   const anchor = "        .accessibilityElement(children: .contain)";
   assert.ok(
-    planted("IOSHarnessScreens.swift", (s) =>
+    planted("IOSSystemScreens.swift", (s) =>
       s.replace(anchor, `        .dynamicTypeSize(...DynamicTypeSize.accessibility3)\n${anchor}`),
     ).length > 0,
     "un plafond `...accessibility3` doit faire rougir la garde",
   );
   assert.ok(
-    planted("IOSHarnessScreens.swift", (s) =>
+    planted("IOSSystemScreens.swift", (s) =>
       s.replace(anchor, `        .dynamicTypeSize(.large ..< .accessibility4)\n${anchor}`),
     ).length > 0,
     "un plafond `..<` doit faire rougir la garde",
@@ -71,9 +72,7 @@ test("ios-dynamic-type-ax-residuel/AC-2 : aucun plafond de taille de texte dans 
     "la constante rowButtonMaximumSize doit faire rougir la garde",
   );
   assert.deepEqual(
-    planted("IOSHarnessScreens.swift", (s) =>
-      s.replace(anchor, `        .dynamicTypeSize(.accessibility2)\n${anchor}`),
-    ),
+    planted("IOSSystemScreens.swift", (s) => s.replace(anchor, `        .dynamicTypeSize(.accessibility2)\n${anchor}`)),
     [],
     "une taille fixe sans borne n'est pas un plafond",
   );
@@ -124,97 +123,5 @@ test("ios-dynamic-type-ax-residuel/AC-14 : DESIGN.md ne décrit plus aucun plafo
     designCapFaults("- Aucune taille de texte n'est plafonnée jusqu'à `accessibility-extra-extra-extra-large`.\n"),
     [],
     "un nom de taille de simctl n'est pas un plafond",
-  );
-});
-
-const RECIPE = path.join(ROOT, "scripts", "recette", "ios-dynamic-type-recette.sh");
-
-/** Ce que la recette avant/après doit porter HORS commentaires (S-9). */
-const RECIPE_TOKENS = [
-  "simctl create",
-  "simctl delete",
-  "zz-dtax-tel",
-  "zz-dtax-tab",
-  "CODE_SIGN_IDENTITY=-",
-  "codesign -dv",
-  "--avant",
-  "content_size",
-  "accessibility-extra-large",
-  "accessibility-extra-extra-extra-large",
-  "erreur",
-];
-/** Les contrôles automatiques dont la recette écrit une ligne `AC-<n>` (S-9) : le littéral `"AC-<n>"` qui l'émet. */
-const RECIPE_CHECKS = [3, 4, 6, 10, 11];
-/** Ce qui volerait le focus du Mac, toucherait l'app Mac de l'utilisateur ou fusionnerait la PR : refusé partout, commentaires compris. */
-const RECIPE_FORBIDDEN = ["open -a", "OMP Console", "osascript", "run-console.sh", "gh pr merge"];
-
-/** Les fautes de la recette : jeton ou contrôle absent hors commentaires, intrusion sur le Mac. */
-function recipeScriptFaults(script: string): string[] {
-  const faults: string[] = [];
-  const code = stripHashComments(script);
-  for (const token of RECIPE_TOKENS) {
-    if (!code.includes(token)) faults.push(`recette : jeton absent hors commentaire « ${token} »`);
-  }
-  for (const n of RECIPE_CHECKS) {
-    if (!code.includes(`"AC-${n}"`)) faults.push(`recette : aucune ligne AC-${n} émise hors commentaire`);
-  }
-  for (const token of RECIPE_FORBIDDEN) {
-    if (script.includes(token)) faults.push(`recette : « ${token} » interdit`);
-  }
-  if (code.includes("Simulator.app")) faults.push("recette : Simulator.app hors commentaire");
-  return faults;
-}
-
-test("ios-dynamic-type-ax-residuel/AC-13 : la recette avant/après tourne sur des simulateurs privés et ne touche pas au Mac", () => {
-  const script = fs.readFileSync(RECIPE, "utf8");
-  assert.deepEqual(recipeScriptFaults(script), [], "la recette réelle doit être saine");
-
-  const plant = (change: (s: string) => string) => {
-    const next = change(script);
-    assert.notEqual(next, script, "la faute n'a pas pu être plantée");
-    return recipeScriptFaults(next);
-  };
-  // Témoin négatif de S-9 : le Simulateur ouvert au premier plan ⇒ rouge.
-  assert.ok(
-    plant((s) =>
-      s.replace("trap cleanup EXIT", 'trap cleanup EXIT\nopen -a Simulator --args -CurrentDeviceUDID "$iphone"'),
-    ).some((f) => f.includes("open -a")),
-    "« open -a » doit faire rougir la garde",
-  );
-  // Une intrusion citée en commentaire reste refusée (le mot ne doit même pas y figurer).
-  assert.ok(
-    plant((s) => s.replace("trap cleanup EXIT", "# gh pr merge --squash\ntrap cleanup EXIT")).length > 0,
-    "« gh pr merge » en commentaire doit rougir",
-  );
-  // Simulateurs conservés ⇒ rouge.
-  assert.ok(
-    plant((s) => s.replaceAll("simctl delete", "simctl shutdown")).some((f) => f.includes("simctl delete")),
-    "des simulateurs conservés doivent rougir",
-  );
-  // AX-XXXL retiré de la matrice ⇒ rouge.
-  assert.ok(
-    plant((s) => s.replaceAll("accessibility-extra-extra-extra-large", "accessibility-extra-large")).some((f) =>
-      f.includes("accessibility-extra-extra-extra-large"),
-    ),
-    "une matrice sans AX-XXXL doit rougir",
-  );
-  // Un contrôle automatique présent seulement en commentaire ⇒ rouge.
-  assert.ok(
-    plant((s) => s.replaceAll('"AC-11"', '"AC-12"')).some((f) => f.includes("AC-11")),
-    "un contrôle AC-11 retiré doit rougir",
-  );
-  // Simulator.app cité en commentaire reste admis ; hors commentaire, il rougit.
-  assert.deepEqual(
-    plant((s) => s.replace("trap cleanup EXIT", "# Simulator.app n'est jamais lancé.\ntrap cleanup EXIT")),
-    [],
-  );
-  assert.ok(
-    plant((s) =>
-      s.replace(
-        "trap cleanup EXIT",
-        'trap cleanup EXIT\nopen "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app"',
-      ),
-    ).some((f) => f.includes("Simulator.app")),
-    "Simulator.app hors commentaire doit rougir",
   );
 });
