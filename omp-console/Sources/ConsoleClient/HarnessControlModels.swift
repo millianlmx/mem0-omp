@@ -513,10 +513,9 @@ public final class HarnessAdmin: ObservableObject {
         }
     }
 
-    /// Lit les réglages d'un dépôt ; `reuse` : ceux déjà lus suffisent.
+    /// Lit les réglages d'un dépôt.
     @discardableResult
-    public func loadRepo(_ name: String, reuse: Bool = false) async -> HarnessRepoSettingsReply? {
-        if reuse, let known = repoSettings[name] { return known }
+    public func loadRepo(_ name: String) async -> HarnessRepoSettingsReply? {
         guard editsRepos else { return nil }
         do {
             let reply: HarnessRepoSettingsReply = try await harness.fetch(
@@ -544,12 +543,10 @@ public final class HarnessAdmin: ObservableObject {
                 "PATCH", "/v1/repos/\(HarnessModel.pathComponent(name))", body: patch
             )
             repoSettings[name] = reply
-            if let index = repos.firstIndex(where: { $0.name == name }) {
-                let repo = reply.repo
-                repos[index] = HarnessServedRepo(
-                    name: name, scope: repo.scope, mainBranch: repo.mainBranch, merge: repo.merge,
-                    maxParallel: repo.maxParallel, judge: repo.tests.judge
-                )
+            // La ligne du dépôt (forge, espace, confidentialité) se relit telle que le serveur la croise.
+            if let served: HarnessServedRepoList = try? await harness.fetch(HarnessCall(method: "GET", path: "/v1/repos")),
+               served.repos != repos {
+                repos = served.repos
             }
             failure = nil
             if patch.changesCatalog { await harness.refreshCatalog() }

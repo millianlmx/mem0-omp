@@ -1977,3 +1977,27 @@ test("release/AC-15 : après la publication, la branche deploy avance en avance 
     output(divergent.run),
   );
 });
+
+test("release/AC-17 : un plugin touché depuis sa version par des commits sans feat, fix ni rupture (titre non conventionnel compris) reste inchangé, mais le plan les compte pour le dire", () => {
+  const memory = historyFixture(MEMORY.name, MEMORY.dir, [["0.3.0", "c".repeat(40)]]);
+  const req = historyFixture(REQ.name, REQ.dir, [["0.18.0", "d".repeat(40)]]);
+  const tags = new Set([versionTag(MEMORY.name, "0.3.0"), versionTag(REQ.name, "0.18.0")]);
+  const plan = planOf(
+    [
+      {
+        ...memory,
+        sinceCurrent: [
+          { sha: "e".repeat(40), subject: "omp-mem0-memory : une refonte", level: null, breaking: null },
+          { sha: "f".repeat(40), subject: "docs: le README", level: null, breaking: null },
+        ],
+      },
+      req,
+    ],
+    tags,
+    "2026-11-12",
+    false,
+  );
+  assert.deepEqual(plan.releases, [], "rien ne se publie sans feat, fix ni rupture");
+  assert.deepEqual(plan.unchanged, [MEMORY.name, REQ.name]);
+  assert.deepEqual(plan.unreleased, [{ name: MEMORY.name, commits: 2 }], "req, lui, n'a été touché par rien");
+});

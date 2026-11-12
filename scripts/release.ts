@@ -114,6 +114,11 @@ export type Plan = {
   journal: Release[];
   /** Plugins sans rien à publier (`· <plugin> : inchangé`). */
   unchanged: string[];
+  /**
+   * Parmi eux, ceux qu'un commit a touchés depuis leur version sans être `feat`, `fix` ni une rupture
+   * (docs, chore, titre non conventionnel…) : le run le dit, au lieu de « aucun fichier touché ».
+   */
+  unreleased: Array<{ name: string; commits: number }>;
   /** Plugins dont la version cible est déjà taguée (garde 2 de S-5). */
   alreadyPublished: Array<{ name: string; tag: string }>;
 };
@@ -320,6 +325,7 @@ export function planOf(
   const journalBumps: Release[] = [];
   const journalBackfills: Release[] = [];
   const unchanged: string[] = [];
+  const unreleased: Array<{ name: string; commits: number }> = [];
   const alreadyPublished: Array<{ name: string; tag: string }> = [];
 
   for (const plugin of plugins) {
@@ -358,6 +364,7 @@ export function planOf(
     const levels = plugin.sinceCurrent.map((change) => change.level).filter((level): level is Level => level !== null);
     if (levels.length === 0) {
       unchanged.push(plugin.name);
+      if (plugin.sinceCurrent.length > 0) unreleased.push({ name: plugin.name, commits: plugin.sinceCurrent.length });
       continue;
     }
     const level = maxLevel(levels);
@@ -390,6 +397,7 @@ export function planOf(
     releases,
     journal: [...journalBumps, ...journalBackfills],
     unchanged,
+    unreleased,
     alreadyPublished,
   };
 }
@@ -751,7 +759,14 @@ function printPlan(plugins: Array<{ name: string }>, plan: Plan, published: bool
     if (tag !== undefined) console.log(`· ${plugin.name} : déjà publié (tag ${tag})`);
     else if (bump !== undefined) {
       console.log(`✓ ${bump.name} : ${bump.level} ${bump.from} → ${bump.version} (${bump.changes.length} commit(s))`);
-    } else if (!published) console.log(`· ${plugin.name} : inchangé (aucun fichier touché)`);
+    } else if (!published) {
+      const ignored = plan.unreleased.find((entry) => entry.name === plugin.name);
+      console.log(
+        ignored === undefined
+          ? `· ${plugin.name} : inchangé (aucun fichier touché)`
+          : `· ${plugin.name} : rien à publier (${ignored.commits} commit(s) depuis la version, aucun en feat, fix ni rupture)`,
+      );
+    }
   }
   if (plan.releases.length > 0) {
     const backfilled = plan.releases.filter((release) => release.kind === "rattrapage").length;

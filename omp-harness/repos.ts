@@ -432,6 +432,17 @@ export class ConfigAdmin {
     });
   }
 
+  /** L'URL du distant d'un dépôt déclaré, lue dans son clone ; `null` sans distant lisible. */
+  async #remoteUrl(repo: RepoConfig): Promise<string | null> {
+    const read = await this.#git.raw(repo.path, ["remote", "get-url", repo.remote ?? "origin"]).catch(() => null);
+    return read?.code === 0 && read.stdout.trim() !== "" ? read.stdout.trim() : null;
+  }
+
+  /** La forge qui sert un dépôt déclaré : la sienne si elle est déclarée, sinon déduite de son distant. */
+  async forgeInUse(repo: RepoConfig): Promise<ForgeKind> {
+    return repo.forge ?? forgeKindOf(repo, await this.#remoteUrl(repo));
+  }
+
   /**
    * Les réglages d'un dépôt déclaré, tels qu'ils servent (défauts compris), avec ce que l'humain doit voir
    * pour les juger : l'URL du distant, la clé publique de déploiement. Jamais la clé privée ni un secret : les
@@ -440,8 +451,7 @@ export class ConfigAdmin {
   async settings(name: string): Promise<RepoSettings> {
     const repo = this.#service.config.repos.find((candidate) => candidate.name === name);
     if (repo === undefined) throw new HarnessError(404, `dépôt non déclaré : ${name}`);
-    const read = await this.#git.raw(repo.path, ["remote", "get-url", repo.remote ?? "origin"]).catch(() => null);
-    const remoteUrl = read?.code === 0 && read.stdout.trim() !== "" ? read.stdout.trim() : null;
+    const remoteUrl = await this.#remoteUrl(repo);
     let deployKey: DeployKey | null = null;
     if (repo.sshKey !== null && fs.existsSync(`${repo.sshKey}.pub`)) {
       try {

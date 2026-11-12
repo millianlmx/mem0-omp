@@ -240,6 +240,7 @@
 "Enregistrer les modèles" = "Save Models";
 "Envoi au dépôt distant refusé" = "Push to the remote repository refused";
 "Envoyer" = "Send";
+"Envoyé" = "Sent";
 "Envoyer le code" = "Send Code";
 "Erreur" = "Error";
 "Erreur du fournisseur" = "Provider error";

@@ -512,16 +512,36 @@ public struct HarnessServedRepo: Codable, Equatable, Sendable, Identifiable {
     public var maxParallel: Int?
     /// Qui juge les tests : `local` (le serveur) ou `ci` (la CI de la forge).
     public var judge: String?
+    /// Au propriétaire : la forge qui sert le dépôt (`github`, `gitlab`, `none`) et l'espace qui le range.
+    public var forge: String?
+    public var space: String?
+    /// Ce que borne sa politique de modèles en vigueur (`privacy`), quand elle borne quelque chose.
+    public var policy: HarnessServedRepoPolicy?
 
     public var id: String { name }
 
-    public init(name: String, scope: String? = nil, mainBranch: String? = nil, merge: String? = nil, maxParallel: Int? = nil, judge: String? = nil) {
+    public init(
+        name: String, scope: String? = nil, mainBranch: String? = nil, merge: String? = nil, maxParallel: Int? = nil,
+        judge: String? = nil, forge: String? = nil, space: String? = nil, policy: HarnessServedRepoPolicy? = nil
+    ) {
         self.name = name
         self.scope = scope
         self.mainBranch = mainBranch
         self.merge = merge
         self.maxParallel = maxParallel
         self.judge = judge
+        self.forge = forge
+        self.space = space
+        self.policy = policy
+    }
+}
+
+/// La politique de modèles en vigueur d'un dépôt, telle que la liste la rend.
+public struct HarnessServedRepoPolicy: Codable, Equatable, Sendable {
+    public var privacy: String?
+
+    public init(privacy: String? = nil) {
+        self.privacy = privacy
     }
 }
 
