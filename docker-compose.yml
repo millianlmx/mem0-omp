@@ -277,7 +277,7 @@ services:
     restart: "no"
 
   test-image:
-    image: docker.io/library/node:22-bookworm
+    image: docker.io/library/node:26-bookworm
     command: ["true"]
     restart: "no"
 
