@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.41.1 — 2026-11-15
+
+- fix(harness): une CI non jugée ne coûte plus de correction, les commits poussés hors du harness sont repris, une PR fusionnée à la main clôt son run (#471) (5bde12c)
+
 ## omp-harness 1.41.0 — 2026-11-12
 
 - feat(console,harness): la liste des dépôts se dessine d'une seule lecture (forge et espace dans GET /v1/repos), coche d'envoi en symbole, et la release dit pourquoi elle ne publie rien (#463) (fb8fb80)
