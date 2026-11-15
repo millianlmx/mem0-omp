@@ -312,9 +312,15 @@ export function failCauseOf(status: "aborted" | "error", error: PromptError | nu
   }
 }
 
-/** Les résultats heavy qui valent « suite verte ». */
-function fullOutcome(result: HeavyResult): "pass" | "fail" {
-  return result.outcome === "pass" ? "pass" : "fail";
+/**
+ * Ce qu'un résultat heavy dit de la suite complète. Un job qui n'a pas pu démarrer ou a été arrêté, ou une CI de
+ * la forge qui n'a pas fini à temps (file du runner, poste endormi), ne juge pas le code : `not_run`, jamais un
+ * bloquant qui coûterait une correction — la suite est rejugée, ou l'humain voit qu'elle n'a pas été jugée.
+ */
+function fullOutcome(result: HeavyResult): "pass" | "fail" | "not_run" {
+  if (result.outcome === "pass") return "pass";
+  if (result.outcome === "error" || result.outcome === "aborted") return "not_run";
+  return result.judge === "ci" && result.outcome === "timeout" ? "not_run" : "fail";
 }
 
 /**
@@ -871,7 +877,7 @@ export class StepExecutor {
         return "la ligne `Ce que fait cette feature : <une phrase>` manque en tête de specs.md : c'est la première ligne de la carte que l'humain lit";
     }
     if (step === "review" && (await git.mergeInProgress(worktree))) {
-      const unresolved = await this.#unresolvedConflicts(worktree);
+      const unresolved = await git.unresolvedConflicts(worktree);
       if (unresolved.length > 0) return `des marqueurs de conflit restent dans ${unresolved.join(", ")}`;
     }
     // Un /impl sans diff n'est pas une panne quand le code est déjà là (livré par un run
@@ -949,6 +955,13 @@ export class StepExecutor {
           verdict = { ...verdict, blockers: [...verdict.blockers, `suite complète rouge : ${detail}`] };
         }
       }
+      // Une suite que rien n'a jugée (push refusé, forge muette, CI trop lente) : l'humain lit pourquoi, sans bloquant.
+      const last = live.lastFull;
+      if (fullTests === "not_run" && last !== null && fullOutcome(last) === "not_run")
+        verdict = {
+          ...verdict,
+          summary: `${verdict.summary}\n\nSuite complète non jugée (${last.outcome}) : ${last.output.trim().slice(0, 500)}`,
+        };
       // Le contrat est celui des specs gelées, plus les critères ajoutés depuis.
       const acIds = this.#specsAcIds(run.id);
       const mergeEvidence = {
@@ -1136,15 +1149,6 @@ export class StepExecutor {
         if (content === null) continue;
         if (store.getArtifact(run.id, name) !== content) store.putArtifact(run.id, name, content, stepId);
       }
-    });
-  }
-
-  /** Les fichiers d'une fusion en cours qui portent encore des marqueurs de conflit. */
-  async #unresolvedConflicts(worktree: string): Promise<string[]> {
-    const files = await this.#ctx.git.unmergedFiles(worktree);
-    return files.filter((file) => {
-      const content = readArtifact(path.dirname(path.join(fs.realpathSync(worktree), file)), path.basename(file));
-      return content === null || /^(<{7}|>{7}) /m.test(content);
     });
   }
 

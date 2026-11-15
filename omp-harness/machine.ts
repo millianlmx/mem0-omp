@@ -670,6 +670,18 @@ export function afterMerged(cursor: Pick<RunCursor, "fixes">): Transition {
   return to("merged", null, { step: "review", fixes: cursor.fixes, attempts: 0 }, { reason: "mergé" });
 }
 
+/** La PR d'un run qui attendait l'humain a été fusionnée sur la forge, hors du harness : le merge le constate. */
+export function afterExternalMerge(cursor: Pick<RunCursor, "fixes">): Transition {
+  return to(
+    "merging",
+    null,
+    { step: "review", fixes: cursor.fixes, attempts: 0 },
+    {
+      reason: "PR fusionnée sur la forge hors du harness : le merge le constate",
+    },
+  );
+}
+
 /** Un merge impossible (push refusé par gh, erreur git) : l'humain reprend la main. */
 export function afterMergeFailed(cursor: Pick<RunCursor, "fixes">, reason: string): Transition {
   return to(

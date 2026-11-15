@@ -204,6 +204,8 @@ export type Forge = {
   autoMerge(head: string, message: SquashMessage | null): Promise<void>;
   /** L'état de la PR de `head`, `null` s'il ne se lit pas (la forge ne répond pas). */
   changeState(head: string): Promise<ChangeState | null>;
+  /** Le commit que la fusion de la PR de `head` a posé sur la branche principale, `null` s'il ne se lit pas. */
+  mergeCommit(head: string): Promise<string | null>;
   /** Sort la PR de `head` du brouillon (sans effet sur une PR qui n'en est pas un). Lève si refusé. */
   markReady(head: string): Promise<void>;
   /**
@@ -372,6 +374,9 @@ class NoForge implements Forge {
     this.#refuse();
   }
   async changeState(): Promise<ChangeState | null> {
+    this.#refuse();
+  }
+  async mergeCommit(): Promise<string | null> {
     this.#refuse();
   }
   async markReady(): Promise<void> {
