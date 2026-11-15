@@ -65,6 +65,7 @@ export const EVENT_TYPES = [
   "merge_retry",
   "merged",
   "push_failed",
+  "remote_adopted",
   "reverted",
   "revert_failed",
   // projets, audits et rêves de la mémoire

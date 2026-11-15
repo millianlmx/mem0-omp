@@ -22,6 +22,7 @@ import * as path from "node:path";
 import type { LogLine } from "./logger.ts";
 import type { Exec, ProcResult } from "./proc.ts";
 import { parseCheckpointTrailer } from "./decisions.ts";
+import { readArtifact } from "./safefs.ts";
 
 export type GitIdentity = { authorName: string; authorEmail: string };
 
@@ -90,6 +91,19 @@ type Moved = { ok: true; head: string } | { ok: false; conflicts: string[] };
 
 /** Un revert de plage : son commit, ou les fichiers en conflit (geste abandonné). */
 type Reverted = { ok: true; sha: string } | { ok: false; conflicts: string[] };
+
+/**
+ * Ce que la branche distante d'un run portait de plus que ce que le harness y a poussé :
+ * - `none` : rien (branche absente, identique au dernier push, ou déjà contenue dans HEAD) ;
+ * - `adopted` : `commits` commits venus d'ailleurs, intégrés à HEAD (avance rapide ou fusion) ;
+ * - `conflict` : ces commits entrent en conflit avec HEAD, rien n'a bougé ;
+ * - `diverged` : la branche distante ne descend plus du dernier push du harness (réécrite ailleurs).
+ */
+export type RemoteAdoption =
+  | { kind: "none" }
+  | { kind: "adopted"; sha: string; commits: number }
+  | { kind: "conflict"; sha: string; conflicts: string[] }
+  | { kind: "diverged"; sha: string };
 
 export class GitError extends Error {
   readonly result: ProcResult;
@@ -474,6 +488,18 @@ export class Git {
     return (await this.run(worktree, ["diff", "--name-only", "--diff-filter=U"])).split("\n").filter(Boolean);
   }
 
+  /**
+   * Les fichiers en conflit dans l'index qui portent encore des marqueurs (ou ne se lisent pas).
+   * L'agent résout un conflit en éditant le fichier, sans `git add` : l'index le garde en conflit.
+   */
+  async unresolvedConflicts(worktree: string): Promise<string[]> {
+    const files = await this.unmergedFiles(worktree);
+    return files.filter((file) => {
+      const content = readArtifact(path.dirname(path.join(fs.realpathSync(worktree), file)), path.basename(file));
+      return content === null || /^(<{7}|>{7}) /m.test(content);
+    });
+  }
+
   /** Fusionne `ref` sans commit : les conflits restent dans les fichiers, à résoudre sans git. */
   mergeNoCommit(worktree: string, ref: string): Promise<void> {
     return this.#exclusive(worktree, () => this.#mergeNoCommit(worktree, ref));
@@ -650,6 +676,54 @@ export class Git {
   /** Oublie ce qui a été poussé sur `branch` (la branche distante est supprimée ou fusionnée). */
   async forgetPushed(cwd: string, branch: string): Promise<void> {
     await this.raw(cwd, ["update-ref", "-d", `${PUSHED_REFS}${branch}`]);
+  }
+
+  /**
+   * Reprend dans le worktree les commits poussés sur la branche distante `branch` par un autre
+   * que le harness (un humain, une autre session), au lieu de buter sur le bail ou de les écraser :
+   * avance rapide si HEAD n'a rien de plus, sinon une fusion commitée (`message`). Le distant ainsi
+   * repris devient le dernier push connu : la poussée suivante (`--force-with-lease`) passe.
+   * Lève si le distant ne répond pas.
+   */
+  async adoptRemote(
+    worktree: string,
+    remote: string,
+    branch: string,
+    env: Record<string, string>,
+    message: string,
+  ): Promise<RemoteAdoption> {
+    // La branche se lit là où elle se pousse (`pushurl`, `pushInsteadOf`) : le bail porte sur ce distant-là.
+    const named = await this.raw(worktree, ["remote", "get-url", "--push", remote]);
+    const where = named.code === 0 ? named.stdout.trim() : remote;
+    const listed = await this.run(worktree, ["ls-remote", "--heads", where, `refs/heads/${branch}`], env);
+    const sha = listed.split(/\s/)[0] ?? "";
+    if (sha === "") return { kind: "none" };
+    const expected = await this.pushedSha(worktree, branch);
+    if (sha === expected) return { kind: "none" };
+    const ref = `refs/harness/remote/${branch}`;
+    await this.run(worktree, ["fetch", "-q", where, `+refs/heads/${branch}:${ref}`], env);
+    try {
+      const ancestor = async (older: string, newer: string) =>
+        (await this.raw(worktree, ["merge-base", "--is-ancestor", older, newer])).code === 0;
+      // Le distant est déjà dans HEAD (push d'une version antérieure du harness, sans trace) : rien à reprendre.
+      if (await ancestor(sha, "HEAD")) {
+        await this.recordPushed(worktree, branch, sha);
+        return { kind: "none" };
+      }
+      if (expected === "" || !(await ancestor(expected, sha))) return { kind: "diverged", sha };
+      const commits = Number(await this.run(worktree, ["rev-list", "--count", `${expected}..${sha}`]));
+      const moved: Moved = (await ancestor("HEAD", sha))
+        ? await this.#exclusive(worktree, async (): Promise<Moved> => {
+            await this.#runLocked(worktree, ["merge", "-q", "--ff-only", ref]);
+            return { ok: true, head: await this.revParse(worktree, "HEAD") };
+          })
+        : await this.mergeCommit(worktree, ref, message);
+      if (!moved.ok) return { kind: "conflict", sha, conflicts: moved.conflicts };
+      await this.recordPushed(worktree, branch, sha);
+      return { kind: "adopted", sha, commits };
+    } finally {
+      await this.raw(worktree, ["update-ref", "-d", ref]);
+    }
   }
 }
 

@@ -704,9 +704,13 @@ export class Orchestrator {
     // quels : le premier tour après la reprise les reprend. La pause est relue avant chacun des trois : une
     // pause posée pendant que le tour attend (`await`) vaut pour la suite du tour. La pause d'un ESPACE
     // retient de même les trois pour ses seuls dépôts (`#spaceHeld`) : les autres espaces continuent.
-    if (this.#pauseHold() === null)
+    if (this.#pauseHold() === null) {
       for (const run of store.listRuns({ state: ["merging"] }))
         if (!this.#spaceHeld(run.repo)) this.#merger.enqueue(run);
+      // Une PR fusionnée sur la forge hors du harness : le run qui l'attendait passe au merge, qui le constate.
+      const waiting = store.listRuns({ state: ["awaiting_human"] }).filter((run) => !this.#spaceHeld(run.repo));
+      void this.#merger.reconcile(waiting, Date.now());
+    }
     // Une escalade ouverte depuis trop longtemps est tranchée sur la recommandation de l'agent.
     try {
       if (this.#pauseHold() === null) await this.#human.autoDecideExpired(Date.now(), this.#spaceHeld);

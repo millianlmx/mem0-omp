@@ -91,6 +91,67 @@ export class CiJudge {
   }
 
   /**
+   * Rend la branche du run poussable AVANT que l'arbre jugé soit calculé (la clé du cache heavy suit) :
+   * - une fusion de main que la revue a résolue (marqueurs retirés, sans `git add` possible) est commitée ;
+   * - le travail non commité entre dans un commit ;
+   * - les commits poussés sur la branche distante par un autre que le harness (humain, autre session)
+   *   sont repris par avance rapide ou fusion, au lieu de faire refuser la poussée (« stale info »).
+   * `null` : prêt. Sinon le résultat `error` à rendre, qui nomme le geste humain attendu.
+   */
+  async prepare(job: HeavyJob): Promise<HeavyResult | null> {
+    const { git, store } = this.#deps;
+    const { repo, worktree } = job;
+    const run = store.getRun(job.runId);
+    if (run === null) return null;
+    let refusal: string | null = null;
+    try {
+      if (await git.mergeInProgress(worktree)) {
+        const unresolved = await git.unresolvedConflicts(worktree);
+        if (unresolved.length > 0)
+          refusal = `une fusion est en cours et des marqueurs de conflit restent dans ${unresolved.join(", ")} : résous-les avant de lancer la suite complète`;
+        else await git.commitAll(worktree, `merge: main dans ${run.branch} (conflits résolus en revue)`);
+      }
+      if (refusal === null && (await git.isDirty(worktree)))
+        await git.commitAll(worktree, `wip: avant la CI — ${run.title}`.slice(0, 120));
+      if (refusal === null) {
+        const adopted = await git.adoptRemote(
+          worktree,
+          repo.remote ?? "origin",
+          run.branch,
+          remoteEnv(repo),
+          `merge: commits poussés sur ${run.branch} hors du harness`,
+        );
+        if (adopted.kind === "adopted")
+          store.appendEvent("remote_adopted", run.id, { sha: adopted.sha, commits: adopted.commits });
+        if (adopted.kind === "conflict")
+          refusal = `push refusé : des commits poussés sur ${run.branch} hors du harness (${adopted.sha.slice(0, 12)}) entrent en conflit avec ce run dans ${adopted.conflicts.join(", ")} — fusionne-les à la main dans le worktree, ou retire-les de la branche`;
+        if (adopted.kind === "diverged")
+          refusal = `push refusé : la branche distante ${run.branch} (${adopted.sha.slice(0, 12)}) a été réécrite hors du harness et ne descend plus de ce qu'il y a poussé — remets-la sur ce SHA, ou supprime-la`;
+      }
+    } catch (err) {
+      refusal = err instanceof Error ? err.message : String(err);
+    }
+    if (refusal === null) return null;
+    store.appendEvent("heavy_started", job.runId, { scope: job.scope, attempt: 1, unit: "ci" });
+    store.appendEvent("heavy_done", job.runId, { scope: job.scope, attempt: 1, outcome: "error", exitCode: null });
+    return {
+      outcome: "error",
+      exitCode: null,
+      output: `la CI de la forge n'a pas pu juger : ${refusal}`,
+      durationMs: 0,
+      attempts: 1,
+      cached: false,
+      skipped: false,
+      note: null,
+      tree: "",
+      key: "",
+      command: CI_COMMAND,
+      tap: null,
+      judge: "ci",
+    };
+  }
+
+  /**
    * Juge l'arbre du worktree de `job` par la CI de la forge : le commit y est poussé, sa PR
    * ouverte en brouillon, ses checks attendus. Ne lève jamais : un geste refusé rend `error`.
    */
@@ -151,8 +212,8 @@ export class CiJudge {
     if (await git.mergeInProgress(worktree)) throw new Error("une fusion est en cours : rien à pousser");
     // La CI juge un commit : ce que le worktree porte encore sans commit y entre d'abord (même arbre que la clé de cache).
     if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip: avant la CI — ${run.title}`.slice(0, 120));
-    // Le bail attend ce que le harness a lui-même poussé : une réécriture après /fix ou rebase passe,
-    // un commit poussé par quelqu'un d'autre sur la branche fait refuser la poussée au lieu d'être écrasé.
+    // Le bail attend ce que le harness a lui-même poussé, ou ce qu'il a repris du distant (`prepare`) : une
+    // réécriture après /fix ou rebase passe, un commit poussé ailleurs depuis fait refuser la poussée.
     const expected = await git.pushedSha(worktree, run.branch);
     const push = await git.raw(
       worktree,

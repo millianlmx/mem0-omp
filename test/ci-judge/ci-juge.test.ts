@@ -30,8 +30,24 @@ function forgeRepo(url: string): { repo: string; bare: string } {
   return { repo, bare };
 }
 
+/** Un commit poussé sur `branch` du distant par quelqu'un d'autre que le harness ; rend son SHA. */
+function pushForeign(bare: string, branch: string, file: string, content: string): string {
+  const clone = path.join(tmpdir("ci-tiers-"), "clone");
+  git(path.dirname(clone), "clone", "-q", "-b", branch, bare, clone);
+  fs.mkdirSync(path.dirname(path.join(clone, file)), { recursive: true });
+  fs.writeFileSync(path.join(clone, file), content);
+  git(clone, "add", "-A");
+  git(clone, "commit", "-q", "-m", `à la main : ${file}`);
+  git(clone, "push", "-q", "origin", branch);
+  return git(clone, "rev-parse", "HEAD");
+}
+
 /** Un run avec une branche (un commit au-dessus de main) et son worktree. */
-async function branchRun(world: FakeWorld, slug: string, state: "merging" | "queued" = "queued"): Promise<RunRow> {
+async function branchRun(
+  world: FakeWorld,
+  slug: string,
+  state: "merging" | "queued" | "awaiting_human" = "queued",
+): Promise<RunRow> {
   const main = git(world.repo, "rev-parse", "main");
   const worktree = path.join(world.config.worktreesDir, slug);
   await world.deps.git.addWorktree(world.repo, worktree, `harness/${slug}`, main);
@@ -84,12 +100,17 @@ const red = (name: string): CheckRun => ({ name, status: "completed", conclusion
 const green = (name: string): CheckRun => ({ name, status: "completed", conclusion: "success", html_url: JOB_URL });
 const running = (name: string): CheckRun => ({ name, status: "in_progress", conclusion: null, html_url: JOB_URL });
 
-/** Ce que le faux `gh` répond : les check runs à chaque lecture, la protection de main, les logs d'un run, l'état de la PR. */
+/**
+ * Ce que le faux `gh` répond : les check runs à chaque lecture, la protection de main, les logs d'un run, l'état
+ * de la PR (selon les appels déjà faits), le commit de sa fusion, et une création de PR refusée.
+ */
 type GhScript = {
   runs: () => CheckRun[];
   required?: string[];
   logs?: Record<string, string>;
-  state?: () => "OPEN" | "MERGED" | "CLOSED";
+  state?: (calls: readonly string[][]) => "OPEN" | "MERGED" | "CLOSED";
+  mergeCommit?: () => string;
+  createFails?: boolean;
 };
 
 /** Un faux `gh` : chaque appel est gardé ; toute autre commande que `gh` est notée dans `others`. */
@@ -104,9 +125,12 @@ function fakeGh(script: GhScript): { exec: Exec; calls: string[][]; polled: stri
     }
     calls.push(args);
     if (args[0] === "pr") {
-      if (args[1] === "create") return done("https://github.com/acme/app/pull/7\n");
+      if (args[1] === "create")
+        return script.createFails === true ? done("", 1) : done("https://github.com/acme/app/pull/7\n");
+      if (args[1] === "view" && args.includes("mergeCommit"))
+        return done(JSON.stringify({ mergeCommit: script.mergeCommit ? { oid: script.mergeCommit() } : null }));
       if (args[1] === "view") {
-        const state = script.state?.() ?? "OPEN";
+        const state = script.state?.(calls) ?? "OPEN";
         return done(JSON.stringify({ state, mergedAt: state === "MERGED" ? "2026-11-09T10:00:00Z" : null }));
       }
       return done("");
@@ -574,4 +598,203 @@ test("ci-juge/AC-11 : l'extrait d'une suite XCTest rouge nomme les tests en éch
     "une ligne répétée n'est gardée qu'une fois",
   );
   assert.doesNotMatch(result.output, /Testing started/, "le bilan s'arrête à la première ligne non indentée");
+});
+
+test("ci-juge/AC-12 : des commits poussés sur la branche du run hors du harness sont repris (avance rapide ou fusion) au lieu de buter sur « stale info » ; en conflit, ils restent intacts", async () => {
+  const gh = fakeGh({ runs: () => [green("build")] });
+  const world = ciWorld({ exec: gh.exec, judge: "ci" });
+  const run = await branchRun(world, "ci-humain");
+  const worktree = run.worktree as string;
+  const remoteHead = () => git(world.bare, "rev-parse", `refs/heads/${run.branch}`);
+  assert.equal((await world.deps.heavy.run(fullJob(world, run))).outcome, "pass", "premier jugement");
+
+  // Un humain pousse au-dessus de ce que le harness a poussé ; le run n'a rien de neuf : avance rapide.
+  const human = pushForeign(world.bare, run.branch, "docs/humain.md", "# à la main\n");
+  const fastForward = await world.deps.heavy.run(fullJob(world, run));
+  assert.equal(fastForward.outcome, "pass", fastForward.output);
+  assert.equal(git(worktree, "rev-parse", "HEAD"), human, "le worktree a avancé sur le commit humain");
+  assert.equal(remoteHead(), human);
+
+  // Le run avance ET un humain repousse ailleurs : une fusion qui garde les deux, poussée sans refus.
+  fs.writeFileSync(path.join(worktree, "src", "api", "ci-humain.ts"), "// corrigé par le run\n");
+  git(worktree, "commit", "-q", "-a", "-m", "fix: par le run");
+  const second = pushForeign(world.bare, run.branch, "docs/encore.md", "# encore\n");
+  const merged = await world.deps.heavy.run(fullJob(world, run));
+  assert.equal(merged.outcome, "pass", merged.output);
+  const head = git(worktree, "rev-parse", "HEAD");
+  assert.equal(remoteHead(), head, "la fusion est poussée");
+  assert.equal(
+    git(worktree, "rev-parse", `${head}^2`),
+    second,
+    "un commit de fusion, le commit humain pour second parent",
+  );
+  assert.ok(fs.existsSync(path.join(worktree, "docs", "encore.md")));
+  assert.equal(fs.readFileSync(path.join(worktree, "src", "api", "ci-humain.ts"), "utf8"), "// corrigé par le run\n");
+  const adopted = world.store.eventsSince(0, run.id).filter((event) => event.type === "remote_adopted");
+  assert.deepEqual(
+    adopted.map((event) => event.payload.commits),
+    [1, 1],
+    "chaque reprise est journalisée",
+  );
+
+  // Un commit humain en conflit avec le run : rien n'est poussé ni fusionné, la cause nomme le fichier.
+  fs.writeFileSync(path.join(worktree, "src", "api", "ci-humain.ts"), "// version du run\n");
+  git(worktree, "commit", "-q", "-a", "-m", "fix: encore par le run");
+  const before = git(worktree, "rev-parse", "HEAD");
+  const conflicting = pushForeign(world.bare, run.branch, "src/api/ci-humain.ts", "// version humaine\n");
+  const refused = await world.deps.heavy.run(fullJob(world, run));
+  assert.equal(refused.outcome, "error");
+  assert.match(refused.output, /entrent en conflit avec ce run dans src\/api\/ci-humain\.ts/);
+  assert.equal(remoteHead(), conflicting, "le commit humain reste sur la branche");
+  assert.equal(git(worktree, "rev-parse", "HEAD"), before, "le worktree n'a pas bougé");
+  assert.equal(await world.deps.git.mergeInProgress(worktree), false, "aucune fusion laissée en cours");
+});
+
+test("ci-juge/AC-13 : une fusion de main résolue en revue (marqueurs retirés, sans `git add`) est commitée puis jugée ; des marqueurs restants refusent le jugement en les nommant", async () => {
+  const gh = fakeGh({ runs: () => [green("build")] });
+  const world = ciWorld({ exec: gh.exec, judge: "ci" });
+  const run = await branchRun(world, "ci-fusion");
+  const worktree = run.worktree as string;
+  fs.writeFileSync(path.join(worktree, "src", "api", "routes.ts"), "// routes du run\n");
+  git(worktree, "commit", "-q", "-a", "-m", "feat: routes du run");
+  const main = commitOnMain(world.repo, "src/api/routes.ts", "// routes de main\n");
+  assert.throws(() => git(worktree, "merge", "--no-ff", "--no-commit", main), "la fusion bute sur un conflit");
+
+  const blocked = await world.deps.heavy.run(fullJob(world, run));
+  assert.equal(blocked.outcome, "error");
+  assert.match(blocked.output, /marqueurs de conflit restent dans src\/api\/routes\.ts/);
+  assert.equal(git(world.bare, "branch", "--list", run.branch), "", "rien n'est poussé");
+
+  // La revue retire les marqueurs (elle ne peut pas `git add`) : le service commite la fusion et la CI la juge.
+  fs.writeFileSync(path.join(worktree, "src", "api", "routes.ts"), "// routes fusionnées\n");
+  const judged = await world.deps.heavy.run(fullJob(world, run));
+  assert.equal(judged.outcome, "pass", judged.output);
+  const head = git(worktree, "rev-parse", "HEAD");
+  assert.equal(git(worktree, "rev-parse", `${head}^2`), main, "un vrai commit de fusion, main pour second parent");
+  assert.match(git(worktree, "log", "-1", "--format=%s"), /^merge: main dans harness\/ci-fusion/);
+  assert.equal(git(world.bare, "rev-parse", `refs/heads/${run.branch}`), head);
+});
+
+test("ci-juge/AC-14 : une CI qui n'a pas pu juger (création de PR refusée) n'est pas un bloquant et ne coûte aucune correction : l'humain voit que la suite n'est pas jugée", async () => {
+  const gh = fakeGh({ runs: () => [green("build")], createFails: true });
+  const { repo } = forgeRepo(GITHUB_URL);
+  const world = fakeWorld(
+    { req: [OK.req], specs: [OK.specs], impl: [OK.impl], review: [OK.review] },
+    {
+      repo,
+      exec: gh.exec,
+      patch: (config) => {
+        config.repos[0]!.forge = "github";
+        config.repos[0]!.tests.judge = "ci";
+        config.review.mergePollSec = 0.02;
+      },
+    },
+  );
+  await world.orchestrator.start();
+  try {
+    const run = await world.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: "Exporter en CSV" });
+    await waitFor(
+      () => world.store.getRun(run.id)?.state === "awaiting_human" && world.store.getRun(run.id)?.step !== "specs",
+      () =>
+        `${world.store.getRun(run.id)?.state} ${world.store.getRun(run.id)?.step} ${world.store.getRun(run.id)?.reason}`,
+      30_000,
+    );
+    const waiting = world.store.getRun(run.id);
+    assert.equal(waiting?.fixes, 0, "aucune correction consommée");
+    assert.deepEqual(waiting?.verdict?.blockers, [], "aucun bloquant « suite complète rouge »");
+    assert.match(waiting?.reason ?? "", /suite complète non lancée/);
+    assert.match(waiting?.verdict?.summary ?? "", /Suite complète non jugée \(error\) : .*gh pr create/);
+    const fixes = world.store.listSteps(run.id).filter((step) => step.kind === "fix");
+    assert.deepEqual(fixes, [], "aucune étape /fix");
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+test("ci-juge/AC-15 : la PR d'un run qui attend l'humain, fusionnée à la main sur la forge, clôt le run `merged` sur le commit de la forge, sans repousser ni rouvrir de PR", async () => {
+  const { repo, bare } = forgeRepo(GITHUB_URL);
+  let squashed = "";
+  // La forge rend le commit de squash posé sur main par la fusion à la main.
+  const gh = fakeGh({ runs: () => [green("build")], state: () => "MERGED", mergeCommit: () => squashed });
+  const world = fakeWorld(
+    {},
+    {
+      repo,
+      exec: gh.exec,
+      patch: (config) => {
+        const entry = config.repos[0]!;
+        entry.forge = "github";
+        entry.merge = "gh";
+        entry.tests.judge = "ci";
+        config.review.mergePollSec = 0.02;
+      },
+    },
+  );
+  const run = await branchRun(world, "ci-externe", "awaiting_human");
+  world.store.updateRun(run.id, { prUrl: "https://github.com/acme/app/pull/9" });
+  // La fusion faite sur GitHub : un squash sur main, que le clone a récupéré.
+  const tree = git(repo, "rev-parse", `${run.branch}^{tree}`);
+  squashed = git(repo, "commit-tree", tree, "-p", git(repo, "rev-parse", "main"), "-m", "squash (#9)");
+  git(repo, "update-ref", "refs/heads/main", squashed);
+  await world.orchestrator.start();
+  try {
+    await waitFor(
+      () => world.store.getRun(run.id)?.state === "merged",
+      () => `${world.store.getRun(run.id)?.state} ${world.store.getRun(run.id)?.reason}`,
+    );
+    const merged = world.store.getRun(run.id);
+    assert.equal(merged?.mergeSha, squashed, "le commit de la forge est la cible d'un revert");
+    const event = world.store.eventsSince(0, run.id).find((entry) => entry.type === "merged");
+    assert.equal(event?.payload.external, true);
+    const verbs = gh.calls.filter((args) => args[0] === "pr").map((args) => args[1]);
+    assert.ok(!verbs.includes("create") && !verbs.includes("merge"), `ni PR rouverte ni fusion : ${verbs.join(", ")}`);
+    assert.equal(git(bare, "branch", "--list", run.branch), "", "la branche n'est pas repoussée");
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+test("ci-juge/AC-16 : au merge, des commits poussés sur la branche hors du harness sont repris avant le rebase, jamais effacés par la poussée", async () => {
+  const { repo, bare } = forgeRepo(GITHUB_URL);
+  const gh = fakeGh({
+    runs: () => [green("build")],
+    state: (calls) => (calls.some((args) => args[0] === "pr" && args[1] === "merge") ? "MERGED" : "OPEN"),
+  });
+  const world = fakeWorld(
+    {},
+    {
+      repo,
+      exec: gh.exec,
+      patch: (config) => {
+        const entry = config.repos[0]!;
+        entry.forge = "github";
+        entry.merge = "gh";
+        entry.tests.judge = "ci";
+        config.review.mergePollSec = 0.02;
+      },
+    },
+  );
+  const run = await branchRun(world, "ci-adopte");
+  assert.equal((await world.deps.heavy.run(fullJob(world, run))).outcome, "pass", "la revue a poussé la branche");
+  const human = pushForeign(bare, run.branch, "docs/humain.md", "# à la main\n");
+  world.store.updateRun(run.id, { state: "merging" });
+  commitOnMain(repo, "docs/autre.md", "# autre\n");
+  await world.orchestrator.start();
+  try {
+    await waitFor(
+      () => world.store.getRun(run.id)?.state !== "merging",
+      () => String(world.store.getRun(run.id)?.state),
+    );
+    assert.equal(world.store.getRun(run.id)?.state, "merged", world.store.getRun(run.id)?.reason ?? "");
+    const events = world.store.eventsSince(0, run.id).map((event) => event.type);
+    assert.ok(events.includes("remote_adopted"), events.join(", "));
+    assert.equal(
+      git(bare, "show", `refs/heads/${run.branch}:docs/humain.md`),
+      "# à la main",
+      "le travail humain est poussé",
+    );
+    assert.notEqual(git(bare, "rev-parse", `refs/heads/${run.branch}`), human, "la branche a été rebasée sur main");
+  } finally {
+    await world.orchestrator.stop();
+  }
 });

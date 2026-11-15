@@ -206,12 +206,22 @@ export class GitLabForge implements Forge {
     };
   }
 
-  async #openMr(head: string): Promise<{ url: string | null; state: ChangeState | null } | null> {
+  async #openMr(
+    head: string,
+  ): Promise<{ url: string | null; state: ChangeState | null; mergeCommit: string | null } | null> {
     const view = await this.#run(["mr", "view", head, "-R", this.#target(), "--output", "json"], PR_TIMEOUT_MS);
     if (view.code !== 0) return null;
     try {
       const raw = record(JSON.parse(view.stdout));
-      return { url: typeof raw.web_url === "string" ? raw.web_url : null, state: mrState(raw) };
+      // Une MR fusionnée en squash pose le commit de squash ; sinon celui de la fusion.
+      const commit = [raw.squash_commit_sha, raw.merge_commit_sha].find(
+        (sha): sha is string => typeof sha === "string" && sha !== "",
+      );
+      return {
+        url: typeof raw.web_url === "string" ? raw.web_url : null,
+        state: mrState(raw),
+        mergeCommit: commit ?? null,
+      };
     } catch {
       return null;
     }
@@ -270,6 +280,10 @@ export class GitLabForge implements Forge {
 
   async changeState(head: string): Promise<ChangeState | null> {
     return (await this.#openMr(head))?.state ?? null;
+  }
+
+  async mergeCommit(head: string): Promise<string | null> {
+    return (await this.#openMr(head))?.mergeCommit ?? null;
   }
 
   async markReady(head: string): Promise<void> {
