@@ -321,7 +321,7 @@ public final class HarnessSpacesModel: ObservableObject {
             await harness.loadCapabilities()
         } catch {
             update(\.availability, HarnessControlFailure.availability(after: error, current: availability))
-            update(\.failure, HarnessModel.failure(of: error))
+            update(\.failure, HarnessModel.failure(after: error, keeping: failure))
         }
     }
 
@@ -377,7 +377,7 @@ public final class HarnessSpacesModel: ObservableObject {
             failure = nil
             return report
         } catch {
-            failure = HarnessModel.failure(of: error)
+            failure = HarnessModel.failure(after: error, keeping: failure)
             return nil
         }
     }
@@ -445,7 +445,7 @@ public final class HarnessSpacesModel: ObservableObject {
             harness.spacesRead(spaces)
             return reply.space
         } catch {
-            failure = HarnessModel.failure(of: error)
+            failure = HarnessModel.failure(after: error, keeping: failure)
             return nil
         }
     }
@@ -492,7 +492,7 @@ public final class HarnessSpacesModel: ObservableObject {
             failure = nil
             return reply?.usage
         } catch {
-            failure = HarnessModel.failure(of: error)
+            failure = HarnessModel.failure(after: error, keeping: failure)
             return nil
         }
     }
@@ -514,7 +514,7 @@ public final class HarnessSpacesModel: ObservableObject {
                 throw HarnessFailure.unreadable
             }
         } catch {
-            failure = HarnessModel.failure(of: error)
+            failure = HarnessModel.failure(after: error, keeping: failure)
             return nil
         }
     }

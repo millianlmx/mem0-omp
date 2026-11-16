@@ -382,7 +382,7 @@ public final class HarnessAutonomy: ObservableObject {
             failure = nil
         } catch {
             availability = HarnessControlFailure.availability(after: error, current: availability)
-            failure = HarnessModel.failure(of: error)
+            failure = HarnessModel.failure(after: error, keeping: failure)
         }
     }
 

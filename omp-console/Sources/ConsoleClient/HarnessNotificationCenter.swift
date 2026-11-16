@@ -104,7 +104,15 @@ public final class HarnessNotificationCenter: NSObject, ObservableObject {
 
     // MARK: - Réponse à une notification
 
+    /// iOS exécute la réponse l'app encore en arrière-plan : ses lectures partent aussitôt, sans attendre un retour
+    /// au premier plan qui ne viendra peut-être pas (`HarnessModel.answeringNotification`).
     private func respond(category: String, action: HarnessNotificationAction?, alert: HarnessPushAlert?, text: String?) async {
+        await HarnessModel.$answeringNotification.withValue(true) {
+            await answer(category: category, action: action, alert: alert, text: text)
+        }
+    }
+
+    private func answer(category: String, action: HarnessNotificationAction?, alert: HarnessPushAlert?, text: String?) async {
         guard let server else { return }
         // Une action app fermée : le serveur, le jeton et le client (`/v1/me`) d'abord.
         await server.load()

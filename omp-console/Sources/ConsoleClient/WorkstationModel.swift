@@ -149,7 +149,7 @@ public final class WorkstationModel: ObservableObject {
         } catch HarnessFailure.forbidden(let motive) {
             clear(.reserved(motive))
         } catch {
-            update(\.failure, HarnessModel.failure(of: error))
+            update(\.failure, HarnessModel.failure(after: error, keeping: failure))
         }
     }
 

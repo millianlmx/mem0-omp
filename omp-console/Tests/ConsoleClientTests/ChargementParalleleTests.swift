@@ -56,7 +56,7 @@ private func inboxJSON(cursor: Int) -> String {
 }
 
 /// Un serveur où toutes les routes du chargement répondent 200 ; ce qu'il ne connaît pas rend 404.
-private func shellRoutes(inboxCursor: Int = 42) -> @Sendable (HarnessCall) -> HarnessReply {
+func shellRoutes(inboxCursor: Int = 42) -> @Sendable (HarnessCall) -> HarnessReply {
     { call in
         let path = call.path
         guard call.method == "GET" else { return osJSON(#"{"error":"route inconnue"}"#, status: 404) }
@@ -112,14 +112,14 @@ private func makeModel(_ transport: LatencyHarnessTransport, space: String? = ni
 
 /// Attend que l'adresse soit posée par `load()` : `.task(id: server.address)` de la coque part à ce moment.
 @MainActor
-private func untilConfigured(_ model: HarnessModel) async {
+func untilConfigured(_ model: HarnessModel) async {
     while !model.isConfigured { await Task.yield() }
 }
 
 /// L'ouverture de l'app iOS : `RootView` lit la boîte (`load()`), `IOSOSRootView.load` lit la coque,
 /// en même temps ; `pulse` démarre avec la coque, comme `workspace.pulse.start()`.
 @MainActor
-private func openApp(_ model: HarnessModel, pulse: OSPulse? = nil) async {
+func openApp(_ model: HarnessModel, pulse: OSPulse? = nil) async {
     async let inbox: Void = model.load()
     await untilConfigured(model)
     pulse?.start()
@@ -129,7 +129,7 @@ private func openApp(_ model: HarnessModel, pulse: OSPulse? = nil) async {
 
 /// Chaque modèle de B-2 a lu quelque chose de lisible : une fixture illisible ferait échouer le test.
 @MainActor
-private func expectShellFilled(_ model: HarnessModel) {
+func expectShellFilled(_ model: HarnessModel) {
     #expect(model.inbox != nil)
     #expect(model.history.runs.count == 1)
     #expect(model.workstation.availability == .available && model.workstation.status != nil)

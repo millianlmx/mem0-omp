@@ -229,7 +229,7 @@ public final class HarnessIntakes: ObservableObject {
             availability = .available
             failure = nil
         } catch {
-            failure = HarnessModel.failure(of: error)
+            failure = HarnessModel.failure(after: error, keeping: failure)
         }
     }
 

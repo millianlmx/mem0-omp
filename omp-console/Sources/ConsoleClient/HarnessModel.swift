@@ -193,6 +193,20 @@ public final class HarnessModel: ObservableObject {
     /// Le rang des lectures : une écriture, un lot d'événements, un passage en arrière-plan ou
     /// un changement de serveur le font avancer, et une lecture partie avant n'est plus rejointe.
     private var readGeneration = 0
+    /// Le nombre de passages en arrière-plan (`suspendStreams`) : une lecture qui le voit avancer a été coupée.
+    private var suspensions = 0
+    /// `suspensions` au dernier retour (`resumeReads`) ; plus petit, l'app est encore en arrière-plan.
+    private var resumedSuspensions = 0
+    /// Vrai entre `resumeReads` et `finishReturn` (ou le passage en arrière-plan suivant).
+    private var returnOpen = false
+    /// Les appelants d'une lecture coupée, en attente du retour.
+    private var awaitingReturn: [UUID: CheckedContinuation<Void, Error>] = [:]
+    /// Les relectures des lectures coupées, par clé : pendant le retour, une lecture identique reçoit leur
+    /// réponse, en vol ou déjà arrivée, au lieu de repartir.
+    private var returnReads: [HarnessReadKey: Task<HarnessReply, Error>] = [:]
+    /// Vrai dans la réponse à une notification (`HarnessNotificationCenter.respond`) : iOS l'exécute l'app
+    /// encore en arrière-plan, et ses lectures ne peuvent pas attendre un retour qui ne viendra peut-être pas.
+    @TaskLocal static var answeringNotification = false
 
     public init(
         transport: any HarnessTransport,
@@ -368,6 +382,12 @@ public final class HarnessModel: ObservableObject {
     /// Ce qui appartient au serveur relié : poste, historique, services, remontée.
     private func resetServerState() {
         readGeneration &+= 1
+        returnOpen = false
+        returnReads = [:]
+        resumedSuspensions = suspensions
+        let waiting = awaitingReturn
+        awaitingReturn = [:]
+        for continuation in waiting.values { continuation.resume(throwing: CancellationError()) }
         serverEpoch += 1
         scope = nil
         scopeEpoch += 1
@@ -422,7 +442,7 @@ public final class HarnessModel: ObservableObject {
             receive(inbox: try await perform(HarnessCall(method: "GET", path: "/v1/inbox"), on: server))
             update(\.failure, nil)
         } catch {
-            update(\.failure, Self.failure(of: error))
+            update(\.failure, Self.failure(after: error, keeping: failure))
         }
         if !clientAsked { await readClient() }
     }
@@ -494,7 +514,7 @@ public final class HarnessModel: ObservableObject {
             }
             update(\.failure, nil)
         } catch {
-            update(\.failure, Self.failure(of: error))
+            update(\.failure, Self.failure(after: error, keeping: failure))
         }
     }
 
@@ -506,7 +526,7 @@ public final class HarnessModel: ObservableObject {
             update(\.failure, nil)
             return view
         } catch {
-            update(\.failure, Self.failure(of: error))
+            update(\.failure, Self.failure(after: error, keeping: failure))
             return nil
         }
     }
@@ -534,16 +554,53 @@ public final class HarnessModel: ObservableObject {
     /// Ferme les flux partagés quand toute l'app passe en arrière-plan : la boîte et le direct
     /// suivi, dont le dernier affichage reste visible (`direct.feed` gardé). Le retour les rouvre
     /// (`HarnessAppLifecycle`). Les lectures en vol sont annulées : iOS coupe leurs connexions à la
-    /// suspension, et elles finiraient à la reprise en « délai dépassé » ou « injoignable » alors que le
-    /// retour les relit. Une annulation n'est jamais annoncée ; une écriture en vol, elle, n'est pas touchée.
+    /// suspension, et elles finiraient à la reprise en « délai dépassé » ou « injoignable ». Leurs
+    /// appelants attendent le retour, puis la relisent une fois (`send`) : une annulation n'est jamais
+    /// annoncée. Une écriture en vol, elle, n'est ni touchée ni rejouée.
     public func suspendStreams() {
         stopLive()
         sessionTask?.cancel()
         sessionTask = nil
         direct.setLive(false)
+        suspensions += 1
+        returnOpen = false
+        returnReads = [:]
         for read in readsInFlight.values { read.cancel() }
         readsInFlight = [:]
         readGeneration &+= 1
+    }
+
+    /// Le retour commence : les lectures coupées, et celles parties pendant l'arrière-plan, se relancent.
+    /// Elles ne peuvent pas attendre la FIN du retour, qui attend lui-même des tâches partagées qu'elles
+    /// peuvent avoir coupées.
+    public func resumeReads() {
+        resumedSuspensions = suspensions
+        returnOpen = true
+        let waiting = awaitingReturn
+        awaitingReturn = [:]
+        for continuation in waiting.values { continuation.resume() }
+    }
+
+    /// Le retour a fini : une lecture identique repart au lieu de recevoir la réponse d'une relecture.
+    public func finishReturn() {
+        returnOpen = false
+        returnReads = [:]
+    }
+
+    /// Attend `resumeReads` ; un appelant annulé (écran quitté) ou un serveur changé lève `CancellationError`.
+    private func untilReturn() async throws {
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    awaitingReturn[id] = continuation
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.awaitingReturn.removeValue(forKey: id)?.resume(throwing: CancellationError()) }
+        }
     }
 
     /// Rouvre le direct suivi après un arrière-plan, sans relire le tampon avant le flux : il est
@@ -1209,7 +1266,7 @@ public final class HarnessModel: ObservableObject {
             update(\.providerCatalog, catalog)
             update(\.failure, nil)
         } catch {
-            update(\.failure, Self.failure(of: error))
+            update(\.failure, Self.failure(after: error, keeping: failure))
         }
     }
 
@@ -1362,24 +1419,41 @@ public final class HarnessModel: ObservableObject {
     /// déjà en vol n'en fait qu'un : tous ses appelants reçoivent la même réponse (quel que soit son
     /// statut) ou la même erreur. Seules les lectures EN VOL sont partagées, jamais une lecture finie.
     /// Une écriture n'est jamais partagée et fait avancer `readGeneration` avant de partir.
-    func send(_ call: HarnessCall, on server: HarnessServer) async throws -> HarnessReply {
+    ///
+    /// Une lecture coupée par le passage en arrière-plan attend le retour, puis est refaite UNE fois
+    /// (`rereading`) ; une lecture qui partirait pendant l'arrière-plan l'attend aussi, sauf dans la
+    /// réponse à une notification. Pendant le retour, `returnReads` fait recevoir leur réponse aux lectures
+    /// identiques de la coque.
+    func send(_ call: HarnessCall, on server: HarnessServer, rereading: Bool = false) async throws -> HarnessReply {
         guard call.method == "GET", call.body == nil else {
             readGeneration &+= 1
             return try await transport.send(call, server: server)
         }
+        if resumedSuspensions < suspensions, !Self.answeringNotification {
+            try await untilReturn()
+            return try await send(call, on: server, rereading: true)
+        }
         let key = HarnessReadKey(call: call, server: server, generation: readGeneration)
+        let epoch = suspensions
         let task: Task<HarnessReply, Error>
-        if let running = readsInFlight[key] {
+        if let returned = returnReads[key] {
+            task = returned
+        } else if let running = readsInFlight[key] {
             task = running
         } else {
             let transport = transport
             task = Task { try await transport.send(call, server: server) }
             readsInFlight[key] = task
         }
+        if rereading, returnOpen { returnReads[key] = task }
         // La requête partagée n'est jamais annulée par un appelant : elle finit, et ses autres attentes la reçoivent.
         let result = await task.result
         if readsInFlight[key] == task { readsInFlight[key] = nil }
         try Task.checkCancellation()
+        if case let .failure(error) = result, error is CancellationError, suspensions > epoch {
+            if resumedSuspensions < suspensions { try await untilReturn() }
+            return try await send(call, on: server, rereading: true)
+        }
         return try result.get()
     }
 
@@ -1466,6 +1540,15 @@ public final class HarnessModel: ObservableObject {
         if error is CancellationError { return nil }
         if let urlError = error as? URLError, urlError.code == .cancelled { return nil }
         return (error as? HarnessFailure) ?? .unreachable
+    }
+
+    /// L'échec d'une lecture qui vient de finir en erreur : une annulation (écran quitté, actualisation
+    /// relancée) garde l'échec d'avant, elle n'efface pas le bandeau d'une panne que l'utilisateur n'a
+    /// pas encore vue ; toute autre erreur donne `failure(of:)`.
+    nonisolated static func failure(after error: Error, keeping current: HarnessFailure?) -> HarnessFailure? {
+        if error is CancellationError { return current }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return current }
+        return failure(of: error)
     }
 }
 

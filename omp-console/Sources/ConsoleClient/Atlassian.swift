@@ -350,7 +350,7 @@ public final class AtlassianModel: ObservableObject {
         } catch HarnessFailure.forbidden {
             clear(.reserved)
         } catch {
-            failure = HarnessModel.failure(of: error)
+            failure = HarnessModel.failure(after: error, keeping: failure)
         }
     }
 
