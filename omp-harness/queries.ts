@@ -4,7 +4,10 @@
 // que les dépôts que son jeton permet (`repos`, `null` : tous).
 import type { EscalationRow, RepoFilter, RunRow, Store } from "./db.ts";
 import { autoAnswerOf } from "./gestures.ts";
-import { isTerminal } from "./machine.ts";
+import { LIVE_RUN_STATES, isTerminal } from "./machine.ts";
+
+/** Les décisions prises seules que la boîte liste au plus : les plus récentes ; `decisionsTotal` dit combien il y en a. */
+export const INBOX_DECISIONS = 200;
 
 /**
  * Une question avec l'étape qui l'a posée (`req`, `specs`, `impl`…) : les apps la
@@ -49,7 +52,8 @@ export function inboxOf(
   repos: RepoFilter = null,
   timeoutSec: number | null = null,
 ): Record<string, unknown> {
-  const runs = store.listRuns({ repos });
+  // Les runs vivants seulement : la boîte ne relit plus tout l'historique pour le filtrer ensuite.
+  const runs = store.listRuns({ repos, state: LIVE_RUN_STATES });
   const byId = new Map(runs.map((run) => [run.id, run]));
   const byRun = new Map<string, unknown[]>();
   let openEscalations = 0;
@@ -61,14 +65,20 @@ export function inboxOf(
     byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
   }
   const awaiting = runs.filter((run) => run.state === "awaiting_human");
-  const decisions = withStep(store, store.listDecisions({ status: ["auto", "auto_timeout"], repos }));
-  const referenced = new Set([...byRun.keys(), ...decisions.map((decision) => decision.runId)]);
+  const unread = { status: ["auto", "auto_timeout"] as ("auto" | "auto_timeout")[], repos };
+  const decisions = withStep(store, store.listDecisions({ ...unread, limit: INBOX_DECISIONS }));
+  // Un run terminé reste dans la boîte s'il porte une décision à relire de la liste.
+  const ended = [...new Set(decisions.map((decision) => decision.runId))]
+    .filter((id) => !byId.has(id))
+    .map((id) => store.getRun(id))
+    .filter((run): run is RunRow => run !== null);
   return {
     pendingCount: openEscalations + awaiting.length,
     batches: [...byRun].map(([runId, items]) => ({ run: byId.get(runId) ?? store.getRun(runId), items })),
     awaiting,
     decisions,
-    runs: runs.filter((run) => !isTerminal(run.state) || referenced.has(run.id)),
+    decisionsTotal: decisions.length < INBOX_DECISIONS ? decisions.length : store.countDecisions(unread),
+    runs: [...runs, ...ended],
     audits: store.listAudits(["queued", "analysing", "proposed"], repos),
     cursor: store.lastEventId(),
   };
@@ -127,13 +137,18 @@ export function autonomyValidations(store: Store, windowDays: number, now: numbe
 
 /** Chaque projet avec le décompte de ses runs par état (la liste des apps). */
 export function projectsOf(store: Store, repos: RepoFilter = null): Record<string, unknown>[] {
-  const runs = store.listRuns({ repos });
-  return store.listProjects(repos).map((project) => {
-    const own = runs.filter((run) => run.projectId === project.id);
-    const byState: Record<string, number> = {};
-    for (const run of own) byState[run.state] = (byState[run.state] ?? 0) + 1;
-    return { ...project, runs: { total: own.length, byState } };
-  });
+  // Compté en base : la liste des projets ne lit plus chaque run.
+  const counts = new Map<string, { total: number; byState: Record<string, number> }>();
+  for (const { key, state, n } of store.countRuns("project_id", repos)) {
+    if (key === null) continue;
+    const own = counts.get(key) ?? { total: 0, byState: {} };
+    own.total += n;
+    own.byState[state] = (own.byState[state] ?? 0) + n;
+    counts.set(key, own);
+  }
+  return store
+    .listProjects(repos)
+    .map((project) => ({ ...project, runs: counts.get(project.id) ?? { total: 0, byState: {} } }));
 }
 
 /** Les compteurs par état et, par dépôt, ce qui vit et ce qui attend : la charge du serveur. */
@@ -144,12 +159,19 @@ export function loadOf(
 ): { runs: Record<string, number>; byRepo: Record<string, Record<string, number>> } {
   const counts: Record<string, number> = {};
   const byRepo: Record<string, Record<string, number>> = {};
-  for (const run of store.listRuns({ repos })) {
-    counts[run.state] = (counts[run.state] ?? 0) + 1;
-    byRepo[run.repo] ??= {};
-    const own = byRepo[run.repo] as Record<string, number>;
-    own[run.state] = (own[run.state] ?? 0) + 1;
-    if (live.has(run.id)) own.live = (own.live ?? 0) + 1;
+  // Compté en base : le statut ne lit plus chaque run ; seuls les runs vivants (peu nombreux) sont relus.
+  for (const { key, state, n } of store.countRuns("repo", repos)) {
+    const repo = key ?? "";
+    counts[state] = (counts[state] ?? 0) + n;
+    byRepo[repo] ??= {};
+    const own = byRepo[repo] as Record<string, number>;
+    own[state] = (own[state] ?? 0) + n;
+  }
+  for (const id of live) {
+    const run = store.getRun(id);
+    if (!run || (repos !== null && !repos.includes(run.repo))) continue;
+    const own = byRepo[run.repo];
+    if (own) own.live = (own.live ?? 0) + 1;
   }
   return { runs: counts, byRepo };
 }

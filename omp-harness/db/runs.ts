@@ -152,7 +152,7 @@ function cancelCauseOf(value: string | null): CancelCause | null {
   return CANCEL_CAUSES.find((cause) => cause === value) ?? "other";
 }
 
-function runOf(row: Row): RunRow {
+export function runOf(row: Row): RunRow {
   return {
     id: str(row, "id"),
     repo: str(row, "repo"),

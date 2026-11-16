@@ -4,7 +4,10 @@
 // - `GET /v1/runs?since=` rend les runs écrits depuis la lecture précédente (et ceux en file), avec `at` :
 //   chaque événement relisait tout l'historique.
 // - Les réponses JSON de plus de 2 Ko partent en gzip au client qui l'accepte.
-// - `GET /v1/stats` est gardé 30 s ; `GET /v1/status` ne fait plus attendre ses lecteurs sur la santé de mem0.
+// - `GET /v1/stats` est gardé 30 s, puis rendu périmé pendant son recalcul ; `GET /v1/status` ne fait plus
+//   attendre ses lecteurs sur la santé de mem0.
+// - L'ouverture ne lit plus tout l'historique : `GET /v1/runs?recent=`, une boîte qui ne lit que les runs
+//   vivants et borne ses décisions à relire, des compteurs de statut et de projets tenus en base.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
@@ -12,6 +15,7 @@ import type { AddressInfo } from "node:net";
 import * as zlib from "node:zlib";
 import { GZIP_MIN_BYTES, PULSE_TEXT, StatsCache, createHandler, pulseFrame } from "../../omp-harness/http.ts";
 import type { EventRow } from "../../omp-harness/db.ts";
+import { INBOX_DECISIONS } from "../../omp-harness/queries.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 
@@ -214,17 +218,41 @@ test("apps-temps-reel/AC-3 : une réponse JSON de plus de 2 Ko part en gzip au c
   }
 });
 
-test("apps-temps-reel/AC-4 : les statistiques sont gardées 30 s par lecteur ; /v1/status lit la santé de mem0 en cache, sans requête à chaque appel", async () => {
+test("apps-temps-reel/AC-4 : les statistiques sont gardées 30 s par lecteur, puis rendues telles quelles pendant qu'un seul recalcul part hors de la requête ; /v1/status lit la santé de mem0 en cache", async () => {
   let now = 0;
-  const cache = new StatsCache(30_000, () => now);
+  const deferred: (() => void)[] = [];
+  const cache = new StatsCache(
+    30_000,
+    () => now,
+    (fn) => deferred.push(fn),
+  );
   let computed = 0;
   const compute = () => ({ n: ++computed });
-  assert.deepEqual(cache.read(null, compute), { n: 1 });
+  assert.deepEqual(cache.read(null, compute), { n: 1 }, "la toute première lecture calcule");
   now = 29_999;
   assert.deepEqual(cache.read(null, compute), { n: 1 });
   assert.deepEqual(cache.read(["demo"], compute), { n: 2 }, "un autre lecteur a son propre calcul");
   now = 30_000;
-  assert.deepEqual(cache.read(null, compute), { n: 3 });
+  assert.deepEqual(cache.read(null, compute), { n: 1 }, "périmées : rendues tout de suite");
+  assert.deepEqual(cache.read(null, compute), { n: 1 });
+  assert.equal(deferred.length, 1, "un seul recalcul en attente");
+  deferred.shift()?.();
+  assert.deepEqual(cache.read(null, compute), { n: 3 }, "le recalcul sert la lecture suivante");
+  const failing = new StatsCache(
+    0,
+    () => 0,
+    (fn) => deferred.push(fn),
+  );
+  failing.read(null, () => ({ ok: 1 }));
+  failing.read(null, () => {
+    throw new Error("base fermée");
+  });
+  deferred.shift()?.();
+  assert.deepEqual(
+    failing.read(null, () => ({ ok: 2 })),
+    { ok: 1 },
+    "un recalcul en échec garde les chiffres d'avant",
+  );
 
   const world = fakeWorld({}, { patch: (config) => (config.oracle = { url: "http://127.0.0.1:9", token: null }) });
   let health = 0;
@@ -242,4 +270,95 @@ test("apps-temps-reel/AC-4 : les statistiques sont gardées 30 s par lecteur ; /
   } finally {
     await api.close();
   }
+});
+
+test("apps-temps-reel/AC-5 : GET /v1/runs?recent=n rend tous les runs vivants et les n terminés écrits le plus récemment, avec `more` ; un recent invalide est un 400", async () => {
+  const world = fakeWorld({});
+  const make = (id: string, state: "merged" | "queued" | "running") =>
+    world.store.createRun({
+      id,
+      repo: "demo",
+      slug: id,
+      title: id,
+      request: id,
+      branch: `harness/${id}`,
+      state,
+      step: state === "merged" ? null : "impl",
+    });
+  for (let i = 0; i < 5; i++) make(`fini-${i}`, "merged");
+  make("en-file", "queued");
+  make("actif", "running");
+  const api = await serve(world);
+  try {
+    const page = JSON.parse((await rawGet(api.port, "/v1/runs?recent=2")).body.toString()) as {
+      runs: { id: string; state: string }[];
+      more: boolean;
+    };
+    const ended = page.runs.filter((run) => run.state === "merged");
+    assert.equal(ended.length, 2);
+    assert.deepEqual(
+      page.runs
+        .filter((run) => run.state !== "merged")
+        .map((run) => run.id)
+        .sort(),
+      ["actif", "en-file"],
+    );
+    assert.equal(page.more, true);
+    const all = JSON.parse((await rawGet(api.port, "/v1/runs?recent=10")).body.toString()) as {
+      runs: unknown[];
+      more: boolean;
+    };
+    assert.deepEqual([all.runs.length, all.more], [7, false]);
+    for (const recent of ["0", "x", "10001"])
+      assert.equal((await rawGet(api.port, `/v1/runs?recent=${recent}`)).status, 400);
+  } finally {
+    await api.close();
+  }
+  // Les plus récents par écriture : un terminé réécrit passe devant.
+  world.store.updateRun("fini-0", { reason: "relu" });
+  const latest = world.store.listEndedRuns(null, 1).map((run) => run.id);
+  assert.deepEqual(latest, ["fini-0"]);
+});
+
+test("apps-temps-reel/AC-6 : la boîte ne lit que les runs vivants (et les terminés qui portent une décision à relire), liste au plus 200 décisions à relire et dit leur total ; statut et projets comptent en base", () => {
+  const world = fakeWorld({});
+  const make = (id: string, state: "merged" | "running") =>
+    world.store.createRun({
+      id,
+      repo: "demo",
+      slug: id,
+      title: id,
+      request: id,
+      branch: `harness/${id}`,
+      state,
+      step: state === "merged" ? null : "impl",
+    });
+  make("vivant", "running");
+  make("ancien", "merged");
+  make("relu", "merged");
+  const step = world.store.startStep("relu", "impl", 0, null, null);
+  for (let i = 0; i < INBOX_DECISIONS + 5; i++)
+    world.store.addDecision({
+      runId: "relu",
+      stepId: step.id,
+      question: `q${i}`,
+      options: ["a", "b"],
+      chosen: "a",
+      rationale: "r",
+      category: "reversible",
+      checkpointSha: null,
+      dependsOn: [],
+    });
+  const inbox = world.orchestrator.inboxView() as {
+    runs: { id: string }[];
+    decisions: { seq: number }[];
+    decisionsTotal: number;
+  };
+  assert.deepEqual(inbox.runs.map((run) => run.id).sort(), ["relu", "vivant"]);
+  assert.equal(inbox.decisions.length, INBOX_DECISIONS);
+  assert.equal(inbox.decisions.at(-1)?.seq, INBOX_DECISIONS + 5, "les plus récentes");
+  assert.equal(inbox.decisionsTotal, INBOX_DECISIONS + 5);
+  const status = world.orchestrator.status() as { runs: Record<string, number>; byRepo: Record<string, unknown> };
+  assert.deepEqual(status.runs, { running: 1, merged: 2 });
+  assert.deepEqual(status.byRepo, { demo: { running: 1, merged: 2 } });
 });

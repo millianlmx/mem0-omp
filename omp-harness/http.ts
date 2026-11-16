@@ -31,6 +31,7 @@ import type {
   EventRow,
   IntakeRow,
   RepoFilter,
+  RunRow,
   SignalState,
   Space,
 } from "./db.ts";
@@ -61,6 +62,7 @@ import {
 import { intakeView, parseIntakeStates, visibleIntake } from "./intake.ts";
 import type { IntakeView } from "./intake.ts";
 import type { RunState } from "./machine.ts";
+import { LIVE_RUN_STATES } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import type { ModelChains, ProviderInput } from "./providers.ts";
 import { PROOF_MIMES } from "./proofs.ts";
@@ -364,24 +366,48 @@ function drained(res: http.ServerResponse): Promise<void> {
 export const STATS_TTL_MS = 30_000;
 
 /**
- * Les statistiques déjà calculées, par lecteur (ses dépôts), gardées `ttlMs` : les apps les lisent à chaque
- * ouverture, et un calcul complet bloque la boucle du service pendant que leurs autres lectures attendent.
+ * Les statistiques déjà calculées, par lecteur (ses dépôts). Fraîches (`ttlMs`), elles sont rendues telles
+ * quelles ; plus vieilles, elles sont rendues QUAND MÊME et recalculées juste après, hors de la requête
+ * (`defer`) : les apps les lisent à chaque ouverture, et un calcul complet bloque la boucle du service
+ * pendant que leurs autres lectures attendent. Seule la toute première lecture d'un lecteur (après un
+ * démarrage) calcule sous ses yeux.
  */
 export class StatsCache {
   readonly #entries = new Map<string, { at: number; value: Record<string, unknown> }>();
+  readonly #refreshing = new Set<string>();
   readonly #ttlMs: number;
   readonly #now: () => number;
-  constructor(ttlMs = STATS_TTL_MS, now: () => number = Date.now) {
+  readonly #defer: (fn: () => void) => void;
+  constructor(
+    ttlMs = STATS_TTL_MS,
+    now: () => number = Date.now,
+    defer: (fn: () => void) => void = (fn) => void setTimeout(fn, 0),
+  ) {
     this.#ttlMs = ttlMs;
     this.#now = now;
+    this.#defer = defer;
   }
   read(repos: RepoFilter, compute: () => Record<string, unknown>): Record<string, unknown> {
     const key = repos === null ? "*" : [...repos].sort().join("\n");
     const hit = this.#entries.get(key);
-    const now = this.#now();
-    if (hit && now - hit.at < this.#ttlMs) return hit.value;
+    if (!hit) return this.#compute(key, compute);
+    if (this.#now() - hit.at >= this.#ttlMs && !this.#refreshing.has(key)) {
+      this.#refreshing.add(key);
+      this.#defer(() => {
+        try {
+          this.#compute(key, compute);
+        } catch {
+          // Un recalcul en échec (base fermée à l'arrêt) garde les chiffres d'avant.
+        } finally {
+          this.#refreshing.delete(key);
+        }
+      });
+    }
+    return hit.value;
+  }
+  #compute(key: string, compute: () => Record<string, unknown>): Record<string, unknown> {
     const value = compute();
-    this.#entries.set(key, { at: now, value });
+    this.#entries.set(key, { at: this.#now(), value });
     return value;
   }
 }
@@ -736,18 +762,35 @@ export function apiRoutes(
       const since = sinceParam === null ? undefined : Number(sinceParam);
       if (since !== undefined && !(Number.isInteger(since) && since >= 0))
         throw new HarnessError(400, "since : entier ≥ 0 (epoch ms)");
+      // `recent=<n>` : la première lecture d'une app — tous les runs vivants et les `n` terminés les plus récents,
+      // `more` s'il en reste de plus anciens ; l'historique entier ne se télécharge plus à chaque ouverture.
+      const recentParam = call.url.searchParams.get("recent");
+      const recent = recentParam === null ? undefined : Number(recentParam);
+      if (recent !== undefined && !(Number.isInteger(recent) && recent >= 1 && recent <= 10_000))
+        throw new HarnessError(400, "recent : entier de 1 à 10 000");
       const at = Date.now();
-      const runs = store.listRuns({
-        ...(state ? { state: state.split(",") as RunState[] } : {}),
-        ...(repo ? { repo } : {}),
-        ...(since !== undefined ? { updatedSince: since } : {}),
-        repos: call.repos,
-      });
+      let more = false;
+      let runs: RunRow[];
+      if (recent !== undefined && since === undefined && !state && !repo) {
+        const ended = store.listEndedRuns(call.repos, recent + 1);
+        more = ended.length > recent;
+        runs = [...store.listRuns({ state: LIVE_RUN_STATES, repos: call.repos }), ...ended.slice(0, recent)].sort(
+          (a, b) => a.projectOrder - b.projectOrder || a.createdAt - b.createdAt,
+        );
+      } else {
+        runs = store.listRuns({
+          ...(state ? { state: state.split(",") as RunState[] } : {}),
+          ...(repo ? { repo } : {}),
+          ...(since !== undefined ? { updatedSince: since } : {}),
+          repos: call.repos,
+        });
+      }
       // En file, la raison d'un run dit ce qui le retient (Orchestrator.withWait).
       send(call.res, 200, {
         runs: runs.map((run) => orchestrator.withWait(run)),
         at,
         ...(since !== undefined ? { since } : {}),
+        ...(recent !== undefined && since === undefined ? { more } : {}),
       });
     }),
     route("POST", "/v1/runs", "operator", async (call) => {
