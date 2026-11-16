@@ -2059,17 +2059,20 @@ Recette pas à pas :
 4. Chercher un terme. Attendu : les souvenirs au-dessus du seuil, ou l'un des trois
    « rien trouvé » distincts ; vider le champ revient au sommaire sans requête.
 5. Couper le serveur (`harness.sh down`), tirer pour actualiser. Attendu : « Mémoire
-   du serveur injoignable. » et son remède, les lignes déjà lues restent, et
-   « Réessayer » relit une fois le serveur revenu.
+   du serveur injoignable. » et son remède, les lignes déjà lues sont gardées (elles
+   reviennent hors connexion et à la lecture suivante), et « Réessayer » relit une
+   fois le serveur revenu.
 
 Une portée entière pèse lourd sur un réseau mobile, et le service la rend d'un bloc : l'app
-la télécharge UNE fois par actualisation (`MemoryAccess`). Ouvrir le sommaire, ouvrir
-le graphe, ou choisir un projet lit `/memory/all` de la portée ; les pages suivantes
-tranchent cette lecture sans rien télécharger, et le graphe ne lit que ses arêtes
-(`/memory/graph`) sur les lignes que le sommaire vient de lire. Tirer pour actualiser, « Réessayer »
-et le second graphe (⌘R) relisent la portée. Sans projet choisi, la première lecture est celle de
-TOUTE la mémoire (elle sert à trouver les portées) : le service filtre `agent_id` en SQL et trie de la
-même façon avec ou sans filtre, donc les lignes de la portée la plus récente en sont tirées sans second
+la télécharge UNE fois par actualisation (`MemoryAccess`), et une lecture en cours est partagée par
+la liste, ses pages suivantes, le graphe et la recherche. Les pages suivantes tranchent cette lecture
+sans rien télécharger, et le graphe ne lit que ses arêtes (`/memory/graph`) sur ses lignes. Tirer pour
+actualiser, « Réessayer », le choix d'un projet, un code d'appairage collé et le graphe rouvert ou
+actualisé (⌘R) relisent la portée ; une actualisation ne rejoint jamais une lecture partie avant elle,
+et la liste repart toujours de la dernière lecture du projet choisi. La lecture de TOUTE la mémoire
+(elle donne les projets) a lieu une fois par lancement et par mémoire reliée, et à chaque actualisation
+tant qu'aucun projet n'existe : le service filtre `agent_id` en SQL et trie de la même façon avec ou
+sans filtre, donc les lignes du projet choisi, ou du plus récent, en sont tirées sans second
 téléchargement.
 
 ### Recette en réseau dégradé

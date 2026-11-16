@@ -25,9 +25,16 @@ protocol IOSMemoryReading: AnyObject {
     func memoryPage(scope: String?, offset: Int, limit: Int?) async throws -> RemoteMemoryPagePayload
     func memorySearch(query: String, scope: String?, limit: Int?) async throws -> RemoteMemorySearchPayload
     func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload
+    /// Chaque lecture complète que l'accès garde, après qu'elle l'est : le sommaire s'y recale.
+    var keptReads: AnyPublisher<MemoryKeptRead, Never> { get }
 }
 
 extension MemoryAccess: IOSMemoryReading {}
+
+extension IOSMemoryReading {
+    /// Une doublure qui ne garde aucune lecture complète ne publie rien.
+    var keptReads: AnyPublisher<MemoryKeptRead, Never> { Empty<MemoryKeptRead, Never>().eraseToAnyPublisher() }
+}
 
 /// L'état de la page suivante du sommaire (S-4) : le pied de liste le rend.
 enum IOSMemoryMore: Equatable {
@@ -135,8 +142,26 @@ final class IOSMemoryModel: ObservableObject {
     /// La lecture de la page suivante, annulée par tout rechargement.
     private var moreTask: Task<Void, Never>?
 
+    private var summaryRead: Int?
+    private var keptWatch: AnyCancellable?
+
     init(client: any IOSMemoryReading) {
         self.client = client
+        keptWatch = client.keptReads.sink { [weak self] kept in
+            MainActor.assumeIsolated { self?.adopt(kept) }
+        }
+    }
+
+    /// Une lecture complète gardée par l'accès (la liste, le graphe, une autre fenêtre) : le sommaire repart de
+    /// sa première page, sans aucun appel. Les pages déjà lues d'une autre lecture ne se mêlent jamais à elle.
+    func adopt(_ kept: MemoryKeptRead) {
+        guard kept.number != summaryRead else { return }
+        moreTask?.cancel()
+        moreTask = nil
+        let summary = IOSMemorySummary(firstPage: kept.firstPage)
+        summaryRead = kept.number
+        summaryPage = summary
+        if case .page = load { load = .page(summary) }
     }
 
     // MARK: - Décisions PURES (testables sans render)
@@ -312,6 +337,7 @@ final class IOSMemoryModel: ObservableObject {
     // MARK: - Travail
 
     private func perform() async {
+        let previous = load
         load = .loading
         switch mode {
         case .summary:
@@ -321,6 +347,8 @@ final class IOSMemoryModel: ObservableObject {
                 let summary = IOSMemorySummary(firstPage: page)
                 summaryPage = summary
                 load = .page(summary)
+            } catch is CancellationError {
+                if !Task.isCancelled { load = restored(previous) }
             } catch {
                 if Task.isCancelled { return }
                 load = Self.load(from: error)
@@ -330,10 +358,25 @@ final class IOSMemoryModel: ObservableObject {
                 let payload = try await client.memorySearch(query: query, scope: nil, limit: nil)
                 if Task.isCancelled { return }
                 load = .search(payload)
+            } catch is CancellationError {
+                if !Task.isCancelled { load = restored(previous) }
             } catch {
                 if Task.isCancelled { return }
                 load = Self.load(from: error)
             }
+        }
+    }
+
+    /// Ce que l'écran montre après une lecture annulée sans être affichée : ce que le modèle détient, jamais
+    /// `.loading` (sans lecture en vol, il figerait l'écran, car tirer et ⌘R sont grisés pendant un chargement).
+    private func restored(_ previous: IOSMemoryLoad) -> IOSMemoryLoad {
+        switch (mode, previous) {
+        case (.summary, .failed), (.search, .search), (.search, .failed):
+            return previous
+        case (.summary, _):
+            return summaryPage.map(IOSMemoryLoad.page) ?? .idle
+        case (.search, _):
+            return .idle
         }
     }
 
@@ -355,7 +398,12 @@ final class IOSMemoryModel: ObservableObject {
         case .success(let page):
             summary.append(page, requested: offset)
         case .failure(let error):
-            summary.more = .failed(message: Self.failureMessage(Self.load(from: error)))
+            if error is CancellationError {
+                // Une lecture annulée (mémoire reliée de nouveau) n'est pas une panne : le pied reprendra.
+                summary.more = .available
+            } else {
+                summary.more = .failed(message: Self.failureMessage(Self.load(from: error)))
+            }
         }
         publish(summary)
     }

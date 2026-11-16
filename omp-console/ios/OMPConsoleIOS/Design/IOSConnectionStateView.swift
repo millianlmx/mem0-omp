@@ -123,12 +123,12 @@ struct IOSConnectionStateView: View {
 }
 
 extension View {
-    /// Lance `perform` quand la mémoire DEVIENT reliée (un code d'appairage vient
-    /// d'être collé, S-4) — jamais au premier rendu.
+    /// Lance `perform` à chaque code d'appairage accepté (S-4) — jamais au premier rendu, ni à l'oubli.
+    /// Un code vers la même adresse ne change aucune autre valeur publiée : le compteur `pairings` le dit.
     @MainActor
     func onMemoryConfigured(_ memory: MemoryAccess, perform: @escaping () -> Void) -> some View {
-        onChange(of: memory.isConfigured) { old, new in
-            if !old && new { perform() }
+        onChange(of: memory.pairings) { _, _ in
+            perform()
         }
     }
 }

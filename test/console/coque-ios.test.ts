@@ -214,6 +214,19 @@ const FORBIDDEN_TOKENS = [
 const NETWORK_PROOF = path.join("omp-console", "ios", "OMPConsoleIOSTests", "IOSDelaisSurSocketsTests.swift");
 const NETWORK_PROOF_TOKENS = ["URLSession", "URLRequest", "http://", "https://"];
 
+/**
+ * Le fichier de tests de la Mémoire (memoire-ios-une-seule-lecture-de-portee) : sa doublure de
+ * `MemoryTransport` doit écrire la signature `send(_ request: URLRequest)`, sans ouvrir aucune socket.
+ * Exempté de ce seul jeton-là.
+ */
+const MEMORY_PROOF = path.join("omp-console", "ios", "OMPConsoleIOSTests", "IOSMemoireUneLectureTests.swift");
+
+/** Les exemptions de jetons, par fichier (nominatives : un autre fichier n'a droit à rien). */
+const TOKEN_EXEMPTIONS: Record<string, string[]> = {
+  [NETWORK_PROOF]: NETWORK_PROOF_TOKENS,
+  [MEMORY_PROOF]: ["URLRequest"],
+};
+
 /** Les cibles DECLAREES par le `.pbxproj`, chacune avec ses groupes synchronisés. */
 type RawTarget = { id: string; groups: string[] };
 
@@ -445,9 +458,9 @@ function tokenFaults(root: string): string[] {
   const faults: string[] = [];
   const sources = allIOSSources(root);
   for (const { file, code: text } of sources) {
-    const exempt = path.relative(root, file) === NETWORK_PROOF;
+    const exemptTokens = TOKEN_EXEMPTIONS[path.relative(root, file)] ?? [];
     for (const token of FORBIDDEN_TOKENS) {
-      if (exempt && NETWORK_PROOF_TOKENS.includes(token)) continue;
+      if (exemptTokens.includes(token)) continue;
       if (text.includes(token)) faults.push(`${path.relative(root, file)} : jeton interdit « ${token} »`);
     }
     const declarations = text.match(/\b(?:struct|enum|class|actor|protocol)\s+(\w+)/g) ?? [];
@@ -694,5 +707,14 @@ test("coque-ios/AC-8 : aucun réseau, aucun magasin, aucun badge, ni Terminal ni
   assert.ok(
     tokenFaults(otherCopy).some((f) => f.includes("AutreTests.swift") && f.includes("URLSession")),
     "un autre fichier de tests ne peut pas nommer URLSession",
+  );
+  // La preuve de la Mémoire n'est exemptée que de `URLRequest` (la signature de `MemoryTransport.send`) :
+  // `URLSession` y reste interdit.
+  assert.ok(fs.existsSync(path.join(ROOT, MEMORY_PROOF)), "le fichier de la Mémoire exempté doit exister");
+  const memoryCopy = shared.fresh();
+  fs.appendFileSync(path.join(memoryCopy, MEMORY_PROOF), "\nlet session = URLSession.shared\n");
+  assert.ok(
+    tokenFaults(memoryCopy).some((f) => f.includes("IOSMemoireUneLectureTests.swift") && f.includes("URLSession")),
+    "URLSession reste interdit dans le fichier de la Mémoire",
   );
 });

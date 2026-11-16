@@ -73,6 +73,11 @@ private func access(_ transport: ScriptedMemoryTransport, chosen: String? = nil)
     let access = MemoryAccess(preferences: preferences, tokens: InMemoryTokenStore(), transport: transport)
     await access.configure(address: "https://vps:8443", token: "jeton")
     await access.load()
+    if let chosen {
+        // Une portée choisie sur un accès neuf passe par la lecture des portées : ici, elle est déjà lue.
+        transport.reply("/memory/all", json: #"{"results":[{"id":"s","memory":"x","agent_id":"\#(chosen)"}]}"#)
+        try? await access.refreshScopes()
+    }
     return access
 }
 

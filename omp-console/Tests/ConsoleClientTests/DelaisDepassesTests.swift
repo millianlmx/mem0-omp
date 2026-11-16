@@ -92,6 +92,7 @@ struct DelaisDepassesTests {
         let transport = ScriptedMemoryTransport()
         let rows = (0 ..< 150).map { #"{"id":"m\#($0)","memory":"souvenir","agent_id":"produit"}"# }
         transport.reply("/memory/all?agent_id=produit", json: #"{"total":150,"results":[\#(rows.joined(separator: ","))]}"#)
+        transport.reply("/memory/all", json: #"{"total":150,"results":[\#(rows.joined(separator: ","))]}"#)
         let preferences = InMemoryClientPreferences()
         preferences.set("produit", forKey: MemoryAccess.scopeKey)
         let access = MemoryAccess(preferences: preferences, tokens: InMemoryTokenStore(), transport: transport)
