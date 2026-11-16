@@ -474,8 +474,9 @@ public final class HarnessModel: ObservableObject {
         wantsCatalog = true
         // Les statistiques (un calcul sur toute la base du serveur) ne retiennent pas le reste :
         // statut, projets et audits s'affichent dès qu'ils arrivent.
+        // Le bandeau d'échec reste celui du catalogue : des statistiques lues ne l'effacent pas, en échec ne le posent pas.
         async let catalog: Void = readCatalog([.status, .projects, .audits])
-        async let figures: Void = readCatalog(.stats)
+        async let figures: Void = readCatalog(.stats, reportsFailure: false)
         _ = await (catalog, figures)
     }
 
@@ -493,8 +494,9 @@ public final class HarnessModel: ObservableObject {
     /// les relit qu'une fois par période, pas à chaque événement.
     static let statsPeriod: Duration = .seconds(60)
 
-    /// Lit les parties demandées en même temps ; un échec n'en retient aucune.
-    private func readCatalog(_ parts: CatalogParts) async {
+    /// Lit les parties demandées en même temps ; un échec n'en retient aucune. `reportsFailure` faux : la
+    /// lecture ne touche pas au bandeau d'échec (ni ne le pose, ni ne l'efface).
+    private func readCatalog(_ parts: CatalogParts, reportsFailure: Bool = true) async {
         guard let server, !parts.isEmpty else { return }
         async let readStatus: HarnessStatus? = parts.contains(.status) ? perform(HarnessCall(method: "GET", path: "/v1/status"), on: server) : nil
         async let readProjects: HarnessProjects? = parts.contains(.projects) ? perform(HarnessCall(method: "GET", path: "/v1/projects"), on: server) : nil
@@ -512,9 +514,9 @@ public final class HarnessModel: ObservableObject {
                 statsReadAt = .now
                 update(\.stats, stats)
             }
-            update(\.failure, nil)
+            if reportsFailure { update(\.failure, nil) }
         } catch {
-            update(\.failure, Self.failure(after: error, keeping: failure))
+            if reportsFailure { update(\.failure, Self.failure(after: error, keeping: failure)) }
         }
     }
 
