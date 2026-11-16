@@ -122,9 +122,10 @@ public struct OSRadar: View {
             workspace.pauseRequested = false
             togglePause()
         }
+        // L'ouverture et le flux les tiennent à jour : rien n'est relu à chaque apparition.
         .task(id: server.address) {
-            await pause.refresh()
-            await localSessions.refresh()
+            if pause.availability == .unknown { await pause.refresh() }
+            if localSessions.availability == .unknown { await localSessions.refresh() }
         }
         // Les chiffres de l'espace retenu (coût du jour, reste du budget) se relisent quand il change.
         .task(id: spaceKey) {

@@ -44,12 +44,13 @@ public struct OSKnowledgeView: View {
         }
         .formStyle(.grouped)
         .navigationTitle(OSWatchText.knowledge)
+        // Ce que l'ouverture ou le flux a déjà lu n'est pas relu à chaque passage sur l'écran.
         .task(id: server.address) {
-            await server.rules.refresh()
-            await server.autonomy.refresh()
+            if server.rules.availability == .unknown { await server.rules.refresh() }
+            if server.autonomy.availability == .unknown { await server.autonomy.refresh() }
             // La confiance d'un dépôt se lit sur la semaine, quelle que soit la dernière fenêtre lue.
             await server.scoreboard.refresh(days: HarnessScoreboardModel.defaultDays)
-            await server.spaces.refresh()
+            if server.spaces.availability == .unknown { await server.spaces.refresh() }
             if server.repos.isEmpty { await server.refreshCatalog() }
         }
     }

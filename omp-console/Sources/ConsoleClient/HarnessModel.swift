@@ -452,7 +452,11 @@ public final class HarnessModel: ObservableObject {
     /// premier appel, le flux le relit aussi, sur les seuls événements qui le changent.
     public func refreshCatalog() async {
         wantsCatalog = true
-        await readCatalog(CatalogParts.all)
+        // Les statistiques (un calcul sur toute la base du serveur) ne retiennent pas le reste :
+        // statut, projets et audits s'affichent dès qu'ils arrivent.
+        async let catalog: Void = readCatalog([.status, .projects, .audits])
+        async let figures: Void = readCatalog(.stats)
+        _ = await (catalog, figures)
     }
 
     /// Les parties du catalogue qu'une relecture lit.

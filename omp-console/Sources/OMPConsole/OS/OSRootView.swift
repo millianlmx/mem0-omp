@@ -189,14 +189,9 @@ struct OSRootView: View {
                     workspace.open(destination)
                 }
             }
-            await history.refresh()
-            await workstation.load()
-            await vigie.load()
-            await intakes.refresh()
-            await atlassian.refresh()
-            await localSessions.refresh()
-            await spaces.refresh()
-            await server.refreshCatalog()
+            // Toutes les lectures de l'ouverture EN MÊME TEMPS, comme sur iOS : le temps d'ouverture
+            // suit la plus longue, pas la somme de toutes.
+            await server.readShell(.opening)
             // Recette : l'espace retenu dans la liste, et la page d'un espace (par identifiant ou par nom).
             if let chosen = recipeSpace(environment["OMP_CONSOLE_OS_SPACE"]) { workspace.choose(space: chosen) }
             if let view = environment["OMP_CONSOLE_OS_VIEW"], view.hasPrefix(Self.recipeSpacePrefix),
@@ -252,13 +247,10 @@ struct OSRootView: View {
 
     /// ⌘R : la boîte, le catalogue et l'historique, puis ce que montre le centre.
     private func reload() async {
-        await server.refresh()
-        await server.refreshCatalog()
-        await history.refresh()
-        await workstation.load()
-        await vigie.load()
-        await intakes.refresh()
-        await localSessions.refresh()
+        async let inbox: Void = server.refresh()
+        async let catalog: Void = server.refreshCatalog()
+        async let shell: Void = server.readShell(.refreshing)
+        _ = await (inbox, catalog, shell)
         switch workspace.selection {
         case OSWorkspace.automations:
             await server.schedules.refresh()

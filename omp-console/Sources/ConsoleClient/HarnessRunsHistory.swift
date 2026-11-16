@@ -7,7 +7,9 @@
 // relit avec elle ; un geste (priorité, arrêt…) le relit aussi. Ces relectures sont
 // INCRÉMENTALES : `GET /v1/runs?since=<at>` ne rend que les runs écrits depuis la lecture
 // précédente (et ceux en file), fusionnés par id ; `refresh()` (ouverture, retour au
-// premier plan) relit tout. Un serveur sans `since` rend tout, et la liste est remplacée.
+// premier plan) relit la liste : les runs vivants et les `recentLimit` terminés les plus
+// récents (`?recent=`), pas tout l'historique. Un serveur sans `since` ni `recent` rend
+// tout, et la liste est remplacée.
 
 import Combine
 import Foundation
@@ -23,6 +25,8 @@ public final class HarnessRunsHistory: ObservableObject {
     /// L'instant serveur (`at`) de la dernière lecture : la suivante ne demande que ce qui a
     /// été écrit depuis. `nil` : la prochaine lecture est complète.
     private var syncedAt: Double?
+    /// Les features terminées lues à l'ouverture : les plus récentes.
+    static let recentLimit = 500
 
     init(harness: HarnessModel) {
         self.harness = harness
@@ -39,7 +43,7 @@ public final class HarnessRunsHistory: ObservableObject {
     /// précédente quand le serveur sait le dire. Rien n'est republié si elle n'a pas changé,
     /// et une lecture en échec garde la précédente.
     func reload() async {
-        let path = syncedAt.map { "/v1/runs?since=\(Int64($0))" } ?? "/v1/runs"
+        let path = syncedAt.map { "/v1/runs?since=\(Int64($0))" } ?? "/v1/runs?recent=\(Self.recentLimit)"
         guard let page: HarnessRunsPage = try? await harness.fetch(HarnessCall(method: "GET", path: path)) else { return }
         update(\.runs, page.since == nil ? page.runs : Self.merging(page.runs, into: runs))
         syncedAt = page.at

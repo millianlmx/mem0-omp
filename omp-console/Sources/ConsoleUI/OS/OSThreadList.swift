@@ -78,9 +78,10 @@ public struct OSThreadList: View {
             List { content }
             #endif
         }
+        // L'ouverture et le flux les tiennent à jour : rien n'est relu à chaque apparition.
         .task(id: server.address) {
-            await spaces.refresh()
-            await proposals.refresh()
+            if spaces.availability == .unknown { await spaces.refresh() }
+            if proposals.availability == .unknown { await proposals.refresh() }
         }
         // Un espace supprimé ailleurs ne retient plus rien.
         .onChange(of: spaces.spaces.map(\.id)) { _, ids in

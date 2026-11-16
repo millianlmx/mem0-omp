@@ -1,7 +1,8 @@
 // L'historique des features se relit par morceaux (`GET /v1/runs?since=`, omp-harness
 // apps-temps-reel/AC-2) : après une lecture complète, un événement ne fait plus télécharger
 // tout l'historique, seulement les runs écrits depuis, fusionnés par id. `refresh()` (ouverture,
-// retour au premier plan) relit tout ; un serveur sans `since` rend tout et la liste est remplacée.
+// retour au premier plan) relit la liste (`?recent=`) ; un serveur sans `since` rend tout et la
+// liste est remplacée.
 
 @testable import ConsoleClient
 import ConsoleCore
@@ -44,7 +45,7 @@ struct HistoriqueIncrementalTests {
         let inbox = #"{"cursor":0,"batches":[],"awaiting":[],"decisions":[],"runs":[]}"#
         let transport = PathTransport([
             "/v1/inbox": inbox,
-            "/v1/runs": #"{"runs":[\#(json("r1", "running", 1)),\#(json("r2", "queued", 2))],"at":1000}"#,
+            "/v1/runs?recent=500": #"{"runs":[\#(json("r1", "running", 1)),\#(json("r2", "queued", 2))],"at":1000}"#,
             "/v1/runs?since=1000": #"{"runs":[\#(json("r1", "merged", 1)),\#(json("r3", "queued", 3))],"at":2000,"since":1000}"#,
         ])
         let server = HarnessModel(
@@ -60,9 +61,9 @@ struct HistoriqueIncrementalTests {
         #expect(server.history.runs.map(\.id) == ["r1", "r2", "r3"])
         #expect(server.history.run("r1")?.state == "merged")
 
-        let before = transport.paths.filter { $0 == "/v1/runs" }.count
+        let before = transport.paths.filter { $0 == "/v1/runs?recent=500" }.count
         await server.history.refresh()
-        #expect(transport.paths.filter { $0 == "/v1/runs" }.count == before + 1, "refresh relit tout")
+        #expect(transport.paths.filter { $0 == "/v1/runs?recent=500" }.count == before + 1, "refresh relit la liste")
     }
 
     @Test("la fusion remplace à sa place, ajoute l'inconnu à la fin dans l'ordre du serveur, et ne touche rien sans changement")
