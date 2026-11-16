@@ -66,6 +66,7 @@ private func reads(_ transport: ScriptedMemoryTransport, _ path: String) -> Int 
     }.count
 }
 
+@MainActor
 private func access(_ transport: ScriptedMemoryTransport, chosen: String? = nil) async -> MemoryAccess {
     let preferences = InMemoryClientPreferences()
     if let chosen { preferences.set(chosen, forKey: MemoryAccess.scopeKey) }
