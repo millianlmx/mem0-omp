@@ -2047,7 +2047,8 @@ export class Orchestrator {
   async oracleStatus(): Promise<{ configured: boolean; ok: boolean; lostWrites: LostWrites }> {
     const lostWrites = this.#ctx.oracle.lostWrites();
     if (!this.#ctx.config.oracle) return { configured: false, ok: false, lostWrites };
-    return { configured: true, ok: await this.#ctx.oracle.health(), lostWrites };
+    // La santé déjà lue par l'observabilité (gardée 30 s) : `/v1/status` ne fait plus attendre ses lecteurs sur mem0.
+    return { configured: true, ok: (await this.#ctx.observability.memoryStatus()).ok, lostWrites };
   }
 }
 

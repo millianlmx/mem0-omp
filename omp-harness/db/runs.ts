@@ -264,6 +264,8 @@ export class RunStore extends StoreCore {
       projectId?: string;
       afterRun?: string;
       repos?: RepoFilter;
+      /** Seulement les runs écrits à partir de cet instant (epoch ms), et tous ceux en file (leur attente bouge sans écriture). */
+      updatedSince?: number;
     } = {},
   ): RunRow[] {
     const where: string[] = [];
@@ -288,6 +290,10 @@ export class RunStore extends StoreCore {
     if (filter.afterRun) {
       where.push("after_run = ?");
       params.push(filter.afterRun);
+    }
+    if (filter.updatedSince !== undefined) {
+      where.push("(updated_at >= ? OR state = 'queued')");
+      params.push(filter.updatedSince);
     }
     const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
     return this.selectAll(`SELECT * FROM runs ${clause} ORDER BY project_order, created_at, rowid`, ...params).map(
