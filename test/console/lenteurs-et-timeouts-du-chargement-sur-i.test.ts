@@ -38,41 +38,51 @@ function wiringFaults(all: Map<string, string>): string[] {
   // RootView ne relit plus rien : ni phase, ni lectures liées à l'adresse.
   const root = code(ROOT_VIEW);
   if (root.includes("scenePhase")) faults.push(`${ROOT_VIEW} : scenePhase (la phase de l'app se lit dans l'App)`);
-  if (root.includes(".task(id: server.address)")) faults.push(`${ROOT_VIEW} : .task(id: server.address) (les lectures sont celles de load())`);
+  if (root.includes(".task(id: server.address)"))
+    faults.push(`${ROOT_VIEW} : .task(id: server.address) (les lectures sont celles de load())`);
 
   // Le chargement initial : readShell(.opening), rien d'autre à attendre.
   const shell = code(SHELL);
   const load = memberBody(shell, "private func load()");
-  if (!load.includes("await server.readShell(.opening)")) faults.push(`${SHELL} : load() sans « await server.readShell(.opening) »`);
-  if (count(load, "await") !== 1) faults.push(`${SHELL} : load() attend ${count(load, "await")} fois (attendu 1, readShell)`);
+  if (!load.includes("await server.readShell(.opening)"))
+    faults.push(`${SHELL} : load() sans « await server.readShell(.opening) »`);
+  if (count(load, "await") !== 1)
+    faults.push(`${SHELL} : load() attend ${count(load, "await")} fois (attendu 1, readShell)`);
 
   // Tirer pour actualiser : readShell(.refreshing) en parallèle de la boîte.
   const reload = memberBody(shell, "private func reload()");
-  if (!reload.includes("server.readShell(.refreshing)")) faults.push(`${SHELL} : reload() sans « server.readShell(.refreshing) »`);
+  if (!reload.includes("server.readShell(.refreshing)"))
+    faults.push(`${SHELL} : reload() sans « server.readShell(.refreshing) »`);
   if (!reload.includes("await server.refresh()")) faults.push(`${SHELL} : reload() sans « await server.refresh() »`);
   const others = reload.replace("await server.refresh()", "").replace(/await shell\b/, "");
-  if (/\bawait\b/.test(others)) faults.push(`${SHELL} : reload() attend autre chose que la boîte et la lecture de la coque`);
+  if (/\bawait\b/.test(others))
+    faults.push(`${SHELL} : reload() attend autre chose que la boîte et la lecture de la coque`);
 
   // La fenêtre ne pilote que son pouls.
   const window = phaseBody(shell);
-  if (!window.includes("workspace.pulse.phaseChanged(")) faults.push(`${SHELL} : .onChange(of: scenePhase) sans workspace.pulse.phaseChanged(`);
+  if (!window.includes("workspace.pulse.phaseChanged("))
+    faults.push(`${SHELL} : .onChange(of: scenePhase) sans workspace.pulse.phaseChanged(`);
   for (const forbidden of ["lifecycle", "suspendStreams", "readShell", "refresh"]) {
-    if (window.includes(forbidden)) faults.push(`${SHELL} : .onChange(of: scenePhase) de la fenêtre touche « ${forbidden} »`);
+    if (window.includes(forbidden))
+      faults.push(`${SHELL} : .onChange(of: scenePhase) de la fenêtre touche « ${forbidden} »`);
   }
 
   // L'App : la phase agrégée, sur la scène (même retrait que `.commands`), un seul appel.
   const app = code(APP_FILE);
   if (!app.includes("@Environment(\\.scenePhase)")) faults.push(`${APP_FILE} : @Environment(\\.scenePhase) absent`);
-  if (!/@State private var lifecycle = HarnessAppLifecycle\(\)/.test(app)) faults.push(`${APP_FILE} : HarnessAppLifecycle() non tenu en @State`);
+  if (!/@State private var lifecycle = HarnessAppLifecycle\(\)/.test(app))
+    faults.push(`${APP_FILE} : HarnessAppLifecycle() non tenu en @State`);
   const sceneIndent = indentOfLine(app, ".onChange(of: scenePhase)");
   const commandsIndent = indentOfLine(app, ".commands");
   if (sceneIndent < 0 || sceneIndent !== commandsIndent)
     faults.push(`${APP_FILE} : .onChange(of: scenePhase) pas au retrait de .commands (modificateur de la scène)`);
-  if (!phaseBody(app).includes("lifecycle.phaseChanged(")) faults.push(`${APP_FILE} : .onChange(of: scenePhase) n'appelle pas lifecycle.phaseChanged(`);
+  if (!phaseBody(app).includes("lifecycle.phaseChanged("))
+    faults.push(`${APP_FILE} : .onChange(of: scenePhase) n'appelle pas lifecycle.phaseChanged(`);
 
   // Dans toute l'app : un seul appel au cycle de vie, jamais de coupure des flux à la main.
   const whole = [...all.keys()].map(code).join("\n");
-  if (count(whole, "lifecycle.phaseChanged(") !== 1) faults.push(`lifecycle.phaseChanged( apparaît ${count(whole, "lifecycle.phaseChanged(")} fois (attendu 1)`);
+  if (count(whole, "lifecycle.phaseChanged(") !== 1)
+    faults.push(`lifecycle.phaseChanged( apparaît ${count(whole, "lifecycle.phaseChanged(")} fois (attendu 1)`);
   if (whole.includes("suspendStreams")) faults.push("suspendStreams appelé depuis l'app iOS");
   return faults;
 }
@@ -97,24 +107,56 @@ test("lenteurs-et-timeouts-du-chargement-sur-i/AC-168 : l'app iOS lit par readSh
   };
 
   // `.task(id: server.address)` remis dans RootView.
-  red(ROOT_VIEW, (s) => s.replace(".task {", ".task(id: server.address) { await server.workstation.refresh() }\n        .task {"), ".task(id: server.address)");
+  red(
+    ROOT_VIEW,
+    (s) => s.replace(".task {", ".task(id: server.address) { await server.workstation.refresh() }\n        .task {"),
+    ".task(id: server.address)",
+  );
 
   // Une lecture en série ajoutée à load().
-  red(SHELL, (s) => s.replace("await server.readShell(.opening)", "await server.readShell(.opening)\n        await workstation.load()"), "load() attend");
+  red(
+    SHELL,
+    (s) =>
+      s.replace(
+        "await server.readShell(.opening)",
+        "await server.readShell(.opening)\n        await workstation.load()",
+      ),
+    "load() attend",
+  );
 
   // readShell(.opening) retiré de load().
-  red(SHELL, (s) => s.replace("await server.readShell(.opening)", "await server.refreshCatalog()"), "sans « await server.readShell(.opening) »");
+  red(
+    SHELL,
+    (s) => s.replace("await server.readShell(.opening)", "await server.refreshCatalog()"),
+    "sans « await server.readShell(.opening) »",
+  );
 
   // readShell(.refreshing) retiré de reload().
-  red(SHELL, (s) => s.replace("async let shell: Void = server.readShell(.refreshing)", "async let shell: Void = server.refreshCatalog()"), "sans « server.readShell(.refreshing) »");
+  red(
+    SHELL,
+    (s) =>
+      s.replace(
+        "async let shell: Void = server.readShell(.refreshing)",
+        "async let shell: Void = server.refreshCatalog()",
+      ),
+    "sans « server.readShell(.refreshing) »",
+  );
 
   // L'appel au cycle de vie déplacé dans la fenêtre.
   red(
     SHELL,
-    (s) => s.replace("workspace.pulse.phaseChanged(to: HarnessAppPhase(phase))", "lifecycle.phaseChanged(to: HarnessAppPhase(phase), harness: server)"),
+    (s) =>
+      s.replace(
+        "workspace.pulse.phaseChanged(to: HarnessAppPhase(phase))",
+        "lifecycle.phaseChanged(to: HarnessAppPhase(phase), harness: server)",
+      ),
     "touche « lifecycle »",
   );
 
   // Le .onChange de l'App indenté dans le contenu de la fenêtre.
-  red(APP_FILE, (s) => s.replace(/\n {8}\.onChange\(of: scenePhase\)/, "\n            .onChange(of: scenePhase)"), "pas au retrait de .commands");
+  red(
+    APP_FILE,
+    (s) => s.replace(/\n {8}\.onChange\(of: scenePhase\)/, "\n            .onChange(of: scenePhase)"),
+    "pas au retrait de .commands",
+  );
 });
