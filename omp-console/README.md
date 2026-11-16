@@ -2062,6 +2062,48 @@ Recette pas à pas :
    du serveur injoignable. » et son remède, les lignes déjà lues restent, et
    « Réessayer » relit une fois le serveur revenu.
 
+Une portée entière pèse lourd sur un réseau mobile, et le service la rend d'un bloc : l'app
+la télécharge UNE fois par actualisation (`MemoryAccess`). Ouvrir le sommaire, ouvrir
+le graphe, ou choisir un projet lit `/memory/all` de la portée ; les pages suivantes
+tranchent cette lecture sans rien télécharger, et le graphe ne lit que ses arêtes
+(`/memory/graph`) sur les lignes que le sommaire vient de lire. Tirer pour actualiser, « Réessayer »
+et le second graphe (⌘R) relisent la portée. Sans projet choisi, la première lecture est celle de
+TOUTE la mémoire (elle sert à trouver les portées) : le service filtre `agent_id` en SQL et trie de la
+même façon avec ou sans filtre, donc les lignes de la portée la plus récente en sont tirées sans second
+téléchargement.
+
+### Recette en réseau dégradé
+
+Les preuves automatiques des délais dépassés tournent sur un serveur local à vraies sockets
+(`OMPConsoleIOSTests/IOSDelaisSurSocketsTests.swift`, en CI macOS) : elles ne disent rien d'un vrai
+réseau mobile. Cette recette se joue À LA MAIN avant la fusion, sur les deux états du code, sous un profil
+nommé de Network Link Conditioner (« 3G », « Very Bad Network » ou « High Latency DNS », au choix, le même
+pour les deux passes) :
+
+1. `cd omp-console && swift test` sur macOS : la suite passe.
+2. Pour l'état d'AVANT, `ef574e5a040e355b93aa63833d6e3d1f562dcfe4` (le commit sur lequel la feature
+   « Lenteurs et timeouts du chargement sur iOS » est partie, jamais l'état après sa fusion), puis
+   pour l'état d'APRÈS (la branche de la feature) : compiler et lancer l'app sur un simulateur ou un iPhone
+   (`scripts/ios-build.sh`), reliée à un serveur, profil réseau activé.
+3. Chargement initial : tuer l'app, la lancer, et chronométrer jusqu'à ce que la barre de progression
+   disparaisse et que l'accueil soit rempli. Trois passes, noter la médiane.
+4. Retour au premier plan : mettre l'app en arrière-plan 30 s, la rouvrir, chronométrer jusqu'à ce que
+   les données soient relues (aucun bandeau). Trois passes, noter la médiane.
+5. Délais dépassés : sur cinq cycles (ouverture, arrière-plan 30 s, retour, tirer pour actualiser, Mémoire
+   ouverte puis graphe), compter les bandeaux « Le serveur de pipelines met trop de temps à répondre »
+   et « Délai dépassé : la mémoire a mis trop de temps à répondre ».
+6. Critère : l'état d'APRÈS ne montre pas plus de délais dépassés que celui d'AVANT, ni un chargement plus
+   long.
+
+Relevé à consigner par la personne qui joue la recette (aucun agent ne le remplit) :
+
+| | Chargement initial | Retour au premier plan | Délais dépassés (5 cycles) |
+|---|---|---|---|
+| Avant (`ef574e5`) | non consigné | non consigné | non consigné |
+| Après (branche) | non consigné | non consigné | non consigné |
+
+Tant que ce relevé n'est pas rempli, le critère reste « non vérifié ».
+
 ### Clavier de l'iPad
 
 Avec un clavier matériel, l'app pose sept commandes dans la **barre des menus de

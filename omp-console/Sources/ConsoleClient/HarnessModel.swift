@@ -529,12 +529,16 @@ public final class HarnessModel: ObservableObject {
 
     /// Ferme les flux partagés quand toute l'app passe en arrière-plan : la boîte et le direct
     /// suivi, dont le dernier affichage reste visible (`direct.feed` gardé). Le retour les rouvre
-    /// (`HarnessAppLifecycle`).
+    /// (`HarnessAppLifecycle`). Les lectures en vol sont annulées : iOS coupe leurs connexions à la
+    /// suspension, et elles finiraient à la reprise en « délai dépassé » ou « injoignable » alors que le
+    /// retour les relit. Une annulation n'est jamais annoncée ; une écriture en vol, elle, n'est pas touchée.
     public func suspendStreams() {
         stopLive()
         sessionTask?.cancel()
         sessionTask = nil
         direct.setLive(false)
+        for read in readsInFlight.values { read.cancel() }
+        readsInFlight = [:]
         readGeneration &+= 1
     }
 
