@@ -501,8 +501,15 @@ elle-même.
   boîte — escalades ouvertes, specs et verdicts à valider — et les envois du poste à
   approuver, qui expirent) et sur « Propositions » ce que les agents proposent ; les
   tuiles du hub Système portent leur état (envois à approuver au Poste, vigie muette,
-  planifications actives…). Sur iOS, le retour au premier plan (`scenePhase` active)
-  ferme le flux, relit la boîte et le poste, puis rouvre le flux.
+  planifications actives…). Sur iOS, l'ouverture, le retour au premier plan et « tirer
+  pour actualiser » lancent leurs lectures en même temps (`HarnessModel.readShell`), et
+  deux lectures identiques en vol n'en font qu'une. Au-delà de la limite de connexions de
+  la session (6 par défaut), une lecture attend son tour dans l'app avant d'être confiée à
+  URLSession, dont le délai de 15 s ne court donc pas pendant cette attente. Le passage de
+  l'app en arrière-plan ferme les flux (boîte, direct) ; le retour les rouvre une fois,
+  après une boîte fraîche. Chaque fenêtre arrête son pouls quand elle est cachée, sans
+  toucher aux flux des autres. Un simple passage par l'état inactif (Centre de contrôle,
+  bannière, Face ID) ne relit rien.
 - **Code partagé.** Le modèle (`HarnessModel`, qui porte `WorkstationModel`), les
   brouillons (`HarnessDrafts`), le transport (`HarnessTransport`) et le contrat
   (`HarnessWire`, `WorkstationWire`) vivent dans `ConsoleClient` ; les mots vivent

@@ -38,6 +38,10 @@ struct OMPConsoleIOSApp: App {
     /// Le jeton APNs de l'appareil.
     @UIApplicationDelegateAdaptor(IOSAppDelegate.self) private var appDelegate
 
+    @Environment(\.scenePhase) private var scenePhase
+    /// Le retour d'arrière-plan : relit, rouvre les flux une fois (`HarnessAppLifecycle`).
+    @State private var lifecycle = HarnessAppLifecycle()
+
     init() {
         let arguments = ProcessInfo.processInfo.arguments
         launch = IOSShellLaunch.resolve(arguments)
@@ -107,6 +111,24 @@ struct OMPConsoleIOSApp: App {
             // Le jeton approbateur ou non : approuver un envoi du poste agit, ou ouvre l'app.
             .onReceive(server.$client) { _ in notifications.refreshCategories() }
         }
+        // La phase AGRÉGÉE de l'app (active si une fenêtre l'est) pilote les flux et lectures partagés ;
+        // posée sur la scène, elle part une fois, pas une fois par fenêtre. Le pouls suit sa fenêtre
+        // (`IOSOSRootView`).
+        .onChange(of: scenePhase) { _, phase in
+            lifecycle.phaseChanged(to: HarnessAppPhase(phase), harness: server)
+        }
         .commands { IOSKeyboardCommands() }
+    }
+}
+
+extension HarnessAppPhase {
+    /// La phase de SwiftUI, traduite pour `ConsoleClient` (qui n'importe pas SwiftUI) ; tout ce qui
+    /// n'est ni actif ni en arrière-plan, `@unknown default` compris, vaut inactif : il ne relit rien.
+    init(_ phase: ScenePhase) {
+        switch phase {
+        case .active: self = .active
+        case .background: self = .background
+        default: self = .inactive
+        }
     }
 }

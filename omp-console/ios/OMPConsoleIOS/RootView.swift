@@ -20,7 +20,6 @@ struct RootView: View {
     @ObservedObject var notifications: HarnessNotificationCenter
     /// L'onglet et les piles de la coque.
     @State private var navigation: IOSOSNavigation
-    @Environment(\.scenePhase) private var scenePhase
 
     /// Ce que les arguments de lancement demandent d'ouvrir.
     private let launch: IOSShellLaunch
@@ -92,28 +91,6 @@ struct RootView: View {
             await memory.load()
             await server.load()
             server.startLive()
-        }
-        // L'état du poste, les propositions de Jira, les demandes et le
-        // battement de la vigie, relus à chaque serveur relié ; le flux de la boîte les tient
-        // ensuite à jour.
-        .task(id: server.address) {
-            await server.workstation.refresh()
-            await server.atlassian.refresh()
-            await server.intakes.refresh()
-            await server.vigie.refresh()
-        }
-        // Au retour au premier plan, le flux coupé en arrière-plan est rouvert sur une
-        // boîte fraîche : ce qui a changé pendant l'absence se voit tout de suite.
-        .onChange(of: scenePhase) { _, phase in
-            guard phase == .active else { return }
-            server.stopLive()
-            Task {
-                await server.refresh()
-                server.startLive()
-                await server.workstation.refresh()
-                await server.atlassian.refresh()
-                await server.intakes.refresh()
-            }
         }
     }
 
