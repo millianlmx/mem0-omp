@@ -1537,6 +1537,15 @@ public final class HarnessModel: ObservableObject {
         if let urlError = error as? URLError, urlError.code == .cancelled { return nil }
         return (error as? HarnessFailure) ?? .unreachable
     }
+
+    /// L'échec d'une lecture qui vient de finir en erreur : une annulation (écran quitté, actualisation
+    /// relancée) garde l'échec d'avant, elle n'efface pas le bandeau d'une panne que l'utilisateur n'a
+    /// pas encore vue ; toute autre erreur donne `failure(of:)`.
+    nonisolated static func failure(after error: Error, keeping current: HarnessFailure?) -> HarnessFailure? {
+        if error is CancellationError { return current }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return current }
+        return failure(of: error)
+    }
 }
 
 private struct EmptyBody: Encodable {}
