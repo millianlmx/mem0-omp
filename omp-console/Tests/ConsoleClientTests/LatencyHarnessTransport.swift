@@ -2,10 +2,28 @@
 // sans échec (sauf les chemins de `failing`), et compte les appels par méthode et chemin. Les flux
 // d'événements s'ouvrent après la même latence, rejouent ce qu'on leur a préparé, puis RESTENT OUVERTS
 // jusqu'à leur terminaison. Elle n'a pas de file de connexions ni de minuteur : elle mesure la profondeur
-// des chaînes de lectures et les appels en double, pas les délais dépassés.
+// des chaînes de lectures (`chainDepth`, sous une `ReadChain` posée) et les appels en double, pas les
+// délais dépassés.
 
 @testable import ConsoleClient
 import Foundation
+
+/// Une suite d'appels `await` enchaînés, posée par `LatencyHarnessTransport.$chain.withValue(ReadChain()) { … }`.
+/// Elle suit les tâches filles (`async let`) et les `Task {}` qui héritent des valeurs de tâche (le partage des
+/// lectures en vol de `HarnessModel.send`, `loadCapabilities`). Un appel qui part y prend la profondeur 1 + la
+/// plus longue chaîne déjà FINIE : deux appels lancés ensemble ont la même profondeur, un appel attendu avant
+/// l'autre ajoute 1. Le temps à latence fixe vaut cette profondeur × L, sans dépendre de la charge de la machine.
+/// Une lecture rejointe en vol (`HarnessModel.send`) ne compte que dans la chaîne qui l'a lancée.
+final class ReadChain: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reached = 0
+
+    /// La profondeur d'un appel qui part maintenant.
+    func start() -> Int { lock.withLock { reached + 1 } }
+
+    /// Un appel de cette profondeur a répondu.
+    func finish(_ depth: Int) { lock.withLock { reached = max(reached, depth) } }
+}
 
 final class LatencyHarnessTransport: HarnessTransport, @unchecked Sendable {
     private let lock = NSLock()
@@ -16,6 +34,10 @@ final class LatencyHarnessTransport: HarnessTransport, @unchecked Sendable {
     private var replays: [String: [Data]] = [:]
     private var live = 0
     private var failingPaths: Set<String> = []
+    private var deepest = 0
+
+    /// La chaîne de la tâche courante, s'il y en a une.
+    @TaskLocal static var chain: ReadChain?
 
     init(latency: Duration, _ handler: @escaping @Sendable (HarnessCall) -> HarnessReply) {
         self.latency = latency
@@ -62,9 +84,18 @@ final class LatencyHarnessTransport: HarnessTransport, @unchecked Sendable {
     /// Les flux ouverts et pas encore terminés.
     var openStreams: Int { lock.withLock { live } }
 
+    /// La plus grande profondeur prise par un appel parti sous une `ReadChain` ; 0 sans chaîne.
+    var chainDepth: Int { lock.withLock { deepest } }
+
     func send(_ call: HarnessCall, server: HarnessServer) async throws -> HarnessReply {
-        lock.withLock { sent.append(call) }
+        let chain = Self.chain
+        let depth = chain?.start()
+        lock.withLock {
+            sent.append(call)
+            if let depth { deepest = max(deepest, depth) }
+        }
         try await Task.sleep(for: latency)
+        if let chain, let depth { chain.finish(depth) }
         return lock.withLock { () -> HarnessReply in
             if failingPaths.contains(call.path) { return HarnessReply(status: 500, body: Data(#"{"error":"panne"}"#.utf8)) }
             return handler(call)

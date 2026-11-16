@@ -314,6 +314,7 @@ struct ChargementParalleleTests {
 
         // Les trois suites du Mac, en même temps (`ConsoleRootView`, `OSRootView`) : la boîte puis le flux ;
         // poste, Jira, demandes, vigie ; historique, poste, vigie, demandes, Jira, sessions, espaces, catalogue.
+        // Chacune sous sa `ReadChain` : la doublure compte sa profondeur de chaîne, pas un temps mural.
         func inboxSuite() async {
             await model.load()
             model.startLive()
@@ -336,21 +337,33 @@ struct ChargementParalleleTests {
             await model.spaces.refresh()
             await model.refreshCatalog()
         }
-        let elapsed = await ContinuousClock().measure {
-            async let inbox: Void = inboxSuite()
-            async let poste: Void = posteSuite()
-            async let os: Void = osSuite()
-            _ = await (inbox, poste, os)
-        }
+        async let inbox: Void = LatencyHarnessTransport.$chain.withValue(ReadChain()) { await inboxSuite() }
+        async let poste: Void = LatencyHarnessTransport.$chain.withValue(ReadChain()) { await posteSuite() }
+        async let os: Void = LatencyHarnessTransport.$chain.withValue(ReadChain()) { await osSuite() }
+        _ = await (inbox, poste, os)
         model.stopLive()
 
-        #expect(elapsed < latency * 12, "chargement Mac en \(elapsed)")
+        // Avant la feature, la suite (c) enchaînait 13 lectures : historique 1, poste 2, vigie 2, demandes 1,
+        // Jira 3, sessions 1, espaces 2 (`/v1/spaces` puis `/v1/health`), catalogue 1. Jira en 2 la ramène à 12.
+        let depth = transport.chainDepth
+        #expect(depth > 0, "aucune lecture comptée dans une chaîne")
+        #expect(depth <= 12, "chargement Mac en \(depth) × L")
         // Au plus deux lectures pour ce que deux suites lisent (poste, Jira, demandes, vigie), une pour le reste.
         let twice = ["/v1/workstation", "/v1/atlassian", "/v1/intake?", "/v1/vigie"]
         for (path, count) in transport.gets(after: 0) {
             #expect(count <= (twice.contains { path.hasPrefix($0) } ? 2 : 1), "\(path) lu \(count) fois")
         }
-        expectShellFilled(model)
+        // Les attentes d'`expectShellFilled`, sauf les propositions : le Mac ne lit pas `/v1/proposals` ici.
+        #expect(model.inbox != nil)
+        #expect(model.history.runs.count == 1)
+        #expect(model.workstation.availability == .available && model.workstation.status != nil)
+        #expect(model.vigie.availability == .available && model.vigie.view != nil)
+        #expect(model.intakes.availability == .available)
+        #expect(model.atlassian.availability == .available && model.atlassian.status != nil && model.atlassian.plan != nil)
+        #expect(model.localSessions.availability == .available)
+        #expect(model.spaces.availability == .available && model.spaces.spaces.count == 1)
+        #expect(model.repos.count == 1)
+        #expect(model.client?.role == "admin")
     }
 
     @Test("lenteurs-et-timeouts-du-chargement-sur-i/AC-14 : inactif puis actif sans arrière-plan ne relit rien et ne coupe aucun flux")
