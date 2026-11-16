@@ -1,5 +1,10 @@
 # Journal des versions
 
+## omp-console 1.3.1 — 2026-11-16
+
+- fix(console): lecture iOS coupée par l'arrière-plan relue au retour (a2841f0)
+- fix(console): chargement iOS en parallèle, lectures partagées, délais (ebdbea5)
+
 ## omp-harness 1.41.1 — 2026-11-15
 
 - fix(harness): une CI non jugée ne coûte plus de correction, les commits poussés hors du harness sont repris, une PR fusionnée à la main clôt son run (#471) (5bde12c)
