@@ -215,6 +215,37 @@ async function exec(args: string[]): Promise<void> {
   fail(`faux moteur : applet inconnu ${applet}`, 126);
 }
 
+/** Le processus vit-il encore ? Un zombie (tué, pas encore récolté) est mort. */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  try {
+    return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8"));
+  } catch {
+    // Hors Linux (pas de /proc) : le signal 0 a répondu, il vit.
+    return true;
+  }
+}
+
+/**
+ * Comme `docker rm -f`, qui ne rend qu'une fois le conteneur arrêté : le groupe reçoit SIGKILL, puis le faux moteur
+ * attend que son processus soit parti (5 s au plus). Sans cette attente, un appelant qui vérifie la mort juste après
+ * la voit encore vivant sur une machine chargée — le signal n'a pas encore pris effet.
+ */
+function kill(pid: number): void {
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    // Déjà parti.
+  }
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 5000;
+  while (alive(pid) && Date.now() < deadline) Atomics.wait(pause, 0, 0, 10);
+}
+
 function rm(args: string[]): void {
   let missing = false;
   for (const name of args.filter((arg) => !arg.startsWith("-"))) {
@@ -223,13 +254,7 @@ function rm(args: string[]): void {
       if (name.startsWith("omp-qa-")) missing = true;
       continue;
     }
-    if (container.pid !== undefined) {
-      try {
-        process.kill(-container.pid, "SIGKILL");
-      } catch {
-        // Déjà parti.
-      }
-    }
+    if (container.pid !== undefined) kill(container.pid);
     fs.rmSync(stateFile(name), { force: true });
   }
   if (missing) fail("Error response from daemon: No such container", 1);
