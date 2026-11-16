@@ -875,7 +875,11 @@ export class Orchestrator {
       const fresh = runs.filter((run) => run.worktree === null);
       // Un run garé chez l'humain (`awaiting_human`) ne tient plus ses modules : il peut y rester des heures, et la
       // file entière l'attendrait pour rien. À sa reprise, la revue et le merge rebasent sur main (conflits compris).
-      const others = active.filter((run) => run.repo === name && run.state !== "awaiting_human");
+      // Un run en `merging` non plus : son code est jugé, il n'attend que sa CI (jusqu'à `review.mergeWaitSec`) ; le
+      // run suivant part de main et rebasera sur lui à sa revue, comme après un run garé.
+      const others = active.filter(
+        (run) => run.repo === name && run.state !== "awaiting_human" && run.state !== "merging",
+      );
       const free = new Set(
         schedulable(
           fresh.map((run) => ({ id: run.id, modules: run.modules })),
