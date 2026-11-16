@@ -288,9 +288,9 @@ export const MCP_TOOLS: readonly Tool[] = [
       },
       lane: {
         type: "string",
-        enum: ["full"],
+        enum: ["full", "express"],
         description:
-          "Facultatif : `full` force la voie complète (/req puis /specs) même si la demande porte sa section `## Critères d'acceptation`.",
+          "Facultatif : `full` force la voie complète (/req puis /specs) même si la demande porte sa section `## Critères d'acceptation` ; `express` part tout de suite à /impl (pas de /req ni de /specs, revue courte, une seule correction) — refusée sur l'irréversible.",
       },
       budgetUsd: {
         type: "number",

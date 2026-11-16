@@ -189,14 +189,9 @@ struct OSRootView: View {
                     workspace.open(destination)
                 }
             }
-            await history.refresh()
-            await workstation.load()
-            await vigie.load()
-            await intakes.refresh()
-            await atlassian.refresh()
-            await localSessions.refresh()
-            await spaces.refresh()
-            await server.refreshCatalog()
+            // Toutes les lectures de l'ouverture EN MÊME TEMPS, comme sur iOS : le temps d'ouverture
+            // suit la plus longue, pas la somme de toutes.
+            await server.readShell(.opening)
             // Recette : l'espace retenu dans la liste, et la page d'un espace (par identifiant ou par nom).
             if let chosen = recipeSpace(environment["OMP_CONSOLE_OS_SPACE"]) { workspace.choose(space: chosen) }
             if let view = environment["OMP_CONSOLE_OS_VIEW"], view.hasPrefix(Self.recipeSpacePrefix),
@@ -232,6 +227,7 @@ struct OSRootView: View {
             }
         }
         .onDisappear { workspace.pulse.stop() }
+        .modifier(MacPulseLifecycle(pulse: workspace.pulse))
     }
 
     /// Montre une destination nommée dans l'OS (`OSMacRoute`).
@@ -251,13 +247,10 @@ struct OSRootView: View {
 
     /// ⌘R : la boîte, le catalogue et l'historique, puis ce que montre le centre.
     private func reload() async {
-        await server.refresh()
-        await server.refreshCatalog()
-        await history.refresh()
-        await workstation.load()
-        await vigie.load()
-        await intakes.refresh()
-        await localSessions.refresh()
+        async let inbox: Void = server.refresh()
+        async let catalog: Void = server.refreshCatalog()
+        async let shell: Void = server.readShell(.refreshing)
+        _ = await (inbox, catalog, shell)
         switch workspace.selection {
         case OSWorkspace.automations:
             await server.schedules.refresh()
@@ -357,5 +350,28 @@ private extension OSSessionPane {
         case .tests: .tests
         case .timeline: .timeline
         }
+    }
+}
+
+/// Sur Mac, l'app masquée (⌘H) ou sa fenêtre réduite dans le Dock ferment le flux du pouls,
+/// comme l'arrière-plan sur iOS ; il se rouvre au retour (`OSPulse.phaseChanged`). Le flux de
+/// la boîte reste ouvert : les notifications en dépendent.
+private struct MacPulseLifecycle: ViewModifier {
+    let pulse: OSPulse
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in
+                pulse.phaseChanged(to: .background)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUnhideNotification)) { _ in
+                pulse.phaseChanged(to: .active)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { _ in
+                pulse.phaseChanged(to: .background)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { _ in
+                pulse.phaseChanged(to: .active)
+            }
     }
 }

@@ -29,6 +29,7 @@ import {
   unanswered,
 } from "./challenge.ts";
 import type { ChallengeStep } from "./config.ts";
+import { fixCapFor } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { RunRow, StepRow, Store } from "./db.ts";
 import type { AtlassianDesk } from "./atlassian/desk.ts";
@@ -122,7 +123,12 @@ export function liveRun(runId: string): LiveRun {
   };
 }
 
-export type SplitFeature = { title: string; request: string; modules: string[] };
+/**
+ * Une sous-feature d'un découpage. `after` : elle a besoin du code du run parent sur main et attend son
+ * merge (`afterRun`) ; sinon c'est un run normal, qui part tout de suite (le planificateur ne la retient
+ * que si ses modules recoupent ceux d'un run en cours).
+ */
+export type SplitFeature = { title: string; request: string; modules: string[]; after: boolean };
 
 /** Le corps d'une section `## Titre` d'un artefact (jusqu'au `## ` suivant), ou `null` si elle manque. */
 export function sectionBody(markdown: string, title: RegExp): string | null {
@@ -149,15 +155,16 @@ function bullets(body: string): string[] {
 }
 
 /**
- * Les sous-features de `## Découpage` : une puce `titre — demande — modules` chacune
- * (modules séparés par des virgules ; demande et modules facultatifs). « aucun » ⇒ vide.
+ * Les sous-features de `## Découpage` : une puce `titre — demande — modules [— après]` chacune
+ * (modules séparés par des virgules ; demande et modules facultatifs ; `— après` : elle attend
+ * le merge de ce run). « aucun » ⇒ vide.
  */
 export function parseSplitSection(specsMd: string): SplitFeature[] {
   const body = sectionBody(specsMd, /^d[ée]coupage/i);
   if (body === null || /^aucun/i.test(body)) return [];
   const features: SplitFeature[] = [];
   for (const item of bullets(body)) {
-    const [title = "", request = "", modules = ""] = item.split(/\s+[—–]\s+/).map((part) => part.trim());
+    const [title = "", request = "", modules = "", marker = ""] = item.split(/\s+[—–]\s+/).map((part) => part.trim());
     if (title === "") continue;
     features.push({
       title: title.replace(/^\*\*|\*\*$/g, "").slice(0, 120),
@@ -166,6 +173,8 @@ export function parseSplitSection(specsMd: string): SplitFeature[] {
         .split(/[,;]/)
         .map((module) => module.trim().replace(/^`|`$/g, ""))
         .filter((module) => module !== "" && !isArtifactPath(module.replace(/^\.\//, ""))),
+      // `— après` : elle a besoin du code de ce run sur main.
+      after: /^apr[eè]s\b/i.test(marker),
     });
   }
   return features;
@@ -287,6 +296,24 @@ export function directSpecs(title: string, request: string): string | null {
     .join("\n");
   return `# ${title.trim()}\n\nVoie directe : la demande portait ses critères d'acceptation, ni /req ni /specs n'ont tourné.\n\n## Demande\n\n${quoted}\n\n## Critères d'acceptation\n\n${criteria}\n`;
 }
+
+/**
+ * Le specs.md de la voie express : celui de la voie directe si la demande porte ses critères, sinon la demande
+ * citée et UN critère synthétisé — la demande livrée telle qu'écrite, prouvée par un test qui la nomme.
+ */
+export function expressSpecs(title: string, request: string): string {
+  const direct = directSpecs(title, request);
+  if (direct !== null) return direct.replace(/^Voie directe : .*$/m, EXPRESS_NOTE);
+  const quoted = request
+    .trim()
+    .split("\n")
+    .map((line) => `> ${line}`.trimEnd())
+    .join("\n");
+  return `# ${title.trim()}\n\n${EXPRESS_NOTE}\n\n## Demande\n\n${quoted}\n\n## Critères d'acceptation\n\nAC-1 : Given le dépôt actuel, When le changement est livré, Then ce que décrit la demande ci-dessus fonctionne, prouvé par un test nommé avec AC-1\n`;
+}
+
+const EXPRESS_NOTE =
+  "Voie express : ni /req ni /specs n'ont tourné ; la revue ne bloque que sur ce qui casse (critère non tenu, test rouge, faille, perte de données).";
 
 /** La cause d'un prompt qui n'a pas abouti, pour la machine (backoff, bascule, impasse). */
 export function failCauseOf(status: "aborted" | "error", error: PromptError | null): FailCause {
@@ -436,7 +463,8 @@ export class StepExecutor {
       if (step === "review" && (await git.mergeInProgress(worktree)))
         live.conflicts = await git.unmergedFiles(worktree);
       // La QA de /review (prévisualisation et son navigateur) démarre en tâche de fond : le prompt ne l'attend pas.
-      if (step === "review")
+      // La voie express s'en passe : la suite complète juge, la navigation de l'agent dans l'app coûte des minutes.
+      if (step === "review" && run.lane !== "express")
         live.qa = QaPreview.start(
           { config, exec: this.#ctx.exec, log: this.#ctx.log, proofs: this.#ctx.proofs },
           { runId: run.id, stepId: stepRow.id, repo: this.#ctx.repo(run.repo), worktree },
@@ -448,7 +476,7 @@ export class StepExecutor {
       const headBefore = await git.revParse(worktree, "HEAD");
       const dirtyBefore = await git.isDirty(worktree);
       await session.open(
-        stepTier(config.stepTiers, step, run.fixes, config.review.fixCap),
+        stepTier(config.stepTiers, step, run.fixes, fixCapFor(config, run)),
         runnerUnit(run.id, stepRow.id),
         live.abort.signal,
         // La revue relit chez un autre fournisseur que l'implémenteur : pas les mêmes angles morts.
@@ -479,6 +507,7 @@ export class StepExecutor {
         specsDrift: step === "review" ? this.#specsDrift(run.id) : [],
         // Pas de req.md : le run est né en voie directe, specs.md ne porte que la demande et ses critères.
         direct: store.getArtifact(run.id, "req.md") === null,
+        express: run.lane === "express",
         qa: step === "review" && live.qa?.offersTools === true,
       });
       store.setInstructions(run.id, null);
@@ -605,7 +634,7 @@ export class StepExecutor {
     if (pending.length > 0) {
       const session = this.session(live, run);
       await session.open(
-        stepTier(config.stepTiers, step, run.fixes, config.review.fixCap),
+        stepTier(config.stepTiers, step, run.fixes, fixCapFor(config, run)),
         `${runnerUnit(run.id, stepRow.id)}-reponse`,
         live.abort.signal,
       );

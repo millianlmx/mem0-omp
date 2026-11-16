@@ -117,7 +117,8 @@ export function newRunInput(
   const needs = text(body, "req", false);
   const priority = integer(body.priority, "priority");
   const budget = budgetUsd(body.budgetUsd);
-  if (body.lane !== undefined && body.lane !== "full") throw new HarnessError(400, 'lane : "full" ou absent');
+  if (body.lane !== undefined && body.lane !== "full" && body.lane !== "express")
+    throw new HarnessError(400, 'lane : "full", "express" ou absent');
   const typed = options.typed === true ? typedInput(body) : {};
   const autonomy = autonomyField(body);
   const repo = text(body, "repo");
@@ -133,7 +134,7 @@ export function newRunInput(
     ...(budget !== undefined ? { budgetUsd: budget } : {}),
     ...typed,
     ...(autonomy !== undefined ? { autonomy } : {}),
-    ...(body.lane === "full" ? { lane: "full" as const } : {}),
+    ...(body.lane === "full" || body.lane === "express" ? { lane: body.lane } : {}),
   };
 }
 

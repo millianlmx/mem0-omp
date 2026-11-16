@@ -24,8 +24,8 @@ export class Store extends IdempotencyStore {}
 
 export { MIGRATIONS } from "./db/schema.ts";
 export type { RepoFilter } from "./db/sql.ts";
-export { CANCEL_CAUSES, RUN_AUTONOMIES } from "./db/runs.ts";
-export type { CancelCause, NewRun, RunAutonomy, RunPatch, RunRow } from "./db/runs.ts";
+export { CANCEL_CAUSES, RUN_AUTONOMIES, RUN_LANES } from "./db/runs.ts";
+export type { CancelCause, NewRun, RunAutonomy, RunLane, RunPatch, RunRow } from "./db/runs.ts";
 export type { NewSpace, Space, SpacePatch } from "./db/spaces.ts";
 export { VIGIE_STATUSES } from "./db/vigie.ts";
 export type { VigieIncident, VigieIncidentPatch, VigieStatus, VigieTriage } from "./db/vigie.ts";

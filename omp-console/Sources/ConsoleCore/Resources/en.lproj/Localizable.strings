@@ -747,7 +747,7 @@
 "Options du lancement" = "Launch options";
 "0 par défaut, de -1000 à 1000" = "0 by default, from -1000 to 1000";
 "Voie" = "Lane";
-"Automatique : la voie directe quand la demande porte ses critères d’acceptation, sinon la voie complète (besoins, specs, implémentation, revue)." = "Automatic: the direct lane when the request carries its acceptance criteria, otherwise the full lane (requirements, specs, implementation, review).";
+"Automatique : la voie directe quand la demande porte ses critères d’acceptation, sinon la voie complète (besoins, specs, implémentation, revue). Express : l’implémentation tout de suite, une revue courte, une seule correction." = "Automatic: the direct lane when the request carries its acceptance criteria, otherwise the full lane (requirements, specs, implementation, review). Express: implementation right away, a short review, a single fix.";
 "Cadrage /req (facultatif)" = "/req framing (optional)";
 "Un cadrage déjà écrit : l’étape /req est sautée." = "A framing already written: the /req step is skipped.";
 "Budget en dollars (facultatif)" = "Budget in dollars (optional)";
@@ -755,6 +755,7 @@
 "La priorité est un entier de -1000 à 1000." = "Priority is an integer from -1000 to 1000.";
 "Le budget est un montant positif, en dollars." = "The budget is a positive amount, in dollars.";
 "Complète" = "Full";
+"Express" = "Express";
 "Automatique" = "Automatic";
 "Monter de 10" = "Raise by 10";
 "Descendre de 10" = "Lower by 10";

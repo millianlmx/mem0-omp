@@ -91,7 +91,7 @@ struct LecturesCoupeesTests {
 
         #expect(model.failure == nil)
         #expect(model.repos.count == 2, "la relecture est publiée")
-        let cut: Set = ["/v1/status", "/v1/projects", "/v1/audits", "/v1/stats", "/v1/runs"]
+        let cut: Set = ["/v1/status", "/v1/projects", "/v1/audits", "/v1/stats", "/v1/runs?recent=500"]
         let counts = transport.gets(after: mark)
         for path in cut { #expect(counts[path] == 2, "\(path) coupée, puis refaite une fois") }
         for (path, count) in counts where !cut.contains(path) { #expect(count <= 1, "\(path) lu \(count) fois") }

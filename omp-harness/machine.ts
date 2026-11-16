@@ -39,6 +39,9 @@ export const ACTIVE_STATES: readonly RunState[] = ["running", "escalated", "awai
 
 export const TERMINAL_STATES: readonly RunState[] = ["merged", "failed", "cancelled"];
 
+/** Les états d'un run qui n'est pas terminé : en file ou actif. */
+export const LIVE_RUN_STATES: readonly RunState[] = ["queued", ...ACTIVE_STATES];
+
 /** La cause d'un échec d'étape : décide de la relance, du backoff et du passage à l'humain. */
 export type FailCause =
   | "timeout"

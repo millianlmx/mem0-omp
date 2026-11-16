@@ -58,10 +58,11 @@ public struct OSHomeView: View {
             .osPagePadding(28)
             .frame(maxWidth: .infinity)
         }
+        // Revenir à l'accueil (un onglet, la fenêtre) ne relit rien : le flux tient le brief à jour.
         .task(id: server.address) {
-            await brief.refresh()
+            if brief.availability == .unknown { await brief.refresh() }
             if brief.isServed {
-                recentScores = await OSScoreTiles.load(server)
+                if recentScores == nil { recentScores = await OSScoreTiles.load(server) }
             } else {
                 // Sans brief, l'accueil d'avant lit le rapport du matin.
                 await server.refreshServices()

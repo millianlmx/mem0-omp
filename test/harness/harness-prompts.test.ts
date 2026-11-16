@@ -35,7 +35,7 @@ test("harness-prompts/AC-1 : /req exige B-n « verbe objet contraintes », AC-n 
   assert.doesNotMatch(prompt, /commence par `oracle_recall`/);
 });
 
-test("harness-prompts/AC-2 : /specs exige le relevé du dépôt, la documentation externe, les non-objectifs, des S-n traçables testables, des modules non vides et un découpage", () => {
+test("harness-prompts/AC-2 : /specs exige le relevé du dépôt, la documentation externe, les non-objectifs, des S-n traçables testables, des modules non vides et un découpage par features indépendantes, jamais par taille", () => {
   const prompt = stepPrompt(ctx({ step: "specs" }));
   for (const expected of [
     /## Relevé du dépôt/,
@@ -51,14 +51,17 @@ test("harness-prompts/AC-2 : /specs exige le relevé du dépôt, la documentatio
     /- titre — demande — modules/,
     /« aucun »/,
     /`set_modules`/,
-    /`split_feature`/,
-    /~300 lignes/,
+    /features indépendantes/,
+    /JAMAIS pour la taille du diff/,
+    /run normal/,
+    /`— après`/,
   ]) {
     assert.match(prompt, expected, String(expected));
   }
+  assert.doesNotMatch(prompt, /300 lignes/);
 });
 
-test("harness-prompts/AC-3 : /impl exige des tests nommés AC-n, aucun stub, la correction des specs ambiguës, save_checkpoint, set_modules, split_feature au-delà du plafond et « ## Reste »", () => {
+test("harness-prompts/AC-3 : /impl exige des tests nommés AC-n, aucun stub, la correction des specs ambiguës, save_checkpoint, set_modules, la demande entière sans découpage et « ## Reste »", () => {
   const prompt = stepPrompt(ctx({ step: "impl" }));
   for (const expected of [
     /NOMMÉ avec son id \(`AC-n`/,
@@ -66,7 +69,8 @@ test("harness-prompts/AC-3 : /impl exige des tests nommés AC-n, aucun stub, la 
     /spec ambiguë.*corrige `\.harness\/specs\.md`.*plutôt que d'implémenter à côté/,
     /`save_checkpoint` après chaque incrément cohérent/,
     /`set_modules` dès que les chemins/,
-    /< 300 lignes de code\. Au-delà.*`split_feature`/,
+    /Livre la demande ENTIÈRE dans ce run, quelle que soit la taille du diff/,
+    /`split_feature` est refusé ici/,
     /## Fait/,
     /## Reste/,
     /`mem0_add` pour les SEULS pièges durables/,

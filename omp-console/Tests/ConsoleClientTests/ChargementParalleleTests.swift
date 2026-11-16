@@ -69,7 +69,7 @@ func shellRoutes(inboxCursor: Int = 42) -> @Sendable (HarnessCall) -> HarnessRep
         switch path {
         case "/v1/inbox": return osJSON(inboxJSON(cursor: inboxCursor))
         case "/v1/me": return osJSON(#"{"client":{"name":"admin","role":"admin","repos":"*","createdAt":0,"approver":false}}"#)
-        case "/v1/runs": return osJSON(#"{"runs":["# + osRunJSON("r1") + "]}")
+        case "/v1/runs?recent=500": return osJSON(#"{"runs":["# + osRunJSON("r1") + "]}")
         case "/v1/workstation": return osJSON(workstationJSON)
         case "/v1/workstation/profile": return osJSON(profileJSON)
         case "/v1/workstation/meetings?limit=20": return osJSON(#"{"meetings":[]}"#)

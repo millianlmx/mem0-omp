@@ -17,6 +17,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync, statfsSync } from "node:fs";
 import * as path from "node:path";
+import * as zlib from "node:zlib";
 import type * as http from "node:http";
 import type { Client, Role } from "./auth.ts";
 import { ClientRegistry, ROLES, allows, repoFilter } from "./auth.ts";
@@ -30,6 +31,7 @@ import type {
   EventRow,
   IntakeRow,
   RepoFilter,
+  RunRow,
   SignalState,
   Space,
 } from "./db.ts";
@@ -60,6 +62,7 @@ import {
 import { intakeView, parseIntakeStates, visibleIntake } from "./intake.ts";
 import type { IntakeView } from "./intake.ts";
 import type { RunState } from "./machine.ts";
+import { LIVE_RUN_STATES } from "./machine.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import type { ModelChains, ProviderInput } from "./providers.ts";
 import { PROOF_MIMES } from "./proofs.ts";
@@ -170,6 +173,7 @@ export const API_FEATURES = [
   "space-workstation",
   "run-facts",
   "repo-settings",
+  "pulse",
 ] as const;
 
 /** La route publique qui échange un ticket d'appairage contre le jeton d'un appareil. */
@@ -265,15 +269,23 @@ export function healthChecks(orchestrator: Orchestrator, now = Date.now()): { ok
   return { ok: checks.db.ok && checks.scheduler.ok && checks.disk.ok, checks };
 }
 
+/** La taille à partir de laquelle une réponse JSON part compressée (gzip) au client qui l'accepte. */
+export const GZIP_MIN_BYTES = 2048;
+
 function send(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
-  const json = JSON.stringify(body);
+  const json = Buffer.from(JSON.stringify(body), "utf8");
+  // Les listes (boîte, runs, stats) pèsent des centaines de Ko : compressées, elles passent sur un lien mobile.
+  const accepts = /\bgzip\b/.test(String(res.req?.headers["accept-encoding"] ?? ""));
+  const payload = accepts && json.length >= GZIP_MIN_BYTES ? zlib.gzipSync(json, { level: 4 }) : json;
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(json),
+    "Content-Length": payload.length,
     "Cache-Control": "no-store",
+    Vary: "Accept-Encoding",
+    ...(payload !== json ? { "Content-Encoding": "gzip" } : {}),
     ...headers,
   });
-  res.end(json);
+  res.end(payload);
 }
 
 async function readJson(req: http.IncomingMessage): Promise<unknown> {
@@ -350,6 +362,80 @@ function drained(res: http.ServerResponse): Promise<void> {
   });
 }
 
+/** L'âge maximal des statistiques servies (`GET /v1/stats`) : leur calcul balaie toute la base, synchrone. */
+export const STATS_TTL_MS = 30_000;
+
+/**
+ * Les statistiques déjà calculées, par lecteur (ses dépôts). Fraîches (`ttlMs`), elles sont rendues telles
+ * quelles ; plus vieilles, elles sont rendues QUAND MÊME et recalculées juste après, hors de la requête
+ * (`defer`) : les apps les lisent à chaque ouverture, et un calcul complet bloque la boucle du service
+ * pendant que leurs autres lectures attendent. Seule la toute première lecture d'un lecteur (après un
+ * démarrage) calcule sous ses yeux.
+ */
+export class StatsCache {
+  readonly #entries = new Map<string, { at: number; value: Record<string, unknown> }>();
+  readonly #refreshing = new Set<string>();
+  readonly #ttlMs: number;
+  readonly #now: () => number;
+  readonly #defer: (fn: () => void) => void;
+  constructor(
+    ttlMs = STATS_TTL_MS,
+    now: () => number = Date.now,
+    defer: (fn: () => void) => void = (fn) => void setTimeout(fn, 0),
+  ) {
+    this.#ttlMs = ttlMs;
+    this.#now = now;
+    this.#defer = defer;
+  }
+  read(repos: RepoFilter, compute: () => Record<string, unknown>): Record<string, unknown> {
+    const key = repos === null ? "*" : [...repos].sort().join("\n");
+    const hit = this.#entries.get(key);
+    if (!hit) return this.#compute(key, compute);
+    if (this.#now() - hit.at >= this.#ttlMs && !this.#refreshing.has(key)) {
+      this.#refreshing.add(key);
+      this.#defer(() => {
+        try {
+          this.#compute(key, compute);
+        } catch {
+          // Un recalcul en échec (base fermée à l'arrêt) garde les chiffres d'avant.
+        } finally {
+          this.#refreshing.delete(key);
+        }
+      });
+    }
+    return hit.value;
+  }
+  #compute(key: string, compute: () => Record<string, unknown>): Record<string, unknown> {
+    const value = compute();
+    this.#entries.set(key, { at: this.#now(), value });
+    return value;
+  }
+}
+
+/** La longueur gardée du texte d'un paragraphe envoyé au pouls (`pulse=1`) : le pouls n'en montre qu'une ligne. */
+export const PULSE_TEXT = 600;
+
+/**
+ * La trame d'un événement pour le pouls (`pulse=1`), ou `null` : une `activity`, telle quelle ; un `session` qui est un
+ * paragraphe de l'agent (`kind: text`), réduit à `{seq, at, step, kind, text}` et son texte rogné ; rien d'autre.
+ */
+export function pulseFrame(event: EventRow): string | null {
+  if (!event.ephemeral) return null;
+  if (event.type === "activity") return sseFrame(event);
+  if (event.type !== "session") return null;
+  const entry = event.payload.entry as { seq?: unknown; at?: unknown; step?: unknown; kind?: unknown; text?: unknown };
+  if (entry?.kind !== "text" || typeof entry.text !== "string") return null;
+  const { entry: _full, ...rest } = event.payload;
+  const slim = {
+    seq: entry.seq,
+    at: entry.at,
+    step: entry.step ?? null,
+    kind: "text",
+    text: entry.text.slice(0, PULSE_TEXT),
+  };
+  return sseFrame({ ...event, payload: { ...rest, entry: slim } });
+}
+
 function sseFrame(event: EventRow): string {
   // Un éphémère n'a pas d'`id:` : il ne déplace pas le curseur de reprise du client.
   return `${event.ephemeral ? "" : `id: ${event.id}\n`}event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
@@ -413,6 +499,7 @@ export function apiRoutes(
   pairing: PairingDesk = new PairingDesk(clients),
 ): Route[] {
   const store = orchestrator.store;
+  const statsCache = new StatsCache();
   const route = (method: Route["method"], path: string, role: Role, handle: Route["handle"]): Route => ({
     method,
     path,
@@ -669,13 +756,42 @@ export function apiRoutes(
     route("GET", "/v1/runs", "viewer", (call) => {
       const state = call.url.searchParams.get("state");
       const repo = call.url.searchParams.get("repo");
-      const runs = store.listRuns({
-        ...(state ? { state: state.split(",") as RunState[] } : {}),
-        ...(repo ? { repo } : {}),
-        repos: call.repos,
-      });
+      // `since` : la relecture incrémentale d'un client qui a déjà la liste — les runs écrits depuis cet instant
+      // (`at` de sa lecture précédente) et ceux en file ; `at` dit d'où reprendre la prochaine fois.
+      const sinceParam = call.url.searchParams.get("since");
+      const since = sinceParam === null ? undefined : Number(sinceParam);
+      if (since !== undefined && !(Number.isInteger(since) && since >= 0))
+        throw new HarnessError(400, "since : entier ≥ 0 (epoch ms)");
+      // `recent=<n>` : la première lecture d'une app — tous les runs vivants et les `n` terminés les plus récents,
+      // `more` s'il en reste de plus anciens ; l'historique entier ne se télécharge plus à chaque ouverture.
+      const recentParam = call.url.searchParams.get("recent");
+      const recent = recentParam === null ? undefined : Number(recentParam);
+      if (recent !== undefined && !(Number.isInteger(recent) && recent >= 1 && recent <= 10_000))
+        throw new HarnessError(400, "recent : entier de 1 à 10 000");
+      const at = Date.now();
+      let more = false;
+      let runs: RunRow[];
+      if (recent !== undefined && since === undefined && !state && !repo) {
+        const ended = store.listEndedRuns(call.repos, recent + 1);
+        more = ended.length > recent;
+        runs = [...store.listRuns({ state: LIVE_RUN_STATES, repos: call.repos }), ...ended.slice(0, recent)].sort(
+          (a, b) => a.projectOrder - b.projectOrder || a.createdAt - b.createdAt,
+        );
+      } else {
+        runs = store.listRuns({
+          ...(state ? { state: state.split(",") as RunState[] } : {}),
+          ...(repo ? { repo } : {}),
+          ...(since !== undefined ? { updatedSince: since } : {}),
+          repos: call.repos,
+        });
+      }
       // En file, la raison d'un run dit ce qui le retient (Orchestrator.withWait).
-      send(call.res, 200, { runs: runs.map((run) => orchestrator.withWait(run)) });
+      send(call.res, 200, {
+        runs: runs.map((run) => orchestrator.withWait(run)),
+        at,
+        ...(since !== undefined ? { since } : {}),
+        ...(recent !== undefined && since === undefined ? { more } : {}),
+      });
     }),
     route("POST", "/v1/runs", "operator", async (call) => {
       const body = await readBody(call.req);
@@ -1136,7 +1252,7 @@ export function apiRoutes(
     }),
     route("GET", "/v1/stats", "viewer", (call) =>
       send(call.res, 200, {
-        ...computeStats(store, Date.now(), call.repos),
+        ...statsCache.read(call.repos, () => computeStats(store, Date.now(), call.repos)),
         scheduler: orchestrator.status(call.repos).scheduler,
       }),
     ),
@@ -1976,7 +2092,10 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     const whole = client.repos === "*";
     const runId = url.searchParams.get("run");
     const auditId = url.searchParams.get("audit");
-    const live = url.searchParams.get("live") === "1";
+    // Le pouls des apps (`pulse=1`) : l'activité éphémère des agents seulement — ni rejeu du journal, ni événement
+    // journalisé, et un `session` réduit à un paragraphe de l'agent, rogné. Le pouls n'en lit pas plus.
+    const pulse = url.searchParams.get("pulse") === "1";
+    const live = pulse || url.searchParams.get("live") === "1";
     const header = req.headers["last-event-id"];
     let cursor = Number((typeof header === "string" ? header : null) ?? url.searchParams.get("after") ?? "0") || 0;
     res.writeHead(200, {
@@ -2038,6 +2157,11 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     };
     const write = (event: EventRow): void => {
       if (!visible(event)) return;
+      if (pulse) {
+        const frame = pulseFrame(event);
+        if (frame !== null && !replaying) push(frame);
+        return;
+      }
       if (event.ephemeral) {
         if (live && !replaying) push(sseFrame(event));
         return;
@@ -2052,6 +2176,7 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     // (`audit=`) qui ne garde rien n'est pas relu indéfiniment.
     let read = cursor;
     for (;;) {
+      if (pulse) break;
       // Le propriétaire qui suit un espace relit tout le journal : `visible` y garde aussi la pause et les
       // changements de l'espace, que le filtre SQL par dépôt écarterait.
       const batch = store.eventsSince(read, runId, REPLAY_BATCH, whole && space !== null ? null : repos);

@@ -336,14 +336,14 @@ in
     environment.systemPackages = [ cfg.nodejs pkgs.git pkgs.util-linux check client ] ++ lib.optional (cfg.ompPackage != null) cfg.ompPackage;
 
     systemd.slices = {
-      omp-harness = { description = "OMP harness — budget mémoire total"; sliceConfig = { MemoryMax = "16G"; MemoryHigh = "15G"; }; };
+      omp-harness = { description = "OMP harness — budget mémoire total"; sliceConfig = { MemoryMax = "23G"; MemoryHigh = "22G"; }; };
       omp-harness-runners = {
         description = "OMP harness — runners";
-        sliceConfig = { MemoryMax = "5G"; ManagedOOMMemoryPressure = "kill"; ManagedOOMMemoryPressureLimit = "80%"; ManagedOOMPreference = "avoid"; };
+        sliceConfig = { MemoryMax = "8G"; ManagedOOMMemoryPressure = "kill"; ManagedOOMMemoryPressureLimit = "80%"; ManagedOOMPreference = "avoid"; };
       };
       omp-harness-heavy = {
         description = "OMP harness — jobs heavy";
-        sliceConfig = { MemoryMax = "8G"; ManagedOOMMemoryPressure = "kill"; ManagedOOMMemoryPressureLimit = "60%"; ManagedOOMSwap = "kill"; };
+        sliceConfig = { MemoryMax = "12G"; ManagedOOMMemoryPressure = "kill"; ManagedOOMMemoryPressureLimit = "60%"; ManagedOOMSwap = "kill"; };
       };
     };
 

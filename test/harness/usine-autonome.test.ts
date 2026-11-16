@@ -1,6 +1,7 @@
 // Feature usine-autonome : la file ne reste plus figée pour rien.
 // - Un run garé chez l'humain (`awaiting_human`) ne retient plus les modules d'un run en file :
 //   constaté le 2026-11-09, quatre runs attendaient depuis six heures deux runs garés.
+// - Un run en `merging` non plus : jugé, il n'attend que sa CI (jusqu'à deux heures sur un dépôt lent).
 // - Le juge de la suite complète d'un dépôt (`tests.judge`) se change par l'API
 //   (`PATCH /v1/repos/{name}`) : la configuration du VPS n'avait aucun autre chemin, et un
 //   dépôt rouge d'environnement dans le slot heavy envoyait chaque revue à l'humain.
@@ -234,6 +235,37 @@ test("usine-autonome/AC-4 : `pilot.allRuns: false` laisse un run hors audit à l
       [],
     );
     assert.equal(world.log().filter((entry) => entry.kind === "prompt" && entry.step === "pilote").length, 0);
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+test("usine-autonome/AC-5 : un run en `merging` (il n'attend que sa CI) ne retient pas les modules d'un run en file", async () => {
+  const world = fakeWorld({ req: [[{ sleep: 60_000 }]] });
+  world.store.createRun({
+    id: "fusion",
+    repo: "demo",
+    slug: "fusion",
+    title: "fusion",
+    request: "fusion",
+    branch: "harness/fusion",
+    state: "merging",
+    step: null,
+    modules: ["src/api"],
+  });
+  await world.orchestrator.start();
+  try {
+    const fresh = world.orchestrator.createRun({
+      repo: "demo",
+      title: "Suite",
+      request: "touche aussi l'API",
+      modules: ["src/api"],
+    });
+    await waitFor(
+      () => world.store.getRun(fresh.id)?.state === "running",
+      () =>
+        `${world.store.getRun(fresh.id)?.state} — ${world.orchestrator.withWait(world.store.getRun(fresh.id)!).reason}`,
+    );
   } finally {
     await world.orchestrator.stop();
   }

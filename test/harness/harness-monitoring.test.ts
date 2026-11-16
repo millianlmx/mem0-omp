@@ -581,8 +581,8 @@ test("harness-monitoring/AC-10 : la santé du serveur est échantillonnée — s
     store,
     scheduler: {
       snapshot: () => ({
-        runner: { used: 2, capacity: 5, labels: [], waiting: 1 },
-        heavy: { used: 0, capacity: 2, labels: [], waiting: 0 },
+        runner: { used: 2, capacity: 5, labels: [], waiting: 1, lent: 0 },
+        heavy: { used: 0, capacity: 2, labels: [], waiting: 0, lent: 0 },
         memAvailableMiB: 8000,
         providers: { anthropic: 7 },
       }),

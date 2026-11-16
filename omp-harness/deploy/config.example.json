@@ -10,11 +10,12 @@
     "oomScoreAdjust": 300,
     "profile": "pipeline",
     "stepTimeoutSec": 5400,
+    "lendMax": 3,
     "retryBackoffSec": [120, 600, 1800],
     "failoverOn": ["rate_limit", "server_error", "network"]
   },
   "heavy": {
-    "slots": 2,
+    "slots": 3,
     "memoryMax": "4G",
     "cpuQuota": "300%",
     "user": "omp-heavy",
