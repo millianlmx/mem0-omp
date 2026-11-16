@@ -1091,7 +1091,7 @@ public final class HarnessModel: ObservableObject {
             request: request,
             modules: options.modules.isEmpty ? nil : options.modules,
             priority: options.priority,
-            lane: options.lane == .full ? HarnessLane.full.rawValue : nil,
+            lane: options.lane == .auto ? nil : options.lane.rawValue,
             req: options.req,
             budgetUsd: options.budgetUsd,
             kind: options.kind?.rawValue,

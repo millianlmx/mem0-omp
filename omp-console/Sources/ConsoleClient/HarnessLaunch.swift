@@ -13,10 +13,12 @@ import Foundation
 
 /// La voie d'une feature : `auto` laisse le serveur choisir (la voie directe quand la
 /// demande porte ses critères d'acceptation, `lanes.direct`), `full` impose la voie
-/// complète (/req, /specs, /impl, /review).
+/// complète (/req, /specs, /impl, /review), `express` part tout de suite à /impl (revue
+/// courte, une seule correction ; un serveur sans voie express la refuse en 400).
 public enum HarnessLane: String, CaseIterable, Sendable, Identifiable {
     case auto
     case full
+    case express
 
     public var id: String { rawValue }
 }

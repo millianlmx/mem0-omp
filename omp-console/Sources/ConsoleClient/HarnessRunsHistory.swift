@@ -4,7 +4,10 @@
 //
 // Porté par `HarnessModel` (`server.history`, comme le poste) : même transport, même
 // jeton. Tant qu'un écran l'observe (`refresh()` appelé), le flux de la boîte le
-// relit avec elle ; un geste (priorité, arrêt…) le relit aussi.
+// relit avec elle ; un geste (priorité, arrêt…) le relit aussi. Ces relectures sont
+// INCRÉMENTALES : `GET /v1/runs?since=<at>` ne rend que les runs écrits depuis la lecture
+// précédente (et ceux en file), fusionnés par id ; `refresh()` (ouverture, retour au
+// premier plan) relit tout. Un serveur sans `since` rend tout, et la liste est remplacée.
 
 import Combine
 import Foundation
@@ -17,6 +20,9 @@ public final class HarnessRunsHistory: ObservableObject {
     public private(set) var isWatched = false
 
     private unowned let harness: HarnessModel
+    /// L'instant serveur (`at`) de la dernière lecture : la suivante ne demande que ce qui a
+    /// été écrit depuis. `nil` : la prochaine lecture est complète.
+    private var syncedAt: Double?
 
     init(harness: HarnessModel) {
         self.harness = harness
@@ -25,14 +31,28 @@ public final class HarnessRunsHistory: ObservableObject {
     /// Relit la liste à la demande d'un écran, qui la fait suivre au flux.
     public func refresh() async {
         isWatched = true
+        syncedAt = nil
         await reload()
     }
 
-    /// Relit la liste (le flux, un geste) ; rien n'est republié si elle n'a pas changé,
+    /// Relit la liste (le flux, un geste) : seulement ce qui a changé depuis la lecture
+    /// précédente quand le serveur sait le dire. Rien n'est republié si elle n'a pas changé,
     /// et une lecture en échec garde la précédente.
     func reload() async {
-        guard let page: HarnessRunsPage = try? await harness.fetch(HarnessCall(method: "GET", path: "/v1/runs")) else { return }
-        update(\.runs, page.runs)
+        let path = syncedAt.map { "/v1/runs?since=\(Int64($0))" } ?? "/v1/runs"
+        guard let page: HarnessRunsPage = try? await harness.fetch(HarnessCall(method: "GET", path: path)) else { return }
+        update(\.runs, page.since == nil ? page.runs : Self.merging(page.runs, into: runs))
+        syncedAt = page.at
+    }
+
+    /// `current` où chaque run de `changed` remplace celui de même id, à sa place ; les runs
+    /// inconnus s'ajoutent à la fin, dans l'ordre du serveur.
+    nonisolated static func merging(_ changed: [HarnessRun], into current: [HarnessRun]) -> [HarnessRun] {
+        guard !changed.isEmpty else { return current }
+        var fresh = Dictionary(changed.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        var merged = current.map { run in fresh.removeValue(forKey: run.id) ?? run }
+        merged.append(contentsOf: changed.filter { fresh.removeValue(forKey: $0.id) != nil })
+        return merged
     }
 
     /// Les événements du journal qui changent une feature de la liste (son état, son
@@ -54,6 +74,7 @@ public final class HarnessRunsHistory: ObservableObject {
     func reset() {
         runs = []
         isWatched = false
+        syncedAt = nil
     }
 }
 
@@ -65,6 +86,10 @@ extension HarnessRun {
 /// La réponse de `GET /v1/runs`.
 struct HarnessRunsPage: Decodable {
     var runs: [HarnessRun]
+    /// L'instant serveur de la lecture, d'où reprendre (absent : serveur sans `since`).
+    var at: Double?
+    /// Présent : la page ne porte que les runs écrits depuis cet instant (et ceux en file).
+    var since: Double?
 }
 
 // MARK: - Priorité

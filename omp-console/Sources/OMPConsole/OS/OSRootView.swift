@@ -232,6 +232,7 @@ struct OSRootView: View {
             }
         }
         .onDisappear { workspace.pulse.stop() }
+        .modifier(MacPulseLifecycle(pulse: workspace.pulse))
     }
 
     /// Montre une destination nommée dans l'OS (`OSMacRoute`).
@@ -357,5 +358,28 @@ private extension OSSessionPane {
         case .tests: .tests
         case .timeline: .timeline
         }
+    }
+}
+
+/// Sur Mac, l'app masquée (⌘H) ou sa fenêtre réduite dans le Dock ferment le flux du pouls,
+/// comme l'arrière-plan sur iOS ; il se rouvre au retour (`OSPulse.phaseChanged`). Le flux de
+/// la boîte reste ouvert : les notifications en dépendent.
+private struct MacPulseLifecycle: ViewModifier {
+    let pulse: OSPulse
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in
+                pulse.phaseChanged(to: .background)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUnhideNotification)) { _ in
+                pulse.phaseChanged(to: .active)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { _ in
+                pulse.phaseChanged(to: .background)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { _ in
+                pulse.phaseChanged(to: .active)
+            }
     }
 }
