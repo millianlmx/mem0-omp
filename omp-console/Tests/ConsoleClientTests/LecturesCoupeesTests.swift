@@ -28,7 +28,7 @@ private final class Finished {
 }
 
 /// `/v1/status` rend deux dépôts : la relecture publiée se distingue de la première lecture.
-private let twoReposStatus = #"{"runs":{"merged":2},"live":[],"scheduler":{},"repos":[{"name":"demo","scope":"src"},{"name":"autre","scope":null}],"oracle":{"configured":false,"ok":false}}"#
+private let twoReposStatus = #"{"runs":{"merged":2},"live":[],"scheduler":{},"repos":[{"name":"demo","scope":"src"},{"name":"autre","scope":""}],"oracle":{"configured":false,"ok":false}}"#
 
 private let providersJSON = #"""
 {"providers":[
