@@ -1,7 +1,7 @@
 // La CLI de script du harness : lancer une feature et attendre sa fin depuis un shell ou une CI,
 // sans app ni plugin (`node --experimental-strip-types omp-harness/cli.ts run … --wait --json`).
 //
-//   run    --repo <dépôt> --title <titre> (--request <texte> | --request -) [--lane full|direct]
+//   run    --repo <dépôt> --title <titre> (--request <texte> | --request -) [--lane full|direct|express]
 //          [--priority n] [--budget usd] [--key <clé>] [--wait] [--timeout 90s|5m|2h] [--json]
 //   status <runId> [--json]
 //   wait   <runId> [--timeout …] [--json]
@@ -31,7 +31,7 @@ const EXIT = {
 
 const USAGE = `usage : cli.ts <commande> [options]
 
-  run    --repo <dépôt> --title <titre> (--request <texte> | --request -) [--lane full|direct]
+  run    --repo <dépôt> --title <titre> (--request <texte> | --request -) [--lane full|direct|express]
          [--priority n] [--budget usd] [--key <clé>] [--wait] [--timeout 90s|5m|2h] [--json]
   status <runId> [--json]
   wait   <runId> [--timeout 90s|5m|2h] [--json]
@@ -413,7 +413,8 @@ async function runCommand(conn: () => Connection, args: string[], progress: (tex
   const requestArg = str(values.request);
   if (requestArg === undefined) throw usageError("--request : texte de la demande, ou - pour le lire sur stdin");
   const lane = str(values.lane);
-  if (lane !== undefined && lane !== "full" && lane !== "direct") throw usageError('--lane : "full" ou "direct"');
+  if (lane !== undefined && lane !== "full" && lane !== "direct" && lane !== "express")
+    throw usageError('--lane : "full", "direct" ou "express"');
   const priority = str(values.priority);
   if (priority !== undefined && !/^-?\d+$/.test(priority)) throw usageError("--priority : entier attendu");
   const budgetArg = str(values.budget);
@@ -434,7 +435,7 @@ async function runCommand(conn: () => Connection, args: string[], progress: (tex
     repo,
     title,
     request,
-    ...(lane === "full" ? { lane: "full" } : {}),
+    ...(lane === "full" || lane === "express" ? { lane } : {}),
     ...(priority !== undefined ? { priority: Number(priority) } : {}),
     ...(budget !== undefined ? { budgetUsd: budget } : {}),
   });

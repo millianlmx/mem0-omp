@@ -32,10 +32,10 @@ import { createFromPlan } from "./intake-create.ts";
 import { Intaker } from "./intake.ts";
 import { AuditPilot, raisesAutonomy } from "./pilot.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
-import { configWarnings, retryBackoff } from "./config.ts";
+import { configWarnings, fixCapFor, retryBackoff } from "./config.ts";
 import type { Actor, HarnessDeps } from "./context.ts";
 import { HarnessContext, SERVICE } from "./context.ts";
-import type { DecisionRow, RepoFilter, RunAutonomy, RunRow, ScheduleTarget, Space } from "./db.ts";
+import type { DecisionRow, RepoFilter, RunAutonomy, RunLane, RunRow, ScheduleTarget, Space } from "./db.ts";
 import { detectIrreversible } from "./decisions.ts";
 import { DigestSender } from "./digest.ts";
 import { HarnessError } from "./errors.ts";
@@ -88,6 +88,7 @@ import {
   StepExecutor,
   challengeUnit,
   directSpecs,
+  expressSpecs,
   liveRun,
   specsGateFacts,
 } from "./steps.ts";
@@ -126,7 +127,8 @@ export type NewRunInput = {
   modules?: string[];
   req?: string;
   priority?: number;
-  lane?: "full";
+  /** `express` : la voie express (`lanes.express`) ; absent : `lanes.default`. */
+  lane?: "full" | "express";
   budgetUsd?: number;
   /** Le type de travail et les labels déclarés par le créateur (`POST /v1/runs`), lus par l'autonomie par paliers. */
   kind?: WorkKind;
@@ -1026,7 +1028,7 @@ export class Orchestrator {
         return { spent: cost, budget: threshold };
       },
       openQuestions: () => store.listEscalations({ runId: run.id, status: "open" }).length,
-      fixCap: config.review.fixCap,
+      fixCap: fixCapFor(config, run),
     });
   }
 
@@ -1177,7 +1179,7 @@ export class Orchestrator {
           { step: run.step as StepKind, fixes: run.fixes, attempts: run.attempts, lastFailCause: run.lastFailCause },
           outcome,
           {
-            fixCap: config.review.fixCap,
+            fixCap: fixCapFor(config, run),
             retryBackoffSec: retryBackoff(config),
             specsGate: config.review.specsGate,
             mergeRetries: config.review.mergeRetries,
@@ -1275,7 +1277,7 @@ export class Orchestrator {
     const autonomy = input.autonomy === undefined ? fallback : input.autonomy;
     if (actor.pilot && raisesAutonomy(fallback, autonomy))
       throw new HarnessError(403, "geste réservé à l'humain — un pilote ne monte pas l'autonomie d'un run");
-    const specs = req === "" && autonomy !== "ask" ? this.#directSpecs(input) : null;
+    const { lane, specs, refused } = this.#laneOf(input, req, autonomy);
     if (req !== "" && !/^##\s+Besoins/m.test(req)) throw new HarnessError(400, "req : la section `## Besoins` manque");
     const priority = input.priority ?? 0;
     if (!Number.isInteger(priority) || Math.abs(priority) > 1000)
@@ -1297,6 +1299,7 @@ export class Orchestrator {
         ...(input.kind !== undefined ? { kind: input.kind } : {}),
         ...(input.labels !== undefined ? { labels: input.labels } : {}),
         autonomy,
+        lane,
         ...(req !== "" ? { step: "specs" as const } : specs !== null ? { step: "impl" as const } : {}),
         ...(input.projectId ? { projectId: input.projectId, projectOrder: input.projectOrder ?? 0 } : {}),
         ...(input.afterRun ? { afterRun: input.afterRun.id, reason: waitReason(input.afterRun) } : {}),
@@ -1317,7 +1320,8 @@ export class Orchestrator {
         priority,
         ...(created.autonomy !== null ? { autonomy: created.autonomy } : {}),
         ...(budget !== undefined ? { budgetUsd: budget } : {}),
-        lane: specs !== null ? "direct" : "full",
+        lane,
+        ...(refused !== null ? { laneRefused: refused } : {}),
         ...(input.afterRun ? { afterRun: input.afterRun.id } : {}),
         ...(actor.by ? { by: actor.by } : {}),
       });
@@ -1333,6 +1337,38 @@ export class Orchestrator {
     if (input.inferModules !== false && (input.modules ?? []).length === 0) void this.#inferModules(run);
     else this.#kick();
     return run;
+  }
+
+  /**
+   * La voie d'un run neuf et son specs.md synthétisé (`null` : voie complète, /req écrira les besoins). Un `req`
+   * fourni part de /specs (voie complète). La voie express (`lane: "express"`, ou `lanes.default: "express"`
+   * sans `lane`) naît à /impl avec `expressSpecs` ; refusée (`#expressRefused`), le run prend la voie que la
+   * demande aurait eue sans elle, et `refused` dit pourquoi (événement `run_created`, `laneRefused`).
+   */
+  #laneOf(
+    input: NewRunInput & { projectId?: string; projectOrder?: number },
+    req: string,
+    autonomy: RunAutonomy | null,
+  ): { lane: RunLane; specs: string | null; refused: string | null } {
+    if (req !== "") return { lane: "full", specs: null, refused: null };
+    const wanted = input.lane ?? (this.#ctx.config.lanes.default === "express" ? "express" : undefined);
+    const refused = wanted === "express" ? this.#expressRefused(input, autonomy) : null;
+    if (wanted === "express" && refused === null)
+      return { lane: "express", specs: expressSpecs(input.title, input.request), refused: null };
+    const specs = autonomy !== "ask" ? this.#directSpecs(input) : null;
+    return { lane: specs !== null ? "direct" : "full", specs, refused };
+  }
+
+  /** Pourquoi la voie express est refusée à cette demande, ou `null` : elle part en express. */
+  #expressRefused(input: NewRunInput, autonomy: RunAutonomy | null): string | null {
+    const { config } = this.#ctx;
+    if (!config.lanes.express) return "voie express coupée (`lanes.express: false`)";
+    if (autonomy === "ask") return "autonomie « tout me demander » : la voie complète";
+    if (config.review.specsGate === true) return "porte des specs toujours posée (`review.specsGate: true`)";
+    const irreversible = detectIrreversible(`${input.title}\n${input.request}`);
+    return irreversible === null
+      ? null
+      : `geste irréversible (${irreversible}) : la voie complète le soumet à l'humain`;
   }
 
   /**

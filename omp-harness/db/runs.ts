@@ -57,6 +57,11 @@ export type RunRow = {
   autonomy: RunAutonomy | null;
   /** Le motif donné par l'humain à l'annulation (`CANCEL_CAUSES`) ; `null` : aucun. */
   cancelCause: CancelCause | null;
+  /**
+   * La voie décidée à la création : `full` (/req → /specs → /impl), `direct` (la demande portait ses critères),
+   * `express` (ni /req ni /specs, revue courte, une seule correction). `null` : un run d'avant la colonne. Jamais modifiée.
+   */
+  lane: RunLane | null;
   /** Le client qui a créé le run (`null` : service ou jeton historique). */
   createdBy: string | null;
   createdAt: number;
@@ -104,8 +109,12 @@ export type NewRun = Pick<RunRow, "id" | "repo" | "slug" | "title" | "request" |
       | "kind"
       | "labels"
       | "autonomy"
+      | "lane"
     >
   >;
+
+export const RUN_LANES = ["full", "direct", "express"] as const;
+export type RunLane = (typeof RUN_LANES)[number];
 
 export const RUN_AUTONOMIES = ["ask", "deliver"] as const;
 export type RunAutonomy = (typeof RUN_AUTONOMIES)[number];
@@ -176,6 +185,7 @@ function runOf(row: Row): RunRow {
     labels: json<string[]>(row, "labels", []),
     autonomy: RUN_AUTONOMIES.find((level) => level === strOrNull(row, "autonomy")) ?? null,
     cancelCause: cancelCauseOf(strOrNull(row, "cancel_cause")),
+    lane: RUN_LANES.find((lane) => lane === strOrNull(row, "lane")) ?? null,
     createdBy: strOrNull(row, "created_by"),
     createdAt: num(row, "created_at"),
     updatedAt: num(row, "updated_at"),
@@ -209,8 +219,8 @@ export class RunStore extends StoreCore {
   createRun(input: NewRun): RunRow {
     const at = this.now();
     this.execute(
-      `INSERT INTO runs (id, repo, slug, title, request, state, step, branch, project_id, project_order, modules, priority, created_by, after_run, reason, kind, labels, autonomy, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (id, repo, slug, title, request, state, step, branch, project_id, project_order, modules, priority, created_by, after_run, reason, kind, labels, autonomy, lane, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.id,
       input.repo,
       input.slug,
@@ -229,6 +239,7 @@ export class RunStore extends StoreCore {
       input.kind ?? null,
       JSON.stringify(input.labels ?? []),
       input.autonomy ?? null,
+      input.lane ?? null,
       at,
       at,
     );

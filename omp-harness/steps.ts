@@ -29,6 +29,7 @@ import {
   unanswered,
 } from "./challenge.ts";
 import type { ChallengeStep } from "./config.ts";
+import { fixCapFor } from "./config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { RunRow, StepRow, Store } from "./db.ts";
 import type { AtlassianDesk } from "./atlassian/desk.ts";
@@ -288,6 +289,24 @@ export function directSpecs(title: string, request: string): string | null {
   return `# ${title.trim()}\n\nVoie directe : la demande portait ses critères d'acceptation, ni /req ni /specs n'ont tourné.\n\n## Demande\n\n${quoted}\n\n## Critères d'acceptation\n\n${criteria}\n`;
 }
 
+/**
+ * Le specs.md de la voie express : celui de la voie directe si la demande porte ses critères, sinon la demande
+ * citée et UN critère synthétisé — la demande livrée telle qu'écrite, prouvée par un test qui la nomme.
+ */
+export function expressSpecs(title: string, request: string): string {
+  const direct = directSpecs(title, request);
+  if (direct !== null) return direct.replace(/^Voie directe : .*$/m, EXPRESS_NOTE);
+  const quoted = request
+    .trim()
+    .split("\n")
+    .map((line) => `> ${line}`.trimEnd())
+    .join("\n");
+  return `# ${title.trim()}\n\n${EXPRESS_NOTE}\n\n## Demande\n\n${quoted}\n\n## Critères d'acceptation\n\nAC-1 : Given le dépôt actuel, When le changement est livré, Then ce que décrit la demande ci-dessus fonctionne, prouvé par un test nommé avec AC-1\n`;
+}
+
+const EXPRESS_NOTE =
+  "Voie express : ni /req ni /specs n'ont tourné ; la revue ne bloque que sur ce qui casse (critère non tenu, test rouge, faille, perte de données).";
+
 /** La cause d'un prompt qui n'a pas abouti, pour la machine (backoff, bascule, impasse). */
 export function failCauseOf(status: "aborted" | "error", error: PromptError | null): FailCause {
   if (status === "aborted") return "aborted";
@@ -436,7 +455,8 @@ export class StepExecutor {
       if (step === "review" && (await git.mergeInProgress(worktree)))
         live.conflicts = await git.unmergedFiles(worktree);
       // La QA de /review (prévisualisation et son navigateur) démarre en tâche de fond : le prompt ne l'attend pas.
-      if (step === "review")
+      // La voie express s'en passe : la suite complète juge, la navigation de l'agent dans l'app coûte des minutes.
+      if (step === "review" && run.lane !== "express")
         live.qa = QaPreview.start(
           { config, exec: this.#ctx.exec, log: this.#ctx.log, proofs: this.#ctx.proofs },
           { runId: run.id, stepId: stepRow.id, repo: this.#ctx.repo(run.repo), worktree },
@@ -448,7 +468,7 @@ export class StepExecutor {
       const headBefore = await git.revParse(worktree, "HEAD");
       const dirtyBefore = await git.isDirty(worktree);
       await session.open(
-        stepTier(config.stepTiers, step, run.fixes, config.review.fixCap),
+        stepTier(config.stepTiers, step, run.fixes, fixCapFor(config, run)),
         runnerUnit(run.id, stepRow.id),
         live.abort.signal,
         // La revue relit chez un autre fournisseur que l'implémenteur : pas les mêmes angles morts.
@@ -479,6 +499,7 @@ export class StepExecutor {
         specsDrift: step === "review" ? this.#specsDrift(run.id) : [],
         // Pas de req.md : le run est né en voie directe, specs.md ne porte que la demande et ses critères.
         direct: store.getArtifact(run.id, "req.md") === null,
+        express: run.lane === "express",
         qa: step === "review" && live.qa?.offersTools === true,
       });
       store.setInstructions(run.id, null);
@@ -605,7 +626,7 @@ export class StepExecutor {
     if (pending.length > 0) {
       const session = this.session(live, run);
       await session.open(
-        stepTier(config.stepTiers, step, run.fixes, config.review.fixCap),
+        stepTier(config.stepTiers, step, run.fixes, fixCapFor(config, run)),
         `${runnerUnit(run.id, stepRow.id)}-reponse`,
         live.abort.signal,
       );

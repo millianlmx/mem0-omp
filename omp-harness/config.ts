@@ -590,9 +590,15 @@ export type HarnessConfig = {
   /**
    * Les voies d'un run (orchestrator.ts) : `direct` laisse une demande qui porte déjà ses
    * critères d'acceptation (`## Critères d'acceptation`, au moins un `AC-n`) partir à /impl
-   * sans /req ni /specs ; `false` : tout run passe par /req.
+   * sans /req ni /specs ; `false` : tout run passe par /req. `express` autorise la voie express
+   * (`lane: "express"` à la création) : ni /req ni /specs même sans critères (un critère est
+   * synthétisé de la demande), une revue qui ne bloque que sur ce qui casse, sans QA de
+   * prévisualisation, et au plus `expressFixCap` corrections avant l'humain. `default` : la voie
+   * d'un run créé sans `lane` — `auto` (directe si la demande porte ses critères, sinon complète)
+   * ou `express`. L'irréversible, la porte des specs toujours posée et l'autonomie `ask` gardent la
+   * voie complète, même demandée express.
    */
-  lanes: { direct: boolean };
+  lanes: { direct: boolean; express: boolean; default: "auto" | "express"; expressFixCap: number };
   /**
    * Les planifications récurrentes (schedules.ts) : leurs expressions cron se lisent en heure
    * murale de `timezone` (IANA) ; une échéance passée pendant un arrêt du service n'est
@@ -641,6 +647,11 @@ export function worstCaseBudgetMiB(config: HarnessConfig, serviceMiB = 1024): nu
     config.heavy.slots * sizeMiB(config.heavy.memoryMax) +
     serviceMiB
   );
+}
+
+/** Le plafond de corrections d'un run : `review.fixCap`, ramené à `lanes.expressFixCap` en voie express. */
+export function fixCapFor(config: HarnessConfig, run: { lane: string | null }): number {
+  return run.lane === "express" ? Math.min(config.review.fixCap, config.lanes.expressFixCap) : config.review.fixCap;
 }
 
 /** La chaîne de bascule d'un tier : la sienne, sinon celle du premier tier au-dessus qui en a une. */
@@ -769,7 +780,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       vps: { url: null, token: null },
     },
     issues: { label: "omp:fix", maxLaunch: 5, pollSec: 900 },
-    lanes: { direct: true },
+    lanes: { direct: true, express: true, default: "auto", expressFixCap: 1 },
     schedules: { timezone: "Europe/Paris", catchUpMin: 60 },
     browser: {
       url: null,
@@ -1203,6 +1214,11 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!(Number.isInteger(config.issues.maxLaunch) && config.issues.maxLaunch >= 1))
     fail("issues.maxLaunch : entier ≥ 1");
   if (typeof config.lanes.direct !== "boolean") fail("lanes.direct : booléen");
+  if (typeof config.lanes.express !== "boolean") fail("lanes.express : booléen");
+  if (config.lanes.default !== "auto" && config.lanes.default !== "express")
+    fail('lanes.default : "auto" ou "express"');
+  if (!(Number.isInteger(config.lanes.expressFixCap) && config.lanes.expressFixCap >= 0))
+    fail("lanes.expressFixCap : entier ≥ 0");
   if (config.issues.pollSec !== null && !(Number.isInteger(config.issues.pollSec) && config.issues.pollSec >= 60))
     fail("issues.pollSec : entier ≥ 60 (secondes), ou null");
   if (typeof config.schedules.timezone !== "string" || !isTimeZone(config.schedules.timezone))
