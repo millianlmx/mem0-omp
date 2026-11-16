@@ -117,7 +117,7 @@ export async function runHostTool(
     case "set_modules":
       return setModulesTool(ctx, run, step, args);
     case "split_feature":
-      return splitFeatureTool(hooks, run, step, args);
+      return splitFeatureTool(run, step, args);
     case "run_tests":
       return runTestsTool(ctx, state, run, step, args, signal);
     case "review_verdict": {
@@ -359,30 +359,29 @@ export function parseSplitFeatures(
 }
 
 /**
- * `split_feature { features }` : les sous-features AUTRES que celle que ce run continue. En
- * /impl, elles partent en projet et attendent le merge de ce run ; en /specs, rien n'est créé
- * — le `## Découpage` de specs.md part quand les specs sont acceptées (split.ts).
+ * `split_feature { features }` : en /specs, il note seulement — le `## Découpage` de specs.md fait foi et part
+ * quand les specs sont acceptées (split.ts). Le découpage se décide DÈS LE DÉPART, sur ce que la demande
+ * regroupe, jamais sur la taille du diff : en /impl, l'outil est refusé et le run livre la demande entière.
  */
-function splitFeatureTool(hooks: StepHooks, run: RunRow, step: StepRow, args: Record<string, unknown>): HostToolResult {
+function splitFeatureTool(run: RunRow, step: StepRow, args: Record<string, unknown>): HostToolResult {
   if (step.kind !== "specs" && step.kind !== "impl")
     return { text: "split_feature n'existe qu'en /specs et /impl", isError: true };
-  // La voie express va droit au but : une demande, un run, aucune chaîne de sous-features.
+  // La voie express va droit au but : une demande, un run, aucune autre feature.
   if (run.lane === "express")
     return {
       text: "voie express : pas de découpage — livre la demande entière dans ce run, quelle que soit la taille du diff",
       isError: true,
     };
+  if (step.kind === "impl")
+    return {
+      text: "le découpage se décide en /specs, pas en /impl : livre la demande entière dans ce run, quelle que soit la taille du diff",
+      isError: true,
+    };
   const parsed = parseSplitFeatures(args.features);
   if (!parsed.ok) return { text: `split_feature refusé : ${parsed.error}`, isError: true };
-  if (step.kind === "specs")
-    return {
-      text: `découpage noté (${parsed.features.length} feature(s)) : il partira de \`## Découpage\` de specs.md quand les specs seront acceptées — liste-les là. Ce run continue sur sa part seulement.`,
-      details: { deferred: true },
-    };
-  const { projectId, runs } = hooks.split(run, parsed.features, step.kind);
   return {
-    text: `projet ${projectId} créé avec ${runs.length} feature(s) : ${runs.map((row) => row.title).join(" ; ")}. Elles partiront après le merge de ce run, qui continue sur sa part seulement.`,
-    details: { projectId, runs: runs.map((row) => row.id) },
+    text: `découpage noté (${parsed.features.length} feature(s)) : il partira de \`## Découpage\` de specs.md quand les specs seront acceptées — liste-les là. Ce run continue sur sa part seulement.`,
+    details: { deferred: true },
   };
 }
 

@@ -195,7 +195,7 @@ Lis \`${ART}/req.md\`. Écris \`${ART}/specs.md\`. Sa TOUTE PREMIÈRE ligne, ava
 ## Modules
 (OBLIGATOIRE, non vide : une puce par chemin du dépôt que l'implémentation touchera — dossiers ou fichiers ; c'est ce qui décide du parallélisme. Appelle aussi \`set_modules\` avec ces chemins.)
 ## Découpage
-(si l'implémentation dépassera ~${ctx.maxDiffLines} lignes de diff de code : une liste \`- titre — demande — modules\` par sous-feature AUTRE que celle que ce run garde, et appelle \`split_feature\` avec les mêmes ; sinon exactement « aucun »)
+(seulement si la demande REGROUPE plusieurs features indépendantes — chacune livrable, testable et utile seule ; JAMAIS pour la taille du diff : ce run livre sa part entière, quelle qu'elle soit. Une puce \`- titre — demande — modules\` par feature AUTRE que celle que ce run garde ; chacune part tout de suite comme un run normal, en parallèle si ses modules sont disjoints. Ajoute \`— après\` en fin de puce seulement si elle a besoin du code de ce run sur main : elle attendra son merge. Sinon exactement « aucun »)
 
 Ne modifie AUCUN autre fichier.`,
 
@@ -216,11 +216,7 @@ ${
 }
 - \`set_modules\` dès que les chemins touchés sont connus, s'ils diffèrent de specs.md.
 - \`save_checkpoint\` après chaque incrément cohérent (tests verts sur ce qui est écrit).
-${
-  ctx.express === true
-    ? "- Voie express : PAS de découpage (`split_feature` est refusé). Livre la demande entière dans ce run, quelle que soit la taille du diff."
-    : `- Diff visé : < ${ctx.maxDiffLines} lignes de code. Au-delà, arrête-toi à un incrément cohérent, appelle \`split_feature\` avec les sous-features restantes, et note-les dans \`## Reste\`.`
-}
+- Livre la demande ENTIÈRE dans ce run, quelle que soit la taille du diff : le découpage s'est décidé avant (\`split_feature\` est refusé ici).
 - Tests : \`run_tests\` avec \`scope: touched\` (tests des fichiers touchés, slot heavy isolé) ; \`scope: check\` avec \`check\` pour une commande nommée du dépôt. La suite complète est réservée à /review.
 - Ne commite pas toi-même : \`save_checkpoint\` et la fin d'étape commitent.
 - Le code demandé est DÉJÀ dans le dépôt (livré avant) ? N'invente pas de diff : \`## Fait\` dit, critère par critère, le fichier et le test qui le livrent déjà ; la revue le vérifie.

@@ -201,8 +201,8 @@ test("voie-express/AC-5 : POST /v1/runs accepte lane express ; la configuration 
   assert.throws(() => validateConfig(world.config), /lanes\.expressFixCap/);
 });
 
-test("voie-express/AC-6 : la voie express est celle d'un run créé sans lane ; elle ne découpe jamais — split_feature est refusé en /impl, aucun projet ni run enfant n'est créé, et /impl reçoit la consigne de tout livrer", async () => {
-  assert.equal(defaultConfig("/tmp/harness-unused").lanes.default, "express");
+test('voie-express/AC-6 : `lanes.default: "express"` rend la voie express à un run créé sans lane (le défaut reste `auto`) ; elle ne découpe jamais — split_feature est refusé, aucun projet ni run enfant n\'est créé, et /impl reçoit la consigne de tout livrer', async () => {
+  assert.equal(defaultConfig("/tmp/harness-unused").lanes.default, "auto");
   const split = {
     tool: "split_feature",
     args: { features: [{ title: "Export JSON", request: "Exporter aussi en JSON", modules: ["docs"] }] },
@@ -231,7 +231,7 @@ test("voie-express/AC-6 : la voie express est celle d'un run créé sans lane ; 
     const prompt = world
       .log()
       .find((entry) => entry.kind === "prompt" && entry.step === "impl" && entry.nudge !== true);
-    assert.match(String(prompt?.message), /PAS de découpage/);
+    assert.match(String(prompt?.message), /Livre la demande ENTIÈRE dans ce run/);
     assert.doesNotMatch(String(prompt?.message), /appelle `split_feature`/);
   } finally {
     await world.orchestrator.stop();

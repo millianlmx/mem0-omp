@@ -123,7 +123,12 @@ export function liveRun(runId: string): LiveRun {
   };
 }
 
-export type SplitFeature = { title: string; request: string; modules: string[] };
+/**
+ * Une sous-feature d'un découpage. `after` : elle a besoin du code du run parent sur main et attend son
+ * merge (`afterRun`) ; sinon c'est un run normal, qui part tout de suite (le planificateur ne la retient
+ * que si ses modules recoupent ceux d'un run en cours).
+ */
+export type SplitFeature = { title: string; request: string; modules: string[]; after: boolean };
 
 /** Le corps d'une section `## Titre` d'un artefact (jusqu'au `## ` suivant), ou `null` si elle manque. */
 export function sectionBody(markdown: string, title: RegExp): string | null {
@@ -150,15 +155,16 @@ function bullets(body: string): string[] {
 }
 
 /**
- * Les sous-features de `## Découpage` : une puce `titre — demande — modules` chacune
- * (modules séparés par des virgules ; demande et modules facultatifs). « aucun » ⇒ vide.
+ * Les sous-features de `## Découpage` : une puce `titre — demande — modules [— après]` chacune
+ * (modules séparés par des virgules ; demande et modules facultatifs ; `— après` : elle attend
+ * le merge de ce run). « aucun » ⇒ vide.
  */
 export function parseSplitSection(specsMd: string): SplitFeature[] {
   const body = sectionBody(specsMd, /^d[ée]coupage/i);
   if (body === null || /^aucun/i.test(body)) return [];
   const features: SplitFeature[] = [];
   for (const item of bullets(body)) {
-    const [title = "", request = "", modules = ""] = item.split(/\s+[—–]\s+/).map((part) => part.trim());
+    const [title = "", request = "", modules = "", marker = ""] = item.split(/\s+[—–]\s+/).map((part) => part.trim());
     if (title === "") continue;
     features.push({
       title: title.replace(/^\*\*|\*\*$/g, "").slice(0, 120),
@@ -167,6 +173,8 @@ export function parseSplitSection(specsMd: string): SplitFeature[] {
         .split(/[,;]/)
         .map((module) => module.trim().replace(/^`|`$/g, ""))
         .filter((module) => module !== "" && !isArtifactPath(module.replace(/^\.\//, ""))),
+      // `— après` : elle a besoin du code de ce run sur main.
+      after: /^apr[eè]s\b/i.test(marker),
     });
   }
   return features;

@@ -1,16 +1,18 @@
 // Le découpage d'une feature : les sous-features que son run ne garde pas partent en
 // projet « Découpage de « … » ».
 //
-// - Le `## Découpage` des specs ne part qu'une fois les specs ACCEPTÉES (machine.ts
-//   `acceptsSpecs` : validées par l'humain ou le pilote, ou aucune porte), jamais à la
-//   clôture de /specs : des specs refusées puis refaites découpent selon leur dernière
-//   version. Des specs refaites APRÈS une acceptation (décision renversée) remplacent le
-//   découpage précédent, qui n'a pas pu démarrer.
-// - `split_feature` en /impl découpe tout de suite : les specs sont déjà acceptées. En
-//   /specs, l'outil ne crée rien, le `## Découpage` fait foi.
-// - Chaque feature découpée attend le MERGE de son parent (`afterRun`) : elle reste en file
-//   avec sa raison, l'admission la saute. Mergé, le parent la libère ; annulé ou en échec,
-//   il l'emporte avec lui (context.ts `#settleSplit`).
+// - Le découpage se décide DÈS LE DÉPART, dans le `## Découpage` des specs, sur ce que la
+//   demande regroupe (des features indépendantes, chacune livrable et testable seule), jamais
+//   sur la taille du diff : `split_feature` est refusé en /impl.
+// - Il ne part qu'une fois les specs ACCEPTÉES (machine.ts `acceptsSpecs` : validées par
+//   l'humain ou le pilote, ou aucune porte), jamais à la clôture de /specs : des specs refusées
+//   puis refaites découpent selon leur dernière version. Des specs refaites APRÈS une
+//   acceptation remplacent le découpage précédent, pour les features qui n'ont pas démarré.
+// - Une sous-feature est un RUN NORMAL : elle part tout de suite, en parallèle du parent si
+//   leurs modules sont disjoints (le planificateur les départage sinon), et ne dépend pas de
+//   son sort. Seule une sous-feature marquée `— après` (elle a besoin du code du parent sur
+//   main) attend son MERGE (`afterRun`) ; annulé ou en échec, il l'emporte avec lui
+//   (context.ts `#settleSplit`).
 // - Sa demande porte le lien vers le parent et ses specs gelées : le cadrage n'est pas refait.
 import type { HarnessContext } from "./context.ts";
 import type { RunRow } from "./db.ts";
@@ -33,9 +35,14 @@ export function waitReason(parent: Pick<RunRow, "id" | "title">): string {
 /**
  * La demande d'une feature découpée : la sienne, puis le contexte — le parent (titre, run,
  * branche) et ses specs gelées, en citation : leurs titres et leurs `AC-n` ne comptent ni
- * pour la voie directe, ni pour la revue de la feature.
+ * pour la voie directe, ni pour la revue de la feature. `after` : elle attend le merge du parent.
  */
-export function splitRequest(request: string, parent: Pick<RunRow, "id" | "title" | "branch">, specs: string): string {
+export function splitRequest(
+  request: string,
+  parent: Pick<RunRow, "id" | "title" | "branch">,
+  specs: string,
+  after = true,
+): string {
   const quoted = specs
     .trim()
     .split("\n")
@@ -44,7 +51,9 @@ export function splitRequest(request: string, parent: Pick<RunRow, "id" | "title
   return (
     `${request.trim()}\n\n## Contexte du découpage\n\n` +
     `Feature découpée de « ${parent.title} » (run \`${parent.id}\`, branche \`${parent.branch}\`). ` +
-    "Elle ne part qu'une fois ce run mergé : son code est déjà sur main. " +
+    (after
+      ? "Elle ne part qu'une fois ce run mergé : son code est déjà sur main. "
+      : "Elle part en même temps que ce run et ne dépend pas de son code : ne le refais pas, ne l'attends pas. ") +
     (specs.trim() === ""
       ? "Ses specs gelées manquent : relis sa branche mergée.\n"
       : `Ses specs gelées fixent le cadrage commun : ne le refais pas, livre seulement la part décrite ci-dessus.\n\n${quoted}\n`)
@@ -84,7 +93,7 @@ export class Splitter {
     if (features.length > 0) this.launch(parent, features, "specs", "specs");
   }
 
-  /** Le projet des sous-features, chacune en attente du merge de `parent`, et l'événement `split` qui le dit. */
+  /** Le projet des sous-features (celles marquées `after` attendent le merge de `parent`), et l'événement `split`. */
   launch(
     parent: RunRow,
     features: SplitFeature[],
@@ -101,18 +110,23 @@ export class Splitter {
           priority: parent.priority,
           features: features.map((feature) => ({
             ...feature,
-            request: splitRequest(feature.request, parent, specs),
+            request: splitRequest(feature.request, parent, specs, feature.after),
           })),
         },
         parent,
       );
+      const waiting = runs.some((row) => row.afterRun === parent.id);
       this.#ctx.event("split", parent.id, {
         projectId,
         step,
         by,
-        waitsFor: parent.id,
-        reason: waitReason(parent),
-        features: runs.map((row) => ({ id: row.id, title: row.title, modules: row.modules })),
+        ...(waiting ? { waitsFor: parent.id, reason: waitReason(parent) } : {}),
+        features: runs.map((row) => ({
+          id: row.id,
+          title: row.title,
+          modules: row.modules,
+          after: row.afterRun === parent.id,
+        })),
       });
       return { projectId, runs };
     });

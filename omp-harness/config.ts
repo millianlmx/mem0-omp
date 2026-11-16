@@ -311,6 +311,14 @@ export type RepoConfig = {
    * forge du dépôt (`forge`), fusionnée par elle en squash.
    */
   merge: "local" | "gh";
+  /**
+   * `merge: "gh"` seulement : la forge a sa file de merge (merge queue de GitHub, merge train de GitLab), qui
+   * teste chaque PR sur main et celles qui la précèdent, puis la fusionne. Le harness prépare alors ses PR une
+   * à une (rebase, poussée, auto-merge) mais n'attend plus la fusion de l'une pour préparer la suivante : les
+   * attentes de CI courent en parallèle. À ne poser que si la file est ACTIVE sur la branche principale :
+   * sans elle, des PR fusionnées ensemble ne seraient jamais testées ensemble.
+   */
+  mergeQueue: boolean;
   /** Le remote poussé après un merge local, ou `null` (aucun push). */
   remote: string | null;
   /** L'image des tests de ce dépôt en isolation `container` ; `null` : `container.testImage`. */
@@ -594,8 +602,8 @@ export type HarnessConfig = {
    * (`lane: "express"` à la création) : ni /req ni /specs même sans critères (un critère est
    * synthétisé de la demande), une revue qui ne bloque que sur ce qui casse, sans QA de
    * prévisualisation, et au plus `expressFixCap` corrections avant l'humain. `default` : la voie
-   * d'un run créé sans `lane` — `express` (défaut : une demande va droit au but) ou `auto`
-   * (directe si la demande porte ses critères, sinon complète). L'irréversible, la porte des specs toujours posée et l'autonomie `ask` gardent la
+   * d'un run créé sans `lane` — `auto` (défaut : directe si la demande porte ses critères, sinon
+   * complète) ou `express`. L'irréversible, la porte des specs toujours posée et l'autonomie `ask` gardent la
    * voie complète, même demandée express.
    */
   lanes: { direct: boolean; express: boolean; default: "auto" | "express"; expressFixCap: number };
@@ -780,7 +788,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       vps: { url: null, token: null },
     },
     issues: { label: "omp:fix", maxLaunch: 5, pollSec: 900 },
-    lanes: { direct: true, express: true, default: "express", expressFixCap: 1 },
+    lanes: { direct: true, express: true, default: "auto", expressFixCap: 1 },
     schedules: { timezone: "Europe/Paris", catchUpMin: 60 },
     browser: {
       url: null,
@@ -1052,6 +1060,9 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     names.add(repo.name);
     if (typeof repo.path !== "string" || !path.isAbsolute(repo.path)) fail(`repos.${repo.name}.path doit être absolu`);
     if (repo.merge !== "local" && repo.merge !== "gh") fail(`repos.${repo.name}.merge : local | gh`);
+    if (typeof repo.mergeQueue !== "boolean") fail(`repos.${repo.name}.mergeQueue : booléen`);
+    if (repo.mergeQueue && repo.merge !== "gh")
+      fail(`repos.${repo.name}.mergeQueue : la file de merge de la forge demande \`merge: "gh"\``);
     if (repo.maxParallel !== null && !(Number.isInteger(repo.maxParallel) && repo.maxParallel >= 1))
       fail(`repos.${repo.name}.maxParallel : entier ≥ 1, ou null`);
     if (
@@ -1417,6 +1428,7 @@ export function repoDefaults(raw: Record<string, unknown>): RepoConfig {
       tests: { touched: "npm test -- {files}", full: "npm test", pattern: null },
       checks: {},
       merge: "local",
+      mergeQueue: false,
       remote: null,
       testImage: null,
       maxParallel: null,

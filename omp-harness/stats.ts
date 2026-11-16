@@ -2,7 +2,7 @@
 // en a coûté — runs par état, étapes et leurs durées, corrections, tests heavy,
 // décisions, audits, consommation des agents et comparaison des modèles. Fonction
 // PURE sur la base : rien n'est tenu à part.
-import type { RepoFilter, Store, UsageRow } from "./db.ts";
+import type { EventRow, RepoFilter, RunRow, StepRow, Store, UsageRow } from "./db.ts";
 import { groupUsage, modelKey, sumUsage } from "./db.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -73,6 +73,61 @@ export function computeStats(store: Store, now = Date.now(), repos: RepoFilter =
     projects: countBy(store.listProjects(repos), (project) => project.status),
     usage: usageStats(store.usageSince(0, repos), now),
     models: modelStats(runs, steps, store.usageSince(0, repos)),
+    cancellations: cancellationStats(runs, steps, store.eventsOfType("pilot", repos)),
+  };
+}
+
+/** D'où vient l'annulation d'un run : l'humain, le pilote, la chute d'un parent (`— après`), un découpage remplacé. */
+export type CancelSource = "human" | "pilot" | "cascade" | "replaced";
+
+/** La source d'une annulation, lue dans le journal du pilote puis dans la raison du run. */
+export function cancelSource(run: Pick<RunRow, "id" | "reason">, cancelledByPilot: ReadonlySet<string>): CancelSource {
+  if (cancelledByPilot.has(run.id)) return "pilot";
+  if (/dont elle attendait le merge/.test(run.reason ?? "")) return "cascade";
+  if (/^remplacée\b/.test(run.reason ?? "")) return "replaced";
+  return "human";
+}
+
+/**
+ * Les runs annulés, par source (et, pour l'humain, par motif `cancelCause`), avec le travail qu'ils ont coûté : les
+ * heures de leurs étapes terminées, jetées avec eux. `withoutWork` : ceux qui n'avaient encore rien fait.
+ */
+function cancellationStats(runs: RunRow[], steps: StepRow[], pilot: EventRow[]): Record<string, unknown> {
+  const byPilot = new Set(
+    pilot
+      .filter((event) => event.payload.action === "cancel" && event.runId !== null)
+      .map((event) => event.runId as string),
+  );
+  const hours = new Map<string, number>();
+  for (const step of steps)
+    if (step.endedAt !== null)
+      hours.set(step.runId, (hours.get(step.runId) ?? 0) + (step.endedAt - step.startedAt) / 3_600_000);
+  const bySource: Record<string, { count: number; hours: number }> = {};
+  const humanMotives: Record<string, number> = {};
+  let wasted = 0;
+  let withoutWork = 0;
+  const cancelled = runs.filter((run) => run.state === "cancelled");
+  for (const run of cancelled) {
+    const source = cancelSource(run, byPilot);
+    const spent = hours.get(run.id) ?? 0;
+    const entry = bySource[source] ?? { count: 0, hours: 0 };
+    entry.count += 1;
+    entry.hours += spent;
+    bySource[source] = entry;
+    if (source === "human")
+      humanMotives[run.cancelCause ?? "none"] = (humanMotives[run.cancelCause ?? "none"] ?? 0) + 1;
+    wasted += spent;
+    if (spent === 0) withoutWork += 1;
+  }
+  const round = (value: number): number => Math.round(value * 10) / 10;
+  return {
+    total: cancelled.length,
+    bySource: Object.fromEntries(
+      Object.entries(bySource).map(([source, entry]) => [source, { count: entry.count, hours: round(entry.hours) }]),
+    ),
+    humanMotives,
+    wastedHours: round(wasted),
+    withoutWork,
   };
 }
 

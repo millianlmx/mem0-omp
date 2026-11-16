@@ -56,7 +56,8 @@ const IRREVERSIBLE_SPECS = SPECS.replace(
 /** Des specs qui proposent un découpage : deux features de plus. */
 const SPLIT_SPECS = SPECS.replace(
   "## Découpage\naucun\n",
-  "## Découpage\n- Export JSON — Exporter aussi en JSON — src/api, docs\n- Export XML — Exporter en XML\n",
+  // `— après` : les features attendent le merge du parent (`afterRun`), d'où ce test les retrouve.
+  "## Découpage\n- Export JSON — Exporter aussi en JSON — src/api, docs — après\n- Export XML — Exporter en XML — docs — après\n",
 );
 /** /impl qui dort : le test juge la porte des specs, pas la suite. */
 const BLOCKED = [[{ sleep: 60_000 }]];

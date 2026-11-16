@@ -594,7 +594,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `providersEnvFile`, `providersModelsFile` | `providers.env`, `providers.models.yml` à côté de `tokenFile` | les clés et le `models.yml` des fournisseurs déclarés depuis les apps |
 | `review.specsGate` | `"auto"` | la feature attend ta validation entre `/specs` et `/impl` : `true` toujours, `false` jamais, `"auto"` seulement si les specs découpent, laissent `## Modules` vide, touchent à l'irréversible, ou ouvrent un projet |
 | `lanes.direct` | `true` | la voie directe : une demande qui porte déjà sa section `## Critères d'acceptation` (au moins un `AC-n`) part à `/impl` sans `/req` ni `/specs` (§ « Une feature, pas à pas ») ; `false` : tout run passe par `/req` |
-| `lanes.express`, `lanes.default`, `lanes.expressFixCap` | `true`, `"express"`, `1` | la voie express (§ « Une feature, pas à pas ») : la voie de tout run créé sans `lane` (`lanes.default: "auto"` rend la voie directe ou complète selon la demande), ou `lane: "express"` à la création ; `expressFixCap` corrections au plus (bornées par `review.fixCap`) avant l'humain ; `lanes.express: false` la refuse |
+| `lanes.express`, `lanes.default`, `lanes.expressFixCap` | `true`, `"auto"`, `1` | la voie express (§ « Une feature, pas à pas ») : `lane: "express"` à la création, ou `lanes.default: "express"` pour tout run créé sans `lane` ; `expressFixCap` corrections au plus (bornées par `review.fixCap`) avant l'humain ; `lanes.express: false` la refuse |
 | `review.fixCap` | `3` | les corrections automatiques avant de te passer la main |
 | `review.maxDiffLines` | `300` | au-delà, pas d'auto-merge |
 | `review.autoMergeRisk` | `"medium"` | le risque le plus haut du verdict qui s'auto-merge encore (`"low"` pour serrer) |
@@ -631,6 +631,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `heavy.env` | `{}` | l'environnement des tests, et rien d'autre |
 | `oracle` | `{ "url": "http://127.0.0.1:8321" }` (posé par l'installation) | la mémoire du projet ; `null` la coupe |
 | `listen` | `127.0.0.1:8790` | l'écoute de l'API, publiée par Tailscale |
+| `repos[].mergeQueue` | `false` | `merge: "gh"` seulement : la forge a sa file de merge (merge queue de GitHub, merge train de GitLab), active sur la branche principale. Le harness prépare ses PR une à une (rebase, poussée, auto-merge) mais n'attend plus la fusion de l'une pour préparer la suivante : la forge teste chaque PR sur main et celles qui la précèdent, les attentes de CI courent en parallèle. Sans file active sur la forge, ne pas le poser : des PR fusionnées ensemble ne seraient jamais testées ensemble |
 | `repos[].maxParallel` | `null` | les runs de ce dépôt vivants à la fois, au plus : un gros dépôt ne prend pas tous les runners aux autres |
 | `repos[].models` | — | les chaînes de CE dépôt par tier (`{ "heavy": ["omlx/qwen3-coder"] }`, des `"fournisseur/modèle"`), prioritaires sur `models` ; un tier non redéfini prend celui du serveur (§ « Projets perso et corpo ») |
 | `repos[].providers` | — | la liste blanche des fournisseurs du dépôt : jamais une bascule hors d'elle ; un tier sans modèle permis refuse l'étape (le run échoue, sans relance) |
@@ -717,7 +718,7 @@ serveur. C'est l'écran Système ▸ Dépôts d'omp-console.
 
 ## Une feature, pas à pas
 
-- **Deux voies, triées à la création** (sous `lanes.default: "auto"`, ou quand l'express est refusé). Sans `req` fourni, le service lit la
+- **Deux voies, triées à la création.** Sans `req` fourni, le service lit la
   demande, sans LLM : si elle porte une section `## Critères d'acceptation` avec au
   moins une ligne qui commence par `AC-n` (le parseur de la revue), le run naît à
   `/impl` (**voie directe**). Son `specs.md` est synthétisé — le titre, la demande
@@ -732,19 +733,16 @@ serveur. C'est l'écran Système ▸ Dépôts d'omp-console.
   GitHub (la section se lit dans la demande du run : le texte de l'issue, ou à défaut
   un commentaire) et les features d'un projet ou d'un audit passent par le même tri.
   `run_created` porte `lane` : `direct`, `full` ou `express`, gardée sur le run (`lane`).
-- **La voie express**, celle de tout run créé sans `lane` (`lanes.default: "express"`, le
-  défaut ; `"auto"` revient au tri directe/complète ci-dessus), ou demandée par `lane:
-  "express"` dans `POST /v1/runs` (`--lane express` en CLI). Ni /req ni /specs, même
+- **La voie express** (`lane: "express"` dans `POST /v1/runs`, `--lane express` en CLI,
+  ou `lanes.default: "express"` pour tout run créé sans `lane`). Ni /req ni /specs, même
   sans critères : `specs.md` est celui de la voie directe si la demande porte les siens,
   sinon la demande citée et un critère synthétisé (`AC-1` : ce que décrit la demande
   fonctionne, prouvé par un test qui le nomme). /impl reçoit la consigne de vérifier par
   `scope: touched` avant de finir. La revue ne démarre pas de QA de prévisualisation
   (la suite complète juge) et reçoit une règle resserrée : un bloquant est seulement un
   critère non tenu, un test rouge que main n'a pas, une faille, une perte de données ou
-  une régression visible ; le reste va en risques. Aucun découpage : `split_feature` est
-  refusé et /impl livre la demande entière dans le run, quelle que soit la taille du diff
-  (au-delà de `review.maxDiffLines`, le merge attend la validation de l'humain, comme
-  ailleurs). Au plus `lanes.expressFixCap` (1)
+  une régression visible ; le reste va en risques. Aucun découpage : la demande entière
+  est livrée dans le run. Au plus `lanes.expressFixCap` (1)
   correction, puis l'humain, comme au plafond ordinaire. Le merge ne change pas : même
   auto-merge, même suite complète sur l'arbre fusionné. L'express est refusé — le run
   prend la voie que la demande aurait eue sans lui, et `run_created` porte `laneRefused`
@@ -756,7 +754,7 @@ serveur. C'est l'écran Système ▸ Dépôts d'omp-console.
   ajoute un relevé du dépôt (chemins, symboles, conventions avec leurs lignes, pour
   que /impl ne relise pas le dépôt), des spécifications `S-n (AC-…)` assez précises
   pour écrire le test avant le code, une section `## Modules` obligatoire et un
-  `## Découpage` (`split_feature` au-delà du plafond de diff). /impl nomme chaque
+  `## Découpage` (les features indépendantes que la demande regroupe). /impl nomme chaque
   test avec son `AC-n`, pose un `save_checkpoint` après chaque incrément cohérent,
   corrige `specs.md` plutôt que d'implémenter à côté d'une spec ambiguë, et note
   dans `## Reste` ce qui n'est pas livré.
@@ -777,15 +775,21 @@ serveur. C'est l'écran Système ▸ Dépôts d'omp-console.
   ouvert, main ne reçoit pas de feature à moitié livrée. Un `## Reste` qui commence
   par « Rien », « Aucun » ou « Néant » suivi de `:`, d'un point, d'un tiret ou de
   « à … » ne demande rien.
-- **Découpage** (`split.ts`). Les features d'un `## Découpage` deviennent un projet
-  « Découpage de « … » » seulement quand les specs du run sont **acceptées** : validées
-  par toi ou par le pilote d'un audit, ou passées en /impl sans porte
-  (`review.specsGate: false`, ou `"auto"` sans raison de s'arrêter). Tant que la porte
-  tient, aucun run enfant n'existe ; des specs refusées puis refaites découpent selon
-  leur dernière version, et des specs refaites après une acceptation (décision
-  renversée) remplacent le découpage précédent, dont les features sont annulées.
-  `split_feature` en /specs ne crée rien (le `## Découpage` fait foi) ; en /impl, les
-  specs étant acceptées, le projet part tout de suite. Chaque feature découpée naît
+- **Découpage** (`split.ts`). Il se décide **dès le départ**, dans le `## Découpage`
+  des specs, sur ce que la demande regroupe : des features indépendantes, chacune
+  livrable, testable et utile seule — jamais sur la taille du diff. `split_feature` ne
+  crée rien en /specs (le `## Découpage` fait foi) et il est refusé en /impl : le run
+  livre sa part entière, quelle qu'elle soit (au-delà de `review.maxDiffLines`, le merge
+  attend ta validation). Les features deviennent un projet « Découpage de « … » »
+  seulement quand les specs du run sont **acceptées** : validées par toi ou par le
+  pilote d'un audit, ou passées en /impl sans porte (`review.specsGate: false`, ou
+  `"auto"` sans raison de s'arrêter). Tant que la porte tient, aucun run enfant
+  n'existe ; des specs refusées puis refaites découpent selon leur dernière version, et
+  des specs refaites après une acceptation (décision renversée) remplacent le découpage
+  précédent pour les features qui attendaient encore. Chaque feature est un **run
+  normal** : il part tout de suite, en parallèle du parent si leurs modules sont
+  disjoints (le planificateur les départage sinon), et ne dépend pas du sort du parent.
+  Une puce terminée par `— après` (la feature a besoin du code du parent sur main) naît
   `queued` avec `afterRun` (l'id du parent) et la raison « attend le merge de « … »
   (r-…) » : l'admission la saute (elle ne réserve pas ses modules) tant que le parent
   n'est pas mergé. Mergé, le parent la libère (raison « « … » mergé : part à son
@@ -793,9 +797,10 @@ serveur. C'est l'écran Système ▸ Dépôts d'omp-console.
   échec ne la recrée pas). Sa demande porte, sous `## Contexte du découpage`, le lien
   vers le parent (titre, run, branche) et ses specs gelées en citation : elle ne
   refait pas le cadrage, et les `AC-n` du parent n'ouvrent pas la voie directe.
-  L'événement `split` porte `projectId`, `step`, `by` (`specs` ou `runner`),
-  `waitsFor` (le parent), `reason` et les `features` ; la boîte (`GET /v1/inbox`)
-  liste les features en attente avec leur raison et leur `afterRun`.
+  L'événement `split` porte `projectId`, `step`, `by` (`specs` ou `runner`), les
+  `features` (chacune avec `after`) et, si l'une attend, `waitsFor` (le parent) et
+  `reason` ; la boîte (`GET /v1/inbox`) liste les features en attente avec leur
+  raison et leur `afterRun`.
 - **Interruption.** Une étape coupée (échéance, fournisseur, réseau, runner mort)
   laisse un commit `wip(<étape>): interrompu (tentative N)` et la tentative
   suivante reçoit la consigne de repartir de `git diff <base>` et de l'artefact,
@@ -2863,7 +2868,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | operator | Lancer les propositions retenues en projet (ordonnées selon `dependsOn` : une feature prend un `projectOrder` postérieur à ses prérequis retenus ; 400 si les dépendances bouclent), ou annuler. |
 | `GET /v1/intake?state=a,b&limit=` · `POST /v1/intake` `{text, source, repo?, context?}` · `GET /v1/intake/{id}` | viewer · operator · viewer | Les Demandes (capacité `intake`, § « Les demandes en langage libre ») : une phrase libre, classée par un job en un plan (`feature`, `bug`, `audit`, `workstation_request`, `schedule`) ou une réponse directe (`question`), ou une question de clarification. `POST` : 201 `{intake}` à l'état `classifying` ; `source` ∈ `console` · `ios` · `voice` · `slack` · `cli` · `chrome` (sinon 400), `text` non vide de 4000 caractères au plus (400), `repo` facultatif qui s'impose au plan (403 hors portée du client, 404 non déclaré), `context` facultatif (capacité `intake-context`) : la page d'où part la demande, `{url?: http(s) ≤ 2000, title?: ≤ 300, selection?: ≤ 4000}`, jugé strictement (400), l'adresse gardée sans identifiants, query ni fragment, rendu par la vue (`context`) à l'auteur et au propriétaire seulement (`null` sans page, et pour tout autre lecteur). La liste (200 `{intakes}`, `state` : des états parmi `classifying` · `clarifying` · `planned` · `answered` · `confirmed` · `cancelled` · `failed`, 400 sinon) et `GET /{id}` (404 pour une demande invisible) ne rendent que les demandes des dépôts du client, plus celles sans dépôt qu'il a posées. |
 | `POST /v1/intake/{id}/confirm` `{plan?}` · `POST /v1/intake/{id}/cancel` · `POST /v1/intake/{id}/answer` `{text}` | operator | `confirm` : crée l'objet du plan par le chemin existant (run, audit, planification, demande au poste) et lie la demande (201 `{intake}` avec `created {kind, id}`) ; `plan` corrige des champs (`kind`, `repo`, `title`, `statement`, `focus`, `schedule`), rejugés (400). 409 si la demande n'est pas `planned` : une seconde confirmation ne crée rien ; 403 du chemin existant (demande au poste : appareil approbateur) : rien n'est créé, la demande reste confirmable. `cancel` : 200, arrête le classement en cours ; 409 si déjà confirmée ou annulée. `answer` : 200, la même demande est reclassée ; 409 si elle n'est pas en `clarifying`, 400 si `text` est vide. 404 pour une demande invisible. |
-| `GET /v1/stats` | viewer | Les statistiques des dépôts du client, avec l'état du scheduler. Les séries des graphiques de Système › Statistiques et santé d'OMP Console : `runs.byDay` (les 14 derniers jours, chacun présent : créés, mergés, échoués), `runs.byRepo` (par dépôt : en cours, mergés, échoués, mergés sur 7 jours), `usage.byRepoLast7Days` (le coût de chaque dépôt sur 7 jours). |
+| `GET /v1/stats` | viewer | Les statistiques des dépôts du client, avec l'état du scheduler. Les séries des graphiques de Système › Statistiques et santé d'OMP Console : `runs.byDay` (les 14 derniers jours, chacun présent : créés, mergés, échoués), `runs.byRepo` (par dépôt : en cours, mergés, échoués, mergés sur 7 jours), `usage.byRepoLast7Days` (le coût de chaque dépôt sur 7 jours). `cancellations` : les runs annulés par source (`bySource` : `human`, `pilot`, `cascade` — la chute d'un parent dont une feature `— après` attendait le merge —, `replaced` — un découpage refait —, chacune avec son nombre et ses heures d'étapes perdues), les motifs humains (`humanMotives`, par `cancelCause`), `wastedHours` et `withoutWork` (annulés avant toute étape terminée). |
 | `GET /v1/digest?since=` | viewer | Le rapport du matin des dépôts du client : `{since, until, text, counts {merged, decisions, waiting, failed}}`. `since` en ms epoch (défaut : il y a 24 h ; 400 s'il est illisible). `text` (Markdown, français) liste les runs mergés dans la fenêtre (lien de la PR ou sha court), les décisions prises seules dans la fenêtre et pas encore relues, les runs qui attendent l'humain à cet instant (`awaiting_human`, `escalated`, avec la raison), les runs échoués dans la fenêtre, les échéances des planifications de la fenêtre (lancées, sautées ou manquées), puis le coût de la fenêtre si la consommation est connue, et pour un client qui voit tous les dépôts la section « Santé » (mémoire, sauvegardes) ; une section vide est omise, « Rien de neuf. » si tout est vide. Sa dernière ligne nomme le commit déployé (`Commit déployé : <sha court>`, ou inconnu), celui de `/v1/health`. |
 | `GET /v1/schedules` · `POST /v1/schedules` `{name, cron, target, enabled?}` | viewer · operator | Les planifications des dépôts que le client voit (`{timezone, schedules}` ; chacune `id`, `name`, `cron`, `target`, `repo`, `enabled`, `nextRunAt`, `lastRunAt`, `lastOutcome`, `lastFired`, `createdBy`, `rev`), créer (201, `ETag` = `rev` ; 403 pour un dépôt non permis, 404 non déclaré, 400 pour un cron illisible ou une cible invalide). § « Les planifications ». |
 | `PUT /v1/schedules/{id}` `{name?, cron?, target?, enabled?}` · `DELETE /v1/schedules/{id}` | operator | Modifier (seuls les champs présents ; un nouveau `cron` ou une réactivation réarment `nextRunAt` depuis maintenant) ou supprimer. `If-Match: <rev>` facultatif : périmé, 412. Une planification d'un dépôt que le client ne voit pas : 404. |

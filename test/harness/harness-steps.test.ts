@@ -41,10 +41,13 @@ const SPECS_NO_MODULES = OK.specs[0]?.content?.replace("## Modules\n- src/api\n"
 
 // -- règles pures -------------------------------------------------------------
 
-test("harness-steps/AC-1 : `## Découpage` se lit puce par puce (titre — demande — modules) ; « aucun » ou absent ⇒ vide", () => {
+test("harness-steps/AC-1 : `## Découpage` se lit puce par puce (titre — demande — modules [— après]) ; « aucun » ou absent ⇒ vide", () => {
   assert.deepEqual(parseSplitSection(SPECS_SPLIT), [
-    { title: "Export JSON", request: "Exporter aussi en JSON", modules: ["src/api", "docs"] },
-    { title: "Export XML", request: "Exporter en XML", modules: [] },
+    { title: "Export JSON", request: "Exporter aussi en JSON", modules: ["src/api", "docs"], after: false },
+    { title: "Export XML", request: "Exporter en XML", modules: [], after: false },
+  ]);
+  assert.deepEqual(parseSplitSection("## Découpage\n- Client — Afficher l'export — src/web — après\n"), [
+    { title: "Client", request: "Afficher l'export", modules: ["src/web"], after: true },
   ]);
   assert.deepEqual(parseSplitSection(OK.specs[0]?.content ?? ""), []);
   assert.deepEqual(parseSplitSection("## Découpage\naucun (diff estimé 120 lignes)\n"), []);

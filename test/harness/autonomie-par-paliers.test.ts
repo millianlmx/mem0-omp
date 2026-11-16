@@ -1373,7 +1373,8 @@ test("autonomie-par-paliers/AC-4 : POST /v1/runs déclare type et labels, la vue
 
 const SPLIT_SPECS = String(OK.specs[0]?.content).replace(
   "## Découpage\naucun",
-  "## Découpage\n- Export JSON — Exporter aussi en JSON — docs",
+  // `— après` : la feature attend le merge du parent (`afterRun`), d'où ce test la retrouve.
+  "## Découpage\n- Export JSON — Exporter aussi en JSON — docs — après",
 );
 
 test("autonomie-par-paliers/AC-29 : un run de suite (revert) et une feature découpée n'héritent ni du type ni des labels de leur parent", async () => {

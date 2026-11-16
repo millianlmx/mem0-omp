@@ -143,7 +143,8 @@ export type NewProjectInput = {
   priority?: number;
   /** Le curseur d'autonomie de toutes ses features ; absent : celui de l'espace du dépôt. */
   autonomy?: RunAutonomy | null;
-  features: { title: string; request: string; slug?: string; modules?: string[] }[];
+  /** `after` (découpage seulement) : la feature attend le merge du run parent (`afterRun`). */
+  features: { title: string; request: string; slug?: string; modules?: string[]; after?: boolean }[];
 };
 
 /** Une heure : la cadence de la purge du journal. */
@@ -1442,7 +1443,8 @@ export class Orchestrator {
    * Le projet et ses runs, nés ensemble : un client ne voit jamais un projet à moitié créé.
    * `inferModules` : les features sans modules les demandent à l'oracle après coup (un
    * découpage, qui naît dans la transaction d'une transition, ne l'attend pas) ;
-   * `afterRun` : le parent dont chaque feature attend le merge.
+   * `afterRun` : le run découpé ; seules ses features marquées `after` attendent son merge, les autres
+   * sont des runs normaux, admis tout de suite (le planificateur départage par modules).
    */
   #openProject(
     input: NewProjectInput,
@@ -1459,7 +1461,7 @@ export class Orchestrator {
         : {};
     return store.transaction(() => {
       const project = store.createProject({ id: newId("p"), repo: repo.name, title: input.title });
-      const runs = input.features.map((feature, order) =>
+      const runs = input.features.map(({ after, ...feature }, order) =>
         this.createRun(
           {
             ...feature,
@@ -1468,7 +1470,7 @@ export class Orchestrator {
             projectId: project.id,
             projectOrder: order,
             ...(options.inferModules === false ? { inferModules: false } : {}),
-            ...(options.afterRun ? { afterRun: options.afterRun } : {}),
+            ...(options.afterRun && after === true ? { afterRun: options.afterRun } : {}),
             ...inherit,
             ...(input.priority !== undefined ? { priority: input.priority } : {}),
           },
@@ -1482,7 +1484,9 @@ export class Orchestrator {
           projectId: project.id,
           repo: repo.name,
           runs: runs.map((run) => ({ id: run.id, modules: run.modules })),
-          ...(options.afterRun ? { afterRun: options.afterRun.id } : {}),
+          ...(options.afterRun && input.features.some((feature) => feature.after === true)
+            ? { afterRun: options.afterRun.id }
+            : {}),
           ...(actor.by ? { by: actor.by } : {}),
         },
         repo.name,
