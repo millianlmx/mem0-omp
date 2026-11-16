@@ -116,5 +116,5 @@ test("lenteurs-et-timeouts-du-chargement-sur-i/AC-168 : l'app iOS lit par readSh
   );
 
   // Le .onChange de l'App indenté dans le contenu de la fenêtre.
-  red(APP_FILE, (s) => s.replace(/\n        \.onChange\(of: scenePhase\)/, "\n            .onChange(of: scenePhase)"), "pas au retrait de .commands");
+  red(APP_FILE, (s) => s.replace(/\n {8}\.onChange\(of: scenePhase\)/, "\n            .onChange(of: scenePhase)"), "pas au retrait de .commands");
 });
