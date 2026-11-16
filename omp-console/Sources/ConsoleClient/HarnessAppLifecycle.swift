@@ -41,6 +41,9 @@ public final class HarnessAppLifecycle {
         case .active:
             guard inBackground else { return nil }
             inBackground = false
+            // Les lectures coupées, et celles parties pendant l'arrière-plan, se relancent dès le début du
+            // retour : il attend lui-même des tâches partagées qu'elles peuvent avoir coupées.
+            harness.resumeReads()
             // La boîte fraîche et les lectures de la coque partent ensemble ; le flux et le direct
             // s'ouvrent après la boîte, sur son curseur neuf : rien n'est rejoué ni relu deux fois.
             let task = Task { [weak harness] in
@@ -48,6 +51,9 @@ public final class HarnessAppLifecycle {
                 async let inbox: Void = Self.reopen(harness)
                 async let shell: Void = harness.readShell(.refreshing)
                 _ = await (inbox, shell)
+                // Repassé en arrière-plan : le retour suivant fait sa propre fin.
+                guard !Task.isCancelled else { return }
+                harness.finishReturn()
             }
             returning = task
             return task

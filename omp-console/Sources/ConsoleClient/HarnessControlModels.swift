@@ -114,7 +114,7 @@ public final class HarnessVigie: ObservableObject {
             update(\.failure, nil)
         } catch {
             update(\.availability, HarnessControlFailure.availability(after: error, current: availability))
-            update(\.failure, HarnessModel.failure(of: error))
+            update(\.failure, HarnessModel.failure(after: error, keeping: failure))
         }
     }
 
@@ -302,7 +302,7 @@ public final class HarnessSchedules: ObservableObject {
             update(\.failure, nil)
         } catch {
             update(\.availability, HarnessControlFailure.availability(after: error, current: availability))
-            update(\.failure, HarnessModel.failure(of: error))
+            update(\.failure, HarnessModel.failure(after: error, keeping: failure))
         }
     }
 
@@ -462,7 +462,7 @@ public final class HarnessAdmin: ObservableObject {
             clientErrors = errors?.errors
             failure = nil
         } catch {
-            failure = HarnessModel.failure(of: error)
+            failure = HarnessModel.failure(after: error, keeping: failure)
         }
     }
 
@@ -509,7 +509,7 @@ public final class HarnessAdmin: ObservableObject {
             repoSettings = repoSettings.filter { names.contains($0.key) }
             failure = nil
         } catch {
-            failure = HarnessModel.failure(of: error)
+            failure = HarnessModel.failure(after: error, keeping: failure)
         }
     }
 
@@ -524,7 +524,7 @@ public final class HarnessAdmin: ObservableObject {
             repoSettings[name] = reply
             return reply
         } catch {
-            failure = HarnessModel.failure(of: error)
+            failure = HarnessModel.failure(after: error, keeping: failure)
             return nil
         }
     }
