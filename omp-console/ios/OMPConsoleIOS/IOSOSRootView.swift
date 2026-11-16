@@ -29,6 +29,7 @@ struct IOSOSRootView: View {
     /// Les fils et le compte des décisions, recalculés à part et publiés seulement s'ils
     /// changent : la coque ne les reconstruit pas à chaque rendu.
     @StateObject private var threadStore: OSThreadStore
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var workspace: OSWorkspace
     /// Portés sans être observés ici : leurs écrans les observent eux-mêmes.
     private let memory: MemoryAccess
@@ -115,6 +116,11 @@ struct IOSOSRootView: View {
                 navigation.show(.decisions)
             }
             .onDisappear { workspace.pulse.stop() }
+            // La phase de CETTE fenêtre ne pilote que son pouls : les flux partagés suivent la phase
+            // de l'app entière (`OMPConsoleIOSApp`), pour qu'une fenêtre cachée ne coupe pas les autres.
+            .onChange(of: scenePhase) { _, phase in
+                workspace.pulse.phaseChanged(to: HarnessAppPhase(phase))
+            }
     }
 
     // MARK: Onglets
@@ -317,37 +323,20 @@ struct IOSOSRootView: View {
         }
     }
 
-    /// À chaque serveur relié : le pouls, puis tout ce dont les fils sont faits.
+    /// À chaque serveur relié : le pouls, puis tout ce dont les fils sont faits, lu d'un coup.
+    /// La boîte, elle, vient de `RootView` (`server.load()`), en même temps.
     private func load() async {
         guard server.isConfigured else { return }
         workspace.pulse.start()
-        await history.refresh()
-        await workstation.load()
-        await vigie.load()
-        await intakes.refresh()
-        await atlassian.refresh()
-        await localSessions.refresh()
-        await spaces.refresh()
-        await proposals.refresh()
-        await server.refreshCatalog()
+        await server.readShell(.opening)
         loaded = true
         openPending(threadStore.threads)
     }
 
-    /// Tirer pour actualiser : la boîte, les fils, et ce que les cinq onglets montrent.
+    /// Tirer pour actualiser : la boîte, les fils, et ce que les cinq onglets montrent, lus d'un coup.
     private func reload() async {
+        async let shell: Void = server.readShell(.refreshing)
         await server.refresh()
-        await history.refresh()
-        await workstation.refresh()
-        await intakes.refresh()
-        await atlassian.refresh()
-        await localSessions.refresh()
-        await spaces.refresh()
-        await proposals.refresh()
-        await server.pause.refresh()
-        await server.brief.refresh()
-        await server.rules.refresh()
-        await server.autonomy.refresh()
-        await vigie.refresh()
+        await shell
     }
 }

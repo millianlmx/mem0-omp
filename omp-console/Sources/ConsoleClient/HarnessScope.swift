@@ -67,7 +67,7 @@ extension HarnessModel {
     }
 
     private func readCapabilities(from server: HarnessServer, epoch: Int) async {
-        guard let reply = try? await transport.send(HarnessCall(method: "GET", path: "/v1/health"), server: server),
+        guard let reply = try? await send(HarnessCall(method: "GET", path: "/v1/health"), on: server),
               epoch == serverEpoch
         else { return }
         switch reply.status {
@@ -164,8 +164,17 @@ extension HarnessModel {
     /// et à la portée : si elle a changé avant la réponse, la lecture lève `CancellationError`
     /// (celle de la nouvelle portée est déjà partie).
     func readScoped<T: Decodable>(_ path: String, capability: HarnessCapability = .spaceScope) async throws -> HarnessScopedRead<T> {
-        await restoreScope()
-        if scope != nil { await loadCapabilities() }
+        if scope == nil, let address, spacePreference.spaceId(forServer: address) != nil, spaces.availability == .unknown {
+            // Espace gardé, espaces pas encore lus : les capacités se lisent pendant que la portée
+            // est restaurée, au lieu de l'attendre (une lecture de moins dans la chaîne).
+            async let restored: Void = restoreScope()
+            async let capable: Void = loadCapabilities()
+            await restored
+            await capable
+        } else {
+            await restoreScope()
+            if scope != nil { await loadCapabilities() }
+        }
         let epoch = scopeEpoch
         let space = scope
         let byServer = space != nil && serves(capability)

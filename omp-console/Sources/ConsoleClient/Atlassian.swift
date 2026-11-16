@@ -335,10 +335,13 @@ public final class AtlassianModel: ObservableObject {
                 return
             }
             let read: AtlassianStatusReply = try harness.decode(reply, for: call)
-            let writes: AtlassianWritesReply = try await harness.fetch(
+            // Les écritures proposées et le plan ne dépendent que de l'état : ils partent ensemble.
+            async let proposed: AtlassianWritesReply = harness.fetch(
                 HarnessCall(method: "GET", path: scoped("/v1/atlassian/writes?state=proposed&limit=\(Self.proposalsLimit)"))
             )
-            let latest: AtlassianPlanReply = try await harness.fetch(HarnessCall(method: "GET", path: scoped("/v1/atlassian/plan")))
+            async let planned: AtlassianPlanReply = harness.fetch(HarnessCall(method: "GET", path: scoped("/v1/atlassian/plan")))
+            let writes = try await proposed
+            let latest = try await planned
             status = read.atlassian
             proposals = writes.writes.filter { $0.state == "proposed" && $0.kind == "comment" }
             plan = latest.plan

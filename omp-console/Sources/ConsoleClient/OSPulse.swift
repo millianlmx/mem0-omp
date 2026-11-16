@@ -93,6 +93,17 @@ public final class OSPulse: ObservableObject {
         if isLive { isLive = false }
     }
 
+    /// La phase de SA fenêtre (pas celle de l'app) : cachée, le pouls ferme son flux ; de retour,
+    /// il le rouvre (sans effet s'il tourne déjà). Inactif, rien : un coup d'œil au Centre de
+    /// contrôle ne coupe rien. Le pouls ne lit aucune route (`live=1` ne rejoue rien).
+    public func phaseChanged(to phase: HarnessAppPhase) {
+        switch phase {
+        case .background: stop()
+        case .active: start()
+        case .inactive: break
+        }
+    }
+
     private func loop() async {
         while !Task.isCancelled {
             guard let server = harness.server else {
