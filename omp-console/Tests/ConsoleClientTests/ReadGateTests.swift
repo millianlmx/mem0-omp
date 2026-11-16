@@ -16,6 +16,8 @@ final class GateURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) private static var begun: [String] = []
     nonisolated(unsafe) private static var held: [GateURLProtocol] = []
     private static let lock = NSLock()
+    /// Cette requête compte encore dans `active` (protégé par `lock`).
+    private var counted = true
 
     static func reset() {
         lock.withLock {
@@ -61,13 +63,24 @@ final class GateURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {
+        // Une requête annulée ou coupée n'est plus en cours non plus.
+        leave()
+        Self.lock.withLock { Self.held.removeAll { $0 === self } }
+    }
+
+    /// La requête n'est plus « en cours » dès que sa réponse part : URLSession appelle `stopLoading` APRÈS avoir
+    /// rendu la réponse à l'appelant, donc après que la porte a laissé passer la suivante. Compter jusqu'à
+    /// `stopLoading` ferait lire un pic de 3 là où la porte n'a jamais confié que 2 requêtes.
+    private func leave() {
         Self.lock.withLock {
+            guard counted else { return }
+            counted = false
             Self.active -= 1
-            Self.held.removeAll { $0 === self }
         }
     }
 
     private func respond(status: Int) {
+        leave()
         guard let url = request.url,
               let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)
         else { return }
