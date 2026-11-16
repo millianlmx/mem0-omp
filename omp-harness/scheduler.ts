@@ -2,9 +2,13 @@
 // LLM, admission sur `MemAvailable`.
 //
 // Un runner tient son slot pendant toute son étape ; un slot heavy n'est pris que
-// le temps d'un `run_tests`. Un process ne démarre que si `/proc/meminfo` dit qu'il
-// laissera `reserveMiB` libres après sa propre enveloppe : la box ne swappe pas
-// pour un job de plus — le job attend.
+// le temps d'un `run_tests`. Pendant qu'un agent attend ses tests (file heavy, job,
+// CI de la forge), son slot runner est PRÊTÉ (`lend`) : il ne compte plus, un autre
+// run peut partir ; il est repris au retour de l'outil, même au-delà de la capacité.
+// Un process ne démarre que si `/proc/meminfo` dit qu'il laissera `reserveMiB`
+// libres après sa propre enveloppe : la box ne swappe pas pour un job de plus — le
+// job attend. C'est aussi ce qui borne les runners prêtés : un agent qui attend
+// ses tests garde sa mémoire, que `MemAvailable` voit.
 import * as fs from "node:fs";
 import type { HarnessConfig, ModelChoice, ProviderLimit, Tier } from "./config.ts";
 
@@ -86,7 +90,11 @@ export type SlotKind = "runner" | "heavy";
 
 export type Slot = { kind: SlotKind; label: string; release: () => void };
 
-export type SlotSnapshot = { used: number; capacity: number; labels: string[]; waiting: number };
+/** `lent` : les slots prêtés (leur agent attend ses tests) — hors de `used` et de `labels`. */
+export type SlotSnapshot = { used: number; capacity: number; labels: string[]; waiting: number; lent: number };
+
+/** Un slot tenu : son libellé, et s'il est prêté (il ne compte plus contre la capacité). */
+type Held = { label: string; lent: boolean };
 
 /** Un slot refusé : le texte (`detail`) et ses chiffres — slots tenus et capacité, ou mémoire disponible et requise. */
 export type Refusal =
@@ -101,19 +109,28 @@ export type ModelPick = { choice: ModelChoice; index: number } | { waitMs: numbe
 export type SchedulerOptions = {
   runnerSlots: number;
   heavySlots: number;
+  /** Les slots runner prêtables au plus (`runner.lendMax`) ; absent ou `0` : aucun prêt. */
+  runnerLendMax?: number;
   admission: HarnessConfig["admission"];
   providers: Record<string, ProviderLimit>;
   memAvailableMiB?: () => number | null;
+  /** Le délai avant qu'un slot soit prêté par `lendDuring` (un résultat de cache rend avant : aucun prêt). */
+  lendAfterMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 };
+
+/** Le délai par défaut avant le prêt d'un slot runner dont l'agent attend ses tests. */
+export const LEND_AFTER_MS = 1000;
 
 /** Le refroidissement par défaut d'un fournisseur limité sans `retry-after`. */
 export const DEFAULT_COOLDOWN_MS = 60_000;
 
 export class Scheduler {
   readonly #capacity: Record<SlotKind, number>;
-  readonly #held: Record<SlotKind, Map<number, string>> = { runner: new Map(), heavy: new Map() };
+  readonly #lendMax: Record<SlotKind, number>;
+  readonly #held: Record<SlotKind, Map<number, Held>> = { runner: new Map(), heavy: new Map() };
+  readonly #onLend: ((kind: SlotKind) => void)[] = [];
   readonly #admission: HarnessConfig["admission"];
   readonly #mem: () => number | null;
   readonly #now: () => number;
@@ -125,28 +142,47 @@ export class Scheduler {
   #waiterSeq = 0;
   #polling = false;
   #pollMs = 1000;
+  readonly #lendAfterMs: number;
 
   constructor(options: SchedulerOptions) {
     this.#capacity = { runner: options.runnerSlots, heavy: options.heavySlots };
+    this.#lendMax = { runner: options.runnerLendMax ?? 0, heavy: 0 };
     this.#admission = options.admission;
     this.#mem = options.memAvailableMiB ?? readMemAvailableMiB;
     this.#now = options.now ?? Date.now;
     this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.#limits = { ...options.providers };
+    this.#lendAfterMs = options.lendAfterMs ?? LEND_AFTER_MS;
   }
 
   #need(kind: SlotKind): number {
     return kind === "runner" ? this.#admission.runnerMiB : this.#admission.heavyMiB;
   }
 
+  /** Les slots de `kind` qui comptent contre la capacité : tenus et non prêtés. */
+  #used(kind: SlotKind): number {
+    let used = 0;
+    for (const entry of this.#held[kind].values()) if (!entry.lent) used++;
+    return used;
+  }
+
   /** Un slot tout de suite, ou le motif du refus (slots pleins, mémoire insuffisante), lisible tel quel. */
   tryAcquire(kind: SlotKind, label: string): Slot | Refusal {
     const held = this.#held[kind];
-    if (held.size >= this.#capacity[kind])
+    const used = this.#used(kind);
+    if (used >= this.#capacity[kind])
       return {
         refused: "slots",
-        detail: `slots ${kind} pleins ${held.size}/${this.#capacity[kind]}`,
-        used: held.size,
+        detail: `slots ${kind} pleins ${used}/${this.#capacity[kind]}`,
+        used,
+        slots: this.#capacity[kind],
+      };
+    // Les slots prêtés gardent leur process : au-delà de `lendMax`, personne de plus ne part.
+    if (held.size >= this.#capacity[kind] + this.#lendMax[kind])
+      return {
+        refused: "slots",
+        detail: `process ${kind} au plafond : ${held.size}/${this.#capacity[kind] + this.#lendMax[kind]} (${this.#capacity[kind]} slots + ${this.#lendMax[kind]} prêtables)`,
+        used,
         slots: this.#capacity[kind],
       };
     const available = this.#mem();
@@ -161,7 +197,7 @@ export class Scheduler {
       };
     }
     const id = this.#nextId++;
-    held.set(id, label);
+    held.set(id, { label, lent: false });
     let released = false;
     return {
       kind,
@@ -174,6 +210,47 @@ export class Scheduler {
         this.#serve(kind);
       },
     };
+  }
+
+  /**
+   * Prête le slot `kind` tenu sous `label` : il ne compte plus contre la capacité, la file est servie
+   * et les écouteurs de `onLend` sont prévenus (l'orchestrateur admet un run de plus). Rend la reprise —
+   * idempotente, sans attente, même au-delà de la capacité (l'agent prêteur reprend là où il en était ;
+   * l'admission attend qu'on repasse sous la capacité) — ou `null` sans prêt possible (`lendMax` nul),
+   * si aucun slot de ce libellé n'est tenu ou qu'il est déjà prêté. Un slot rendu pendant son prêt ne revient pas à la reprise.
+   */
+  lend(kind: SlotKind, label: string): (() => void) | null {
+    if (this.#lendMax[kind] === 0) return null;
+    const entry = [...this.#held[kind].values()].find((held) => held.label === label && !held.lent);
+    if (!entry) return null;
+    entry.lent = true;
+    this.#serve(kind);
+    for (const listener of this.#onLend) listener(kind);
+    return () => {
+      entry.lent = false;
+    };
+  }
+
+  /**
+   * `work` avec le slot `kind` de `label` prêté s'il dure plus de `lendAfterMs`, repris à sa fin
+   * (succès, échec ou arrêt). Un `work` plus court (cache, rien à tester) ne prête rien.
+   */
+  async lendDuring<T>(kind: SlotKind, label: string, work: Promise<T>): Promise<T> {
+    const loan: { reclaim: (() => void) | null } = { reclaim: null };
+    const timer = setTimeout(() => {
+      loan.reclaim = this.lend(kind, label);
+    }, this.#lendAfterMs);
+    try {
+      return await work;
+    } finally {
+      clearTimeout(timer);
+      loan.reclaim?.();
+    }
+  }
+
+  /** Appelé à chaque prêt d'un slot (`lend`). */
+  onLend(listener: (kind: SlotKind) => void): void {
+    this.#onLend.push(listener);
   }
 
   /**
@@ -322,6 +399,17 @@ export class Scheduler {
     this.#limits[provider] = { capacity: 1, refillPerMinute: 60 };
   }
 
+  #slotSnapshot(kind: SlotKind, waiting: number): SlotSnapshot {
+    const held = [...this.#held[kind].values()];
+    return {
+      used: held.filter((entry) => !entry.lent).length,
+      capacity: this.#capacity[kind],
+      labels: held.filter((entry) => !entry.lent).map((entry) => entry.label),
+      waiting,
+      lent: held.filter((entry) => entry.lent).length,
+    };
+  }
+
   snapshot(): {
     runner: SlotSnapshot;
     heavy: SlotSnapshot;
@@ -332,18 +420,8 @@ export class Scheduler {
     for (const [name, bucket] of this.#buckets) providers[name] = Math.floor(bucket.available());
     const waiting = this.waiting();
     return {
-      runner: {
-        used: this.#held.runner.size,
-        capacity: this.#capacity.runner,
-        labels: [...this.#held.runner.values()],
-        waiting: waiting.runner,
-      },
-      heavy: {
-        used: this.#held.heavy.size,
-        capacity: this.#capacity.heavy,
-        labels: [...this.#held.heavy.values()],
-        waiting: waiting.heavy,
-      },
+      runner: this.#slotSnapshot("runner", waiting.runner),
+      heavy: this.#slotSnapshot("heavy", waiting.heavy),
       memAvailableMiB: this.#mem(),
       providers,
     };

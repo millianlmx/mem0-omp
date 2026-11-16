@@ -1,9 +1,9 @@
 // La configuration du harness : un fichier JSON unique, complété par des défauts, validé au démarrage.
 //
-// Les valeurs par défaut SONT le budget du schéma d'architecture (VPS 32 Go, ~16 Go
-// pour le harness) : 5 runners plafonnés à 1 Go, 2 slots heavy à 4 Go, 1 Go pour le
-// service — 5 + 8 + 1 = 14 Go, 2 Go de marge. Un fichier de configuration ne fait
-// que les surcharger.
+// Les valeurs par défaut SONT le budget du schéma d'architecture (VPS 32 Go, ~23 Go
+// pour le harness) : 5 runners et 3 prêtables (`lendMax`) plafonnés à 1 Go, 3 slots
+// heavy à 4 Go, 1 Go pour le service — 8 + 12 + 1 = 21 Go, 2 Go de marge. Un fichier
+// de configuration ne fait que les surcharger.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -423,6 +423,12 @@ export type HarnessConfig = {
      */
     stepTimeoutSec: number;
     /**
+     * Les slots runner prêtables au plus : pendant qu'un agent attend ses tests (`run_tests` : file
+     * heavy, job, CI de la forge), son slot est prêté et un autre run part. Les process d'agents restent
+     * bornés à `slots + lendMax` (la tranche des runners est dimensionnée dessus) ; `0` : aucun prêt.
+     */
+    lendMax: number;
+    /**
      * Les extensions chargées par chaque runner (`-e`) EN PLUS du plugin mémoire
      * (`omp-mem0-memory/extension.ts`), que la pile charge toujours (`runnerExtensions`).
      */
@@ -628,10 +634,10 @@ export function launch(config: HarnessConfig, args: string[]): { command: string
   return { command: config.launcher[0] as string, args: [...config.launcher.slice(1), ...args] };
 }
 
-/** Le budget pire cas en Mio : runners + heavy + service. */
+/** Le budget pire cas en Mio : runners (prêtés compris) + heavy + service. */
 export function worstCaseBudgetMiB(config: HarnessConfig, serviceMiB = 1024): number {
   return (
-    config.runner.slots * sizeMiB(config.runner.memoryMax) +
+    (config.runner.slots + config.runner.lendMax) * sizeMiB(config.runner.memoryMax) +
     config.heavy.slots * sizeMiB(config.heavy.memoryMax) +
     serviceMiB
   );
@@ -678,10 +684,11 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       retryBackoffSec: [...DEFAULT_RETRY_BACKOFF_SEC],
       failoverOn: [...FAILOVER_CAUSES],
       stepTimeoutSec: 5400,
+      lendMax: 3,
       extensions: [],
     },
     heavy: {
-      slots: 2,
+      slots: 3,
       memoryMax: "4G",
       cpuQuota: "300%",
       user: "omp-heavy",
@@ -965,6 +972,8 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!Number.isInteger(config.runner.slots) || config.runner.slots < 1) fail("runner.slots doit être ≥ 1");
   if (!Number.isInteger(config.heavy.slots) || config.heavy.slots < 1) fail("heavy.slots doit être ≥ 1");
   if (!(config.runner.stepTimeoutSec >= 1)) fail("runner.stepTimeoutSec doit être ≥ 1");
+  if (!Number.isInteger(config.runner.lendMax) || config.runner.lendMax < 0)
+    fail("runner.lendMax doit être un entier ≥ 0");
   if (!(config.events.retentionDays > 0)) fail("events.retentionDays doit être > 0");
   const { backups, health } = config;
   if (backups.dir !== null && (typeof backups.dir !== "string" || !path.isAbsolute(backups.dir)))

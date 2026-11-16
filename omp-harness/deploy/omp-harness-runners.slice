@@ -1,9 +1,10 @@
-# Les runners OMP (une scope de 1 Go chacun, 5 au plus). Enfant de omp-harness.slice.
+# Les runners OMP (une scope de 1 Go chacun : 5 slots, plus 3 prêtés
+# pendant que leur agent attend ses tests — `runner.slots` + `runner.lendMax`). Enfant de omp-harness.slice.
 [Unit]
 Description=OMP harness — runners
 
 [Slice]
-MemoryMax=5G
+MemoryMax=8G
 # oomd les tue sous pression, mais APRÈS les jobs heavy (préférence « avoid »).
 ManagedOOMMemoryPressure=kill
 ManagedOOMMemoryPressureLimit=80%

@@ -347,6 +347,10 @@ export class Orchestrator {
     this.#ctx = new HarnessContext(deps);
     this.#pause = pauseOf(this.#ctx.store.getSetting<unknown>(PAUSE_KEY));
     this.#tickMs = deps.tickMs ?? 1000;
+    // Un slot runner prêté (son agent attend ses tests) : le suivant de la file part sans attendre le tour.
+    this.#ctx.scheduler.onLend((kind) => {
+      if (kind === "runner" && !this.#stopping) this.#kick();
+    });
     // L'étanchéité d'un espace lit autour de lui sa connexion Atlassian et les réglages de la vigie ; son
     // retrait lit sa pause et la connexion Atlassian par défaut, puis oublie ce qui n'était qu'à lui.
     this.spaces = new SpaceDesk(this.#ctx, {

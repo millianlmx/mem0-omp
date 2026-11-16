@@ -459,25 +459,34 @@ async function runTestsTool(
     if (!hit) state.fullRunsThisStep++;
   }
   const files = scope === "touched" ? await git.touchedFiles(worktree, run.baseSha ?? repo.mainBranch) : [];
-  const result = await heavy.run(
-    {
-      runId: run.id,
-      stepId: step.id,
-      repo,
-      worktree,
-      scope,
-      files,
-      priority: run.priority,
-      ...(scope === "check" ? { check } : {}),
-    },
-    signal,
+  // L'agent est bloqué sur cet appel (file heavy, job, CI de la forge) : son slot runner est prêté
+  // pendant l'attente, un autre run peut faire travailler son agent ; il est repris au retour.
+  const { result, judged } = await ctx.scheduler.lendDuring(
+    "runner",
+    run.id,
+    (async () => {
+      const result = await heavy.run(
+        {
+          runId: run.id,
+          stepId: step.id,
+          repo,
+          worktree,
+          scope,
+          files,
+          priority: run.priority,
+          ...(scope === "check" ? { check } : {}),
+        },
+        signal,
+      );
+      // Un rouge que main a déjà n'est pas un bloquant : l'agent de revue le lit ici, avant son verdict.
+      const judged = scope === "full" ? await ctx.baseline.judge(run, repo, result) : null;
+      return { result, judged };
+    })(),
   );
   ctx.graphs.test(run.id, step, scope, scope === "check" ? check : null, result.outcome);
   if (scope !== "check" && !(result.cached && state.lastTests?.result.key === result.key))
     state.lastTests = { scope, result };
   if (scope === "full") state.lastFull = result;
-  // Un rouge que main a déjà n'est pas un bloquant : l'agent de revue le lit ici, avant son verdict.
-  const judged = scope === "full" ? await ctx.baseline.judge(run, repo, result) : null;
   const baseline = judged
     ? `\n\nROUGE DE BASE : ${baselineSummary(judged)}.${judged.new.length === 0 ? " Ce n'est pas un bloquant." : ""}`
     : "";

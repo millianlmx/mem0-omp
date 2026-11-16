@@ -10,12 +10,13 @@
     "isolation": "container",
     "slots": 5,
     "memoryMax": "1G",
+    "lendMax": 3,
     "retryBackoffSec": [120, 600, 1800],
     "failoverOn": ["rate_limit", "server_error", "network"]
   },
   "heavy": {
     "isolation": "container",
-    "slots": 2,
+    "slots": 3,
     "memoryMax": "4G",
     "cpuQuota": "300%",
     "cargoTargetRoot": "@ROOT@/cache/cargo",
