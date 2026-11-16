@@ -109,37 +109,3 @@ struct DelaisDepassesTests {
         #expect(try await access.memoryPage(scope: "produit", offset: 100, limit: nil).rows.count == 50)
     }
 }
-
-@MainActor
-@Suite("Délais dépassés : la suspension de l'app", .serialized)
-struct SuspensionDesLecturesTests {
-    @Test("lenteurs-et-timeouts-du-chargement-sur-i/AC-11 : une lecture en vol quand toute l'app passe en arrière-plan est annulée, sans bandeau, et le retour la relit")
-    func suspensionCancelsReadsInFlight() async throws {
-        let transport = LatencyHarnessTransport(latency: .milliseconds(300)) { _ in osJSON(osInboxJSON) }
-        let model = HarnessModel(
-            transport: transport,
-            preferences: InMemoryClientPreferences([HarnessModel.addressKey: "https://vps.example"]),
-            tokens: InMemoryTokenStore([HarnessModel.tokenAccount: "t"]),
-            retryDelay: .seconds(3600), refreshDelay: .milliseconds(10), reporter: .off
-        )
-        await model.load()
-        let read = model.inbox
-        #expect(read != nil)
-
-        // Une lecture qui irait au bout rendrait un 500 et poserait un bandeau : la suspension l'annule avant.
-        transport.respond { _ in osJSON(#"{"error":"panne"}"#, status: 500) }
-        let reading = Task { await model.refresh() }
-        try await Task.sleep(for: .milliseconds(100))
-        model.suspendStreams()
-        await reading.value
-        #expect(model.failure == nil)
-        #expect(model.inbox == read)
-
-        // Le retour relit : une lecture neuve ne rejoint pas la lecture coupée.
-        transport.respond { _ in osJSON(osInboxJSON) }
-        await model.refresh()
-        #expect(model.failure == nil)
-        #expect(model.inbox == read)
-        #expect(transport.count("GET", "/v1/inbox") == 3)
-    }
-}

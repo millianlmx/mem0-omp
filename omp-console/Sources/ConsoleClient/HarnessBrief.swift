@@ -255,7 +255,7 @@ public final class HarnessBriefModel: ObservableObject {
             update(\.failure, nil)
         } catch {
             update(\.availability, HarnessControlFailure.availability(after: error, current: availability))
-            update(\.failure, HarnessModel.failure(of: error))
+            update(\.failure, HarnessModel.failure(after: error, keeping: failure))
         }
     }
 
@@ -423,7 +423,7 @@ public final class HarnessScoreboardModel: ObservableObject {
             failure = nil
         } catch {
             availability = HarnessControlFailure.availability(after: error, current: availability)
-            failure = HarnessModel.failure(of: error)
+            failure = HarnessModel.failure(after: error, keeping: failure)
         }
     }
 

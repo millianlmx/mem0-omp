@@ -147,7 +147,7 @@ public final class HarnessLocalSessionsModel: ObservableObject {
             update(\.sessions, [])
             update(\.failure, nil)
         } catch {
-            update(\.failure, HarnessModel.failure(of: error))
+            update(\.failure, HarnessModel.failure(after: error, keeping: failure))
         }
     }
 

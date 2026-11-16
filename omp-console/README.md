@@ -509,7 +509,11 @@ elle-même.
   l'app en arrière-plan ferme les flux (boîte, direct) ; le retour les rouvre une fois,
   après une boîte fraîche. Chaque fenêtre arrête son pouls quand elle est cachée, sans
   toucher aux flux des autres. Un simple passage par l'état inactif (Centre de contrôle,
-  bannière, Face ID) ne relit rien.
+  bannière, Face ID) ne relit rien. Une lecture en vol quand l'app passe en arrière-plan est
+  coupée, sans bandeau ; elle est refaite une fois au retour, et partage sa réponse avec la
+  même lecture du retour. Une lecture qui partirait pendant l'arrière-plan attend le retour,
+  sauf celles d'une réponse à une notification. Une lecture annulée (écran quitté,
+  actualisation relancée) n'efface pas le bandeau d'avant.
 - **Code partagé.** Le modèle (`HarnessModel`, qui porte `WorkstationModel`), les
   brouillons (`HarnessDrafts`), le transport (`HarnessTransport`) et le contrat
   (`HarnessWire`, `WorkstationWire`) vivent dans `ConsoleClient` ; les mots vivent
