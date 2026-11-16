@@ -366,6 +366,12 @@ export function parseSplitFeatures(
 function splitFeatureTool(hooks: StepHooks, run: RunRow, step: StepRow, args: Record<string, unknown>): HostToolResult {
   if (step.kind !== "specs" && step.kind !== "impl")
     return { text: "split_feature n'existe qu'en /specs et /impl", isError: true };
+  // La voie express va droit au but : une demande, un run, aucune chaîne de sous-features.
+  if (run.lane === "express")
+    return {
+      text: "voie express : pas de découpage — livre la demande entière dans ce run, quelle que soit la taille du diff",
+      isError: true,
+    };
   const parsed = parseSplitFeatures(args.features);
   if (!parsed.ok) return { text: `split_feature refusé : ${parsed.error}`, isError: true };
   if (step.kind === "specs")

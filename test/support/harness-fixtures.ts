@@ -76,6 +76,8 @@ export function testConfig(repo: string, patch: (config: HarnessConfig) => void 
   // Une relance immédiate, une seule : les scénarios d'échec restent courts (le backoff a ses propres tests).
   config.runner.retryBackoffSec = [0];
   config.runner.stepRetries = 1;
+  // Les scénarios suivent la voie que leur demande dicte (complète, directe) : la voie express a ses propres tests.
+  config.lanes.default = "auto";
   config.repos = [
     repoDefaults({
       name: "demo",

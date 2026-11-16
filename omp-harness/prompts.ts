@@ -216,7 +216,11 @@ ${
 }
 - \`set_modules\` dès que les chemins touchés sont connus, s'ils diffèrent de specs.md.
 - \`save_checkpoint\` après chaque incrément cohérent (tests verts sur ce qui est écrit).
-- Diff visé : < ${ctx.maxDiffLines} lignes de code. Au-delà, arrête-toi à un incrément cohérent, appelle \`split_feature\` avec les sous-features restantes, et note-les dans \`## Reste\`.
+${
+  ctx.express === true
+    ? "- Voie express : PAS de découpage (`split_feature` est refusé). Livre la demande entière dans ce run, quelle que soit la taille du diff."
+    : `- Diff visé : < ${ctx.maxDiffLines} lignes de code. Au-delà, arrête-toi à un incrément cohérent, appelle \`split_feature\` avec les sous-features restantes, et note-les dans \`## Reste\`.`
+}
 - Tests : \`run_tests\` avec \`scope: touched\` (tests des fichiers touchés, slot heavy isolé) ; \`scope: check\` avec \`check\` pour une commande nommée du dépôt. La suite complète est réservée à /review.
 - Ne commite pas toi-même : \`save_checkpoint\` et la fin d'étape commitent.
 - Le code demandé est DÉJÀ dans le dépôt (livré avant) ? N'invente pas de diff : \`## Fait\` dit, critère par critère, le fichier et le test qui le livrent déjà ; la revue le vérifie.

@@ -594,7 +594,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `providersEnvFile`, `providersModelsFile` | `providers.env`, `providers.models.yml` à côté de `tokenFile` | les clés et le `models.yml` des fournisseurs déclarés depuis les apps |
 | `review.specsGate` | `"auto"` | la feature attend ta validation entre `/specs` et `/impl` : `true` toujours, `false` jamais, `"auto"` seulement si les specs découpent, laissent `## Modules` vide, touchent à l'irréversible, ou ouvrent un projet |
 | `lanes.direct` | `true` | la voie directe : une demande qui porte déjà sa section `## Critères d'acceptation` (au moins un `AC-n`) part à `/impl` sans `/req` ni `/specs` (§ « Une feature, pas à pas ») ; `false` : tout run passe par `/req` |
-| `lanes.express`, `lanes.default`, `lanes.expressFixCap` | `true`, `"auto"`, `1` | la voie express (§ « Une feature, pas à pas ») : `lane: "express"` à la création, ou `lanes.default: "express"` pour tout run créé sans `lane` ; `expressFixCap` corrections au plus (bornées par `review.fixCap`) avant l'humain ; `lanes.express: false` la refuse |
+| `lanes.express`, `lanes.default`, `lanes.expressFixCap` | `true`, `"express"`, `1` | la voie express (§ « Une feature, pas à pas ») : la voie de tout run créé sans `lane` (`lanes.default: "auto"` rend la voie directe ou complète selon la demande), ou `lane: "express"` à la création ; `expressFixCap` corrections au plus (bornées par `review.fixCap`) avant l'humain ; `lanes.express: false` la refuse |
 | `review.fixCap` | `3` | les corrections automatiques avant de te passer la main |
 | `review.maxDiffLines` | `300` | au-delà, pas d'auto-merge |
 | `review.autoMergeRisk` | `"medium"` | le risque le plus haut du verdict qui s'auto-merge encore (`"low"` pour serrer) |
@@ -717,7 +717,7 @@ serveur. C'est l'écran Système ▸ Dépôts d'omp-console.
 
 ## Une feature, pas à pas
 
-- **Deux voies, triées à la création.** Sans `req` fourni, le service lit la
+- **Deux voies, triées à la création** (sous `lanes.default: "auto"`, ou quand l'express est refusé). Sans `req` fourni, le service lit la
   demande, sans LLM : si elle porte une section `## Critères d'acceptation` avec au
   moins une ligne qui commence par `AC-n` (le parseur de la revue), le run naît à
   `/impl` (**voie directe**). Son `specs.md` est synthétisé — le titre, la demande
@@ -732,15 +732,19 @@ serveur. C'est l'écran Système ▸ Dépôts d'omp-console.
   GitHub (la section se lit dans la demande du run : le texte de l'issue, ou à défaut
   un commentaire) et les features d'un projet ou d'un audit passent par le même tri.
   `run_created` porte `lane` : `direct`, `full` ou `express`, gardée sur le run (`lane`).
-- **La voie express** (`lane: "express"` dans `POST /v1/runs`, `--lane express` en CLI,
-  ou `lanes.default: "express"` pour tout run créé sans `lane`). Ni /req ni /specs, même
+- **La voie express**, celle de tout run créé sans `lane` (`lanes.default: "express"`, le
+  défaut ; `"auto"` revient au tri directe/complète ci-dessus), ou demandée par `lane:
+  "express"` dans `POST /v1/runs` (`--lane express` en CLI). Ni /req ni /specs, même
   sans critères : `specs.md` est celui de la voie directe si la demande porte les siens,
   sinon la demande citée et un critère synthétisé (`AC-1` : ce que décrit la demande
   fonctionne, prouvé par un test qui le nomme). /impl reçoit la consigne de vérifier par
   `scope: touched` avant de finir. La revue ne démarre pas de QA de prévisualisation
   (la suite complète juge) et reçoit une règle resserrée : un bloquant est seulement un
   critère non tenu, un test rouge que main n'a pas, une faille, une perte de données ou
-  une régression visible ; le reste va en risques. Au plus `lanes.expressFixCap` (1)
+  une régression visible ; le reste va en risques. Aucun découpage : `split_feature` est
+  refusé et /impl livre la demande entière dans le run, quelle que soit la taille du diff
+  (au-delà de `review.maxDiffLines`, le merge attend la validation de l'humain, comme
+  ailleurs). Au plus `lanes.expressFixCap` (1)
   correction, puis l'humain, comme au plafond ordinaire. Le merge ne change pas : même
   auto-merge, même suite complète sur l'arbre fusionné. L'express est refusé — le run
   prend la voie que la demande aurait eue sans lui, et `run_created` porte `laneRefused`

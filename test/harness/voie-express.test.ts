@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
-import { fixCapFor, validateConfig } from "../../omp-harness/config.ts";
+import { defaultConfig, fixCapFor, validateConfig } from "../../omp-harness/config.ts";
 import { createHandler } from "../../omp-harness/http.ts";
 import { SPECS_BASELINE, expressSpecs } from "../../omp-harness/steps.ts";
 import { parseAcIds } from "../../omp-harness/verdict.ts";
@@ -199,4 +199,41 @@ test("voie-express/AC-5 : POST /v1/runs accepte lane express ; la configuration 
   assert.throws(() => validateConfig(world.config), /lanes\.default/);
   Object.assign(world.config.lanes, { default: "auto", expressFixCap: -1 });
   assert.throws(() => validateConfig(world.config), /lanes\.expressFixCap/);
+});
+
+test("voie-express/AC-6 : la voie express est celle d'un run créé sans lane ; elle ne découpe jamais — split_feature est refusé en /impl, aucun projet ni run enfant n'est créé, et /impl reçoit la consigne de tout livrer", async () => {
+  assert.equal(defaultConfig("/tmp/harness-unused").lanes.default, "express");
+  const split = {
+    tool: "split_feature",
+    args: { features: [{ title: "Export JSON", request: "Exporter aussi en JSON", modules: ["docs"] }] },
+  };
+  const impl = [OK.impl[0], split, ...OK.impl.slice(1)];
+  const world = fakeWorld(
+    { impl: [impl], review: [OK.review] },
+    { patch: (config) => (config.lanes.default = "express") },
+  );
+  const run = world.orchestrator.createRun({
+    repo: "demo",
+    title: "Export CSV",
+    request: "Exporter les données en CSV.",
+  });
+  assert.equal(run.lane, "express");
+  await world.orchestrator.start();
+  try {
+    await settled(world, run.id);
+    const refused = world.log().find((entry) => entry.kind === "tool" && entry.tool === "split_feature");
+    assert.match(String(refused?.result), /voie express : pas de découpage/);
+    assert.equal(world.store.listProjects().length, 0);
+    assert.deepEqual(
+      world.store.listRuns({}).map((row) => row.id),
+      [run.id],
+    );
+    const prompt = world
+      .log()
+      .find((entry) => entry.kind === "prompt" && entry.step === "impl" && entry.nudge !== true);
+    assert.match(String(prompt?.message), /PAS de découpage/);
+    assert.doesNotMatch(String(prompt?.message), /appelle `split_feature`/);
+  } finally {
+    await world.orchestrator.stop();
+  }
 });
