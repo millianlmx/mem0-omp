@@ -840,6 +840,18 @@ const INTAKE_TOOL: HostToolDefinition = {
       cron: { ...NULLABLE_STRING, description: "La planification cron à 5 champs d'une `schedule`." },
       target: { ...NULLABLE_STRING, description: "La cible d'une `schedule` : run, audit ou issues." },
       label: { ...NULLABLE_STRING, description: "Le label des issues d'une `schedule` de cible issues." },
+      lane: {
+        type: "string",
+        enum: ["express", "direct", "full"],
+        description:
+          "La voie du run d'un `feature` ou d'un `bug` : express, direct ou full ; omise pour les autres types.",
+      },
+      laneReason: { ...NULLABLE_STRING, description: "Pourquoi cette voie, en une phrase." },
+      criteria: {
+        type: "array",
+        items: { type: "string" },
+        description: "Les critères d'acceptation établis par la demande et ses réponses, Given/When/Then, sans numéro.",
+      },
     },
     additionalProperties: false,
   },

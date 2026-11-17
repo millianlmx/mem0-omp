@@ -732,7 +732,8 @@ serveur. C'est l'écran Système ▸ Dépôts d'omp-console.
   ou en `"auto"` si la demande touche à l'irréversible ou ouvre un projet. Les issues
   GitHub (la section se lit dans la demande du run : le texte de l'issue, ou à défaut
   un commentaire) et les features d'un projet ou d'un audit passent par le même tri.
-  `run_created` porte `lane` : `direct`, `full` ou `express`, gardée sur le run (`lane`).
+  Le run d'une **Demande** reçoit la voie que son classeur a choisie (§ « Les demandes en
+  langage libre »). `run_created` porte `lane` : `direct`, `full` ou `express`, gardée sur le run (`lane`).
 - **La voie express** (`lane: "express"` dans `POST /v1/runs`, `--lane express` en CLI,
   ou `lanes.default: "express"` pour tout run créé sans `lane`). Ni /req ni /specs, même
   sans critères : `specs.md` est celui de la voie directe si la demande porte les siens,
@@ -2206,11 +2207,28 @@ Une « Demande » est une phrase libre, posée de n'importe où (`POST /v1/intak
 et exécute après UNE confirmation. Rien n'est créé avant `POST /v1/intake/{id}/confirm`.
 
 - **Cycle de vie.** `classifying` (un job léger, comme les audits, sur `intake.tier`) →
-  `planned` (le plan : type, dépôt, titre, énoncé reformulé, planification éventuelle, et
+  `planned` (le plan : type, dépôt, titre, énoncé reformulé, planification éventuelle, voie du run et critères, et
   `creates`, ce qui sera créé, rédigé par le serveur), `clarifying` (une question ; `answer`
   renvoie la même demande en classement), `answered` (un `question` : réponse directe, rien à
   créer) ou `failed` (`reason`) ; puis `confirmed` (`created` : le run, l'audit, la
   planification ou la demande au poste) ou `cancelled`.
+- **La voie du run.** Pour un plan `feature` ou `bug`, le classeur choisit la voie du run
+  (`plan.lane`) et dit pourquoi en une phrase (`plan.laneReason`) : `express` pour une demande
+  triviale et localisée (petite, évidente, sans décision produit ni migration, vérifiable par un
+  test), `direct` pour une demande déjà structurée — il rend alors ses critères d'acceptation
+  (`plan.criteria`), tirés de la demande et des réponses de clarification, jamais inventés —, `full`
+  pour une demande floue ou large ; dans le doute, la voie la plus cadrée. Le prompt lui dit les voies
+  que `lanes.express` et `lanes.direct` coupent. Le serveur juge : une voie inconnue met la demande en
+  échec, `direct` sans critère devient `full` (raison réécrite), et les critères sont ramenés à une
+  ligne chacun, débarrassés de leur `AC-n` ou de leur puce, 20 au plus de 500 caractères, puis
+  numérotés `AC-1 : …`. Un autre type n'en porte pas. La vue rend toujours `lane`, `laneReason` et
+  `criteria` (`null`, `null`, `[]` sans voie) ; `creates` ajoute la voie. À la confirmation
+  (intake-create.ts `runOfPlan`), la demande du run est l'énoncé suivi de `## Critères d'acceptation`
+  et de ses critères ; `express` et `full` sont passées en `lane`, `direct` n'en passe aucune : la
+  création reconnaît la voie directe à ses critères. Les gardes de la création valent toujours :
+  l'irréversible, l'autonomie « tout me demander » ou `specsGate: true` refusent l'express
+  (`laneRefused`), et la porte des specs peut rendre la directe complète. Un plan sans voie (classé
+  avant elles, ou sans `lane` rendu) garde le tri d'avant, `lanes.default` compris.
 - **Le classeur ne lit ni dépôt ni mémoire.** Son répertoire de travail est vide, aucun
   plugin mémoire n'est chargé (ni scope projet ni `_global` : un texte non fiable d'un client ne
   ressort pas chez un autre), ses seuls outils sont `progress` et `intake_classify`. Le texte de
@@ -2867,7 +2885,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `GET /v1/dreams` · `POST /v1/dreams` `{repo}` | viewer · operator | Le rêve de la mémoire : le dernier rêve de chaque dépôt (`state` `dreaming` · `done` · `skipped` · `failed`, `facts`, `reason`, `report` de mem0-rs) ; `POST` demande un rêve, examiné au prochain tour sans seuil de faits ni attente du repos (202 ; 409 sans oracle). |
 | `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | operator | Lancer les propositions retenues en projet (ordonnées selon `dependsOn` : une feature prend un `projectOrder` postérieur à ses prérequis retenus ; 400 si les dépendances bouclent), ou annuler. |
 | `GET /v1/intake?state=a,b&limit=` · `POST /v1/intake` `{text, source, repo?, context?}` · `GET /v1/intake/{id}` | viewer · operator · viewer | Les Demandes (capacité `intake`, § « Les demandes en langage libre ») : une phrase libre, classée par un job en un plan (`feature`, `bug`, `audit`, `workstation_request`, `schedule`) ou une réponse directe (`question`), ou une question de clarification. `POST` : 201 `{intake}` à l'état `classifying` ; `source` ∈ `console` · `ios` · `voice` · `slack` · `cli` · `chrome` (sinon 400), `text` non vide de 4000 caractères au plus (400), `repo` facultatif qui s'impose au plan (403 hors portée du client, 404 non déclaré), `context` facultatif (capacité `intake-context`) : la page d'où part la demande, `{url?: http(s) ≤ 2000, title?: ≤ 300, selection?: ≤ 4000}`, jugé strictement (400), l'adresse gardée sans identifiants, query ni fragment, rendu par la vue (`context`) à l'auteur et au propriétaire seulement (`null` sans page, et pour tout autre lecteur). La liste (200 `{intakes}`, `state` : des états parmi `classifying` · `clarifying` · `planned` · `answered` · `confirmed` · `cancelled` · `failed`, 400 sinon) et `GET /{id}` (404 pour une demande invisible) ne rendent que les demandes des dépôts du client, plus celles sans dépôt qu'il a posées. |
-| `POST /v1/intake/{id}/confirm` `{plan?}` · `POST /v1/intake/{id}/cancel` · `POST /v1/intake/{id}/answer` `{text}` | operator | `confirm` : crée l'objet du plan par le chemin existant (run, audit, planification, demande au poste) et lie la demande (201 `{intake}` avec `created {kind, id}`) ; `plan` corrige des champs (`kind`, `repo`, `title`, `statement`, `focus`, `schedule`), rejugés (400). 409 si la demande n'est pas `planned` : une seconde confirmation ne crée rien ; 403 du chemin existant (demande au poste : appareil approbateur) : rien n'est créé, la demande reste confirmable. `cancel` : 200, arrête le classement en cours ; 409 si déjà confirmée ou annulée. `answer` : 200, la même demande est reclassée ; 409 si elle n'est pas en `clarifying`, 400 si `text` est vide. 404 pour une demande invisible. |
+| `POST /v1/intake/{id}/confirm` `{plan?}` · `POST /v1/intake/{id}/cancel` · `POST /v1/intake/{id}/answer` `{text}` | operator | `confirm` : crée l'objet du plan par le chemin existant (run, audit, planification, demande au poste) et lie la demande (201 `{intake}` avec `created {kind, id}`) ; `plan` corrige des champs (`kind`, `repo`, `title`, `statement`, `focus`, `schedule`, `lane`, `criteria` — une liste de chaînes qui remplace celle du plan), rejugés (400 : voie inconnue, `direct` sans critère, `criteria` qui n'est pas une liste) ; une voie changée prend la raison « choisie à la confirmation ». 409 si la demande n'est pas `planned` : une seconde confirmation ne crée rien ; 403 du chemin existant (demande au poste : appareil approbateur) : rien n'est créé, la demande reste confirmable. `cancel` : 200, arrête le classement en cours ; 409 si déjà confirmée ou annulée. `answer` : 200, la même demande est reclassée ; 409 si elle n'est pas en `clarifying`, 400 si `text` est vide. 404 pour une demande invisible. |
 | `GET /v1/stats` | viewer | Les statistiques des dépôts du client, avec l'état du scheduler. Les séries des graphiques de Système › Statistiques et santé d'OMP Console : `runs.byDay` (les 14 derniers jours, chacun présent : créés, mergés, échoués), `runs.byRepo` (par dépôt : en cours, mergés, échoués, mergés sur 7 jours), `usage.byRepoLast7Days` (le coût de chaque dépôt sur 7 jours). `cancellations` : les runs annulés par source (`bySource` : `human`, `pilot`, `cascade` — la chute d'un parent dont une feature `— après` attendait le merge —, `replaced` — un découpage refait —, chacune avec son nombre et ses heures d'étapes perdues), les motifs humains (`humanMotives`, par `cancelCause`), `wastedHours` et `withoutWork` (annulés avant toute étape terminée). |
 | `GET /v1/digest?since=` | viewer | Le rapport du matin des dépôts du client : `{since, until, text, counts {merged, decisions, waiting, failed}}`. `since` en ms epoch (défaut : il y a 24 h ; 400 s'il est illisible). `text` (Markdown, français) liste les runs mergés dans la fenêtre (lien de la PR ou sha court), les décisions prises seules dans la fenêtre et pas encore relues, les runs qui attendent l'humain à cet instant (`awaiting_human`, `escalated`, avec la raison), les runs échoués dans la fenêtre, les échéances des planifications de la fenêtre (lancées, sautées ou manquées), puis le coût de la fenêtre si la consommation est connue, et pour un client qui voit tous les dépôts la section « Santé » (mémoire, sauvegardes) ; une section vide est omise, « Rien de neuf. » si tout est vide. Sa dernière ligne nomme le commit déployé (`Commit déployé : <sha court>`, ou inconnu), celui de `/v1/health`. |
 | `GET /v1/schedules` · `POST /v1/schedules` `{name, cron, target, enabled?}` | viewer · operator | Les planifications des dépôts que le client voit (`{timezone, schedules}` ; chacune `id`, `name`, `cron`, `target`, `repo`, `enabled`, `nextRunAt`, `lastRunAt`, `lastOutcome`, `lastFired`, `createdBy`, `rev`), créer (201, `ETag` = `rev` ; 403 pour un dépôt non permis, 404 non déclaré, 400 pour un cron illisible ou une cible invalide). § « Les planifications ». |

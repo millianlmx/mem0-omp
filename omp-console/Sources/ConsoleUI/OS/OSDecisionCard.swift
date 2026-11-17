@@ -531,6 +531,25 @@ public struct OSDecisionCard: View {
             if !plan.statement.isEmpty {
                 Text(plan.statement).font(.callout).foregroundStyle(.secondary).lineLimit(large ? 5 : 3)
             }
+            // La voie choisie par le classeur et sa raison ; « Modifier le plan » la change.
+            if plan.createsRun, plan.lane != nil {
+                Label(IntakeText.laneLine(plan.lane, reason: plan.laneReason), systemImage: IntakeText.laneSymbol(plan.lane))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(large ? 3 : 2)
+                    .consoleID("intake.card.lane")
+            }
+            if plan.createsRun, !plan.criteria.isEmpty {
+                if large {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(plan.criteria, id: \.self) { criterion in
+                            Text(criterion).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                } else {
+                    Text(IntakeText.criteriaCount(plan.criteria.count)).font(.caption).foregroundStyle(.secondary)
+                }
+            }
             OSLine {
                 Button {
                     perform { (try? await intakes.confirm(intake)) != nil }

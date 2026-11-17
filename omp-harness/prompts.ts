@@ -464,7 +464,10 @@ export function intakePrompt(ctx: {
   exchanges: { question: string; answer: string }[];
   /** La page d'où part la demande (popup du navigateur) : une donnée, comme la demande. */
   context?: { url?: string; title?: string; selection?: string } | null;
+  /** Les voies que le serveur ouvre (`lanes.express`, `lanes.direct`) ; absent : toutes. */
+  lanes?: { express: boolean; direct: boolean };
 }): string {
+  const lanes = ctx.lanes ?? { express: true, direct: true };
   return [
     `# /demande — classement d'une demande
 
@@ -513,6 +516,20 @@ Une personne confie une demande en langage libre à l'OS. Classe-la en un plan l
         "Une `schedule` a un `cron` à 5 champs (minute heure jour mois jour-de-semaine) et une `target` : `run`, `audit` ou `issues` (la correction des issues d'un dépôt, `label` facultatif). `title` et `statement` décrivent ce qui sera lancé à chaque échéance.",
         "Pose une `clarification` (seule, sans plan) SEULEMENT si le type d'objet, le dépôt (pour un type qui en porte un, quand aucun dépôt n'est imposé) ou, pour une `schedule`, la fréquence ou la cible ne peuvent pas être déduits. Un `bug` ou une `feature` décrit vaguement (« corrige le bug X dans R ») devient quand même un plan : l'énoncé reprend ce qui est dit, et le /req du run créé le précisera.",
         "Pour un plan : `kind`, `repo` (un des dépôts ci-dessus), `title`, `statement` autoportant (reformulé), et selon le type `focus`, `cron`, `target`, `label`.",
+        [
+          "Pour un `feature` ou un `bug`, choisis aussi la voie du run (`lane`) et dis pourquoi en une phrase (`laneReason`). Tu ne lis pas le code : juge sur ce que dit la demande.",
+          "  - `express` : triviale et localisée — un changement petit et évident (un libellé, une valeur par défaut, un message d'erreur, un bug dont la cause et l'endroit sont nommés), sans décision produit, sans nouveau concept, sans donnée ni contrat d'API à migrer, vérifiable par un test. Le run part tout de suite à l'implémentation, avec une revue courte.",
+          "  - `direct` : déjà structurée — le résultat attendu est précis et vérifiable, au point d'en écrire les critères d'acceptation sans rien inventer (la demande les donne, ou ses réponses de clarification les précisent). Le run part à l'implémentation sur ces critères.",
+          "  - `full` : floue ou large — plusieurs lectures possibles, une décision produit à prendre, plusieurs parties du système, ou un geste irréversible (suppression, migration de données, publication, paiement). /req puis /specs la cadreront.",
+          "  - Dans le doute entre `express` et `direct`, prends `direct` ; entre `direct` et `full`, prends `full`.",
+          ...(lanes.express ? [] : ["  - La voie express est coupée sur ce serveur : n'utilise jamais `express`."]),
+          ...(lanes.direct
+            ? []
+            : [
+                "  - La voie directe est coupée sur ce serveur : un run `direct` passera quand même par /req, ses critères en entrée.",
+              ]),
+        ].join("\n"),
+        "`criteria` : les critères d'acceptation que la demande et ses réponses établissent, un par entrée, au format `Given … When … Then …`, sans numéro (le service les numérote). Requis pour `direct` ; facultatifs pour `express` et `full` ; jamais inventés. Ne les recopie pas dans `statement`.",
         `Le \`title\` est ce qu'une liste montre : ${INTAKE_TITLE_MAX} caractères au plus (au-delà, le service le coupe), une étiquette qui nomme le résultat attendu (« Export CSV des commandes »), jamais la demande recopiée. Sans préfixe technique (\`feat:\`, \`fix(api):\`), sans nom de dépôt, de branche ni de fichier, sans numéro d'issue, sans point final ; le détail va dans \`statement\`.`,
         "Pour une `question` : tu ne lis ni code ni mémoire ; réponds avec le seul texte et la liste des dépôts, dis ce que tu ne peux pas savoir et suggère un audit plutôt que d'inventer. Mets cette réponse dans `answer`.",
         "Rends ton classement UNE fois par `intake_classify`, puis termine ton tour. N'utilise JAMAIS `ask`.",

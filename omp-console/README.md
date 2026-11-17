@@ -753,7 +753,9 @@ sa route (404) — rien ne s'affiche alors, sans échec.
 - **Champs lus** : `HarnessRun.autonomy`, `cancelCause`, `blockedBy` (ce qui retient une feature en
   file), `waitUntil` ; `HarnessEscalation.autoAt` et `autoAnswer` (l'instant où la recommandation
   s'appliquera seule) ; `HarnessStatus.paused` ; `HarnessIntake.context` (page d'origine d'une Demande,
-  envoyée par `intakes.submit(…, context:)`).
+  envoyée par `intakes.submit(…, context:)`) ; `HarnessIntakePlan.lane`, `laneReason` et `criteria` (la
+  voie du run qu'a choisie le classeur, sa raison et les critères d'acceptation : la carte du plan les
+  montre, « Modifier le plan » change la voie et les critères, un critère par ligne).
 - **Notifications** : la catégorie `omp.answer` (une seule question ouverte, avec sa recommandation)
   offre « prendre la recommandation » et « répondre » (saisie) ; `HarnessPushAlert.question` porte
   `omp.question {id, recommended, options}`, et `HarnessNotificationRouting.gesture` en fait la réponse à

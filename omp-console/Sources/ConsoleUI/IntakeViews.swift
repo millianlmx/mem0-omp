@@ -107,7 +107,8 @@ struct IntakeSheet: View {
 // MARK: - Modifier le plan
 
 /// La feuille « Modifier le plan » : type, dépôt, titre, énoncé et, selon le type,
-/// périmètre ou planification ; « Confirmer » envoie la correction avec la confirmation.
+/// périmètre, planification, ou voie du run et critères d'acceptation ; « Confirmer »
+/// envoie la correction avec la confirmation.
 struct IntakePlanSheet: View {
     @ObservedObject var server: HarnessModel
     let intake: HarnessIntake
@@ -161,6 +162,27 @@ struct IntakePlanSheet: View {
                         }
                     }
                 }
+                if plan.createsRun {
+                    Section {
+                        Picker(IntakeText.laneLabel, selection: laneBinding) {
+                            ForEach(laneChoices, id: \.self) { lane in
+                                Label(IntakeText.lane(lane.isEmpty ? nil : lane), systemImage: IntakeText.laneSymbol(lane.isEmpty ? nil : lane))
+                                    .tag(lane)
+                            }
+                        }
+                        .consoleID("intake.edit.lane")
+                        TextField(IntakeText.criteriaLabel, text: criteriaBinding, prompt: Text(IntakeText.criteriaPrompt), axis: .vertical)
+                            .lineLimit(2...10)
+                            .consoleID("intake.edit.criteria")
+                        if lacksCriteria {
+                            Text(IntakeText.criteriaRequired)
+                                .font(.callout)
+                                .consoleBanner(tone: .attention)
+                        }
+                    } footer: {
+                        Text(IntakeText.laneHint)
+                    }
+                }
                 if let failure {
                     Section {
                         Text(intakeMessage(failure))
@@ -180,7 +202,7 @@ struct IntakePlanSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(IntakeText.confirm) { confirm() }
-                        .disabled(isSending || plan.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(isSending || plan.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || lacksCriteria)
                         .consoleID("intake.edit.confirm")
                 }
             }
@@ -202,6 +224,30 @@ struct IntakePlanSheet: View {
 
     private func optional(_ key: WritableKeyPath<HarnessIntakePlan, String?>) -> Binding<String> {
         Binding(get: { plan[keyPath: key] ?? "" }, set: { plan[keyPath: key] = $0.isEmpty ? nil : $0 })
+    }
+
+    /// Les voies proposées. « Choisie par le serveur » (`""`) seulement quand le plan reçu n'en porte
+    /// pas : une correction sans `lane` laisse celle du plan, elle ne l'efface pas.
+    private var laneChoices: [String] {
+        intake.plan?.lane == nil ? [""] + HarnessIntakePlan.lanes : HarnessIntakePlan.lanes
+    }
+
+    private var laneBinding: Binding<String> {
+        Binding(get: { plan.lane ?? "" }, set: { plan.lane = $0.isEmpty ? nil : $0 })
+    }
+
+    /// Un critère par ligne ; le serveur retire les `AC-n` et renumérote.
+    private var criteriaBinding: Binding<String> {
+        Binding(
+            get: { plan.criteria.joined(separator: "\n") },
+            set: { plan.criteria = $0.components(separatedBy: "\n") }
+        )
+    }
+
+    /// La voie directe sans aucun critère : le serveur la refuserait (400).
+    private var lacksCriteria: Bool {
+        plan.createsRun && plan.lane == "direct"
+            && plan.criteria.allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
     }
 
     private var schedule: HarnessIntakeSchedule { plan.schedule ?? HarnessIntakeSchedule(cron: "", target: "run") }
@@ -238,6 +284,14 @@ struct IntakePlanSheet: View {
         if sent.kind == "workstation_request" { sent.repo = nil } else if sent.repo == nil { sent.repo = repoChoices.first }
         if sent.kind != "schedule" { sent.schedule = nil } else if sent.schedule == nil { sent.schedule = schedule }
         if sent.kind != "audit" { sent.focus = nil }
+        // La raison de la voie ne s'envoie pas : le serveur l'écrit. Hors run, ni voie ni critères.
+        sent.laneReason = nil
+        if sent.createsRun {
+            sent.criteria = sent.criteria.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        } else {
+            sent.lane = nil
+            sent.criteria = []
+        }
         let corrected = sent
         Task {
             defer { isSending = false }

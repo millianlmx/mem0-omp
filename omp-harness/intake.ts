@@ -9,10 +9,11 @@ import { isRecord, repoByName, repoDefaults } from "./config.ts";
 import type { HarnessConfig, ModelPolicy, RepoConfig } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
 import { parseCron } from "./cron.ts";
-import { INTAKE_STATES } from "./db.ts";
+import { INTAKE_LANES, INTAKE_STATES } from "./db.ts";
 import type {
   IntakeContext,
   IntakeExchange,
+  IntakeLane,
   IntakePatch,
   IntakePlan,
   IntakeRow,
@@ -126,13 +127,20 @@ type LiveIntake = {
   done: Promise<void>;
 };
 
+/** La voie d'un run, telle que la description de ce qui sera créé la dit. */
+const LANE_CREATES: Record<IntakeLane, string> = {
+  express: "voie express : /impl tout de suite, revue courte",
+  direct: "voie directe : /impl sur ses critères d'acceptation",
+  full: "voie complète : /req et /specs avant /impl",
+};
+
 /** Ce que la confirmation du plan créera, rédigé par le serveur (jamais par le modèle). */
 function creates(plan: IntakePlan): string {
   const repo = plan.repo ?? "";
   switch (plan.kind) {
     case "feature":
     case "bug":
-      return `Un run « ${plan.title} » sur ${repo}`;
+      return `Un run « ${plan.title} » sur ${repo}${plan.lane ? ` — ${LANE_CREATES[plan.lane]}` : ""}`;
     case "audit":
       return `Un audit de ${repo}${plan.focus ? ` (${plan.focus})` : ""}`;
     case "workstation_request":
@@ -150,6 +158,24 @@ function creates(plan: IntakePlan): string {
   }
 }
 
+/** Le plan tel que la vue le rend. */
+export type PlanView = Omit<IntakePlan, "lane" | "laneReason" | "criteria"> & {
+  lane: IntakeLane | null;
+  laneReason: string | null;
+  criteria: string[];
+  creates: string;
+};
+
+function planView(plan: IntakePlan): PlanView {
+  return {
+    ...plan,
+    lane: plan.lane ?? null,
+    laneReason: plan.laneReason ?? null,
+    criteria: plan.criteria ?? [],
+    creates: creates(plan),
+  };
+}
+
 /** La Demande telle que le contrat public de `/v1/intake` la rend. */
 export type IntakeView = {
   id: string;
@@ -159,7 +185,11 @@ export type IntakeView = {
   requestedRepo: string | null;
   state: IntakeState;
   kind: IntakeRow["kind"];
-  plan: (IntakePlan & { creates: string }) | null;
+  /**
+   * Le plan, avec `creates` ; `lane`, `laneReason` et `criteria` y sont toujours présents (`null`, `null`
+   * et `[]` quand le plan n'en porte pas : un autre type, ou un plan classé avant les voies).
+   */
+  plan: PlanView | null;
   question: string | null;
   answer: string | null;
   exchanges: IntakeExchange[];
@@ -193,7 +223,7 @@ export function intakeView(row: IntakeRow, reader: Client, spaces?: Pick<SpaceLo
     requestedRepo: row.requestedRepo,
     state: row.state,
     kind: row.kind,
-    plan: row.plan ? { ...row.plan, creates: creates(row.plan) } : null,
+    plan: row.plan ? planView(row.plan) : null,
     question: row.question,
     answer: row.answer,
     exchanges: row.exchanges,
@@ -311,8 +341,53 @@ type Fields = {
   cron: string;
   target: string;
   label: string;
+  /** La voie (`""` : aucune, le serveur trie à la création) et sa raison ; `feature` et `bug` seulement. */
+  lane: string;
+  laneReason: string;
+  /** Les critères déjà normalisés (`criteriaOf`). */
+  criteria: string[];
 };
 type Judged = { plan: IntakePlan } | { reason: string };
+
+/** Les bornes des critères d'un plan : leur nombre, la longueur de chacun, et celle de la raison de la voie. */
+const CRITERIA_MAX = 20;
+const CRITERION_MAX = 500;
+const LANE_REASON_MAX = 300;
+
+/** Un `AC-n` (avec sa co-signature `(B-m)` et son séparateur) ou une puce en tête d'un critère : le serveur renumérote. */
+const CRITERION_PREFIX = /^\s*(?:[-*]\s+)?(?:\**AC-\d+\**\s*(?:\([^)]*\)\s*)?[:.)\u2013\u2014-]?\s*)?/i;
+
+/**
+ * Les critères d'acceptation d'un plan, rendus par le classeur ou corrigés à la confirmation : une liste
+ * de chaînes (sinon `null` : forme refusée), chacune ramenée à une ligne sans son `AC-n` ni sa puce,
+ * les vides écartées, bornées (CRITERIA_MAX, CRITERION_MAX), puis numérotées `AC-1 : …` dans l'ordre —
+ * le format que lit la voie directe (steps.ts `directSpecs`). Pure.
+ */
+export function criteriaOf(raw: unknown): string[] | null {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw) || !raw.every((item) => typeof item === "string")) return null;
+  return (raw as string[])
+    .map((item) => item.replace(/\s+/g, " ").replace(CRITERION_PREFIX, "").trim().slice(0, CRITERION_MAX).trim())
+    .filter((item) => item !== "")
+    .slice(0, CRITERIA_MAX)
+    .map((item, index) => `AC-${index + 1} : ${item}`);
+}
+
+/** La voie d'un plan `feature` ou `bug` et ses critères, jugés ; rien pour les autres types. */
+function judgeLane(plan: IntakePlan, fields: Fields): string | null {
+  if (plan.kind !== "feature" && plan.kind !== "bug") return null;
+  const { lane, criteria } = fields;
+  if (lane !== "") {
+    if (!(INTAKE_LANES as readonly string[]).includes(lane))
+      return `voie « ${lane} » inconnue (express, direct ou full)`;
+    if (lane === "direct" && criteria.length === 0) return "la voie directe demande au moins un critère d'acceptation";
+    plan.lane = lane as IntakeLane;
+    const reason = fields.laneReason.replace(/\s+/g, " ").trim().slice(0, LANE_REASON_MAX);
+    if (reason !== "") plan.laneReason = reason;
+  }
+  if (criteria.length > 0) plan.criteria = criteria;
+  return null;
+}
 
 /** Les règles d'un plan (S-4, règles 4 à 8), communes au classement et à la correction à la confirmation. */
 function judge(fields: Fields, scope: IntakeRow["scope"], declared: string[]): Judged {
@@ -327,6 +402,8 @@ function judge(fields: Fields, scope: IntakeRow["scope"], declared: string[]): J
   if (scope !== "*" && !scope.includes(repo))
     return { reason: `le dépôt « ${repo} » est hors de la portée de l'auteur` };
   const plan = { kind, repo, title, statement } as IntakePlan;
+  const refused = judgeLane(plan, fields);
+  if (refused !== null) return { reason: refused };
   if (kind === "audit" && focus !== "") plan.focus = focus;
   if (kind === "schedule") {
     let source: string;
@@ -369,6 +446,14 @@ export function interpretClassification(
     return { state: "answered", kind: "question", answer: answer.slice(0, 4000), plan: null };
   }
   if (kind === "workstation_request" && ctx.poste === false) return failed(NO_POSTE);
+  // Des critères d'une forme inattendue ne font pas échouer la demande : le plan part sans eux.
+  const criteria = criteriaOf(raw.criteria) ?? [];
+  let lane = field("lane");
+  let laneReason = field("laneReason");
+  if (lane === "direct" && criteria.length === 0) {
+    lane = "full";
+    laneReason = "voie directe proposée sans critère d'acceptation : /req et /specs les établiront";
+  }
   const judged = judge(
     {
       kind,
@@ -381,6 +466,9 @@ export function interpretClassification(
       cron: field("cron"),
       target: field("target"),
       label: field("label"),
+      lane,
+      laneReason,
+      criteria,
     },
     ctx.scope,
     ctx.declared,
@@ -573,6 +661,7 @@ export class Intaker {
           requestedRepo: row.requestedRepo,
           exchanges: row.exchanges,
           context: row.context,
+          lanes: config.lanes,
         })}${space === null ? "" : spaceNote(space)}${this.#hooks.state?.(stateScope(row)) ?? ""}`,
         live.abort.signal,
         deadlineAt,
@@ -649,6 +738,10 @@ export class Intaker {
     const kind = correction(raw, "kind", plan.kind);
     if (raw.clarification !== undefined || !(PLAN_KINDS as readonly string[]).includes(kind))
       throw new HarnessError(400, "plan : type inconnu ou sans objet");
+    // La voie et les critères se corrigent ; la raison de la voie ne s'écrit pas : changée, la voie est celle de l'humain.
+    const lane = correction(raw, "lane", plan.lane ?? "");
+    const criteria = raw.criteria === undefined ? (plan.criteria ?? []) : criteriaOf(raw.criteria);
+    if (criteria === null) throw new HarnessError(400, "plan.criteria : liste de chaînes attendue");
     const judged = judge(
       {
         kind,
@@ -662,6 +755,9 @@ export class Intaker {
         cron: correction(schedule, "cron", plan.schedule?.cron ?? ""),
         target: correction(schedule, "target", plan.schedule?.target ?? ""),
         label: correction(schedule, "label", plan.schedule?.label ?? ""),
+        lane,
+        laneReason: lane === (plan.lane ?? "") ? (plan.laneReason ?? "") : "choisie à la confirmation",
+        criteria,
       },
       scope,
       this.#ctx.config.repos.map((repo) => repo.name),
