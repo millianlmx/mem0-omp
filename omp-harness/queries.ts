@@ -5,6 +5,7 @@
 import type { EscalationRow, RepoFilter, RunRow, Store } from "./db.ts";
 import { autoAnswerOf } from "./gestures.ts";
 import { LIVE_RUN_STATES, isTerminal } from "./machine.ts";
+import { pushTo } from "./collections.ts";
 
 /** Les décisions prises seules que la boîte liste au plus : les plus récentes ; `decisionsTotal` dit combien il y en a. */
 export const INBOX_DECISIONS = 200;
@@ -62,7 +63,7 @@ export function inboxOf(
     const run = byId.get(item.runId) ?? store.getRun(item.runId);
     if (run && isTerminal(run.state)) continue;
     openEscalations += 1;
-    byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
+    pushTo(byRun, item.runId, item);
   }
   const awaiting = runs.filter((run) => run.state === "awaiting_human");
   const unread = { status: ["auto", "auto_timeout"] as ("auto" | "auto_timeout")[], repos };
@@ -97,7 +98,7 @@ export function escalationBatches(
 ): Record<string, unknown> {
   const byRun = new Map<string, unknown[]>();
   for (const item of withStep(store, withDeadline(store, store.listEscalations({ status, repos }), timeoutSec)))
-    byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
+    pushTo(byRun, item.runId, item);
   return {
     batches: [...byRun].map(([runId, items]) => {
       const run = store.getRun(runId);

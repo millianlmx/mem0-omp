@@ -30,6 +30,9 @@ public final class HarnessModel: ObservableObject {
     /// Gardé à part de `inbox`, dont le curseur change à chaque événement : une boîte
     /// identique au curseur près n'est pas republiée.
     private(set) var eventCursor = 0
+    /// La boîte a donné son curseur. Sans lui (boîte pas encore lue : serveur qui redémarre, lecture en
+    /// échec), le flux part du dernier événement (`after=latest`) au lieu de rejouer tout le journal.
+    private var cursorKnown = false
     /// Le flux d'événements est ouvert : la boîte se met à jour seule.
     @Published public private(set) var isLive = false
     /// Les runs dont un geste attend la réponse du serveur.
@@ -360,6 +363,7 @@ public final class HarnessModel: ObservableObject {
         address = nil
         inbox = nil
         eventCursor = 0
+        cursorKnown = false
         client = nil
         clientAsked = false
         update(\.repos, [])
@@ -451,6 +455,7 @@ public final class HarnessModel: ObservableObject {
     /// au-delà du curseur (qui avance à chaque événement du journal).
     private func receive(inbox fetched: HarnessInbox) {
         eventCursor = fetched.cursor
+        cursorKnown = true
         if var shown = inbox {
             shown.cursor = fetched.cursor
             if shown == fetched { return }
@@ -619,10 +624,14 @@ public final class HarnessModel: ObservableObject {
         defer { if !Task.isCancelled { liveTask = nil } }
         while !Task.isCancelled {
             guard let server else { return }
-            let cursor = eventCursor
+            // Sans curseur, rejouer le journal depuis le début ferait relire chaque écran à chaque lot et, sur Mac,
+            // notifier chaque vieil événement : le flux part du dernier événement, et la boîte est relue à côté.
+            let known = cursorKnown
+            let after = known ? String(eventCursor) : "latest"
             do {
-                let stream = try await transport.events(HarnessCall(method: "GET", path: "/v1/events?after=\(cursor)"), server: server)
+                let stream = try await transport.events(HarnessCall(method: "GET", path: "/v1/events?after=\(after)"), server: server)
                 update(\.isLive, true)
+                if !known { Task { [weak self] in await self?.refreshInbox() } }
                 var parser = HarnessEventParser()
                 for try await chunk in stream {
                     let events = parser.consumeEvents(chunk)

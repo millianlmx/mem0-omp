@@ -59,29 +59,45 @@ export function modelKey(row: Pick<UsageRow, "provider" | "model">): string {
   return row.model ?? row.provider ?? "?";
 }
 
+function emptyTotals(): UsageTotals {
+  return { messages: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+}
+
+function addRow(total: UsageTotals, row: UsageRow): void {
+  total.messages++;
+  total.input += row.input;
+  total.output += row.output;
+  total.cacheRead += row.cacheRead;
+  total.cacheWrite += row.cacheWrite;
+  total.cost += row.cost;
+}
+
 /** La somme d'une liste de lignes de consommation. */
 export function sumUsage(rows: readonly UsageRow[]): UsageTotals {
-  const total: UsageTotals = { messages: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
-  for (const row of rows) {
-    total.messages++;
-    total.input += row.input;
-    total.output += row.output;
-    total.cacheRead += row.cacheRead;
-    total.cacheWrite += row.cacheWrite;
-    total.cost += row.cost;
-  }
+  const total = emptyTotals();
+  for (const row of rows) addRow(total, row);
   total.cost = Math.round(total.cost * 1e6) / 1e6;
   return total;
 }
 
-/** Les sommes par clé (étape, modèle, jour…). */
+/**
+ * Les sommes par clé (étape, modèle, jour…), cumulées au fil des lignes : linéaire. Copier la liste de son
+ * groupe à chaque ligne coûtait le carré du nombre de lignes — 100 s pour 100 000 lignes d'un seul modèle,
+ * pendant lesquelles le service, synchrone, ne répondait plus à personne.
+ */
 export function groupUsage(rows: readonly UsageRow[], key: (row: UsageRow) => string): Record<string, UsageTotals> {
-  const groups = new Map<string, UsageRow[]>();
+  const groups = new Map<string, UsageTotals>();
   for (const row of rows) {
     const name = key(row);
-    groups.set(name, [...(groups.get(name) ?? []), row]);
+    let total = groups.get(name);
+    if (total === undefined) {
+      total = emptyTotals();
+      groups.set(name, total);
+    }
+    addRow(total, row);
   }
-  return Object.fromEntries([...groups].map(([name, list]) => [name, sumUsage(list)]));
+  for (const total of groups.values()) total.cost = Math.round(total.cost * 1e6) / 1e6;
+  return Object.fromEntries(groups);
 }
 
 export class UsageStore extends SessionStore {
@@ -152,6 +168,56 @@ export class UsageStore extends SessionStore {
       params.push(...repos);
     }
     return this.selectAll(`SELECT * FROM usage WHERE ${where.join(" AND ")} ORDER BY id`, ...params).map(usageOf);
+  }
+
+  /**
+   * Les sommes de consommation depuis `since`, calculées en base, par `by` : `repo` (`?` sans dépôt), `model`
+   * (`modelKey`), `day` (UTC, `2026-10-24`) ou `all` (la seule clé `*`). Une ligne par groupe : les statistiques
+   * ne chargent plus chaque ligne d'usage en mémoire (des centaines de milliers sur un serveur de quelques mois).
+   */
+  usageGroups(
+    by: "repo" | "model" | "day" | "all",
+    since: number,
+    repos: RepoFilter = null,
+  ): Record<string, UsageTotals> {
+    if (repos !== null && repos.length === 0) return by === "all" ? { "*": emptyTotals() } : {};
+    const where = ["at >= ?"];
+    const params: SqlValue[] = [since];
+    if (repos !== null) {
+      where.push(`repo IN (${repos.map(() => "?").join(", ")})`);
+      params.push(...repos);
+    }
+    const keyed =
+      by === "repo"
+        ? { select: "COALESCE(repo, '?') AS k", group: "GROUP BY k" }
+        : by === "day"
+          ? { select: "strftime('%Y-%m-%d', at / 1000, 'unixepoch') AS k", group: "GROUP BY k" }
+          : by === "model"
+            ? { select: "provider, model", group: "GROUP BY provider, model" }
+            : { select: "'*' AS k", group: "" };
+    const rows = this.selectAll(
+      `SELECT ${keyed.select}, COUNT(*) AS messages, SUM(input) AS input, SUM(output) AS output, SUM(cache_read) AS cache_read,
+              SUM(cache_write) AS cache_write, SUM(cost) AS cost
+       FROM usage WHERE ${where.join(" AND ")} ${keyed.group}`,
+      ...params,
+    );
+    const groups: Record<string, UsageTotals> = by === "all" ? { "*": emptyTotals() } : {};
+    for (const row of rows) {
+      const key =
+        by === "model"
+          ? modelKey({ provider: strOrNull(row, "provider"), model: strOrNull(row, "model") })
+          : String(row.k ?? "?");
+      const total = groups[key] ?? emptyTotals();
+      total.messages += Number(row.messages ?? 0);
+      total.input += Number(row.input ?? 0);
+      total.output += Number(row.output ?? 0);
+      total.cacheRead += Number(row.cache_read ?? 0);
+      total.cacheWrite += Number(row.cache_write ?? 0);
+      total.cost += Number(row.cost ?? 0);
+      groups[key] = total;
+    }
+    for (const total of Object.values(groups)) total.cost = Math.round(total.cost * 1e6) / 1e6;
+    return groups;
   }
 
   /**
