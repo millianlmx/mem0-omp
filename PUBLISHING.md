@@ -351,10 +351,12 @@ n'est pas celle du bundle (`CFBundleShortVersionString`) : elle nomme la release
 node --experimental-strip-types scripts/release.ts --before <sha> --after <sha> --dry-run
 ```
 
-**Règles de décision** — `fix` ⇒ patch, `feat` ⇒ mineure, `!` avant le `:` ou
-footer `BREAKING CHANGE:` ⇒ majeure (quel que soit le type) ; les autres types
-(`docs`, `chore`, `ci`, `refactor`, `perf`, `test`, `build`, `style`) n'apportent
-rien. Un commit ne compte que pour les plugins dont il touche un fichier : un
+**Règles de décision** — `fix` et `perf` ⇒ patch, `feat` ⇒ mineure, `!` avant le
+`:` ou footer `BREAKING CHANGE:` ⇒ majeure (quel que soit le type) ; les autres
+types (`docs`, `chore`, `ci`, `refactor`, `test`, `build`, `style`) et un titre
+sans type n'apportent rien. `perf` publie parce que la branche `deploy` ne suit que
+les tags : sans version, un gain de performance n'atteint jamais le serveur. Un
+commit ne compte que pour les plugins dont il touche un fichier : un
 merge qui ne touche que `README.md`, `scripts/`, `test/` ou `.github/` ne bumpe
 rien et ne publie rien.
 

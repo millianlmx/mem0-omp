@@ -115,7 +115,7 @@ export type Plan = {
   /** Plugins sans rien à publier (`· <plugin> : inchangé`). */
   unchanged: string[];
   /**
-   * Parmi eux, ceux qu'un commit a touchés depuis leur version sans être `feat`, `fix` ni une rupture
+   * Parmi eux, ceux qu'un commit a touchés depuis leur version sans être `feat`, `fix`, `perf` ni une rupture
    * (docs, chore, titre non conventionnel…) : le run le dit, au lieu de « aucun fichier touché ».
    */
   unreleased: Array<{ name: string; commits: number }>;
@@ -183,8 +183,9 @@ export function breakingText(body: string): string | null {
 
 /**
  * Niveau d'un commit : `major` si `!` avant le `:` ou footer de rupture, sinon
- * `minor` pour `feat`, `patch` pour `fix`, et **rien** pour tout le reste
- * (docs, chore, ci, refactor, perf, test, build, style, sujet non conventionnel).
+ * `minor` pour `feat`, `patch` pour `fix` et `perf` (un gain de performance doit
+ * atteindre le serveur, que `deploy` ne met à jour que par un tag), et **rien** pour
+ * tout le reste (docs, chore, ci, refactor, test, build, style, sujet non conventionnel).
  */
 export function levelOf(subject: string, body: string): Level | null {
   const match = SUBJECT.exec(subject);
@@ -193,7 +194,7 @@ export function levelOf(subject: string, body: string): Level | null {
   if (breakingText(body) !== null) return "major";
   const type = (match[1] ?? "").toLowerCase();
   if (type === "feat") return "minor";
-  if (type === "fix") return "patch";
+  if (type === "fix" || type === "perf") return "patch";
   return null;
 }
 
@@ -764,7 +765,7 @@ function printPlan(plugins: Array<{ name: string }>, plan: Plan, published: bool
       console.log(
         ignored === undefined
           ? `· ${plugin.name} : inchangé (aucun fichier touché)`
-          : `· ${plugin.name} : rien à publier (${ignored.commits} commit(s) depuis la version, aucun en feat, fix ni rupture)`,
+          : `· ${plugin.name} : rien à publier (${ignored.commits} commit(s) depuis la version, aucun en feat, fix, perf ni rupture)`,
       );
     }
   }
