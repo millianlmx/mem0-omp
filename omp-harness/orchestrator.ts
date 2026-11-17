@@ -108,6 +108,7 @@ import { NO_SPACE_HOLDS, SpaceDesk } from "./spaces.ts";
 import type { SpaceHold, SpaceHolds } from "./spaces.ts";
 import { LocalSessionDesk } from "./local-sessions.ts";
 import { ProposalDesk } from "./proposals.ts";
+import { pushTo } from "./collections.ts";
 
 export { HarnessError } from "./errors.ts";
 export type { Actor, SpawnRunner } from "./context.ts";
@@ -848,7 +849,7 @@ export class Orchestrator {
       activeByGroup.set(groupOf(run), (activeByGroup.get(groupOf(run)) ?? 0) + 1);
     }
     const byRepo = new Map<string, RunRow[]>();
-    for (const run of queued) byRepo.set(run.repo, [...(byRepo.get(run.repo) ?? []), run]);
+    for (const run of queued) pushTo(byRepo, run.repo, run);
     const candidates: Candidate[] = [];
     for (const [name, runs] of byRepo) {
       const repo = this.#ctx.config.repos.find((entry) => entry.name === name);

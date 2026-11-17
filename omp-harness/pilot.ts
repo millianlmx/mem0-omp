@@ -28,6 +28,7 @@ import type { HostToolResult } from "./rpc.ts";
 import { forceStop, hostToolsFor, runnerUnit } from "./runner.ts";
 import { RunnerSession } from "./runner-session.ts";
 import { auditOwner } from "./session-feed.ts";
+import { pushTo } from "./collections.ts";
 
 export type PilotAction = "approve" | "refuse" | "retry" | "cancel" | "defer";
 
@@ -244,7 +245,7 @@ export class AuditPilot {
     const splits = new Map<string, string[]>();
     const add = (map: Map<string, string[]>, key: string | null, value: unknown): void => {
       if (key === null || typeof value !== "string") return;
-      map.set(key, [...(map.get(key) ?? []), value]);
+      pushTo(map, key, value);
     };
     for (const event of store.eventsOfType("follow_up")) add(followUps, event.runId, event.payload.runId);
     for (const event of store.eventsOfType("split")) add(splits, event.runId, event.payload.projectId);
@@ -282,7 +283,7 @@ export class AuditPilot {
       if (event.runId === null) continue;
       const action = event.payload.action as PilotAction;
       const entry = { action, reason: String(event.payload.reason ?? ""), rev: Number(event.payload.rev) };
-      past.set(event.runId, [...(past.get(event.runId) ?? []), entry]);
+      pushTo(past, event.runId, entry);
     }
     return past;
   }

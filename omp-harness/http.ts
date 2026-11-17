@@ -174,6 +174,7 @@ export const API_FEATURES = [
   "run-facts",
   "repo-settings",
   "pulse",
+  "events-latest",
 ] as const;
 
 /** La route publique qui échange un ticket d'appairage contre le jeton d'un appareil. */
@@ -2097,7 +2098,15 @@ export function createHandler(options: HttpOptions): http.RequestListener {
     const pulse = url.searchParams.get("pulse") === "1";
     const live = pulse || url.searchParams.get("live") === "1";
     const header = req.headers["last-event-id"];
-    let cursor = Number((typeof header === "string" ? header : null) ?? url.searchParams.get("after") ?? "0") || 0;
+    // `after=latest` : à partir du dernier événement écrit, sans rien rejouer — un client qui ne connaît pas encore
+    // son curseur (sa boîte pas encore lue) ne télécharge pas tout le journal pour l'ignorer.
+    const after = url.searchParams.get("after");
+    let cursor =
+      typeof header === "string"
+        ? Number(header) || 0
+        : after === "latest"
+          ? store.lastEventId()
+          : Number(after ?? "0") || 0;
     res.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-store",

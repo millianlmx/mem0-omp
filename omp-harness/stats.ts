@@ -2,8 +2,8 @@
 // en a coûté — runs par état, étapes et leurs durées, corrections, tests heavy,
 // décisions, audits, consommation des agents et comparaison des modèles. Fonction
 // PURE sur la base : rien n'est tenu à part.
-import type { EventRow, RepoFilter, RunRow, StepRow, Store, UsageRow } from "./db.ts";
-import { groupUsage, modelKey, sumUsage } from "./db.ts";
+import type { EventRow, RepoFilter, RunRow, StepRow, Store, UsageTotals } from "./db.ts";
+import { pushTo } from "./collections.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -71,8 +71,8 @@ export function computeStats(store: Store, now = Date.now(), repos: RepoFilter =
     escalations: countBy(store.listEscalations({ repos }), (item) => item.status),
     audits: countBy(store.listAudits([], repos), (audit) => audit.state),
     projects: countBy(store.listProjects(repos), (project) => project.status),
-    usage: usageStats(store.usageSince(0, repos), now),
-    models: modelStats(runs, steps, store.usageSince(0, repos)),
+    usage: usageStats(store, now, repos),
+    models: modelStats(runs, steps, store.usageGroups("model", 0, repos)),
     cancellations: cancellationStats(runs, steps, store.eventsOfType("pilot", repos)),
   };
 }
@@ -199,20 +199,22 @@ function runsByRepo(runs: ReturnType<Store["listRuns"]>, now: number): Record<st
   return repos;
 }
 
-/** Ce que les agents ont consommé : en tout, sur 7 jours, jour par jour (14 derniers), par dépôt. */
-function usageStats(rows: UsageRow[], now: number): Record<string, unknown> {
-  const recent = rows.filter((row) => now - row.at <= SERIES_DAYS * DAY_MS);
-  const week = rows.filter((row) => now - row.at <= 7 * DAY_MS);
-  const byDay = groupUsage(recent, (row) => dayOf(row.at));
+/**
+ * Ce que les agents ont consommé : en tout, sur 7 jours, jour par jour (14 derniers), par dépôt. Les sommes sont
+ * faites en base (`usageGroups`) : aucune ligne d'usage n'est chargée en mémoire.
+ */
+function usageStats(store: Store, now: number, repos: RepoFilter): Record<string, unknown> {
+  const week = now - 7 * DAY_MS;
+  const byDay = store.usageGroups("day", now - SERIES_DAYS * DAY_MS, repos);
   return {
-    total: sumUsage(rows),
-    last7Days: sumUsage(week),
+    total: store.usageGroups("all", 0, repos)["*"],
+    last7Days: store.usageGroups("all", week, repos)["*"],
     byDay: Object.entries(byDay)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([day, totals]) => ({ day, ...totals })),
-    byRepo: groupUsage(rows, (row) => row.repo ?? "?"),
+    byRepo: store.usageGroups("repo", 0, repos),
     /** Le coût de chaque dépôt sur 7 jours : ce que l'Accueil compare. */
-    byRepoLast7Days: groupUsage(week, (row) => row.repo ?? "?"),
+    byRepoLast7Days: store.usageGroups("repo", week, repos),
   };
 }
 
@@ -224,12 +226,11 @@ function usageStats(rows: UsageRow[], now: number): Record<string, unknown> {
 function modelStats(
   runs: ReturnType<Store["listRuns"]>,
   steps: ReturnType<Store["allSteps"]>,
-  usage: UsageRow[],
+  costs: Record<string, UsageTotals>,
 ): Record<string, unknown>[] {
   const merged = new Set(runs.filter((run) => run.state === "merged").map((run) => run.id));
   const byRun = new Map<string, typeof steps>();
-  for (const step of steps) byRun.set(step.runId, [...(byRun.get(step.runId) ?? []), step]);
-  const costs = groupUsage(usage, (row) => modelKey(row));
+  for (const step of steps) pushTo(byRun, step.runId, step);
   const models = new Set([...steps.map((step) => step.model).filter((model) => model !== null), ...Object.keys(costs)]);
   return [...models]
     .map((model) => {

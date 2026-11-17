@@ -40,6 +40,7 @@ import { humanDecisionMemory } from "./oracle.ts";
 import type { RunBudget } from "./monitor.ts";
 import { ASK_HUMAN_ONLY, HUMAN_ONLY, humanOnlyOf, raisesAutonomy } from "./pilot.ts";
 import type { StandingRules } from "./standing-rules.ts";
+import { pushTo } from "./collections.ts";
 
 export type GestureHooks = {
   /** Arrête le run s'il est conduit par ce process, et attend sa fin. */
@@ -366,7 +367,7 @@ export class HumanLoop {
       if (repo !== undefined && held?.(repo)) continue;
       const { autoAt } = autoAnswerOf(item, runs.get(item.runId) ?? null, timeoutSec);
       if (autoAt === null || autoAt > now) continue;
-      byRun.set(item.runId, [...(byRun.get(item.runId) ?? []), item]);
+      pushTo(byRun, item.runId, item);
     }
     for (const [runId, items] of byRun) {
       await this.#serial(runId, () => this.#autoDecide(runId, items, timeoutSec)).catch((err: unknown) =>
