@@ -22,13 +22,13 @@ mem0-omp/                              ← racine du dépôt = marketplace
 │   └── mem0-rs/                       ← le serveur Rust mem0-rs (crate)
 ├── test/                              ← suite de tests, hors publication
 ├── scripts/check.sh                   ← validation avant publication
-├── scripts/release.ts                 ← PR de release auto-mergée, tags et releases au merge
+├── scripts/release.ts                 ← commit de release poussé sur main, tags et releases au merge
 ├── scripts/no-manual-bump.sh          ← refuse un bump de version manuel dans une PR
 ├── scripts/release-simulation.sh      ← simule la release d'une PR sur une copie jetable
 ├── .github/workflows/check.yml        ← la CI des PR
 ├── .github/workflows/release-simulation.yml  ← répète la release sur le commit de fusion de la PR
-├── .github/workflows/release.yml      ← le job de release au merge sur main
-└── .github/workflows/release-assets.yml  ← joint les apps Mac et iOS et l'extension Chrome à chaque release publiée
+├── .github/workflows/release.yml      ← le job de release au merge sur main, puis les apps
+└── .github/workflows/release-assets.yml  ← joint les apps Mac et iOS et l'extension Chrome aux releases publiées
 ```
 
 Deux fichiers font tout le travail, et ce sont ceux qu'on rate le plus souvent :
@@ -107,8 +107,9 @@ sous Windows (oh-my-pi#1292) ou qui importent le mauvais scope de package
 
 Amorçage d'un dépôt neuf — **ce n'est pas le chemin de release** : le `git push`
 initial sur `main` n'est admis qu'ici, avant que les workflows existent côté
-GitHub. Ensuite, tout passe par la PR de release du job (cf. § Release
-automatique), et plus jamais par un push direct sur `main`.
+GitHub. Ensuite, tout arrive sur `main` par une PR fusionnée, et seul le job de
+release y pousse lui-même son commit de release (cf. § Release automatique) :
+plus jamais un push direct à la main.
 
 ```bash
 cd mem0-omp
@@ -276,59 +277,47 @@ exact plutôt que sur une branche :
 ## Release automatique
 
 Un merge sur `main` déclenche `.github/workflows/release.yml`, qui exécute
-`scripts/release.ts`. **Rien n'est jamais poussé directement sur `main`** : le
-commit de release est porté par une PR que le job ouvre puis fusionne lui-même, et
-c'est seulement ensuite que les tags et les releases sont publiés.
+`scripts/release.ts`. Il n'y a **pas de PR de release** : le commit de release
+est poussé directement sur `main` par le job, avec le jeton dédié autorisé à
+contourner la protection de branche (cf. § Jeton de release). Aucun humain ne
+pousse sur `main` : l'arbre qui y arrive a passé les statuts requis de sa PR,
+`release-simulation` compris, qui avait déjà prouvé l'arbre que la release écrit.
 
 1. **Plan** — le moteur relit `origin/main`, repère les versions jamais publiées
    (rattrapage) et calcule le bump de chaque plugin touché depuis l'apparition de
    sa version courante ;
-2. **Branche** — `release/<sha de l'événement>`, sur laquelle il écrit les
-   versions, les deux catalogues et `CHANGELOG.md`, puis prouve le résultat avec
-   `./scripts/check.sh` limité aux sections que la release peut casser
-   (catalogue, noms, plugins, versions, extension, types, lint, smoke, noyau)
-   plus les tests que les fichiers écrits concernent (`--tests-base=HEAD`) ;
-   rouge ⇒ rien n'est committé ;
-3. **PR** — poussée de la branche, puis PR vers `main` ouverte avec le jeton dédié
-   (cf. § Jeton de release) ; une PR déjà ouverte pour la branche est réutilisée.
-   Toute autre PR ouverte d'une branche `release/*` du dépôt, laissée par un run
-   précédent (statuts jamais verts, budget d'attente épuisé), est alors périmée :
-   le job la ferme avec un commentaire qui nomme la PR courante et supprime sa
-   branche — de même quand plus rien n'est à publier ; `--dry-run` les liste sans
-   les fermer ;
-4. **Statuts requis** — le job attend que les trois statuts requis passent sur
-   cette PR (`check (ubuntu-latest)`, `check (macos-latest)` et
-   `release-simulation`, ce dernier rejouant la release sur l'arbre écrit, cf.
-   § Simulation de release) — `mergeStateStatus` ∈ `CLEAN`, `UNSTABLE`,
-   `HAS_HOOKS` — et échoue en le nommant après le budget d'attente
-   (`--merge-timeout`, commun à toute l'attente du run) ;
-5. **Main a bougé ?** — à chaque tour de l'attente, puis juste avant la fusion, le
-   job relit `main` sur le remote. Si une autre PR y a été fusionnée entre-temps, la
-   PR de release porte un plan périmé et n'est **jamais** fusionnée telle quelle :
-   le moteur recalcule le plan depuis le nouveau `main` — tous les commits depuis la
-   version courante, donc un `fix` et un `feat` fusionnés coup sur coup donnent une
-   mineure, et l'entrée de `CHANGELOG.md` les nomme tous —, réécrit la même branche,
-   remet la même PR à jour (titre, corps) et reprend l'attente. Au-delà de 3
-   recalculs, ou s'il reste moins de 20 min de budget (le recalcul rejoue `check.sh`
-   puis attend de nouveau les statuts, sous le plafond de 60 min du job), il ne
-   fusionne rien, ferme sa PR et sort vert : le run de la fusion qui a bougé `main`,
-   en file derrière lui, repart du `main` courant et publie le tout. Les runs restants
-   ne trouvent ensuite plus rien à publier ;
-6. **Fusion** — squash avec un titre et un corps explicites, puis relecture du sha
-   de fusion et vérification que l'arbre fusionné est bien celui qui a passé
-   `check.sh` (si `main` a bougé dans les secondes de la fusion elle-même, le job
-   s'arrête là sans taguer et le dit) ;
-7. **Tags et releases** — tous les tags `<plugin>-v<version>` d'abord, en une seule
+2. **Écriture et preuve** — sur une branche locale `release/<sha de
+   l'événement>` (jamais poussée), il écrit les versions, les deux catalogues et
+   `CHANGELOG.md`, puis prouve le résultat avec `./scripts/check.sh` limité aux
+   sections que la release peut casser (catalogue, noms, plugins, versions,
+   extension, types, lint, smoke, noyau) plus les tests que les fichiers écrits
+   concernent (`--tests-base=HEAD`) ; rouge ⇒ rien n'est committé ;
+3. **Commit et poussée** — le commit `chore(release): …` porte le trailer
+   `Release-Event:` et la marque `[skip ci]` : il ne relance ni `check.yml` ni
+   `release.yml`. Il est poussé sur `main` en **avance rapide seulement**, jamais
+   forcé. Un refus alors que `main` n'a pas bougé vient de la protection de
+   branche : le job échoue en nommant § Jeton de release, sans rien taguer ;
+4. **Main a bougé ?** — si une autre PR a été fusionnée entre le plan et la
+   poussée, le remote refuse la poussée ; le moteur recalcule le plan depuis le
+   nouveau `main` — tous les commits depuis la version courante, donc un `fix` et
+   un `feat` fusionnés coup sur coup donnent une mineure, et l'entrée de
+   `CHANGELOG.md` les nomme tous —, rejoue `check.sh` et retente. Au-delà de 3
+   recalculs, il ne publie rien et sort vert : le run de la fusion qui a bougé
+   `main`, en file derrière lui, repart du `main` courant et publie le tout. Les
+   runs restants ne trouvent ensuite plus rien à publier ;
+5. **Tags et releases** — tous les tags `<plugin>-v<version>` d'abord, en une seule
    poussée, puis une release GitHub par version, portant les commandes
    d'installation et de mise à jour — et « ce qui casse / quoi faire » pour un bump
    majeur ;
-8. **Branche `deploy`** — le job l'avance, en avance rapide seulement, sur le commit
+6. **Branche `deploy`** — le job l'avance, en avance rapide seulement, sur le commit
    du dernier tag `omp-harness-v*` (elle est créée au premier passage). C'est elle
    que suit le déploiement continu du serveur : la pile Portainer en GitOps, ou
    `harness.sh up --ref deploy` (cf. `omp-harness/README.md` § Avec Portainer). Une
    branche déjà sur ce commit, ou en avance sur lui, reste telle quelle ; une branche
    divergente fait échouer le job en donnant la commande qui la réaligne. Chaque run,
-   même sans rien à publier, refait ce pas : un échec est rattrapé par le suivant.
+   même sans rien à publier, refait ce pas : un échec est rattrapé par le suivant ;
+7. **Apps** — le job `assets` du même workflow construit les apps des releases
+   publiées, une fois par commit tagué (cf. § Apps jointes aux releases).
 
 Le serveur de pipelines `omp-harness/` suit le même chemin sans être un plugin du
 catalogue : son `omp-harness/package.json` est bumpé d'après les commits qui touchent
@@ -374,7 +363,7 @@ l'historique du dépôt — dans l'ordre chronologique d'apparition des versions
 n'est pas l'ordre semver (une régression de version publiée est journalisée telle
 qu'elle a eu lieu).
 
-**Idempotence** — le commit de fusion porte le trailer
+**Idempotence** — le commit de release porte le trailer
 `Release-Event: <sha après>` ; un rejeu du même événement s'arrête sur
 `· merge déjà publié` et ne republie rien. Un plugin dont le tag de la version
 cible existe déjà est retiré du plan (`· déjà publié (tag …)`), une version déjà
@@ -403,16 +392,23 @@ avec `if: always()` et échoue dès qu'un job macOS n'a pas réussi : un statut 
 sauté compterait comme passant), et `release-simulation` parce qu'un job sans
 matrice et sans `name:` expose exactement l'identifiant de son job. Renommer l'OS
 de la matrice, l'agrégateur ou le job de simulation sans rejouer cette commande
-débloquerait le merge en silence. Ce sont
-ces trois statuts que la PR de release doit obtenir avant d'être fusionnée — d'où
-le jeton dédié de la section suivante, plutôt qu'un `GITHUB_TOKEN` qui ne
-déclencherait aucun run.
+débloquerait le merge en silence.
+
+`"enforce_admins":false` est ce qui laisse passer le commit de release : un
+administrateur du dépôt contourne les statuts requis, et le jeton de release
+agit au nom du propriétaire du dépôt (cf. § Jeton de release). Passer
+`enforce_admins` à `true` fait échouer chaque release sur
+`GH006: Protected branch update failed`, sans tag ni release.
 
 ## Apps jointes aux releases
 
-Chaque release publiée, quel que soit le composant, déclenche
-`.github/workflows/release-assets.yml` : deux jobs macOS construisent OMP Console
-depuis le code du tag avec `scripts/release-assets.sh mac|ios`, un job Linux
+Après la publication, le job `assets` de `release.yml` appelle
+`.github/workflows/release-assets.yml` (workflow réutilisable), pour toutes les
+releases du run quel que soit le composant, **une fois par commit tagué** : les
+tags d'un même run pointent tous sur le commit de release, leurs apps se
+construisent donc une seule fois et se joignent à chacune de ces releases. Deux
+jobs macOS construisent OMP Console depuis ce commit avec
+`scripts/release-assets.sh mac|ios`, un job Linux
 construit l'extension Chrome avec `scripts/release-assets.sh chrome`, puis chacun
 joint son fichier à la release (`gh release upload --clobber`) :
 
@@ -436,10 +432,9 @@ est importé dans un trousseau temporaire, au mot de passe aléatoire masqué da
 journal ; une étape `if: always()` (`scripts/release-assets.sh nettoyer`) le
 retire avec les profils installés, même après un échec ou une annulation.
 
-Les releases sont créées avec le jeton dédié, et c'est ce qui déclenche le
-workflow : un événement du jeton du dépôt n'en déclencherait aucun. Le
-téléversement, lui, passe par le jeton du run, limité à ce job
-(`contents: write`). Une release déjà publiée se complète à la main :
+Le téléversement passe par le jeton du run, élargi à `contents: write` pour ce
+seul appel ; les secrets de signature lui sont transmis par `secrets: inherit`.
+Une release déjà publiée (rattrapage, ou un job tombé) se complète à la main :
 **Actions › release-assets › Run workflow**, avec son tag.
 
 ### Secrets de l'app Mac
@@ -550,9 +545,9 @@ poussée, aucun tag n'est posé, aucune PR n'est ouverte, et l'arbre de la PR n'
 pas modifié — l'appelant retrouve son arbre intact, `git status` propre. La copie
 jetable est supprimée à la fin, verte ou rouge. Son environnement est celui du job
 de release (Node 22 seul : ni Bun, ni hôte OMP), donc il juge la release avec les
-mêmes outils que la publication, jamais avec un gate plus strict : c'est ce qui
-permet à la PR de release du bot — celle qui porte déjà le commit `chore(release)`
-— de sortir verte au lieu d'échouer en faussement.
+mêmes outils que la publication, jamais avec un gate plus strict. C'est la
+preuve, faite AVANT la fusion, que le commit de release que le job poussera
+ensuite sur `main` passera son `check.sh` : ce commit ne repasse par aucune PR.
 
 Son statut, `release-simulation`, est **requis** sur `main` (cf. § Blocage du
 merge) : une PR dont la release simulée échouerait ne peut plus être fusionnée.
@@ -564,15 +559,22 @@ ce qu'il faut y mettre.
 
 Le job de release publie avec un jeton **dédié**, rangé dans le secret de dépôt
 `RELEASE_TOKEN` et lu par `.github/workflows/release.yml`. C'est ce jeton qui
-pousse la branche, ouvre la PR, la fusionne, pousse les tags, crée les releases et
+pousse le commit de release sur `main`, pousse les tags, crée les releases et
 avance la branche `deploy` (**Contents** suffit : `deploy` n'a pas de protection).
 
-Il est **obligatoire** : les événements créés par le `GITHUB_TOKEN` du dépôt ne
-déclenchent aucun run de workflow, donc une PR de release ouverte avec lui resterait
-indéfiniment à « statuts requis manquants » (les deux `check.yml` ne s'exécuteraient
-jamais dessus) — l'auto-fusion ne pourrait pas aboutir. **Ni la pipeline ni le
-workflow ne peuvent le créer** : il se crée une fois, à la main, par le
-propriétaire du dépôt.
+Il est **obligatoire** : `main` exige des statuts requis qu'un commit neuf n'a pas
+encore, et seul un acteur autorisé à **contourner** la protection peut y pousser
+le commit de release. Le `GITHUB_TOKEN` du dépôt ne l'est pas ; un jeton
+fine-grained du propriétaire du dépôt l'est, tant que la protection n'est pas
+imposée aux administrateurs (`"enforce_admins":false`, cf. § Blocage du merge).
+**Ni la pipeline ni le workflow ne peuvent le créer** : il se crée une fois, à la
+main, par le propriétaire du dépôt.
+
+Avec un **ruleset** sur `main` plutôt que la protection classique : Settings →
+**Rules** → **Rulesets** → le ruleset de `main` → **Bypass list** → **Add
+bypass** → **Repository admin**, en mode **Always allow**. Sans cette entrée, le
+job s'arrête sur `GH006: Protected branch update failed for refs/heads/main.` et
+le dit : `le jeton de release doit pouvoir contourner la protection de main`.
 
 ### Créer le jeton (personal access token fine-grained)
 
@@ -585,9 +587,11 @@ tokens** → **Generate new token**, puis :
 | Expiration | 90 jours, et note la date : elle devra être renouvelée |
 | Resource owner | le compte propriétaire du dépôt |
 | Repository access | **Only select repositories** → `mem0-omp` |
-| Permissions | **Contents: Read and write**, **Pull requests: Read and write** — **Metadata: Read** est implicite, toujours incluse |
+| Permissions | **Contents: Read and write** — **Metadata: Read** est implicite, toujours incluse |
 
-Rien de plus : ces permissions minimales suffisent au flux complet. Un jeton à
+Rien de plus : ces permissions minimales suffisent au flux complet (plus aucune PR
+n'est ouverte, **Pull requests** n'est plus nécessaire et peut être retiré d'un
+jeton existant). Un jeton à
 portée large (jeton classique `repo`, ou jeton d'organisation) est un risque
 inutile — le job n'en a pas besoin, et il ne doit accéder qu'à ce dépôt.
 

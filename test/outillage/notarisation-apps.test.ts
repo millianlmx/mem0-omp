@@ -468,7 +468,7 @@ test("notarisation-apps/AC-7 : les secrets ne vont qu'à l'étape de constructio
   const steps = etapes();
   const build = steps.findIndex((s) => s.run === "bash scripts/release-assets.sh ${{ matrix.app }}");
   const nettoyage = steps.findIndex((s) => s.run === "bash scripts/release-assets.sh nettoyer");
-  const upload = steps.findIndex((s) => s.run.startsWith("gh release upload "));
+  const upload = steps.findIndex((s) => s.texte.includes("gh release upload "));
   assert.ok(build !== -1 && nettoyage > build && upload > nettoyage, "construction, nettoyage, puis téléversement");
   assert.equal(steps[nettoyage]!.si, "always()", "le nettoyage passe même après un échec");
 

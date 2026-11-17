@@ -1,23 +1,28 @@
 name: release
 
 # Un merge sur main (merge commit, squash ou rebase : les trois poussent sur main)
-# déclenche le moteur de release : il ouvre une PR de release (branche
-# release/<sha de l'événement>), attend que les deux statuts requis passent, la
-# fusionne en squash, puis pousse les tags et publie les releases GitHub. Le job
-# ne pousse JAMAIS sur main : la protection de branche exige deux statuts qu'un
-# commit neuf n'a pas encore, donc un push direct rendrait
-# `remote: error: GH006: Protected branch update failed for refs/heads/main.`
-# Si main bouge pendant l'attente (une autre PR fusionnée), la PR n'est pas
-# fusionnée : le moteur recalcule la release depuis le nouveau main et remet la
-# même PR à jour. Enfin, il avance la branche `deploy` (avance rapide seulement)
-# sur le commit du dernier tag omp-harness-v* : la pile Portainer la suit en
-# GitOps (omp-harness/README.md § Avec Portainer).
+# déclenche le moteur de release (job `release`) : il décide des versions, écrit
+# versions, catalogues et CHANGELOG.md, prouve l'arbre écrit avec check.sh, puis
+# pousse le commit de release DIRECTEMENT sur main — avance rapide seulement,
+# jamais forcée — avec le jeton dédié, autorisé à contourner la protection de
+# branche (PUBLISHING.md § Jeton de release). Ce commit porte `[skip ci]` : il ne
+# relance ni check.yml ni ce workflow. Si main a bougé entre le plan et la
+# poussée (une autre PR fusionnée), le moteur recalcule la release depuis le
+# nouveau main et retente. Viennent ensuite les tags et les releases GitHub, puis
+# la branche `deploy` (avance rapide seulement) sur le commit du dernier tag
+# omp-harness-v* : la pile Portainer la suit en GitOps (omp-harness/README.md
+# § Avec Portainer).
+#
+# Le job `assets` construit enfin les apps des releases publiées
+# (release-assets.yml, réutilisable), une fois par commit tagué : les tags d'un
+# même run pointent tous sur le commit de release.
 on:
   push:
     branches: [main]
 
-# Plus rien n'écrit avec le GITHUB_TOKEN du dépôt : tout passe par le jeton
-# dédié (secret RELEASE_TOKEN), y compris le checkout.
+# Le job de release écrit avec le jeton dédié (secret RELEASE_TOKEN), y compris le
+# checkout ; le GITHUB_TOKEN reste en lecture. Seul l'appel des assets l'élargit,
+# pour `gh release upload`.
 permissions:
   contents: read
 
@@ -25,9 +30,9 @@ permissions:
 # premier (le moteur relit origin/main et repart de son état). `queue: max` :
 # jusqu'à 100 runs en attente (FIFO) — avec le défaut `single`, un merge
 # intermédiaire perdrait silencieusement son run et sa publication n'aurait
-# jamais lieu tant qu'aucun merge ne suit. La file ne suffit pas seule : le
-# merge suivant arrive pendant que le premier run attend sa PR, d'où le
-# recalcul du moteur quand main bouge sous elle.
+# jamais lieu tant qu'aucun merge ne suit. La file ne suffit pas seule : un merge
+# peut arriver entre le plan d'un run et sa poussée, d'où le recalcul du moteur
+# quand main bouge sous lui.
 concurrency:
   group: release-main
   queue: max
@@ -36,19 +41,20 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    # Phase d'ouverture de la PR (≈ 18 min observées : écriture, check.sh, push),
-    # puis attente des statuts requis (--merge-timeout 2100 ci-dessous, 35 min,
-    # budget commun à tous les recalculs : un recalcul — main a bougé — rejoue
-    # check.sh DANS ce budget, et n'est tenté que s'il en reste assez), puis fusion
-    # et publication : release.ts échoue sur son budget avant ce plafond.
-    timeout-minutes: 60
+    # Plan, écriture, check.sh limité aux sections que la release peut casser,
+    # poussée, tags et releases : quelques minutes ; chaque recalcul (main a
+    # bougé) rejoue check.sh, trois au plus.
+    timeout-minutes: 30
+    outputs:
+      # JSON `[{ref, tags}]` écrit par le moteur de release : un groupe par commit
+      # tagué, vide quand rien n'est publié.
+      assets: ${{ steps.publier.outputs.assets }}
     steps:
       # Première étape, avant tout checkout : sans le jeton dédié, rien ne peut
-      # être publié — les événements créés par le jeton du dépôt ne déclenchent
-      # aucun run, donc une PR de release ouverte avec lui resterait à « statuts
-      # requis manquants » pour toujours. Échouer ici évite un run à moitié fait,
-      # et il n'y a AUCUN repli sur le jeton du dépôt : le secret ci-dessous est la
-      # seule identité de publication (cf. PUBLISHING.md, § Jeton de release).
+      # être publié — le GITHUB_TOKEN ne contourne pas la protection de main.
+      # Échouer ici évite un run à moitié fait, et il n'y a AUCUN repli sur le
+      # jeton du dépôt : le secret ci-dessous est la seule identité de
+      # publication (cf. PUBLISHING.md, § Jeton de release).
       - name: Vérifier le jeton de release
         env:
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
@@ -59,9 +65,8 @@ jobs:
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # `token` : l'identité DÉDIÉE. Ses push et sa PR déclenchent les
-          # workflows (donc check.yml sur la PR de release) ; ceux du
-          # GITHUB_TOKEN du dépôt n'en déclenchent aucun.
+          # `token` : l'identité DÉDIÉE, celle qui pousse le commit de release, les
+          # tags et la branche `deploy`.
           token: ${{ secrets.RELEASE_TOKEN }}
           fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -71,22 +76,40 @@ jobs:
       # avec l'état de main, avant que le moteur ne lise origin/main.
       - name: Récupérer les tags et l'état de main
         run: git fetch --force --tags origin "+refs/heads/main:refs/remotes/origin/main"
-      # Le moteur écrit, prouve avec check.sh, committe sur la branche de
-      # release, ouvre et fait fusionner la PR, tague et publie. Le job de release
-      # lance check.sh lui-même parce que la fusion de sa PR ne relance pas
-      # forcément check.yml avant qu'il n'ait fini. Ses seules étapes préalables :
-      # préparer le linter et le TypeScript épinglés, que les sections `lint` et
-      # `types` de check.sh exigent sans jamais les télécharger elles-mêmes.
+      # Le moteur écrit, prouve avec check.sh, committe, pousse sur main, tague et
+      # publie. Ses seules étapes préalables : préparer le linter et le TypeScript
+      # épinglés, que les sections `lint` et `types` de check.sh exigent sans
+      # jamais les télécharger elles-mêmes.
       - name: Préparer le linter épinglé (Biome)
         run: bash scripts/lint.sh --prepare
       - name: Installer le TypeScript épinglé du type-check
         run: bash scripts/typecheck.sh --prepare
       - name: Décider, écrire, prouver et publier
+        id: publier
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           node --experimental-strip-types scripts/release.ts \
             --before "${{ github.event.before }}" \
-            --after "${{ github.event.after }}" \
-            --merge-timeout 2100
+            --after "${{ github.event.after }}"
+
+  # Les apps des releases publiées : Mac, iOS et l'extension Chrome, construites
+  # une fois par commit tagué et jointes à chacune de ses releases. Sauté quand
+  # le run n'a rien publié.
+  assets:
+    needs: release
+    if: needs.release.outputs.assets != '' && needs.release.outputs.assets != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.release.outputs.assets) }}
+    # `gh release upload` exige contents: write ; les secrets de signature vont,
+    # dans release-assets.yml, au seul job de leur app.
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-assets.yml
+    with:
+      ref: ${{ matrix.ref }}
+      tags: ${{ matrix.tags }}
+    secrets: inherit

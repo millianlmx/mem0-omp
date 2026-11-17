@@ -640,8 +640,8 @@ if command -v node >/dev/null 2>&1; then
       fail "tests unitaires — scripts/test-files.sh a échoué (relance : $tests_relance)"
     elif [ -n "$tests_base" ]; then
       # Sélection par le diff : un ensemble vide est un « rien à prouver ici »
-      # annoncé par test-files.sh ci-dessus, jamais un échec — le push vers main
-      # et la PR de release rejouent la suite entière.
+      # annoncé par test-files.sh ci-dessus, jamais un échec — le run nocturne
+      # de check.yml sur main rejoue la suite entière.
       echo "  · aucun fichier de test concerné par le diff depuis $tests_base (--tests-scope=${tests_scope:-aucun}, --tests-part=${tests_part:-aucune})"
     else
       fail "tests unitaires — aucun fichier de test retenu (--tests-scope=${tests_scope:-aucun}, --tests-part=${tests_part:-aucune})"
