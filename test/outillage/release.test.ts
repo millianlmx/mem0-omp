@@ -148,6 +148,7 @@ const output = (run: Run) => `${run.stdout}${run.stderr}`;
 test("niveaux : `!`, footer de rupture, type, casse — et rien pour le reste", () => {
   assert.equal(levelOf("feat(a): x", ""), "minor");
   assert.equal(levelOf("FIX: x", ""), "patch", "la casse du type est tolérée (CC §15)");
+  assert.equal(levelOf("perf(harness): x", ""), "patch", "un gain de performance doit atteindre le serveur");
   assert.equal(levelOf("fix(a)!: x", ""), "major");
   assert.equal(levelOf("chore(ci): x", ""), null);
   assert.equal(levelOf("docs: x", ""), null);
