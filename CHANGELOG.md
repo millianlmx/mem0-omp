@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-console 1.4.1 — 2026-11-18
+
+- fix(ci): les jobs macOS tournent sur le Mac auto-hébergé (#487) (4edcf63)
+
 ## omp-harness 1.43.0 — 2026-11-18
 
 - feat(harness): le classeur d'une Demande ne répond plus à l'aveugle — audit pour les idées, réponse lue dans le code, mémoire d'un dépôt (#486) (401fb24)
