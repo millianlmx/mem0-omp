@@ -57,8 +57,8 @@ public enum IntakeText {
 
     public static let laneLabel = L10n.text("Voie")
     public static let criteriaLabel = L10n.text("Critères d’acceptation")
-    public static let criteriaPrompt = L10n.text("Un critère par ligne : Given … When … Then …")
-    public static let laneHint = L10n.text("Express : l’implémentation tout de suite, une revue courte. Directe : l’implémentation sur ces critères. Complète : besoins et specs d’abord. Le serveur garde ses refus (geste irréversible, autonomie « tout me demander »).")
+    public static let criteriaPrompt = L10n.text("Un critère par ligne : Given … When … Then …")
+    public static let laneHint = L10n.text("Express : l’implémentation tout de suite, une revue courte. Directe : l’implémentation sur ces critères. Complète : besoins et specs d’abord. Le serveur garde ses refus (geste irréversible, autonomie « tout me demander »).")
     public static let criteriaRequired = L10n.text("La voie directe demande au moins un critère.")
 
     /// La voie d'un plan, en français ; `nil` : le serveur la choisira.
@@ -84,7 +84,7 @@ public enum IntakeText {
     /// La voie et sa raison, sur une ligne de la carte du plan.
     public static func laneLine(_ lane: String?, reason: String?) -> String {
         guard let reason, !reason.isEmpty else { return L10n.format("Voie %@", Self.lane(lane)) }
-        return L10n.format("Voie %@ : %@", Self.lane(lane), reason)
+        return L10n.format("Voie %@ : %@", Self.lane(lane), reason)
     }
 
     /// Le nombre de critères d'acceptation d'un plan.
