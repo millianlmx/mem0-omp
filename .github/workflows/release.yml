@@ -16,9 +16,15 @@ name: release
 # Le job `assets` construit enfin les apps des releases publiées
 # (release-assets.yml, réutilisable), une fois par commit tagué : les tags d'un
 # même run pointent tous sur le commit de release.
+#
+# `workflow_dispatch` relance la release à la main, sur `main` seulement : un run
+# sauté (message de squash qui cite la marque skip ci entre crochets) ou perdu se
+# rattrape sans attendre la fusion suivante. Le plan part toujours de la version
+# publiée de chaque plugin, donc la relance publie tout ce qui attend.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 # Le job de release écrit avec le jeton dédié (secret RELEASE_TOKEN), y compris le
 # checkout ; le GITHUB_TOKEN reste en lecture. Seul l'appel des assets l'élargit,
@@ -40,6 +46,9 @@ concurrency:
 
 jobs:
   release:
+    # Un lancement manuel depuis une autre branche ne publie rien : le commit de
+    # l'événement doit être celui de main.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Plan, écriture, check.sh limité aux sections que la release peut casser,
     # poussée, tags et releases : quelques minutes ; chaque recalcul (main a
@@ -84,15 +93,32 @@ jobs:
         run: bash scripts/lint.sh --prepare
       - name: Installer le TypeScript épinglé du type-check
         run: bash scripts/typecheck.sh --prepare
+      # La plage de l'événement : celle du push, ou, lancé à la main, le commit
+      # de main et son parent. Les valeurs passent par l'environnement, jamais
+      # interpolées dans le shell.
+      - name: Plage de l'événement
+        id: plage
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after || github.sha }}
+        run: |
+          if [ -z "$BEFORE" ]; then
+            BEFORE="$(git rev-parse "$AFTER^")"
+            echo "· lancement manuel : plage $BEFORE..$AFTER"
+          fi
+          echo "before=$BEFORE" >> "$GITHUB_OUTPUT"
+          echo "after=$AFTER" >> "$GITHUB_OUTPUT"
       - name: Décider, écrire, prouver et publier
         id: publier
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          BEFORE: ${{ steps.plage.outputs.before }}
+          AFTER: ${{ steps.plage.outputs.after }}
         run: |
           node --experimental-strip-types scripts/release.ts \
-            --before "${{ github.event.before }}" \
-            --after "${{ github.event.after }}"
+            --before "$BEFORE" \
+            --after "$AFTER"
 
   # Les apps des releases publiées : Mac, iOS et l'extension Chrome, construites
   # une fois par commit tagué et jointes à chacune de ses releases. Sauté quand

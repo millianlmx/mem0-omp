@@ -1758,3 +1758,43 @@ test("release/AC-18 : la sortie `assets` nomme, par commit tagué, les releases 
   assert.equal(docs.run.status, 0, output(docs.run));
   assert.equal(fs.existsSync(path.join(docs.repo.state, "github-output")), false);
 });
+
+test("release/AC-19 : release.yml se relance à la main sur main seulement — sans plage d'événement, le commit de main et son parent", () => {
+  const yaml = lireWorkflow("release.yml");
+  const on = (yaml.split(/^permissions:/m)[0] ?? "").replace(/^\s*#.*$\n?/gm, "");
+  assert.match(on, /^on:\n {2}push:\n {4}branches: \[main\]\n {2}workflow_dispatch:\n/m);
+  // Lancé depuis une autre branche, le job ne publie rien.
+  const job = yaml.split(/^ {2}release:$/m)[1]?.split(/^ {2}assets:$/m)[0] ?? "";
+  assert.match(job, /^ {4}if: github\.ref == 'refs\/heads\/main'$/m);
+  // Le moteur reçoit la plage de l'étape `plage`, par l'environnement.
+  assert.match(job, /^ {10}BEFORE: \$\{\{ steps\.plage\.outputs\.before \}\}$/m);
+  assert.match(job, /^ {10}AFTER: \$\{\{ steps\.plage\.outputs\.after \}\}$/m);
+  for (const step of ["Plage de l'événement", "Décider, écrire, prouver et publier"]) {
+    assert.ok(!workflowStepScript(yaml, step).includes("${{"), `${step} : rien d'interpolé dans le shell`);
+  }
+
+  // L'étape, exécutée pour de vrai dans un dépôt jetable.
+  const script = workflowStepScript(yaml, "Plage de l'événement");
+  const dir = tmpdir("release-plage-");
+  git(["init", "-q", "-b", "main"], dir);
+  git(["commit", "-q", "--allow-empty", "-m", "chore: un"], dir);
+  const parent = git(["rev-parse", "HEAD"], dir).trim();
+  git(["commit", "-q", "--allow-empty", "-m", "chore: deux"], dir);
+  const head = git(["rev-parse", "HEAD"], dir).trim();
+  let runs = 0;
+  const plage = (env: Record<string, string>) => {
+    runs += 1;
+    const out = path.join(dir, `sortie-${runs}`);
+    const run = spawnSync("bash", ["-c", script], {
+      cwd: dir,
+      encoding: "utf8",
+      env: { ...process.env, ...GIT_ENV, GITHUB_OUTPUT: out, ...env },
+    });
+    assert.equal(run.status, 0, output(run));
+    return fs.readFileSync(out, "utf8");
+  };
+  // Lancement manuel : aucun `before`, `after` = le commit de main.
+  assert.equal(plage({ BEFORE: "", AFTER: head }), `before=${parent}\nafter=${head}\n`);
+  // Push : la plage de l'événement, telle quelle.
+  assert.equal(plage({ BEFORE: "a".repeat(40), AFTER: head }), `before=${"a".repeat(40)}\nafter=${head}\n`);
+});

@@ -363,6 +363,13 @@ l'historique du dépôt — dans l'ordre chronologique d'apparition des versions
 n'est pas l'ordre semver (une régression de version publiée est journalisée telle
 qu'elle a eu lieu).
 
+**Relance à la main** — **Actions › release › Run workflow**, sur `main` : le
+run prend le commit de `main` et son parent comme plage d'événement, et publie
+tout ce qui attend (le plan part toujours de la version publiée de chaque
+plugin). C'est le rattrapage d'un run sauté — un message de fusion qui cite la
+marque skip ci entre crochets saute aussi `release.yml` — ou perdu, sans attendre
+la fusion suivante. Lancé depuis une autre branche, le job ne fait rien.
+
 **Idempotence** — le commit de release porte le trailer
 `Release-Event: <sha après>` ; un rejeu du même événement s'arrête sur
 `· merge déjà publié` et ne republie rien. Un plugin dont le tag de la version
