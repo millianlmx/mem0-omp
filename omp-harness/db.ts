@@ -29,11 +29,12 @@ export type { CancelCause, NewRun, RunAutonomy, RunLane, RunPatch, RunRow } from
 export type { NewSpace, Space, SpacePatch } from "./db/spaces.ts";
 export { VIGIE_STATUSES } from "./db/vigie.ts";
 export type { VigieIncident, VigieIncidentPatch, VigieStatus, VigieTriage } from "./db/vigie.ts";
-export { INTAKE_STATES } from "./db/intakes.ts";
+export { INTAKE_LANES, INTAKE_STATES } from "./db/intakes.ts";
 export type {
   IntakeContext,
   IntakeExchange,
   IntakeKind,
+  IntakeLane,
   IntakePatch,
   IntakePlan,
   IntakeRow,

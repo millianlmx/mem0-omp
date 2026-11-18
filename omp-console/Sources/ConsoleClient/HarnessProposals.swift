@@ -233,7 +233,7 @@ public struct HarnessRunTemplate: Codable, Equatable, Sendable {
     public var kind: String?
     public var labels: [String]
     public var modules: [String]
-    /// `full`, ou `nil` : le serveur choisit la voie.
+    /// `full`, `express`, ou `nil` : le serveur choisit la voie.
     public var lane: String?
     public var budgetUsd: Double?
     public var autonomy: HarnessRunAutonomy?
@@ -272,7 +272,7 @@ public struct HarnessRunTemplate: Codable, Equatable, Sendable {
     /// Les options d'un lancement qui refait la feature.
     public var options: HarnessLaunchOptions {
         HarnessLaunchOptions(
-            lane: lane == HarnessLane.full.rawValue ? .full : .auto, modules: modules, budgetUsd: budgetUsd,
+            lane: lane.flatMap(HarnessLane.init(rawValue:)) ?? .auto, modules: modules, budgetUsd: budgetUsd,
             kind: kind.flatMap(HarnessWorkKind.init(rawValue:)), labels: labels, autonomy: autonomy
         )
     }

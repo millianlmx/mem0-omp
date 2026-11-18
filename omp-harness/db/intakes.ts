@@ -16,6 +16,14 @@ export type IntakeState = (typeof INTAKE_STATES)[number];
 
 export type IntakeKind = "feature" | "bug" | "audit" | "workstation_request" | "schedule" | "question";
 
+/**
+ * La voie que le classeur choisit pour le run d'un plan `feature` ou `bug` : `express` (triviale et
+ * localisée : /impl tout de suite), `direct` (déjà structurée : /impl sur ses critères), `full` (floue
+ * ou large : /req puis /specs).
+ */
+export const INTAKE_LANES = ["express", "direct", "full"] as const;
+export type IntakeLane = (typeof INTAKE_LANES)[number];
+
 /** Le plan lisible d'une Demande : ce que sa confirmation créera. Stocké dans `intakes.plan`. */
 export type IntakePlan = {
   kind: Exclude<IntakeKind, "question">;
@@ -24,6 +32,12 @@ export type IntakePlan = {
   statement: string;
   focus?: string;
   schedule?: { cron: string; target: "run" | "audit" | "issues"; focus?: string; label?: string };
+  /** La voie du run (`feature` et `bug` seulement) ; absente : le serveur trie à la création, comme avant. */
+  lane?: IntakeLane;
+  /** Pourquoi cette voie, en une phrase (présente avec `lane`). */
+  laneReason?: string;
+  /** Les critères d'acceptation établis par la demande et ses réponses, numérotés `AC-n : …` (`feature` et `bug`). */
+  criteria?: string[];
 };
 
 export type IntakeExchange = { question: string; answer: string; at: number };
