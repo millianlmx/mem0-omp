@@ -578,7 +578,9 @@ protection de branche, et marqué `[skip ci]` pour ne relancer ni `check.yml` ni
 `release.yml`. GitHub lit cette marque n'importe où dans le message : un commit
 humain qui la cite telle quelle saute lui aussi les workflows de sa PR (aucun
 statut requis ne démarre) et, fusionné en squash, le run de release — pour en
-parler dans un message, écris-la sans crochets (« skip ci »). Il pousse ensuite les tags `<plugin>-v<version>` et publie les
+parler dans un message, écris-la sans crochets (« skip ci »). Un run de release
+sauté ou perdu se relance à la main (`workflow_dispatch`, sur `main` seulement) :
+`PUBLISHING.md` § Release automatique. Il pousse ensuite les tags `<plugin>-v<version>` et publie les
 releases GitHub. Les versions elles-mêmes sont décidées **par le job** — `fix` ⇒
 patch, `feat` ⇒ mineure, rupture déclarée ⇒ majeure, d'après les commits touchant
 chaque plugin — et non par la PR mergée : personne ne monte une version à la main
