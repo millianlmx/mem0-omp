@@ -298,11 +298,15 @@ final class IOSMemoryGraphModel: ObservableObject {
     /// `showsLoading` faux garde l'état affiché pendant la lecture (S-2).
     private func load(showsLoading: Bool) async {
         guard Self.gesturesEnabled(client.isConfigured) else { return }
+        let previous = state
         if showsLoading { state = .loading }
         do {
             let payload = try await client.memoryGraph(scope: nil)
             if Task.isCancelled { return }
             await publish(payload)
+        } catch is CancellationError {
+            // Une annulation (mémoire reliée de nouveau) n'est jamais une panne, et ne laisse pas le chargement figé.
+            if !Task.isCancelled { state = previous == .loading ? .idle : previous }
         } catch {
             if Task.isCancelled { return }
             state = Self.failure(from: error)
