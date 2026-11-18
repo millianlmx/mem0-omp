@@ -85,14 +85,6 @@ jobs:
       # avec l'état de main, avant que le moteur ne lise origin/main.
       - name: Récupérer les tags et l'état de main
         run: git fetch --force --tags origin "+refs/heads/main:refs/remotes/origin/main"
-      # Le moteur écrit, prouve avec check.sh, committe, pousse sur main, tague et
-      # publie. Ses seules étapes préalables : préparer le linter et le TypeScript
-      # épinglés, que les sections `lint` et `types` de check.sh exigent sans
-      # jamais les télécharger elles-mêmes.
-      - name: Préparer le linter épinglé (Biome)
-        run: bash scripts/lint.sh --prepare
-      - name: Installer le TypeScript épinglé du type-check
-        run: bash scripts/typecheck.sh --prepare
       # La plage de l'événement : celle du push, ou, lancé à la main, le commit
       # de main et son parent. Les valeurs passent par l'environnement, jamais
       # interpolées dans le shell.
@@ -108,6 +100,14 @@ jobs:
           fi
           echo "before=$BEFORE" >> "$GITHUB_OUTPUT"
           echo "after=$AFTER" >> "$GITHUB_OUTPUT"
+      # Le moteur écrit, prouve avec check.sh, committe, pousse sur main, tague et
+      # publie. Ses seules étapes préalables : préparer le linter et le TypeScript
+      # épinglés, que les sections `lint` et `types` de check.sh exigent sans
+      # jamais les télécharger elles-mêmes.
+      - name: Préparer le linter épinglé (Biome)
+        run: bash scripts/lint.sh --prepare
+      - name: Installer le TypeScript épinglé du type-check
+        run: bash scripts/typecheck.sh --prepare
       - name: Décider, écrire, prouver et publier
         id: publier
         env:
