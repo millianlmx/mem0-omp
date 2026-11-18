@@ -9,7 +9,7 @@ import {
   detectIrreversible,
   parseCheckpointTrailer,
   planDecision,
-} from "../../omp-harness/decisions.ts";
+} from "../../omp-harness/runs/decisions.ts";
 import { escalationArgs } from "../support/card-fixtures.ts";
 
 const base = {

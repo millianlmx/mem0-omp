@@ -14,10 +14,10 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Client } from "../../omp-harness/auth.ts";
-import { repoDefaults } from "../../omp-harness/config.ts";
-import { createHandler } from "../../omp-harness/http.ts";
-import { ConfigAdmin } from "../../omp-harness/repos.ts";
+import type { Client } from "../../omp-harness/api/auth.ts";
+import { repoDefaults } from "../../omp-harness/config/config.ts";
+import { createHandler } from "../../omp-harness/api/http.ts";
+import { ConfigAdmin } from "../../omp-harness/config/repos.ts";
 import { OK, type FakeWorld, fakeWorld, harnessRepo, waitFor } from "../../test/support/harness-fixtures.ts";
 import { DEMO_RUN, GRAPH_RUN, demoWorld } from "./mac-shots-serveur.ts";
 

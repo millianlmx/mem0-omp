@@ -7,17 +7,17 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import * as path from "node:path";
 import { PassThrough } from "node:stream";
-import { HarnessContext } from "../../omp-harness/context.ts";
-import type { SpawnRunner } from "../../omp-harness/context.ts";
-import type { HarnessConfig } from "../../omp-harness/config.ts";
-import { Store } from "../../omp-harness/db.ts";
-import type { EventType } from "../../omp-harness/events.ts";
-import { Git } from "../../omp-harness/git.ts";
-import { HeavyRunner } from "../../omp-harness/heavy.ts";
-import { execProcess } from "../../omp-harness/proc.ts";
-import type { PromptError, RunnerProcess } from "../../omp-harness/rpc.ts";
-import { RunnerSession, SAME_PROVIDER_RETRIES } from "../../omp-harness/runner-session.ts";
-import { Scheduler } from "../../omp-harness/scheduler.ts";
+import { HarnessContext } from "../../omp-harness/runs/context.ts";
+import type { SpawnRunner } from "../../omp-harness/runs/context.ts";
+import type { HarnessConfig } from "../../omp-harness/config/config.ts";
+import { Store } from "../../omp-harness/db/db.ts";
+import type { EventType } from "../../omp-harness/api/events.ts";
+import { Git } from "../../omp-harness/forge/git.ts";
+import { HeavyRunner } from "../../omp-harness/heavy/heavy.ts";
+import { execProcess } from "../../omp-harness/runners/proc.ts";
+import type { PromptError, RunnerProcess } from "../../omp-harness/runners/rpc.ts";
+import { RunnerSession, SAME_PROVIDER_RETRIES } from "../../omp-harness/runners/runner-session.ts";
+import { Scheduler } from "../../omp-harness/runners/scheduler.ts";
 import { MemoryOracle, harnessRepo, testConfig } from "../support/harness-fixtures.ts";
 
 /** Un faux runner en mémoire : chaque prompt reçoit la prochaine réponse du script (`null` : succès). */

@@ -6,10 +6,10 @@
 // Écritures (jobs du poste seulement) : `jira_transition` fait avancer SEUL un ticket assigné à
 // l'utilisateur connecté (prouvé par JQL avant d'écrire), journalisé ; `jira_comment_propose`
 // n'écrit rien chez Atlassian : le commentaire attend l'approbateur dans l'app.
-import { isRecord } from "../config.ts";
-import type { AtlassianWrite, NewAtlassianWrite } from "../db.ts";
-import type { HostToolDefinition, HostToolResult } from "../rpc.ts";
-import { untrusted } from "../workstation-guards.ts";
+import { isRecord } from "../config/config.ts";
+import type { AtlassianWrite, NewAtlassianWrite } from "../db/db.ts";
+import type { HostToolDefinition, HostToolResult } from "../runners/rpc.ts";
+import { untrusted } from "../workstation/workstation-guards.ts";
 import type { McpToolResult } from "./mcp.ts";
 
 export type AtlassianToolName =

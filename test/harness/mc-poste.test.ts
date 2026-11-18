@@ -10,7 +10,7 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
 import type {
   Meeting,
   Space,
@@ -18,18 +18,22 @@ import type {
   WorkstationAutomation,
   WorkstationProfile,
   WorkstationRequest,
-} from "../../omp-harness/db.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/http.ts";
-import type { IntakeView } from "../../omp-harness/intake.ts";
-import type { BrowserView, ProfileStats, WorkstationStatus } from "../../omp-harness/workstation.ts";
+} from "../../omp-harness/db/db.ts";
+import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/api/http.ts";
+import type { IntakeView } from "../../omp-harness/intake/intake.ts";
+import type { BrowserView, ProfileStats, WorkstationStatus } from "../../omp-harness/workstation/workstation.ts";
 import {
   APPROVER_ONLY,
   NO_SPACE_BROWSER,
   REQUEST_OUT_OF_SPACE,
   posteDir,
   uploadDir,
-} from "../../omp-harness/workstation.ts";
-import { WORKSTATION_SCOPE, workstationScope, workstationTarget } from "../../omp-harness/workstation-agent.ts";
+} from "../../omp-harness/workstation/workstation.ts";
+import {
+  WORKSTATION_SCOPE,
+  workstationScope,
+  workstationTarget,
+} from "../../omp-harness/workstation/workstation-agent.ts";
 import { fakeWorld, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";

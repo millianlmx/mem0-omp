@@ -9,13 +9,18 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import { repoDefaults } from "../../omp-harness/config.ts";
-import type { EventRow, LocalSession, RunRow } from "../../omp-harness/db.ts";
-import { EPHEMERAL_EVENTS, EVENT_TYPES } from "../../omp-harness/events.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/http.ts";
-import { ENDED_AFTER_MS, IDLE_AFTER_MS, PURGE_AFTER_MS, handoffRequest } from "../../omp-harness/local-sessions.ts";
-import { UNTRUSTED_END, untrusted } from "../../omp-harness/workstation-guards.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import { repoDefaults } from "../../omp-harness/config/config.ts";
+import type { EventRow, LocalSession, RunRow } from "../../omp-harness/db/db.ts";
+import { EPHEMERAL_EVENTS, EVENT_TYPES } from "../../omp-harness/api/events.ts";
+import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/api/http.ts";
+import {
+  ENDED_AFTER_MS,
+  IDLE_AFTER_MS,
+  PURGE_AFTER_MS,
+  handoffRequest,
+} from "../../omp-harness/sessions/local-sessions.ts";
+import { UNTRUSTED_END, untrusted } from "../../omp-harness/workstation/workstation-guards.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";

@@ -9,9 +9,9 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DEFAULT_LAUNCHER, loadConfig } from "../../omp-harness/config.ts";
-import type { Exec } from "../../omp-harness/proc.ts";
-import { forceStop, runnerArgv } from "../../omp-harness/runner.ts";
+import { DEFAULT_LAUNCHER, loadConfig } from "../../omp-harness/config/config.ts";
+import type { Exec } from "../../omp-harness/runners/proc.ts";
+import { forceStop, runnerArgv } from "../../omp-harness/runners/runner.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
 const DEPLOY = path.join(ROOT, "omp-harness", "deploy");

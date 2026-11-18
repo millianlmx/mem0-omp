@@ -9,9 +9,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
-import { createHandler } from "../../omp-harness/http.ts";
-import { groupUsage, modelKey, sumUsage } from "../../omp-harness/db.ts";
-import type { UsageRow } from "../../omp-harness/db.ts";
+import { createHandler } from "../../omp-harness/api/http.ts";
+import { groupUsage, modelKey, sumUsage } from "../../omp-harness/db/db.ts";
+import type { UsageRow } from "../../omp-harness/db/db.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 
 const TOKEN = "t".repeat(64);

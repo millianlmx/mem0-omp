@@ -7,10 +7,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { HarnessContext } from "../../omp-harness/context.ts";
-import type { RunRow } from "../../omp-harness/db.ts";
-import { crashed } from "../../omp-harness/machine.ts";
-import type { Transition } from "../../omp-harness/machine.ts";
+import { HarnessContext } from "../../omp-harness/runs/context.ts";
+import type { RunRow } from "../../omp-harness/db/db.ts";
+import { crashed } from "../../omp-harness/runs/machine.ts";
+import type { Transition } from "../../omp-harness/runs/machine.ts";
 
 function specsWith(split: string): string {
   return `Ce que fait cette feature : exporter les données au format CSV.\n## Relevé du dépôt\n- src/api : routes\n## Non-objectifs\n## Spécifications\nS-1 (AC-1) : export CSV\n## Critères d'acceptation\nAC-1 (B-1) : Given des données, When l'export est demandé, Then un CSV est produit\n## Modules\n- src/api\n## Découpage\n${split}\n`;

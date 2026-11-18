@@ -10,7 +10,7 @@
 // Elle porte un lien vers le fil et, pour une revue qui attend, le bouton « Valider ».
 //
 // `HarnessActivityState` est la forme EXACTE de `content-state` que le serveur envoie
-// (`ActivityContent` de `omp-harness/push.ts`) : un champ de plus ou de moins d'un
+// (`ActivityContent` de `omp-harness/notify/push.ts`) : un champ de plus ou de moins d'un
 // côté, et iOS ignore la mise à jour.
 
 import Foundation

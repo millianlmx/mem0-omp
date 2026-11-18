@@ -1,7 +1,7 @@
 // Le cache des résultats heavy (clé : tree hash + commande + env) et l'historique
 // des passes de tests de chaque run.
 import { DecisionStore } from "./decisions.ts";
-import type { TestScope } from "../heavy.ts";
+import type { TestScope } from "../heavy/heavy.ts";
 import { str, num, numOrNull } from "./sql.ts";
 import type { Row } from "./sql.ts";
 

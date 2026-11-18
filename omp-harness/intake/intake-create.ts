@@ -1,0 +1,78 @@
+// La confirmation d'une Demande : l'objet de son plan est créé par les chemins existants
+// (mêmes entrées, mêmes gardes que les routes), sans en recopier aucun contrôle.
+import type { Client } from "../api/auth.ts";
+import type { Actor } from "../runs/context.ts";
+import type { IntakePlan, RunAutonomy } from "../db/db.ts";
+import { newRunInput, requireRepo } from "../api/input.ts";
+import type { Created } from "./intake.ts";
+import type { Orchestrator } from "../runs/orchestrator.ts";
+import { scheduleInput } from "../jobs/schedules.ts";
+import { approverFor } from "../workstation/workstation.ts";
+
+/**
+ * Le run d'un plan `feature` ou `bug` : sa demande — l'énoncé, suivi de ses critères sous
+ * `## Critères d'acceptation`, la section que lit la voie directe (steps.ts `directSpecs`) — et sa
+ * voie. `express` et `full` sont demandées telles quelles ; `direct` n'en demande aucune : la
+ * création la reconnaît à ses critères, avec ses propres gardes (porte des specs, irréversible). Sans
+ * voie, le serveur trie comme pour tout run (`lanes.default`). Pure.
+ */
+export function runOfPlan(plan: IntakePlan): { request: string; lane?: "express" | "full" } {
+  const criteria = plan.criteria ?? [];
+  const request =
+    criteria.length === 0 ? plan.statement : `${plan.statement}\n\n## Critères d'acceptation\n\n${criteria.join("\n")}`;
+  return plan.lane === "express" || plan.lane === "full" ? { request, lane: plan.lane } : { request };
+}
+
+/**
+ * Crée l'objet du plan : `bug` et `feature` un run (`autonomy` : son curseur, s'il est demandé), `audit`,
+ * `schedule` et `workstation_request` le leur. `spaceId` : l'espace de la demande — une tâche du poste
+ * s'exécute dans un navigateur de cet espace (`Workstation.createRequest` refuse s'il n'en a pas) ; le
+ * dépôt d'un plan d'espace est déjà vérifié par `Intaker.confirm`.
+ */
+export function createFromPlan(
+  orchestrator: Orchestrator,
+  client: Client,
+  actor: Actor,
+  plan: IntakePlan,
+  autonomy?: RunAutonomy | null,
+  spaceId: string | null = null,
+): Created {
+  const repo = plan.repo ?? "";
+  switch (plan.kind) {
+    case "feature":
+    case "bug": {
+      const input = newRunInput(
+        {
+          repo,
+          title: plan.title,
+          ...runOfPlan(plan),
+          kind: plan.kind,
+          ...(autonomy !== undefined ? { autonomy } : {}),
+        },
+        client,
+        { typed: true },
+      );
+      return { kind: "run", id: orchestrator.createRun(input, actor).id };
+    }
+    case "audit": {
+      requireRepo(client, repo);
+      return { kind: "audit", id: orchestrator.audits.create(repo, plan.focus ?? "", actor).id };
+    }
+    case "schedule": {
+      const schedule = plan.schedule as NonNullable<IntakePlan["schedule"]>;
+      const target =
+        schedule.target === "run"
+          ? { kind: "run", repo, title: plan.title, request: plan.statement }
+          : schedule.target === "audit"
+            ? { kind: "audit", repo, focus: schedule.focus ?? "" }
+            : { kind: "issues", repo, ...(schedule.label ? { label: schedule.label } : {}) };
+      const input = scheduleInput({ name: plan.title, cron: schedule.cron, target }, client);
+      return { kind: "schedule", id: orchestrator.schedules.create(input, actor).id };
+    }
+    case "workstation_request": {
+      const workstation = approverFor(orchestrator.workstation, client);
+      const request = { instruction: plan.statement, ...(spaceId === null ? {} : { space: spaceId }) };
+      return { kind: "workstation_request", id: workstation.createRequest(request, actor).id };
+    }
+  }
+}

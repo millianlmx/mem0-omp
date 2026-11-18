@@ -8,7 +8,7 @@
 // action) : ni page, ni texte, ni destinataire. Une erreur de client (contrat C2) garde sa
 // source, sa version, son type et son message, jamais son `context`.
 import * as path from "node:path";
-import type { EventRow } from "../db.ts";
+import type { EventRow } from "../db/db.ts";
 import type { Signal } from "./fingerprint.ts";
 import { record, textOf as text } from "./json.ts";
 

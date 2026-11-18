@@ -12,11 +12,11 @@
 // Moli ne sait pas faire rend `failed` avec une raison qui le dit : jamais un succès simulé.
 import { randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
-import type { WorkstationAction } from "../db.ts";
-import { HarnessError } from "../errors.ts";
-import type { LogLine } from "../logger.ts";
-import type { BrowserHello, Workstation } from "../workstation.ts";
-import { hostOf } from "../workstation-guards.ts";
+import type { WorkstationAction } from "../db/db.ts";
+import { HarnessError } from "../api/errors.ts";
+import type { LogLine } from "../operations/logger.ts";
+import type { BrowserHello, Workstation } from "../workstation/workstation.ts";
+import { hostOf } from "../workstation/workstation-guards.ts";
 import { mergeFrames } from "../../omp-chrome/src/lib/snapshot.ts";
 import type { FrameSnapshot } from "../../omp-chrome/src/lib/snapshot.ts";
 import { validateAction } from "../../omp-chrome/src/lib/actions.ts";

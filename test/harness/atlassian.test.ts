@@ -21,20 +21,20 @@ import {
   isAtlassianTool,
 } from "../../omp-harness/atlassian/desk.ts";
 import type { AtlassianDesk } from "../../omp-harness/atlassian/desk.ts";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import type { HarnessConfig } from "../../omp-harness/config.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import type { HarnessConfig } from "../../omp-harness/config/config.ts";
 import {
   LOOPBACK_REDIRECT,
   defaultConfig,
   loadConfig,
   repoDefaults,
   validateConfig,
-} from "../../omp-harness/config.ts";
-import type { AtlassianWrite } from "../../omp-harness/db.ts";
-import { EVENT_TYPES } from "../../omp-harness/events.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/http.ts";
-import { alertFor } from "../../omp-harness/push-alerts.ts";
-import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../omp-harness/workstation-guards.ts";
+} from "../../omp-harness/config/config.ts";
+import type { AtlassianWrite } from "../../omp-harness/db/db.ts";
+import { EVENT_TYPES } from "../../omp-harness/api/events.ts";
+import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
+import { alertFor } from "../../omp-harness/notify/push-alerts.ts";
+import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../omp-harness/workstation/workstation-guards.ts";
 import {
   FAKE_ACCESS_TOKEN,
   FAKE_ACCOUNT,

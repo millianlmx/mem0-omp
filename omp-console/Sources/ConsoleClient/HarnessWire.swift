@@ -846,7 +846,7 @@ public struct HarnessProofs: Codable, Equatable, Sendable {
     }
 }
 
-/// Le contenu d'une preuve `test_report` (omp-harness/test-report.ts) : le décompte
+/// Le contenu d'une preuve `test_report` (omp-harness/heavy/test-report.ts) : le décompte
 /// des tests par critère des specs du run, lu dans toute la sortie des tests.
 public struct HarnessTestReport: Codable, Equatable, Sendable {
     /// `impl` ou `fix`.

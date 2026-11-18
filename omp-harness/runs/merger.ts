@@ -1,0 +1,663 @@
+// Le merge des runs validés (auto-merge ou humain), en FILE PAR DÉPÔT.
+//
+// Deux merges du même dépôt ne se croisent jamais : le second attend le premier,
+// puis se rebase sur le `main` qu'il a produit. Sans file, ils se disputaient
+// `update-ref` et le perdant refaisait rebase et suite complète à chaque tentative.
+// Les dépôts différents mergent en parallèle.
+//
+// Si main a bougé depuis la revue : rebase, puis la suite complète repasse en heavy
+// sur le nouvel arbre — sans LLM. Rouge ou conflit : retour en correction (machine),
+// après un délai (5, 15 puis 60 min) compté dans `mergeRetries`. Une branche que le
+// rebase a vidée (son travail est déjà dans main) se termine mergée, sans commit.
+//
+// Dépôt en `tests.judge: "ci"` : aucune suite locale. En mode `gh`, la branche rebasée est poussée, sa PR sort du
+// brouillon, l'auto-merge est armé, puis l'attente de la fusion lit aussi les checks de la forge sur ce SHA : rouges,
+// le run repart en correction avec leurs extraits de logs ; en mode `local`, la CI juge le rebase à la place de `full`.
+//
+// Le message du squash vient du verdict (`commit` : sujet Conventional Commits, corps),
+// suivi des décisions et du trailer `Harness-Run` ; le résumé de la revue n'y entre pas.
+//
+// Mode `gh` : une PR (une MR sur GitLab) sur la forge du dépôt (forge.ts), sa fusion
+// squash automatique, puis l'attente de la fusion constatée (les checks requis de la
+// branche protégée, le pipeline) — jamais « merged » avant que la forge l'ait fait. Mode
+// `local` : squash puis push ; un push refusé n'est PAS un merge : le run attend
+// l'humain avec la raison (une coupure réseau est réessayée).
+import * as path from "node:path";
+import { testsJudge } from "../config/config.ts";
+import { newFailuresText } from "../heavy/baseline.ts";
+import type { RepoConfig } from "../config/config.ts";
+import type { Actor, HarnessContext } from "./context.ts";
+import type { DecisionRow, DecisionStatus, RunRow } from "../db/db.ts";
+import { HarnessError } from "../api/errors.ts";
+import { type Forge, openForge } from "../forge/forge.ts";
+import { remoteEnv } from "../forge/git.ts";
+import { afterExternalMerge, afterMergeFailed, afterMergeStopped, afterMerged } from "./machine.ts";
+import type { NewRunInput } from "./orchestrator.ts";
+import { ciFailureReport, ciState } from "../heavy/ci-judge.ts";
+
+export type MergerHooks = {
+  /** Un merge (réussi ou non) a quitté la file : l'orchestrateur refait un tour. */
+  onDone: () => void;
+  /** Le run de suite ouvert après un revert. */
+  followUp: (input: NewRunInput, actor: Actor) => Promise<RunRow>;
+};
+
+/** Les statuts de décision qui comptent dans le message de merge et le souvenir. */
+const DECIDED: DecisionStatus[] = ["auto", "auto_timeout", "accepted", "reversed"];
+
+/** Les refus de push qui tiennent au réseau, pas au dépôt : réessayés. */
+const NETWORK_PUSH_ERROR =
+  /could not resolve|could not connect|connection (?:refused|reset|timed out)|timed out|unable to access|network is unreachable|early EOF|remote end hung up|temporarily unavailable|operation timed out/i;
+
+/** Les attentes entre deux poussées après une coupure réseau, en multiples de `mergePollSec`. */
+const PUSH_RETRY_STEPS: readonly number[] = [1, 2, 5];
+
+/** L'intervalle minimal entre deux relectures, sur la forge, des PR des runs qui attendent l'humain. */
+const RECONCILE_MS = 5 * 60_000;
+
+/** Une décision rendue dans le message de merge et le souvenir : l'option retenue, et qui l'a validée. */
+function decisionLine(decision: DecisionRow): string {
+  const chosen = decision.status === "reversed" ? (decision.reversalOption ?? decision.chosen) : decision.chosen;
+  const mark =
+    decision.status === "auto" || decision.status === "auto_timeout"
+      ? " (choix de l'agent, non validé)"
+      : decision.status === "reversed"
+        ? ` (renversée par l'humain : ${decision.reversalReason ?? "sans raison donnée"})`
+        : "";
+  return `${decision.question} → ${chosen}${mark}`;
+}
+
+export class Merger {
+  readonly #ctx: HarnessContext;
+  readonly #hooks: MergerHooks;
+  /** La queue de chaque dépôt : la promesse du dernier merge enfilé. */
+  readonly #queues = new Map<string, Promise<void>>();
+  /** Les runs enfilés ou en cours de merge. */
+  readonly #pending = new Set<string>();
+  /** Les fusions laissées à la file de la forge (`mergeQueue`) : attendues hors de la queue du dépôt. */
+  readonly #landings = new Set<Promise<void>>();
+  /** La dernière relecture des PR des runs qui attendent l'humain (`reconcile`), et celle en cours. */
+  #reconciledAt = 0;
+  #reconciling: Promise<void> | null = null;
+
+  constructor(ctx: HarnessContext, hooks: MergerHooks) {
+    this.#ctx = ctx;
+    this.#hooks = hooks;
+  }
+
+  /** Le run est-il enfilé ou en cours de merge ? (un geste humain ne l'interrompt pas). */
+  has(runId: string): boolean {
+    return this.#pending.has(runId);
+  }
+
+  /** Enfile le merge d'un run en `merging` derrière ceux de son dépôt. */
+  enqueue(run: RunRow): void {
+    if (this.#pending.has(run.id)) return;
+    this.#pending.add(run.id);
+    const previous = this.#queues.get(run.repo) ?? Promise.resolve();
+    if (this.#queues.has(run.repo))
+      this.#ctx.event("merge_queued", run.id, {
+        behind: [...this.#pending].filter((id) => id !== run.id && this.#ctx.store.getRun(id)?.repo === run.repo),
+      });
+    const settle = (): void => {
+      this.#pending.delete(run.id);
+      this.#hooks.onDone();
+    };
+    const next: Promise<void> = previous
+      .then(() => this.#merge(run.id))
+      .then((detached) => {
+        // La file de la forge (`mergeQueue`) teste et fusionne elle-même : le merge suivant du dépôt ne
+        // l'attend pas, la fusion de celui-ci est suivie à part.
+        if (detached === undefined) return settle();
+        const { landing } = detached;
+        this.#landings.add(landing);
+        void landing.finally(() => {
+          this.#landings.delete(landing);
+          settle();
+        });
+      })
+      .finally(() => {
+        if (this.#queues.get(run.repo) === next) this.#queues.delete(run.repo);
+      });
+    this.#queues.set(run.repo, next);
+  }
+
+  /** Attend la relecture des PR en cours, puis que toutes les files soient vides (arrêt du service). */
+  async idle(): Promise<void> {
+    // La relecture peut enfiler un merge : elle finit d'abord.
+    await this.#reconciling;
+    await Promise.allSettled([...this.#queues.values()]);
+    await Promise.allSettled([...this.#landings]);
+  }
+
+  /**
+   * Les runs qui attendent l'humain et dont la PR a été fusionnée sur la forge hors du harness (à la
+   * main, par une autre session) passent au merge, qui le constate : sans cela ils attendraient pour
+   * toujours, et les features découpées derrière eux aussi. La forge est relue au plus toutes les
+   * `RECONCILE_MS`, une relecture à la fois ; une forge muette laisse le run tel quel.
+   */
+  reconcile(runs: readonly RunRow[], now: number): Promise<void> {
+    if (this.#reconciling !== null) return this.#reconciling;
+    if (now - this.#reconciledAt < RECONCILE_MS) return Promise.resolve();
+    this.#reconciledAt = now;
+    this.#reconciling = this.#reconcile(runs).finally(() => {
+      this.#reconciling = null;
+    });
+    return this.#reconciling;
+  }
+
+  async #reconcile(runs: readonly RunRow[]): Promise<void> {
+    for (const run of runs) {
+      if (run.prUrl === null || this.#pending.has(run.id)) continue;
+      try {
+        const repo = this.#ctx.repo(run.repo);
+        if (repo.merge !== "gh") continue;
+        const forge = await openForge(repo, { exec: this.#ctx.exec, git: this.#ctx.git });
+        if (forge.kind === "none" || (await forge.changeState(run.branch)) !== "MERGED") continue;
+        const moved = this.#ctx.transition(run, afterExternalMerge(run), ["awaiting_human"]);
+        if (moved) this.enqueue(moved);
+      } catch (err) {
+        this.#ctx.log(
+          `run ${run.id} : PR non relue sur la forge — ${err instanceof Error ? err.message : String(err)}`,
+          {
+            level: "warn",
+            runId: run.id,
+            repo: run.repo,
+          },
+        );
+      }
+    }
+  }
+
+  /**
+   * Le merge d'un run. Rend la fusion encore en cours sur la forge quand le dépôt a sa file de merge
+   * (`mergeQueue`) : la queue du dépôt passe au suivant pendant qu'elle s'achève.
+   */
+  async #merge(runId: string): Promise<{ landing: Promise<void> } | undefined> {
+    const { store, git, heavy } = this.#ctx;
+    let mainAtStart: string | null = null;
+    try {
+      let run = store.getRun(runId);
+      if (run?.state !== "merging") return;
+      const repo = this.#ctx.repo(run.repo);
+      // La PR a été fusionnée sur la forge hors du harness : constatée, jamais refaite (la branche
+      // ne repart pas sur la forge, aucune nouvelle PR ne s'ouvre).
+      if (repo.merge === "gh" && run.prUrl !== null) {
+        const forge = await this.#forge(repo);
+        if ((await forge.changeState(run.branch)) === "MERGED") {
+          await this.#ctx.fetchMain(repo);
+          await git.forgetPushed(repo.path, run.branch);
+          this.#finish(run, await this.#landed(forge, run, repo), repo, true);
+          return;
+        }
+      }
+      const worktree = run.worktree;
+      if (worktree === null) throw new Error("le run n'a plus de worktree");
+      await this.#ctx.fetchMain(repo);
+      const main = await git.revParse(repo.path, repo.mainBranch);
+      mainAtStart = main;
+      if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip: avant merge — ${run.title}`.slice(0, 120));
+      // Des commits poussés sur la branche du run hors du harness (un humain, une autre session) : repris
+      // avant le rebase, sinon la poussée forcée du merge les effacerait de la forge.
+      if (repo.merge === "gh" && (await git.pushedSha(worktree, run.branch)) !== "") {
+        const adopted = await git.adoptRemote(
+          worktree,
+          repo.remote ?? "origin",
+          run.branch,
+          remoteEnv(repo),
+          `merge: commits poussés sur ${run.branch} hors du harness`,
+        );
+        if (adopted.kind === "adopted")
+          this.#ctx.event("remote_adopted", run.id, { sha: adopted.sha, commits: adopted.commits });
+        if (adopted.kind === "conflict" || adopted.kind === "diverged") {
+          const reason =
+            adopted.kind === "conflict"
+              ? `des commits poussés sur ${run.branch} hors du harness (${adopted.sha.slice(0, 12)}) entrent en conflit avec ce run dans ${adopted.conflicts.join(", ")} : fusionne-les à la main dans le worktree, ou retire-les de la branche`
+              : `la branche distante ${run.branch} (${adopted.sha.slice(0, 12)}) a été réécrite hors du harness : remets-la sur ce que le harness y a poussé, ou supprime-la`;
+          this.#ctx.transition(run, afterMergeFailed(run, reason), ["merging"]);
+          return;
+        }
+      }
+      // Déjà dans main (merge fait, état non écrit avant un arrêt) : rien à refaire, sauf la poussée.
+      if (
+        (await git.run(repo.path, ["rev-parse", `${run.branch}^{tree}`])) ===
+          (await git.run(repo.path, ["rev-parse", `${main}^{tree}`])) &&
+        main !== run.baseSha
+      ) {
+        if (repo.merge === "local" && !(await this.#pushMain(run, repo))) return;
+        this.#finish(run, main, repo);
+        return;
+      }
+      const mainMoved = main !== run.baseSha;
+      if (mainMoved) {
+        // Un rebase qui bute ne vaut pas conflit : une branche qui porte déjà une fusion de
+        // main (conflits résolus en revue) rejoue au rebase ses commits d'avant la fusion,
+        // donc les mêmes conflits, à chaque tentative. Une fusion de main ne rejoue rien :
+        // elle ne bute que sur un conflit nouveau.
+        const rebased = await git.rebase(worktree, main);
+        const updated = rebased.ok
+          ? rebased
+          : await git.mergeCommit(worktree, main, `merge: main dans ${run.branch} (avant merge)`);
+        // Conflit : retour en revue, qui fusionne main et fait résoudre les conflits.
+        if (!updated.ok)
+          return this.#stopped(run, "review", `conflit avec main avant merge : ${updated.conflicts.join(", ")}`);
+        await this.#ctx.remapCheckpoints(run.id, worktree, main);
+        run = store.updateRun(run.id, { baseSha: main });
+      }
+      // La branche n'apporte plus rien à main (son travail y est entré par un autre run,
+      // et le rebase l'a vidée) : déjà dans main, sans commit vide, sans poussée ni PR.
+      // Vérifié avant la suite complète : elle jugerait l'arbre de main, pas ce run.
+      if (
+        (await git.run(repo.path, ["rev-parse", `${run.branch}^{tree}`])) ===
+        (await git.run(repo.path, ["rev-parse", `${main}^{tree}`]))
+      ) {
+        this.#finish(run, null, repo);
+        return;
+      }
+      // `judge: "ci"` + PR : la CI de la forge juge le rebase pendant l'attente de la fusion (#mergeWithForge), sans suite locale.
+      if (mainMoved && !(repo.merge === "gh" && testsJudge(repo) === "ci")) {
+        const result = await heavy.run({
+          runId: run.id,
+          stepId: null,
+          repo,
+          worktree,
+          scope: "full",
+          files: [],
+          priority: run.priority,
+        });
+        if (result.outcome !== "pass") {
+          // Les échecs que main a déjà ne renvoient pas en correction ; seuls les nouveaux comptent.
+          const baseline = await this.#ctx.baseline.judge(run, repo, result);
+          if (baseline) this.#ctx.baseline.record(run.id, "merge", baseline);
+          if (baseline === null || baseline.new.length > 0)
+            return this.#stopped(
+              run,
+              "fix",
+              baseline
+                ? `suite complète rouge après rebase sur main : ${newFailuresText(baseline)}`
+                : `suite complète ${result.outcome} après rebase sur main`,
+            );
+        }
+      }
+      const decisions = store.listDecisions({ runId, status: DECIDED });
+      // Le message vient du verdict (`commit`) ; un verdict rendu avant ce champ garde le titre du run.
+      const subject = run.verdict?.commit?.subject ?? run.title;
+      const body = run.verdict?.commit?.body ?? "";
+      const trailer = [
+        ...(decisions.length > 0 ? ["Décisions :", ...decisions.map((d) => `- ${decisionLine(d)}`), ""] : []),
+        `Harness-Run: ${run.id}`,
+      ];
+      const commitBody = [...(body === "" ? [] : [body, ""]), ...trailer].join("\n");
+      if (repo.merge === "gh") {
+        // La PR est le lieu de la revue : son corps porte aussi le résumé du relecteur, le commit non.
+        const review = run.verdict?.summary ?? "";
+        const prBody = [
+          ...(body === "" ? [] : [body, ""]),
+          ...(review === "" ? [] : ["## Revue", review, ""]),
+          ...trailer,
+        ];
+        const opened = await this.#openForMerge(run, repo, { subject, commitBody, prBody: prBody.join("\n") });
+        if (opened.prUrl !== null && opened.prUrl !== run.prUrl) run = store.updateRun(run.id, { prUrl: opened.prUrl });
+        if (opened.kind === "stopped") {
+          this.#stopped(run, "review", opened.reason);
+          return;
+        }
+        const landing = this.#land(run.id, repo, opened);
+        // Enveloppée : une promesse rendue telle quelle par une fonction `async` serait attendue avec elle.
+        if (repo.mergeQueue) return { landing };
+        await landing;
+        return;
+      }
+      const sha = await git.squashMerge(repo.path, run.branch, repo.mainBranch, main, `${subject}\n\n${commitBody}`);
+      if (!(await this.#pushMain(run, repo))) return;
+      // `judge: "ci"` : la branche poussée pour la CI et sa PR brouillon n'ont plus d'objet ; sans branche, la forge ferme la PR.
+      if (testsJudge(repo) === "ci") {
+        await git.raw(repo.path, ["push", "-q", repo.remote ?? "origin", "--delete", run.branch], remoteEnv(repo));
+        await git.forgetPushed(repo.path, run.branch);
+      }
+      this.#finish(run, sha, repo);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      const run = store.getRun(runId);
+      if (!run) return;
+      // main a avancé pendant ce merge (un push venu d'ailleurs, CAS de update-ref perdu) : on retente au tick suivant.
+      const repo = this.#ctx.repo(run.repo);
+      const nowMain = await git.revParse(repo.path, repo.mainBranch).catch(() => null);
+      if (mainAtStart !== null && nowMain !== null && nowMain !== mainAtStart) {
+        this.#ctx.event("merge_retry", runId, { reason });
+        return;
+      }
+      this.#ctx.transition(run, afterMergeFailed(run, reason), ["merging"]);
+    }
+  }
+
+  /**
+   * Pousse `main` sur le distant (mode `local`). Un refus du dépôt (branche protégée,
+   * droit manquant) n'est pas un merge : le run attend l'humain avec la raison. Une
+   * coupure réseau est réessayée un nombre borné de fois avant d'en faire autant.
+   * `true` si main est poussée (ou qu'il n'y a pas de distant).
+   */
+  async #pushMain(run: RunRow, repo: RepoConfig): Promise<boolean> {
+    if (!repo.remote) return true;
+    const { git, config } = this.#ctx;
+    const args = ["push", "-q", repo.remote, `refs/heads/${repo.mainBranch}:refs/heads/${repo.mainBranch}`];
+    let detail = "";
+    for (let attempt = 0; ; attempt++) {
+      const push = await git.raw(repo.path, args, remoteEnv(repo));
+      if (push.code === 0) return true;
+      detail = (push.stderr || push.stdout).trim().slice(0, 300);
+      this.#ctx.event("push_failed", run.id, { detail, attempt });
+      const wait = PUSH_RETRY_STEPS[attempt];
+      if (!NETWORK_PUSH_ERROR.test(detail) || wait === undefined) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, wait * config.review.mergePollSec * 1000));
+    }
+    const current = this.#ctx.store.getRun(run.id) ?? run;
+    this.#ctx.transition(current, { ...afterMergeFailed(current, detail), reason: `push refusé : ${detail}` }, [
+      "merging",
+    ]);
+    return false;
+  }
+
+  /**
+   * Mode `gh` : la PR (créée ou retrouvée) sur la forge du dépôt, sa fusion squash
+   * automatique, puis l'attente de la fusion constatée, relue toutes les `mergePollSec`,
+   * jusqu'à `mergeWaitSec`. Fermée sans fusion, refusée ou trop longue : le merge
+   * s'arrête. Le squash prend le sujet et le corps du verdict : sans eux, la forge
+   * composerait le message depuis le titre et les commits de la PR, selon son réglage.
+   */
+  /**
+   * Mode `gh`, première moitié : la branche poussée, la PR (créée ou retrouvée) sur la forge du dépôt, sortie du
+   * brouillon (`judge: "ci"`) et son auto-merge squash demandé.
+   */
+  async #openForMerge(
+    run: RunRow,
+    repo: RepoConfig,
+    message: { subject: string; commitBody: string; prBody: string },
+  ): Promise<
+    | { kind: "opened"; prUrl: string | null; forge: Forge; sha: string | null; branch: string }
+    | { kind: "stopped"; prUrl: string | null; reason: string }
+  > {
+    const { git } = this.#ctx;
+    const remote = repo.remote ?? "origin";
+    const worktree = run.worktree;
+    if (worktree === null) throw new Error("le run n'a plus de worktree");
+    const forge = await this.#forge(repo);
+    // Le bail vaut ce que le harness a poussé ou repris du distant (`#merge`) : un commit poussé ailleurs
+    // depuis fait refuser la poussée au lieu d'être effacé. Une branche jamais poussée part en force.
+    const leased = await git.pushedSha(worktree, run.branch);
+    const lease = leased === "" ? "-f" : `--force-with-lease=refs/heads/${run.branch}:${leased}`;
+    await git.run(worktree, ["push", "-q", lease, remote, `${run.branch}:${run.branch}`], remoteEnv(repo));
+    // Le jugement suivant de la CI (rouge après ce rebase → /fix) prend ce SHA pour bail.
+    await git.recordPushed(worktree, run.branch, run.branch);
+    // Le SHA que la CI de la forge jugera (`judge: "ci"`).
+    const sha = testsJudge(repo) === "ci" ? await git.revParse(worktree, "HEAD") : null;
+    const prUrl = await forge.openChange(
+      { head: run.branch, base: repo.mainBranch, title: message.subject, body: message.prBody },
+      run.prUrl,
+    );
+    try {
+      // `judge: "ci"` : la PR, restée en brouillon depuis la preuve de la revue, en sort avant l'auto-merge.
+      if (sha !== null) await forge.markReady(run.branch);
+      await forge.autoMerge(run.branch, { subject: message.subject, body: message.commitBody });
+    } catch (err) {
+      return { kind: "stopped", prUrl, reason: err instanceof Error ? err.message : String(err) };
+    }
+    return { kind: "opened", prUrl, forge, sha, branch: run.branch };
+  }
+
+  /**
+   * Mode `gh`, seconde moitié : la fusion constatée sur la forge (jusqu'à `review.mergeWaitSec`), puis l'état du
+   * run. Ses erreurs restent les siennes : elle peut courir hors de la queue du dépôt (`mergeQueue`).
+   */
+  async #land(
+    runId: string,
+    repo: RepoConfig,
+    opened: { prUrl: string | null; forge: Forge; sha: string | null; branch: string },
+  ): Promise<void> {
+    const { store, git } = this.#ctx;
+    try {
+      const outcome = await this.#awaitForge(repo, opened);
+      const run = store.getRun(runId);
+      if (run?.state !== "merging") return;
+      if (outcome.kind === "merged") {
+        await git.forgetPushed(repo.path, run.branch);
+        this.#finish(run, await git.revParse(repo.path, repo.mainBranch), repo);
+        return;
+      }
+      this.#stopped(run, outcome.step ?? "review", outcome.reason);
+    } catch (err) {
+      const run = store.getRun(runId);
+      if (run?.state === "merging")
+        this.#ctx.transition(run, afterMergeFailed(run, err instanceof Error ? err.message : String(err)), ["merging"]);
+    }
+  }
+
+  /** La PR suivie jusqu'à sa fusion, sa fermeture, une CI rouge (`judge: "ci"`) ou l'échéance. */
+  async #awaitForge(
+    repo: RepoConfig,
+    opened: { forge: Forge; sha: string | null; branch: string },
+  ): Promise<{ kind: "merged" } | { kind: "stopped"; reason: string; step?: "fix" }> {
+    const { config } = this.#ctx;
+    const { forge, sha, branch } = opened;
+    const deadline = Date.now() + config.review.mergeWaitSec * 1000;
+    const change = forge.kind === "gitlab" ? "MR" : "PR";
+    for (;;) {
+      const state = await forge.changeState(branch);
+      if (state === "MERGED") {
+        await this.#ctx.fetchMain(repo);
+        return { kind: "merged" };
+      }
+      if (state === "CLOSED") return { kind: "stopped", reason: `la ${change} a été fermée sans être fusionnée` };
+      // `judge: "ci"` : la CI rougit après le rebase → retour en correction, les extraits de logs pour raison.
+      const red = sha === null ? null : await this.#ciFailure(forge, sha);
+      if (red !== null) return { kind: "stopped", reason: red, step: "fix" };
+      if (Date.now() >= deadline)
+        return {
+          kind: "stopped",
+          reason: `fusion non constatée après ${config.review.mergeWaitSec} s (checks ou revue en attente sur la ${change})`,
+        };
+      await new Promise<void>((resolve) => setTimeout(resolve, config.review.mergePollSec * 1000));
+    }
+  }
+
+  /** La forge des PR du dépôt ; sans forge, le mode `gh` est refusé en le disant. */
+  async #forge(repo: RepoConfig): Promise<Forge> {
+    const forge = await openForge(repo, { exec: this.#ctx.exec, git: this.#ctx.git });
+    if (forge.kind === "none")
+      throw new HarnessError(
+        409,
+        `le dépôt ${repo.name} est en \`"merge": "gh"\` mais n'a pas de forge : déclare \`forge\` ("github" ou "gitlab"), ou passe-le en \`"merge": "local"\``,
+      );
+    return forge;
+  }
+
+  /**
+   * `judge: "ci"` : les jobs rouges de la CI sur `sha` (nom, URL, extrait des logs) si elle a fini rouge, sinon
+   * `null` — verte, en cours, ou forge muette (la prochaine lecture reprendra).
+   */
+  async #ciFailure(forge: Forge, sha: string): Promise<string | null> {
+    const checks = await forge.checks(sha).catch(() => null);
+    if (checks === null || ciState(checks) !== "fail") return null;
+    return `suite complète rouge sur la CI de la forge après le rebase sur main (${sha.slice(0, 12)})\n${await ciFailureReport(forge, sha, checks)}`;
+  }
+
+  /**
+   * Le merge s'arrête : retour en correction ou en revue après un délai, compté dans
+   * `mergeRetries` (machine) ; au plafond, l'humain.
+   */
+  /** Rend `undefined` : `return this.#stopped(…)` clôt aussi `#merge`. */
+  #stopped(run: RunRow, step: "fix" | "review", reason: string): undefined {
+    const { store, config } = this.#ctx;
+    const transition = afterMergeStopped(run, step, reason, config.review, Date.now());
+    store.transaction(() => {
+      const patch = {
+        mergeRetries: run.mergeRetries + 1,
+        ...(transition.state === "queued"
+          ? { verdict: run.verdict ? { ...run.verdict, blockers: [reason] } : null }
+          : {}),
+      };
+      const moved = this.#ctx.transition(run, transition, ["merging"], { patch });
+      if (moved && transition.state === "queued")
+        store.addInstructions(
+          run.id,
+          `Le merge a été arrêté : ${reason}. ${step === "fix" ? "Corrige, puis la revue reprendra." : "Reprends la revue."}`,
+        );
+    });
+    return undefined;
+  }
+
+  /**
+   * Fin de run : état, knowledge-updater (oracle), worktree rendu (le projet est clos par le contexte).
+   * `sha` null : la branche n'apportait plus rien à main, aucun commit n'a été posé —
+   * `mergeSha` reste null (un revert déferait le commit d'un autre) et l'événement
+   * `merged` porte `empty: true`. `external` : la PR a été fusionnée sur la forge hors du
+   * harness ; `sha` est le commit qu'elle a posé sur main, `null` s'il ne se lit pas.
+   */
+  #finish(run: RunRow, sha: string | null, repo: RepoConfig, external = false): void {
+    const { store, git, oracle } = this.#ctx;
+    // Le merge est fait dans git : l'état suit. Aucun geste ne passe pendant un merge
+    // (annuler, renverser et valider le refusent), le run est donc toujours en `merging`.
+    const current = store.getRun(run.id) ?? run;
+    const moved = store.transaction(() => {
+      if (!this.#ctx.transition(current, afterMerged(current), ["merging"], { patch: { mergeSha: sha } })) return false;
+      this.#ctx.event("merged", run.id, {
+        sha,
+        prUrl: store.getRun(run.id)?.prUrl ?? null,
+        ...(external ? { external: true } : sha === null ? { empty: true } : {}),
+      });
+      return true;
+    });
+    if (!moved) return;
+    const decisions = store.listDecisions({ runId: run.id, status: DECIDED });
+    const verdict = run.verdict;
+    const where = sha === null ? "" : sha.slice(0, 12);
+    const landed = external
+      ? `fusionnée sur la forge hors du harness${where === "" ? "" : `, ${where}`}`
+      : where || "déjà dans main, sans commit";
+    const summary = [
+      `Feature mergée « ${run.title} » (${landed}) : ${verdict?.summary ?? ""}`,
+      run.modules.length > 0 ? `Modules : ${run.modules.join(", ")}.` : "",
+      verdict && verdict.risks.length > 0 ? `Risques résiduels : ${verdict.risks.join(" ; ")}.` : "",
+      verdict && verdict.unverified.length > 0 ? `Non vérifié par la revue : ${verdict.unverified.join(" ; ")}.` : "",
+      decisions.length > 0 ? `Décisions : ${decisions.map(decisionLine).join(" ; ")}.` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    void oracle.retain(repo.scope, summary, ["harness", "feature"]);
+    if (run.worktree !== null)
+      void git.removeWorktree(repo.path, run.worktree, repo.merge === "local" ? run.branch : null).catch(() => {});
+  }
+
+  /** Le commit que la forge a posé sur main pour la PR du run, s'il y est bien ; `null` sinon (rien qu'un revert puisse viser). */
+  async #landed(forge: Forge, run: RunRow, repo: RepoConfig): Promise<string | null> {
+    const sha = await forge.mergeCommit(run.branch).catch(() => null);
+    if (sha === null) return null;
+    const inMain = await this.#ctx.git.raw(repo.path, ["merge-base", "--is-ancestor", sha, repo.mainBranch]);
+    return inMain.code === 0 ? sha : null;
+  }
+
+  /**
+   * Revert d'un run mergé : le commit squash est défait sur `main` (mode `local` :
+   * `git revert` puis push ; mode `gh` : une PR de revert fusionnée en `--auto`), puis
+   * un run de suite s'ouvre pour reprendre la feature. Lève AVANT d'ouvrir le run de
+   * suite si le revert ou la poussée échoue ; 409 si le run n'est pas mergé.
+   */
+  async revert(runId: string, actor: Actor): Promise<RunRow> {
+    const run = this.#ctx.run(runId);
+    if (run.state !== "merged") throw new HarnessError(409, `le run ${runId} n'est pas mergé : rien à reverter`);
+    if (run.mergeSha === null)
+      throw new HarnessError(409, `le run ${runId} n'a posé aucun commit sur main (déjà dans main) : rien à reverter`);
+    const repo = this.#ctx.repo(run.repo);
+    const { git, config } = this.#ctx;
+    await this.#ctx.fetchMain(repo);
+    const main = await git.revParse(repo.path, repo.mainBranch);
+    const scratch = path.join(config.worktreesDir, `revert-${run.slug}-${Date.now().toString(36)}`);
+    const branch = repo.merge === "gh" ? `harness/revert-${run.slug}` : null;
+    let result: { sha: string; prUrl: string | null };
+    try {
+      await git.addWorktree(repo.path, scratch, branch, main);
+      // Un commit squash n'a qu'un parent : un revert simple suffit.
+      const reverted = await git.raw(scratch, ["revert", "--no-edit", run.mergeSha]);
+      if (reverted.code !== 0) {
+        await git.raw(scratch, ["revert", "--abort"]);
+        throw new HarnessError(409, `revert impossible : ${(reverted.stderr || reverted.stdout).trim().slice(0, 300)}`);
+      }
+      const sha = await git.revParse(scratch, "HEAD");
+      result = repo.merge === "gh" ? await this.#revertWithForge(run, repo, scratch, sha) : { sha, prUrl: null };
+      if (repo.merge === "local") {
+        await git.run(repo.path, ["update-ref", `refs/heads/${repo.mainBranch}`, sha, main]);
+        if (repo.remote) {
+          const push = await git.raw(
+            repo.path,
+            ["push", "-q", repo.remote, `refs/heads/${repo.mainBranch}:refs/heads/${repo.mainBranch}`],
+            remoteEnv(repo),
+          );
+          if (push.code !== 0) {
+            // La poussée refusée défait le revert local : main reste comme le distant la connaît.
+            await git.raw(repo.path, ["update-ref", `refs/heads/${repo.mainBranch}`, main, sha]);
+            this.#ctx.event("push_failed", run.id, { detail: push.stderr.trim().slice(0, 300), revert: true });
+            throw new HarnessError(502, `push du revert refusé : ${push.stderr.trim().slice(0, 300)}`);
+          }
+        }
+      }
+    } finally {
+      await git.removeWorktree(repo.path, scratch, branch).catch(() => {});
+    }
+    this.#ctx.event("reverted", run.id, {
+      sha: result.sha,
+      revertedSha: run.mergeSha,
+      prUrl: result.prUrl,
+      ...(actor.by ? { by: actor.by } : {}),
+    });
+    void this.#ctx.oracle.retain(
+      repo.scope,
+      `Feature revertée « ${run.title} » : le commit ${run.mergeSha.slice(0, 12)} a été défait sur ${repo.mainBranch} (${result.sha.slice(0, 12)})${actor.by ? ` par ${actor.by}` : ""}. Un run de suite reprend la feature.`,
+      ["harness", "feature", "revert"],
+    );
+    const follow = await this.#hooks.followUp(
+      {
+        repo: run.repo,
+        title: `Reprise après revert — ${run.title}`.slice(0, 120),
+        request: [
+          `La feature « ${run.title} » (run ${run.id}) avait été mergée dans ${repo.mainBranch} (${run.mergeSha.slice(0, 12)}), puis revertée (${result.sha.slice(0, 12)})${actor.by ? ` par ${actor.by}` : ""}.`,
+          "Reprends-la : relis le commit reverté, comprends ce qui a motivé le revert (consignes ci-dessous s'il y en a) et livre une version corrigée.",
+          "",
+          "Demande d'origine :",
+          run.request,
+        ].join("\n"),
+        modules: run.modules,
+        priority: run.priority,
+        autonomy: run.autonomy,
+      },
+      actor,
+    );
+    // Le lien du run de suite vers son parent : la lignée (vigie, pilote) et le gabarit « refaire » le lisent.
+    this.#ctx.event("follow_up", run.id, { runId: follow.id });
+    return follow;
+  }
+
+  /** Mode `gh` : la branche de revert poussée, une PR sur la forge, sa fusion squash automatique. */
+  async #revertWithForge(
+    run: RunRow,
+    repo: RepoConfig,
+    scratch: string,
+    sha: string,
+  ): Promise<{ sha: string; prUrl: string | null }> {
+    const { git } = this.#ctx;
+    const remote = repo.remote ?? "origin";
+    const branch = `harness/revert-${run.slug}`;
+    const forge = await this.#forge(repo);
+    await git.run(scratch, ["push", "-q", "-f", remote, `${branch}:${branch}`], remoteEnv(repo));
+    const prUrl = await forge.openChange(
+      {
+        head: branch,
+        base: repo.mainBranch,
+        title: `Revert « ${run.title} »`.slice(0, 120),
+        body: `Revert du commit ${run.mergeSha?.slice(0, 12) ?? ""} (run ${run.id}).\n\nHarness-Run: ${run.id}`,
+      },
+      null,
+    );
+    await forge.autoMerge(branch, null);
+    return { sha, prUrl };
+  }
+}

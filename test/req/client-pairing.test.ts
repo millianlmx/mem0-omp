@@ -11,7 +11,7 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
 import reqExtension from "../../omp-mem0-req/extension.ts";
 import { APPROVER_CODE_REFUSAL, decodePairing, encodePairing, writePairing } from "../../omp-mem0-req/harness.ts";
 import { fakeSchema } from "../support/fake-zod.ts";

@@ -4,7 +4,7 @@
 // destination dans l'app. Le pont vers `UserNotifications` (HarnessNotificationCenter)
 // ne fait que traduire.
 //
-// Le contrat vient du serveur (omp-harness/push-alerts.ts) : catégories `omp.validate`
+// Le contrat vient du serveur (omp-harness/notify/push-alerts.ts) : catégories `omp.validate`
 // (specs, verdict : Valider / Refuser), `omp.approve` (envoi du poste : Approuver /
 // Refuser), `omp.answer` (une seule question ouverte, avec sa recommandation : la
 // prendre, ou répondre autre chose), `omp.open` ; `rev` est l'If-Match du geste.
@@ -18,7 +18,7 @@
 import ConsoleCore
 import Foundation
 
-/// Les catégories de notification (`ALERT_CATEGORIES` d'omp-harness/push-alerts.ts).
+/// Les catégories de notification (`ALERT_CATEGORIES` d'omp-harness/notify/push-alerts.ts).
 public enum HarnessNotificationCategory: String, CaseIterable, Sendable {
     case validate = "omp.validate"
     case approve = "omp.approve"

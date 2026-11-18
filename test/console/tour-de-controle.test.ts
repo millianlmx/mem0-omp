@@ -10,8 +10,8 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 import type { AddressInfo } from "node:net";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import { apiRoutes, createHandler } from "../../omp-harness/http.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import { apiRoutes, createHandler } from "../../omp-harness/api/http.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT } from "../support/repo.ts";
 
@@ -98,7 +98,7 @@ test("tour-de-controle/AC-1 : chaque route de la tour de contrôle appelée par 
     assert.equal(served?.role, role, `le serveur ne sert pas ${method} ${sample} au rôle ${role}`);
   }
   // Les issues n'ont d'autre surface que le MCP : les deux outils appelés existent.
-  const mcp = fs.readFileSync(path.join(ROOT, "omp-harness", "mcp.ts"), "utf8");
+  const mcp = fs.readFileSync(path.join(ROOT, "omp-harness", "api", "mcp.ts"), "utf8");
   for (const tool of ["issues_list", "issue_fix"]) {
     assert.ok(client("HarnessControlModels.swift").includes(`"${tool}"`), `le client n'appelle plus ${tool}`);
     assert.match(mcp, new RegExp(`name: "${tool}"`), `le MCP ne sert plus ${tool}`);

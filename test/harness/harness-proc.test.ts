@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { CLOSE_GRACE_MS, execProcess } from "../../omp-harness/proc.ts";
+import { CLOSE_GRACE_MS, execProcess } from "../../omp-harness/runners/proc.ts";
 
 /** Le process `pid` vit-il encore ? Un zombie (tué, pas encore récolté par init) ne vit plus. */
 function alive(pid: number): boolean {

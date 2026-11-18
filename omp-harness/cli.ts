@@ -16,8 +16,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
 import type { ParseArgsOptionsConfig } from "node:util";
-import { humanWaitOf } from "./machine.ts";
-import type { HumanWait, RunState, StepKind } from "./machine.ts";
+import { humanWaitOf } from "./runs/machine.ts";
+import type { HumanWait, RunState, StepKind } from "./runs/machine.ts";
 
 /** Les codes de sortie : un contrat pour les scripts, ils ne changent pas de sens. */
 const EXIT = {
@@ -41,7 +41,7 @@ Connexion : HARNESS_URL et HARNESS_TOKEN, sinon ~/.omp/harness.json ({"url", "to
 Sortie : 0 livré · 1 échoué, annulé ou refusé · 2 ligne de commande fausse · 3 attend un humain
          4 délai d'attente dépassé · 5 serveur injoignable ou non configuré`;
 
-/** Le plus gros corps que le serveur lit (omp-harness/http.ts, MAX_BODY) : au-delà il rend 413. */
+/** Le plus gros corps que le serveur lit (omp-harness/api/http.ts, MAX_BODY) : au-delà il rend 413. */
 const MAX_BODY_BYTES = 1024 * 1024;
 /** Une réponse du serveur qui ne vient pas en 30 s est une panne réseau. */
 const REQUEST_TIMEOUT_MS = 30_000;

@@ -18,8 +18,8 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { HttpOracle } from "../oracle.ts";
-import { execProcess } from "../proc.ts";
+import { HttpOracle } from "../memory/oracle.ts";
+import { execProcess } from "../runners/proc.ts";
 import { HarnessApi } from "./api.ts";
 import { Vigie } from "./agent.ts";
 import type { CiRun } from "./collect.ts";

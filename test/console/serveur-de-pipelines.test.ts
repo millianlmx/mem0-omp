@@ -8,10 +8,10 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 import type { AddressInfo } from "node:net";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/http.ts";
-import { APPROVER_ONLY } from "../../omp-harness/workstation.ts";
-import { buildCard } from "../../omp-harness/card.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/api/http.ts";
+import { APPROVER_ONLY } from "../../omp-harness/workstation/workstation.ts";
+import { buildCard } from "../../omp-harness/human/card.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import { covers, swiftFields } from "../support/swift-contract.ts";
 import { ROOT } from "../support/repo.ts";
@@ -133,7 +133,7 @@ test("serveur-de-pipelines/AC-1 : chaque champ décodé par le client Swift exis
     assert.deepEqual(awaiting.briefing, { feature: "", cards: [] }, "un run qui attend un verdict : briefing vide");
     // Les états que l'app nomme sont ceux de la machine du serveur.
     const states = [...wire.matchAll(/case (\w+)(?: = "(\w+)")?$/gm)].map(([, name, raw]) => raw ?? name);
-    const machine = read("omp-harness", "machine.ts");
+    const machine = read("omp-harness", "runs", "machine.ts");
     for (const state of states) assert.match(machine, new RegExp(`"${state}"`), `état ${state} inconnu du serveur`);
   } finally {
     server.closeAllConnections();
@@ -214,10 +214,10 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
   }
   // Le flux d'événements est servi hors de la table (SSE).
   assert.ok(model.includes("/v1/events?after="), "le client ne suit plus /v1/events");
-  assert.match(read("omp-harness", "http.ts"), /url\.pathname === "\/v1\/events"/);
+  assert.match(read("omp-harness", "api", "http.ts"), /url\.pathname === "\/v1\/events"/);
   const transport = fs.readFileSync(path.join(CLIENT, "HarnessTransport.swift"), "utf8");
   assert.match(transport, /"Bearer \\\(server\.token\)", forHTTPHeaderField: "Authorization"/);
-  assert.match(read("omp-harness", "http.ts"), /auth\.startsWith\("Bearer "\)/);
+  assert.match(read("omp-harness", "api", "http.ts"), /auth\.startsWith\("Bearer "\)/);
 });
 
 test("serveur-de-pipelines/AC-3 : la coque Mac et l'app iOS ouvrent la feuille du serveur depuis la tuile Système › Serveur, sur un seul client par app", () => {
@@ -665,7 +665,7 @@ test("serveur-de-pipelines/AC-30 : multi-client — chaque route, chaque capacit
     const codes = [...client("HarnessSpaceFrontier.swift").matchAll(/^ {4}case \w+ = "([a-z_]+)"$/gm)].map(
       ([, code]) => code,
     );
-    const isolation = read("omp-harness", "isolation.ts");
+    const isolation = read("omp-harness", "spaces", "isolation.ts");
     assert.ok(codes.length >= 8, "les codes de lacune du client");
     for (const code of codes) assert.ok(isolation.includes(`"${code}"`), `code de lacune inconnu du serveur : ${code}`);
 

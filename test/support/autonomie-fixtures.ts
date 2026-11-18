@@ -3,9 +3,9 @@
 // diff de N lignes avec (ou sans) un test de reproduction.
 //
 // Ce module n'est pas un fichier de test (pas de suffixe `.test.ts`) : seuls les tests l'importent.
-import type { AutonomyRule } from "../../omp-harness/autonomy-rules.ts";
-import type { HarnessConfig } from "../../omp-harness/config.ts";
-import type { EventRow, RunRow } from "../../omp-harness/db.ts";
+import type { AutonomyRule } from "../../omp-harness/autonomy/autonomy-rules.ts";
+import type { HarnessConfig } from "../../omp-harness/config/config.ts";
+import type { EventRow, RunRow } from "../../omp-harness/db/db.ts";
 import { OK, fakeWorld, waitFor } from "./harness-fixtures.ts";
 import type { FakeWorld } from "./harness-fixtures.ts";
 

@@ -10,9 +10,9 @@ import {
   runnerEnv,
   runnerMemoryEnv,
   writePipelineOverlay,
-} from "../../omp-harness/runner.ts";
-import { clientEnv } from "../../omp-harness/heavy.ts";
-import { loginEnv } from "../../omp-harness/oauth.ts";
+} from "../../omp-harness/runners/runner.ts";
+import { clientEnv } from "../../omp-harness/heavy/heavy.ts";
+import { loginEnv } from "../../omp-harness/config/oauth.ts";
 import { testConfig } from "../support/harness-fixtures.ts";
 import { tmpdir } from "../support/repo.ts";
 

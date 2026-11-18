@@ -2,7 +2,7 @@
 # Lance les tests node que des fichiers touchés concernent — l'entrée `touched`
 # du harness (`npm run -s test:touched -- <fichiers…>`).
 #
-#   bash scripts/test-touched.sh omp-harness/verdict.ts src/chain.ts
+#   bash scripts/test-touched.sh omp-harness/runs/verdict.ts src/chain.ts
 #
 # La sélection est celle de `scripts/test-files.sh --scope=files <fichiers…>`
 # (règles a/b/c, outillage exclu). Liste reçue vide, ou aucun test qui nomme ces

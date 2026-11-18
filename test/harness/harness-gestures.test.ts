@@ -10,10 +10,10 @@ import * as path from "node:path";
 import { escalationArgs, readFrames } from "../support/card-fixtures.ts";
 import { OK, fakeWorld, git, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
-import type { HarnessConfig } from "../../omp-harness/config.ts";
-import { HarnessError } from "../../omp-harness/errors.ts";
-import { Store } from "../../omp-harness/db.ts";
-import { inboxOf } from "../../omp-harness/queries.ts";
+import type { HarnessConfig } from "../../omp-harness/config/config.ts";
+import { HarnessError } from "../../omp-harness/api/errors.ts";
+import { Store } from "../../omp-harness/db/db.ts";
+import { inboxOf } from "../../omp-harness/api/queries.ts";
 import { tmpdir } from "../support/repo.ts";
 
 function stateOf(world: FakeWorld, runId: string): string {

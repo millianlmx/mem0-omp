@@ -3,11 +3,11 @@
 // total, fermés (contexte supprimé dans Moli) après inactivité et à l'arrêt. Le journal ne reçoit
 // que des noms de classe et de méthode : jamais d'URL, d'hôte, de message de Moli ni de texte de page.
 import { randomBytes } from "node:crypto";
-import type { Client } from "../auth.ts";
-import type { HarnessConfig } from "../config.ts";
-import { HarnessError } from "../errors.ts";
-import type { LogLine } from "../logger.ts";
-import { untrusted } from "../workstation-guards.ts";
+import type { Client } from "../api/auth.ts";
+import type { HarnessConfig } from "../config/config.ts";
+import { HarnessError } from "../api/errors.ts";
+import type { LogLine } from "../operations/logger.ts";
+import { untrusted } from "../workstation/workstation-guards.ts";
 import { CdpClosedError, CdpConnectError, CdpError, CdpTimeoutError } from "./cdp.ts";
 import { GuardRefusal, checkUrl } from "./guard.ts";
 import type { Lookup } from "./guard.ts";

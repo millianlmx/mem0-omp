@@ -4,8 +4,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { OK, fakeWorld, git, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { nextAfter } from "../../omp-harness/machine.ts";
-import type { Limits } from "../../omp-harness/machine.ts";
+import { nextAfter } from "../../omp-harness/runs/machine.ts";
+import type { Limits } from "../../omp-harness/runs/machine.ts";
 
 const REMAINING = "- la pagination de l'export";
 

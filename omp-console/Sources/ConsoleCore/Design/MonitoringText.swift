@@ -422,7 +422,7 @@ public enum MonitoringText {
 }
 
 /// Les NOTIFICATIONS des deux apps : les gestes qu'offre une notification (catégories
-/// `omp.validate`, `omp.approve`, `omp.open` d'omp-harness/push-alerts.ts) et, sur Mac,
+/// `omp.validate`, `omp.approve`, `omp.open` d'omp-harness/notify/push-alerts.ts) et, sur Mac,
 /// le texte des notifications locales tirées du flux du serveur — les mêmes mots que
 /// les alertes push que le serveur envoie à l'iPhone.
 public enum NotificationText {
@@ -474,7 +474,7 @@ public enum NotificationText {
     public static func runLine(repo: String, title: String) -> String { "\(repo) · \(title)" }
 
     /// « aucune preuve », « 1 preuve », « 3 preuves » : les mots du serveur
-    /// (`proofCountText` d'omp-harness/proofs.ts), en fin du corps d'un verdict.
+    /// (`proofCountText` d'omp-harness/heavy/proofs.ts), en fin du corps d'un verdict.
     public static func proofs(_ count: Int) -> String {
         switch count {
         case ...0: L10n.text("aucune preuve")

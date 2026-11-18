@@ -10,7 +10,7 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { API_FEATURES, HARNESS_VERSION, createHandler, healthChecks } from "../../omp-harness/http.ts";
+import { API_FEATURES, HARNESS_VERSION, createHandler, healthChecks } from "../../omp-harness/api/http.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 
@@ -170,7 +170,7 @@ test("harness-health/AC-5 : `/v1/health` rend le commit construit — OMP_HARNES
         "--no-warnings",
         "--input-type=module",
         "-e",
-        `import { HARNESS_COMMIT } from ${JSON.stringify(path.join(ROOT, "omp-harness/build-info.ts"))};` +
+        `import { HARNESS_COMMIT } from ${JSON.stringify(path.join(ROOT, "omp-harness/operations/build-info.ts"))};` +
           "process.stdout.write(JSON.stringify(HARNESS_COMMIT));",
       ],
       { env, encoding: "utf8" },

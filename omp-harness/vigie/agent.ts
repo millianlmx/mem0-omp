@@ -16,13 +16,13 @@
 // injoignable, gestes passés) vit dans `<workDir>/state.json` : un redémarrage reprend.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { EventRow, VigieTriage } from "../db.ts";
-import type { HumanWait, StepKind } from "../machine.ts";
-import { humanWaitOf } from "../machine.ts";
-import type { Oracle } from "../oracle.ts";
-import { renderMemories } from "../oracle.ts";
-import { HUMAN_ONLY, PILOT_ACTIONS } from "../pilot.ts";
-import type { Exec } from "../proc.ts";
+import type { EventRow, VigieTriage } from "../db/db.ts";
+import type { HumanWait, StepKind } from "../runs/machine.ts";
+import { humanWaitOf } from "../runs/machine.ts";
+import type { Oracle } from "../memory/oracle.ts";
+import { renderMemories } from "../memory/oracle.ts";
+import { HUMAN_ONLY, PILOT_ACTIONS } from "../human/pilot.ts";
+import type { Exec } from "../runners/proc.ts";
 import type { HarnessApi } from "./api.ts";
 import { HarnessUnreachable } from "./api.ts";
 import type { CiRun, LogLine, Observed } from "./collect.ts";

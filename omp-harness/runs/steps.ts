@@ -1,0 +1,1246 @@
+// La conduite d'une étape : worktree, artefacts, prompt, relance unique, clôture.
+//
+// Une étape réussie rend son issue à la machine (`StepOutcome`) ; ce module ne décide
+// d'aucune transition. Il prépare le worktree (rebase sur main avant la revue, fusion
+// de main en cas de conflit), ouvre le runner du bon tier, envoie le prompt borné par
+// l'échéance de l'étape, vérifie que l'étape a rendu ce qu'elle devait, verse ses
+// artefacts dans la base et pose le checkpoint de fin.
+//
+// Une étape interrompue (délai, fournisseur, runner mort) laisse un commit WIP et une
+// consigne de reprise : la tentative suivante repart du travail fait, pas de zéro.
+//
+// Les étapes de contrat (/req, /specs) passent, avant leur clôture, devant le
+// contradicteur (challenge.ts). Les specs closes sont GELÉES (`SPECS_BASELINE`) : la revue
+// et l'auto-merge jugent sur leurs critères, pas sur ceux que /impl aurait réécrits.
+import { baselineSummary, newFailuresText } from "../heavy/baseline.ts";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import type { Answer, ChallengeRecord, Finding } from "./challenge.ts";
+import {
+  CHALLENGE_ARTIFACT,
+  CHALLENGE_STATE,
+  disputes,
+  openDisputes,
+  parseAnswers,
+  parseFindings,
+  readRecords,
+  renderRecords,
+  toAnswer,
+  unanswered,
+} from "./challenge.ts";
+import type { ChallengeStep } from "../config/config.ts";
+import { fixCapFor } from "../config/config.ts";
+import type { HarnessContext } from "./context.ts";
+import type { RunRow, StepRow, Store } from "../db/db.ts";
+import type { AtlassianDesk } from "../atlassian/desk.ts";
+import { featureLine } from "../human/card.ts";
+import { detectIrreversible } from "./decisions.ts";
+import { ARTIFACTS_DIR, isArtifactPath, isTestFile } from "../forge/git.ts";
+import type { HeavyResult } from "../heavy/heavy.ts";
+import { matchesGlob } from "../heavy/heavy.ts";
+import type { StepState } from "./host-tools.ts";
+import { runHostTool } from "./host-tools.ts";
+import type { FailCause, GateFact, StepKind, StepOutcome } from "./machine.ts";
+import { IRREVERSIBLE_GATE, isRunnerOom, stepTier } from "./machine.ts";
+import { broadModules, parseModulesSection } from "./planner.ts";
+import {
+  OOM_RETRY_NOTE,
+  STEP_ARTIFACT,
+  challengeAnswerPrompt,
+  challengePrompt,
+  nudgePrompt,
+  stepPrompt,
+} from "./prompts.ts";
+import { briefOfReq, renderMemories } from "../memory/oracle.ts";
+import { PolicyRefusal } from "../config/policy.ts";
+import type { PromptError, PromptResult } from "../runners/rpc.ts";
+import { RunnerExited } from "../runners/rpc.ts";
+import { hostToolsFor, runnerUnit } from "../runners/runner.ts";
+import { QaPreview } from "../browser/qa.ts";
+import { reportSlugs, testReport } from "../heavy/test-report.ts";
+import { RunnerSession, STEP_TIMEOUT_PREFIX, providerOfLabel } from "../runners/runner-session.ts";
+import { ensureArtifactsDir, expectedDir, readArtifact, writeArtifact } from "./safefs.ts";
+import type { CriterionDrift, MergeDecision, ReviewEvidence, Verdict } from "./verdict.ts";
+import { criteriaDrift, mergeDecision, parseAcIds } from "./verdict.ts";
+
+/** Les specs telles qu'à la clôture de /specs (et donc à leur validation) : artefact interne. */
+export const SPECS_BASELINE = "_specs.baseline.md";
+
+/**
+ * Ce que la revue a établi quand elle a rendu son verdict (`{merge, evidence}`) : artefact interne,
+ * que l'autonomie par paliers relit pour lever une attente de verdict (autonomy-gates.ts). Il n'entre
+ * ni dans la vue du run ni dans le journal public, et le runner ne le voit pas.
+ */
+export const REVIEW_EVIDENCE = "_review-evidence.json";
+
+/** L'unité du runner contradicteur d'une étape (l'arrêt forcé la retrouve au redémarrage). */
+export function challengeUnit(runId: string, stepId: number): string {
+  return `${runnerUnit(runId, stepId)}-contradicteur`;
+}
+
+/** Ce que le passage du contradicteur laisse à l'étape : rien à redire, un artefact cassé, ou un prompt interrompu. */
+type ChallengeEnd =
+  | { kind: "ok" }
+  | { kind: "missing"; reason: string }
+  | { kind: "interrupted"; result: PromptResult };
+
+/** Ce que l'orchestrateur prête aux étapes : créer du travail (découpage), lire Atlassian. */
+export type StepHooks = {
+  /** `split_feature` en /impl : un projet des sous-features AUTRES que celle que le run continue, en attente de son merge (split.ts). */
+  split: (run: RunRow, features: SplitFeature[], step: StepKind) => { projectId: string; runs: RunRow[] };
+  /** Le connecteur Atlassian : ses lectures et `corpo_recall` pour un dépôt `atlassian: true` (host-tools.ts). */
+  atlassian: AtlassianDesk;
+};
+
+/** L'état vivant d'un run conduit par ce process. */
+export type LiveRun = StepState & {
+  runId: string;
+  abort: AbortController;
+  /** La session du runner : créée au premier besoin, gardée entre review et fix. */
+  session: RunnerSession | null;
+  pendingRebase: boolean;
+  conflicts: string[];
+  /** La suite complète lancée à l'entrée en revue, avant le prompt (le runner la rejoint). */
+  fullSuite: Promise<HeavyResult | null> | null;
+  done: Promise<void>;
+};
+
+export function liveRun(runId: string): LiveRun {
+  return {
+    runId,
+    abort: new AbortController(),
+    session: null,
+    step: null,
+    verdict: null,
+    fullRunsThisStep: 0,
+    lastFull: null,
+    lastTests: null,
+    qa: null,
+    pendingRebase: false,
+    conflicts: [],
+    fullSuite: null,
+    done: Promise.resolve(),
+  };
+}
+
+/**
+ * Une sous-feature d'un découpage. `after` : elle a besoin du code du run parent sur main et attend son
+ * merge (`afterRun`) ; sinon c'est un run normal, qui part tout de suite (le planificateur ne la retient
+ * que si ses modules recoupent ceux d'un run en cours).
+ */
+export type SplitFeature = { title: string; request: string; modules: string[]; after: boolean };
+
+/** Le corps d'une section `## Titre` d'un artefact (jusqu'au `## ` suivant), ou `null` si elle manque. */
+export function sectionBody(markdown: string, title: RegExp): string | null {
+  const lines = markdown.split("\n");
+  const start = lines.findIndex((line) => {
+    const heading = /^##\s+(.+?)\s*$/.exec(line);
+    return heading !== null && title.test(heading[1] ?? "");
+  });
+  if (start < 0) return null;
+  const body: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^##\s/.test(line)) break;
+    body.push(line);
+  }
+  return body.join("\n").trim();
+}
+
+/** Les puces d'un corps de section, sans leur marqueur. */
+function bullets(body: string): string[] {
+  return body
+    .split("\n")
+    .map((line) => /^\s*(?:[-*]|\d+[.)])\s+(.*\S)\s*$/.exec(line)?.[1] ?? null)
+    .filter((item): item is string => item !== null);
+}
+
+/**
+ * Les sous-features de `## Découpage` : une puce `titre — demande — modules [— après]` chacune
+ * (modules séparés par des virgules ; demande et modules facultatifs ; `— après` : elle attend
+ * le merge de ce run). « aucun » ⇒ vide.
+ */
+export function parseSplitSection(specsMd: string): SplitFeature[] {
+  const body = sectionBody(specsMd, /^d[ée]coupage/i);
+  if (body === null || /^aucun/i.test(body)) return [];
+  const features: SplitFeature[] = [];
+  for (const item of bullets(body)) {
+    const [title = "", request = "", modules = "", marker = ""] = item.split(/\s+[—–]\s+/).map((part) => part.trim());
+    if (title === "") continue;
+    features.push({
+      title: title.replace(/^\*\*|\*\*$/g, "").slice(0, 120),
+      request: request === "" ? title : request,
+      modules: modules
+        .split(/[,;]/)
+        .map((module) => module.trim().replace(/^`|`$/g, ""))
+        .filter((module) => module !== "" && !isArtifactPath(module.replace(/^\.\//, ""))),
+      // `— après` : elle a besoin du code de ce run sur main.
+      after: /^apr[eè]s\b/i.test(marker),
+    });
+  }
+  return features;
+}
+
+/**
+ * Le `## Reste` d'impl.md : ce que l'implémentation n'a pas fait, ou `""`. Une section
+ * qui commence par « rien », « aucun » ou « néant » (seul, ou suivi de `:`, `.`, un tiret
+ * ou « à … » : « Rien : tout est livré », « Rien à livrer ») ne demande rien.
+ */
+export function parseRemaining(implMd: string): string {
+  const body = sectionBody(implMd, /^reste/i) ?? "";
+  return /^(?:(?:aucune?|rien|n[ée]ant)(?:\s*$|\s*[.:—–-]|\s+à\s)|[-—]\s*$)/i.test(body) ? "" : body;
+}
+
+/** Les identifiants `P-n` en tête de ligne d'un texte, dans l'ordre, dédoublonnés. */
+function idsOf(text: string, prefix: string): string[] {
+  const atLineStart = new RegExp(`^\\s*(?:[-*]\\s*)?\\*{0,2}(${prefix}-\\d+)\\*{0,2}`, "gm");
+  return [...new Set([...text.matchAll(atLineStart)].map((match) => match[1] ?? ""))];
+}
+
+/** Les identifiants cités entre parenthèses juste après `id` sur sa ligne : `AC-2 (B-1, B-3)`. */
+function citedBy(text: string, id: string): string[] {
+  const line = new RegExp(`^\\s*(?:[-*]\\s*)?\\*{0,2}${id}\\*{0,2}\\s*\\(([^)]*)\\)`, "m").exec(text);
+  return line === null ? [] : ((line[1] ?? "").match(/\b(?:B|AC)-\d+\b/g) ?? []);
+}
+
+/**
+ * La couverture des specs : chaque besoin B-n a au moins un critère `AC-m (B-n)`,
+ * chaque critère est cité par au moins une spécification `S-k (AC-m)`. Le premier
+ * trou, ou `null`.
+ */
+export function specsCoverageGap(reqMd: string, specsMd: string): string | null {
+  const needs = idsOf(sectionBody(reqMd, /^besoins/i) ?? "", "B");
+  const criteriaBody = sectionBody(specsMd, /^crit[eè]res d'acceptation/i) ?? "";
+  const criteria = idsOf(criteriaBody, "AC");
+  if (criteria.length === 0) return "aucun critère `AC-n (B-m)` dans `## Critères d'acceptation`";
+  const covered = new Set(criteria.flatMap((ac) => citedBy(criteriaBody, ac)));
+  const orphanNeed = needs.find((need) => !covered.has(need));
+  if (orphanNeed !== undefined)
+    return `le besoin ${orphanNeed} n'a aucun critère d'acceptation (attendu : \`AC-n (${orphanNeed})\`)`;
+  const specsBody = sectionBody(specsMd, /^sp[ée]cifications/i) ?? "";
+  const cited = new Set(idsOf(specsBody, "S").flatMap((spec) => citedBy(specsBody, spec)));
+  const orphanCriterion = criteria.find((ac) => !cited.has(ac));
+  if (orphanCriterion !== undefined)
+    return `le critère ${orphanCriterion} n'est cité par aucune spécification (attendu : \`S-n (${orphanCriterion})\`)`;
+  return null;
+}
+
+/**
+ * Pourquoi les specs ont besoin d'un regard humain avant /impl (porte « auto »), en DONNÉES : un
+ * découpage proposé, des modules absents, une décision irréversible dans le texte, ou la
+ * première feature d'un projet (elle fixe le cadre des suivantes). Vide : aucune raison.
+ */
+export function gateFacts(run: Pick<RunRow, "projectId" | "projectOrder">, specsMd: string): GateFact[] {
+  const irreversible = detectIrreversible(specsMd);
+  return [
+    ...(parseSplitSection(specsMd).length > 0 ? [{ code: "split_proposed" } as const] : []),
+    ...(parseModulesSection(specsMd).length === 0 ? [{ code: "empty_modules" } as const] : []),
+    ...(irreversible !== null ? [{ code: "irreversible", category: irreversible } as const] : []),
+    ...(run.projectId !== null && run.projectOrder === 0 ? [{ code: "first_of_project" } as const] : []),
+  ];
+}
+
+/** Le texte d'une raison de porte, tel que la raison du run le garde. */
+function gateText(fact: GateFact): string {
+  switch (fact.code) {
+    case "split_proposed":
+      return "découpage proposé";
+    case "empty_modules":
+      return "modules vides";
+    case "irreversible":
+      return `${IRREVERSIBLE_GATE} (${fact.category})`;
+    case "first_of_project":
+      return "première feature d'un projet";
+    case "dispute":
+      return `désaccord avec le contradicteur (${fact.ids.join(", ")})`;
+  }
+}
+
+/** Les raisons de porte des specs, en texte (`gateFacts`) : ce que la raison du run et la carte de specs disent. */
+export function gateReasons(run: Pick<RunRow, "projectId" | "projectOrder">, specsMd: string): string[] {
+  return gateFacts(run, specsMd).map(gateText);
+}
+
+/**
+ * Toutes les raisons de la porte des specs d'un run, relues de ce qu'il a en base : celles de son
+ * `specs.md` (`gateFacts`), puis ses désaccords restés ouverts avec le contradicteur.
+ */
+export function specsGateFacts(
+  store: Pick<Store, "getArtifact">,
+  run: Pick<RunRow, "id" | "projectId" | "projectOrder">,
+): GateFact[] {
+  const disputed = openDisputes(readRecords(store.getArtifact(run.id, CHALLENGE_STATE)));
+  return [
+    ...gateFacts(run, store.getArtifact(run.id, "specs.md") ?? ""),
+    ...(disputed.length > 0 ? [{ code: "dispute", ids: disputed } as const] : []),
+  ];
+}
+
+export function gateNeeded(run: Pick<RunRow, "projectId" | "projectOrder">, specsMd: string): boolean {
+  return gateReasons(run, specsMd).length > 0;
+}
+
+/**
+ * La voie directe, triée à la création sans LLM : une demande qui porte déjà sa section
+ * `## Critères d'acceptation`, avec au moins un `AC-n` en tête de ligne (le parseur de la
+ * revue), part à /impl sans /req ni /specs. Rend le specs.md synthétisé — le titre, la
+ * demande citée telle quelle (en citation : ses titres et ses ids n'y comptent pas), puis
+ * ses critères —, ou `null` si la demande n'en porte pas.
+ */
+export function directSpecs(title: string, request: string): string | null {
+  const criteria = sectionBody(request, /^crit[eè]res d'acceptation/i);
+  if (criteria === null || parseAcIds(criteria).length === 0) return null;
+  const quoted = request
+    .trim()
+    .split("\n")
+    .map((line) => `> ${line}`.trimEnd())
+    .join("\n");
+  return `# ${title.trim()}\n\nVoie directe : la demande portait ses critères d'acceptation, ni /req ni /specs n'ont tourné.\n\n## Demande\n\n${quoted}\n\n## Critères d'acceptation\n\n${criteria}\n`;
+}
+
+/**
+ * Le specs.md de la voie express : celui de la voie directe si la demande porte ses critères, sinon la demande
+ * citée et UN critère synthétisé — la demande livrée telle qu'écrite, prouvée par un test qui la nomme.
+ */
+export function expressSpecs(title: string, request: string): string {
+  const direct = directSpecs(title, request);
+  if (direct !== null) return direct.replace(/^Voie directe : .*$/m, EXPRESS_NOTE);
+  const quoted = request
+    .trim()
+    .split("\n")
+    .map((line) => `> ${line}`.trimEnd())
+    .join("\n");
+  return `# ${title.trim()}\n\n${EXPRESS_NOTE}\n\n## Demande\n\n${quoted}\n\n## Critères d'acceptation\n\nAC-1 : Given le dépôt actuel, When le changement est livré, Then ce que décrit la demande ci-dessus fonctionne, prouvé par un test nommé avec AC-1\n`;
+}
+
+const EXPRESS_NOTE =
+  "Voie express : ni /req ni /specs n'ont tourné ; la revue ne bloque que sur ce qui casse (critère non tenu, test rouge, faille, perte de données).";
+
+/** La cause d'un prompt qui n'a pas abouti, pour la machine (backoff, bascule, impasse). */
+export function failCauseOf(status: "aborted" | "error", error: PromptError | null): FailCause {
+  if (status === "aborted") return "aborted";
+  if (error?.message.startsWith(STEP_TIMEOUT_PREFIX)) return "timeout";
+  const cause = error?.cause;
+  switch (cause) {
+    case "rate_limit":
+      return "rate_limit";
+    case "network":
+      return "network";
+    case "server_error":
+      return "provider";
+    case "context":
+      return "context";
+    case "other":
+    case undefined:
+      return "other";
+    default: {
+      const _exhaustive: never = cause;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Ce qu'un résultat heavy dit de la suite complète. Un job qui n'a pas pu démarrer ou a été arrêté, ou une CI de
+ * la forge qui n'a pas fini à temps (file du runner, poste endormi), ne juge pas le code : `not_run`, jamais un
+ * bloquant qui coûterait une correction — la suite est rejugée, ou l'humain voit qu'elle n'a pas été jugée.
+ */
+function fullOutcome(result: HeavyResult): "pass" | "fail" | "not_run" {
+  if (result.outcome === "pass") return "pass";
+  if (result.outcome === "error" || result.outcome === "aborted") return "not_run";
+  return result.judge === "ci" && result.outcome === "timeout" ? "not_run" : "fail";
+}
+
+/**
+ * Un résumé d'une suite rouge pour un bloquant : code de sortie et fin de sortie, sur une ligne. Jugée par la
+ * CI de la forge : l'issue, puis chaque job rouge (nom, URL, extrait de ses logs) tel que le juge l'a écrit.
+ */
+function failSummary(result: HeavyResult): string {
+  if (result.judge === "ci") return `${result.outcome} (CI de la forge)\n${result.output.slice(0, 8000)}`;
+  const tail = result.output.trim().replace(/\s+/g, " ").slice(-300);
+  return `${result.outcome}${result.exitCode !== null ? `, code ${result.exitCode}` : ""}${tail ? ` — ${tail}` : ""}`;
+}
+
+export class StepExecutor {
+  readonly #ctx: HarnessContext;
+  readonly #hooks: StepHooks;
+
+  constructor(ctx: HarnessContext, hooks: StepHooks) {
+    this.#ctx = ctx;
+    this.#hooks = hooks;
+  }
+
+  /** La session du run, liée à son worktree ; ses événements portent le run et l'étape. */
+  session(live: LiveRun, run: RunRow): RunnerSession {
+    const { store } = this.#ctx;
+    live.session ??= new RunnerSession(
+      this.#ctx,
+      { repo: this.#ctx.repo(run.repo), cwd: run.worktree as string },
+      {
+        onHostTool: (name, args, signal) => runHostTool(this.#ctx, this.#hooks, live, live.runId, name, args, signal),
+        event: (type, payload) =>
+          this.#ctx.event(type, live.runId, { ...payload, ...(live.step ? { step: live.step.kind } : {}) }),
+        frame: (frame) => {
+          this.#ctx.sessions.frame(live.runId, live.step?.kind ?? null, frame);
+          this.#ctx.graphs.frame(run, live.step, frame);
+        },
+        runnerChanged: (unit, model) => {
+          store.updateRun(live.runId, { model });
+          if (live.step) store.setStepRunner(live.step.id, unit, model);
+        },
+      },
+    );
+    return live.session;
+  }
+
+  /**
+   * Les lectures Atlassian offertes aux étapes du run : le dépôt les déclare (`atlassian: true`,
+   * jamais sur un dépôt public) ET la connexion de SON espace est branchée (la connexion par défaut
+   * pour un dépôt hors espace ; un espace sans connexion n'a rien). La visibilité de la forge ne se lit
+   * qu'en asynchrone (`Forge.visibility()`) : la déclaration du dépôt fait foi.
+   */
+  #atlassianFor(run: RunRow): boolean {
+    return this.#ctx.repo(run.repo).atlassian === true && this.#hooks.atlassian.forRepo(run.repo).connected();
+  }
+
+  /** Le worktree du run, sur une branche neuve à partir de `main`. */
+  async provision(run: RunRow): Promise<RunRow> {
+    const { git, config, store } = this.#ctx;
+    const repo = this.#ctx.repo(run.repo);
+    await this.#ctx.fetchMain(repo);
+    const base = await git.revParse(repo.path, repo.mainBranch);
+    const worktree = path.join(config.worktreesDir, repo.name, run.slug);
+    await git.addWorktree(repo.path, worktree, run.branch, base);
+    return store.transaction(() => {
+      this.#ctx.event("worktree", run.id, { worktree, branch: run.branch, base });
+      return store.updateRun(run.id, { worktree, baseSha: base });
+    });
+  }
+
+  /** Une étape, et la QA de /review arrêtée à sa sortie quelle qu'elle soit (succès, échec, arrêt du service). */
+  async execute(live: LiveRun, run: RunRow): Promise<StepOutcome> {
+    live.qa = null;
+    try {
+      return await this.#executeStep(live, run);
+    } finally {
+      // `live.qa` a pu être posé par #executeStep : l'affectation de `null` plus haut ne dit plus rien de lui.
+      const qa = live.qa as QaPreview | null;
+      live.qa = null;
+      await qa?.stop();
+    }
+  }
+
+  async #executeStep(live: LiveRun, run: RunRow): Promise<StepOutcome> {
+    const { store, git, config } = this.#ctx;
+    const step = run.step as StepKind;
+    const worktree = run.worktree as string;
+    if (live.pendingRebase && step === "review") {
+      await this.#rebaseOnMain(live, run);
+      live.pendingRebase = false;
+      run = store.getRun(run.id) as RunRow;
+    }
+    const session = this.session(live, run);
+    const reused = session.alive;
+    const stepRow = store.startStep(
+      run.id,
+      step,
+      run.attempts,
+      reused ? session.model : null,
+      reused ? session.unit : null,
+    );
+    live.step = stepRow;
+    this.#ctx.graphs.step(run, stepRow);
+    live.verdict = null;
+    live.fullRunsThisStep = 0;
+    live.lastFull = null;
+    live.lastTests = null;
+    live.fullSuite = null;
+    // L'échéance de l'étape : prompts, relance et bascules compris.
+    const deadlineAt = Date.now() + config.runner.stepTimeoutSec * 1000;
+    this.#ctx.event("step_started", run.id, { step, stepId: stepRow.id, attempt: run.attempts });
+    try {
+      this.#materialize(run);
+      // Une fusion de main en cours (rebase en conflit) : ses fichiers encore en conflit partent dans le prompt.
+      if (step === "review" && (await git.mergeInProgress(worktree)))
+        live.conflicts = await git.unmergedFiles(worktree);
+      // La QA de /review (prévisualisation et son navigateur) démarre en tâche de fond : le prompt ne l'attend pas.
+      // La voie express s'en passe : la suite complète juge, la navigation de l'agent dans l'app coûte des minutes.
+      if (step === "review" && run.lane !== "express")
+        live.qa = QaPreview.start(
+          { config, exec: this.#ctx.exec, log: this.#ctx.log, proofs: this.#ctx.proofs },
+          { runId: run.id, stepId: stepRow.id, repo: this.#ctx.repo(run.repo), worktree },
+          live.abort.signal,
+        );
+      // La première revue a besoin de la suite complète : elle part tout de suite, le runner la rejoindra.
+      if (step === "review" && run.fixes === 0 && live.conflicts.length === 0)
+        this.#launchFullSuite(live, run, stepRow);
+      const headBefore = await git.revParse(worktree, "HEAD");
+      const dirtyBefore = await git.isDirty(worktree);
+      await session.open(
+        stepTier(config.stepTiers, step, run.fixes, fixCapFor(config, run)),
+        runnerUnit(run.id, stepRow.id),
+        live.abort.signal,
+        // La revue relit chez un autre fournisseur que l'implémenteur : pas les mêmes angles morts.
+        step === "review" && config.review.crossProvider ? { avoidProvider: this.#implementerProvider(run.id) } : {},
+      );
+      await session.setHostTools(
+        hostToolsFor(step, { qa: live.qa?.offersTools === true, atlassian: this.#atlassianFor(run) }),
+      );
+
+      const repo = this.#ctx.repo(run.repo);
+      const prompt = stepPrompt({
+        step,
+        title: run.title,
+        request: run.request,
+        baseSha: run.baseSha ?? "main",
+        maxDiffLines: config.review.maxDiffLines,
+        memories: renderMemories(
+          await this.#ctx.oracle.recall(repo.scope, `${run.title}\n${run.request}\n${run.modules.join(" ")}`),
+        ),
+        blockers: run.verdict?.blockers ?? [],
+        previousVerdict: run.verdict,
+        previousBlockers: run.verdict?.blockers ?? [],
+        sinceSha: step === "review" && run.fixes > 0 ? run.lastReviewSha : null,
+        resume: store.instructions(run.id),
+        standing: store.activeStandingRules(repo.name).map((rule) => rule.text),
+        decisions: this.#decisionLines(run.id),
+        conflicts: live.conflicts,
+        specsDrift: step === "review" ? this.#specsDrift(run.id) : [],
+        // Pas de req.md : le run est né en voie directe, specs.md ne porte que la demande et ses critères.
+        direct: store.getArtifact(run.id, "req.md") === null,
+        express: run.lane === "express",
+        qa: step === "review" && live.qa?.offersTools === true,
+      });
+      store.setInstructions(run.id, null);
+      live.conflicts = [];
+
+      let result = await session.prompt(prompt, live.abort.signal, deadlineAt);
+      let missing =
+        result.status === "completed" ? await this.#missingOutput(live, run, headBefore, dirtyBefore) : null;
+      if (result.status === "completed" && missing !== null) {
+        result = await session.prompt(
+          this.#withPending(run.id, nudgePrompt(step, missing)),
+          live.abort.signal,
+          deadlineAt,
+        );
+        missing = result.status === "completed" ? await this.#missingOutput(live, run, headBefore, dirtyBefore) : null;
+      }
+      // Une revue sans bloquant conclut sur la suite complète : si elle n'a pas tourné sur cet arbre, une relance.
+      // (`live.verdict` est posé par l'outil hôte pendant le prompt : lu par fonction, hors du rétrécissement.)
+      const verdictNow = (): Verdict | null => live.verdict;
+      const rendered = verdictNow();
+      if (
+        result.status === "completed" &&
+        missing === null &&
+        step === "review" &&
+        rendered !== null &&
+        rendered.blockers.length === 0 &&
+        (await this.#fullTests(live, run)) === "not_run"
+      ) {
+        result = await session.prompt(
+          this.#withPending(
+            run.id,
+            nudgePrompt(step, "la suite complète n'a pas tourné sur cet arbre — lance `run_tests` avec `scope: full`"),
+          ),
+          live.abort.signal,
+          deadlineAt,
+        );
+        missing = result.status === "completed" ? await this.#missingOutput(live, run, headBefore, dirtyBefore) : null;
+      }
+      if (result.status !== "completed") {
+        const cause = failCauseOf(result.status, result.error);
+        const reason =
+          result.error?.message ?? (result.status === "aborted" ? "prompt interrompu" : "erreur du runner");
+        return await this.#interrupted(run, stepRow, cause, reason, result.error?.retryable !== false);
+      }
+      if (missing !== null) {
+        store.finishStep(stepRow.id, "failed", missing);
+        return { kind: "failed", cause: "missing_output", reason: missing, retryable: true };
+      }
+      const challenged = await this.#challenge(live, run, stepRow, headBefore, dirtyBefore, deadlineAt);
+      if (challenged.kind === "interrupted") {
+        const error = challenged.result.error;
+        const status = challenged.result.status === "aborted" ? "aborted" : "error";
+        return await this.#interrupted(
+          run,
+          stepRow,
+          failCauseOf(status, error),
+          error?.message ?? (status === "aborted" ? "prompt interrompu" : "erreur du runner"),
+          error?.retryable !== false,
+        );
+      }
+      if (challenged.kind === "missing") {
+        store.finishStep(stepRow.id, "failed", challenged.reason);
+        return { kind: "failed", cause: "missing_output", reason: challenged.reason, retryable: true };
+      }
+      // La capture d'office de la QA est une preuve de la revue : elle est écrite avant la clôture (notification comprise).
+      await live.qa?.finish();
+      return await this.#close(live, run, stepRow);
+    } catch (err) {
+      if (live.abort.signal.aborted) {
+        store.finishStep(stepRow.id, "interrupted", "arrêté");
+        return { kind: "failed", cause: "aborted", reason: "arrêté", retryable: false };
+      }
+      const reason = err instanceof Error ? err.message : String(err);
+      await session.stop();
+      // Une politique du dépôt qui refuse l'étape (aucun modèle permis, jeton absent) : la
+      // relancer telle quelle referait le même refus — l'humain corrige la configuration.
+      return await this.#interrupted(
+        run,
+        stepRow,
+        err instanceof RunnerExited ? "runner" : "other",
+        reason,
+        !(err instanceof PolicyRefusal),
+      );
+    } finally {
+      this.#ctx.graphs.flush(run.id);
+    }
+  }
+
+  /**
+   * Le contradicteur d'une étape de contrat. L'auteur rend son runner (un run, un slot,
+   * un runner), un agent neuf relit l'artefact en lecture seule, puis l'auteur — sur un
+   * runner neuf — corrige ou réfute chaque constat dans l'artefact. Un contradicteur en
+   * panne DÉGRADE l'étape (événement `challenge` en échec), il ne la bloque jamais.
+   */
+  async #challenge(
+    live: LiveRun,
+    run: RunRow,
+    stepRow: StepRow,
+    headBefore: string,
+    dirtyBefore: boolean,
+    deadlineAt: number,
+  ): Promise<ChallengeEnd> {
+    const { config, store, git } = this.#ctx;
+    const step = run.step as StepKind;
+    if ((step !== "req" && step !== "specs") || !config.challenge.steps.includes(step)) return { kind: "ok" };
+    const worktree = run.worktree as string;
+    const author = this.session(live, run);
+    const authorModel = author.model;
+    // Le travail de l'auteur est à l'abri (base et commit) avant que le contradicteur n'ouvre le worktree.
+    this.#ingest(run, stepRow.id);
+    if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip(${step}): ${run.title}`.slice(0, 120));
+    await author.stop();
+    const critic = await this.#runCritic(live, run, stepRow, step, author.provider, deadlineAt);
+    // Ce que le contradicteur a pu écrire est jeté ; les artefacts de l'auteur reviennent de la base.
+    if (await git.isDirty(worktree)) await git.resetTo(worktree, "HEAD");
+    this.#materialize(run);
+    if (critic.kind === "failed") {
+      this.#ctx.event("challenge", run.id, { step, status: "failed", reason: critic.reason });
+      return { kind: "ok" };
+    }
+
+    const pending = toAnswer(critic.findings);
+    let answers = new Map<string, Answer>();
+    if (pending.length > 0) {
+      const session = this.session(live, run);
+      await session.open(
+        stepTier(config.stepTiers, step, run.fixes, fixCapFor(config, run)),
+        `${runnerUnit(run.id, stepRow.id)}-reponse`,
+        live.abort.signal,
+      );
+      await session.setHostTools(hostToolsFor(step, { atlassian: this.#atlassianFor(run) }));
+      const missingAnswer = async (): Promise<string | null> => {
+        const broken = await this.#missingOutput(live, run, headBefore, dirtyBefore);
+        if (broken !== null) return broken;
+        const ids = unanswered(pending, parseAnswers(this.#artifactNow(run, step)));
+        return ids.length === 0
+          ? null
+          : `${ids.join(", ")} sans réponse dans la section \`## Contradicteur\` de \`${ARTIFACTS_DIR}/${STEP_ARTIFACT[step] as string}\` (\`C-n : corrigé — …\` ou \`C-n : réfuté — …\`)`;
+      };
+      let result = await session.prompt(
+        this.#withPending(run.id, challengeAnswerPrompt({ step, title: run.title, findings: pending })),
+        live.abort.signal,
+        deadlineAt,
+      );
+      let missing = result.status === "completed" ? await missingAnswer() : null;
+      if (result.status === "completed" && missing !== null) {
+        result = await session.prompt(
+          this.#withPending(run.id, nudgePrompt(step, missing)),
+          live.abort.signal,
+          deadlineAt,
+        );
+        missing = result.status === "completed" ? await missingAnswer() : null;
+      }
+      if (result.status !== "completed") return { kind: "interrupted", result };
+      // Une réponse absente compte comme un refus (désaccord) ; un artefact cassé fait échouer l'étape.
+      const broken = await this.#missingOutput(live, run, headBefore, dirtyBefore);
+      if (broken !== null) return { kind: "missing", reason: broken };
+      answers = parseAnswers(this.#artifactNow(run, step));
+    }
+    const record: ChallengeRecord = {
+      step,
+      model: critic.model,
+      authorModel,
+      findings: critic.findings,
+      answers: Object.fromEntries([...answers].filter(([id]) => critic.findings.some((f) => f.id === id))),
+      disputes: disputes(critic.findings, answers),
+    };
+    store.transaction(() => {
+      const records = { ...readRecords(store.getArtifact(run.id, CHALLENGE_STATE)), [step]: record };
+      store.putArtifact(run.id, CHALLENGE_STATE, JSON.stringify(records), stepRow.id);
+      store.putArtifact(run.id, CHALLENGE_ARTIFACT, renderRecords(records), stepRow.id);
+      this.#ctx.event("challenge", run.id, {
+        step,
+        status: "done",
+        model: record.model,
+        authorModel,
+        findings: record.findings.length,
+        answered: pending.length,
+        disputes: record.disputes,
+      });
+    });
+    return { kind: "ok" };
+  }
+
+  /** Le contradicteur lui-même : un runner neuf, en lecture seule, qui rend ses constats ou échoue. */
+  async #runCritic(
+    live: LiveRun,
+    run: RunRow,
+    stepRow: StepRow,
+    step: ChallengeStep,
+    avoidProvider: string | null,
+    deadlineAt: number,
+  ): Promise<{ kind: "done"; findings: Finding[]; model: string | null } | { kind: "failed"; reason: string }> {
+    const { config, oracle } = this.#ctx;
+    const repo = this.#ctx.repo(run.repo);
+    const report: { findings: Finding[] | null } = { findings: null };
+    const critic = new RunnerSession(
+      this.#ctx,
+      { repo, cwd: run.worktree as string },
+      {
+        onHostTool: async (name, args) => {
+          switch (name) {
+            case "progress": {
+              const message = typeof args.message === "string" ? args.message.slice(0, 500) : "";
+              this.#ctx.event("progress", run.id, { step, by: "contradicteur", message });
+              return { text: "noté" };
+            }
+            case "oracle_recall":
+              return {
+                text: renderMemories(
+                  await oracle.recall(repo.scope, typeof args.query === "string" ? args.query : run.title),
+                ),
+              };
+            case "challenge_report": {
+              const parsed = parseFindings(args);
+              if (!parsed.ok) return { text: `constats refusés : ${parsed.error}`, isError: true };
+              report.findings = parsed.findings;
+              return { text: `${parsed.findings.length} constat(s) enregistré(s). Termine ton tour.` };
+            }
+            default:
+              return { text: `outil inconnu : ${name}`, isError: true };
+          }
+        },
+        event: (type, payload) => this.#ctx.event(type, run.id, { ...payload, step, by: "contradicteur" }),
+        frame: (frame) => this.#ctx.sessions.frame(run.id, step, frame),
+      },
+    );
+    try {
+      await critic.open(config.challenge.tier, challengeUnit(run.id, stepRow.id), live.abort.signal, {
+        avoidProvider,
+      });
+      await critic.setHostTools(hostToolsFor("challenge"));
+      const memories = renderMemories(await oracle.recall(repo.scope, `${run.title}\n${run.request}`));
+      let result = await critic.prompt(
+        challengePrompt({
+          step,
+          title: run.title,
+          request: run.request,
+          memories,
+          standing: this.#ctx.store.activeStandingRules(repo.name).map((rule) => rule.text),
+        }),
+        live.abort.signal,
+        deadlineAt,
+      );
+      if (result.status === "completed" && report.findings === null)
+        result = await critic.prompt(
+          nudgePrompt(
+            "contradicteur",
+            "les constats n'ont pas été rendus par `challenge_report` (une liste vide si rien à redire)",
+          ),
+          live.abort.signal,
+          deadlineAt,
+        );
+      if (result.status !== "completed")
+        return { kind: "failed", reason: result.error?.message ?? "contradicteur interrompu" };
+      if (report.findings === null)
+        return { kind: "failed", reason: "les constats n'ont pas été rendus par `challenge_report`" };
+      return { kind: "done", findings: report.findings, model: critic.model };
+    } catch (err) {
+      if (live.abort.signal.aborted) throw err;
+      return { kind: "failed", reason: err instanceof Error ? err.message : String(err) };
+    } finally {
+      await critic.stop();
+    }
+  }
+
+  /**
+   * Un prompt de plus dans la même étape, suivi des consignes arrivées depuis le
+   * précédent (une consigne de l'humain quand aucun prompt ne tournait, une décision
+   * renversée) : l'agent les reçoit au prochain tour, pas à l'étape suivante. Lues, elles
+   * sont effacées.
+   */
+  #withPending(runId: string, message: string): string {
+    const { store } = this.#ctx;
+    const pending = store.instructions(runId)?.trim() ?? "";
+    if (pending === "") return message;
+    store.setInstructions(runId, null);
+    return `${message}\n\n## Consignes reçues pendant l'étape\n${pending}`;
+  }
+
+  /** L'artefact d'une étape tel que le runner l'a laissé dans le worktree. */
+  #artifactNow(run: RunRow, step: StepKind): string {
+    const artifact = STEP_ARTIFACT[step];
+    return artifact === null ? "" : (readArtifact(expectedDir(run.worktree as string, ARTIFACTS_DIR), artifact) ?? "");
+  }
+
+  /** Le fournisseur de la dernière implémentation (ou correction) du run, d'après ses étapes. */
+  #implementerProvider(runId: string): string | null {
+    const steps = this.#ctx.store.listSteps(runId).filter((row) => row.kind === "impl" || row.kind === "fix");
+    return providerOfLabel(steps.findLast((row) => row.model !== null)?.model ?? null);
+  }
+
+  /** Les critères qui ont bougé depuis les specs gelées ; rien si le run n'en a pas (ancien run). */
+  #specsDrift(runId: string): CriterionDrift[] {
+    const { store } = this.#ctx;
+    const validated = store.getArtifact(runId, SPECS_BASELINE);
+    return validated === null ? [] : criteriaDrift(validated, store.getArtifact(runId, "specs.md") ?? "");
+  }
+
+  /**
+   * Une étape interrompue : le travail en cours devient un commit WIP, et la tentative
+   * suivante reçoit la consigne de repartir de là plutôt que de zéro.
+   */
+  async #interrupted(
+    run: RunRow,
+    stepRow: StepRow,
+    cause: FailCause,
+    reason: string,
+    retryable: boolean,
+  ): Promise<StepOutcome> {
+    const { store, git } = this.#ctx;
+    const step = run.step as StepKind;
+    const attempt = run.attempts + 1;
+    const worktree = run.worktree as string;
+    try {
+      if (!(await git.mergeInProgress(worktree)) && (await git.isDirty(worktree)))
+        await git.commitAll(worktree, `wip(${step}): interrompu (tentative ${attempt})`);
+    } catch (err) {
+      this.#ctx.log(
+        `run ${run.id} : commit WIP impossible après interruption — ${err instanceof Error ? err.message : String(err)}`,
+        { level: "warn", runId: run.id, repo: run.repo },
+      );
+    }
+    const artifact = STEP_ARTIFACT[step] ?? "impl.md";
+    store.addInstructions(
+      run.id,
+      `Tentative ${attempt} interrompue à ${new Date().toISOString()} (${cause} : ${reason}) ; repars de \`git diff ${run.baseSha ?? "main"}\` et de \`${ARTIFACTS_DIR}/${artifact}\` — ne refais pas ce qui est fait.`,
+    );
+    if (isRunnerOom(reason)) store.addInstructions(run.id, OOM_RETRY_NOTE);
+    store.finishStep(stepRow.id, "failed", reason);
+    return { kind: "failed", cause, reason, retryable };
+  }
+
+  /** La suite complète lancée sans attendre : le runner la rejoint par `run_tests`, la clôture la lit. */
+  #launchFullSuite(live: LiveRun, run: RunRow, stepRow: StepRow): void {
+    const repo = this.#ctx.repo(run.repo);
+    live.fullSuite = this.#ctx.heavy
+      .run(
+        {
+          runId: run.id,
+          stepId: stepRow.id,
+          repo,
+          worktree: run.worktree as string,
+          scope: "full",
+          files: [],
+          priority: run.priority,
+        },
+        live.abort.signal,
+      )
+      .then(
+        (result) => {
+          live.lastFull ??= result;
+          return result;
+        },
+        (err: unknown) => {
+          this.#ctx.log(
+            `run ${run.id} : suite complète anticipée en échec — ${err instanceof Error ? err.message : String(err)}`,
+            { level: "warn", runId: run.id, repo: run.repo },
+          );
+          return null;
+        },
+      );
+  }
+
+  /** Le résultat de la suite complète sur l'arbre COURANT : attend la suite anticipée, puis cache. */
+  async #fullTests(live: LiveRun, run: RunRow): Promise<"pass" | "fail" | "not_run"> {
+    const { heavy, store } = this.#ctx;
+    if (live.fullSuite) await live.fullSuite;
+    const repo = this.#ctx.repo(run.repo);
+    const key = await heavy.keyFor({ repo, worktree: run.worktree as string, scope: "full", files: [] });
+    if (key === null) return "not_run";
+    if (live.lastFull !== null && live.lastFull.tree === key.tree) return fullOutcome(live.lastFull);
+    const cached = store.cacheGet(key.key);
+    return cached ? cached.outcome : "not_run";
+  }
+
+  /** Ce qui manque à l'étape pour être terminée, ou `null`. */
+  async #missingOutput(live: LiveRun, run: RunRow, headBefore: string, dirtyBefore: boolean): Promise<string | null> {
+    const { git, store } = this.#ctx;
+    const worktree = run.worktree as string;
+    const step = run.step as StepKind;
+    const artifact = STEP_ARTIFACT[step];
+    const content = artifact === null ? null : readArtifact(expectedDir(worktree, ARTIFACTS_DIR), artifact);
+    if (artifact !== null && content === null)
+      return `\`${ARTIFACTS_DIR}/${artifact}\` n'existe pas (ou n'est pas un fichier régulier)`;
+    if (step === "req" && !/^##\s+Besoins/m.test(content ?? "")) return "la section `## Besoins` manque dans req.md";
+    if (step === "specs") {
+      const specs = content ?? "";
+      if (!/^##\s+Crit[eè]res d'acceptation/m.test(specs))
+        return "la section `## Critères d'acceptation` manque dans specs.md";
+      if (parseModulesSection(specs).length === 0)
+        return "la section `## Modules` de specs.md est vide : une puce par chemin du dépôt que l'implémentation touchera (les fichiers de `.harness/` ne comptent pas)";
+      const gap = specsCoverageGap(store.getArtifact(run.id, "req.md") ?? "", specs);
+      if (gap !== null) return gap;
+      if (featureLine(specs) === null)
+        return "la ligne `Ce que fait cette feature : <une phrase>` manque en tête de specs.md : c'est la première ligne de la carte que l'humain lit";
+    }
+    if (step === "review" && (await git.mergeInProgress(worktree))) {
+      const unresolved = await git.unresolvedConflicts(worktree);
+      if (unresolved.length > 0) return `des marqueurs de conflit restent dans ${unresolved.join(", ")}`;
+    }
+    // Un /impl sans diff n'est pas une panne quand le code est déjà là (livré par un run
+    // précédent) : `## Fait` le dit, critère par critère, et la revue en juge.
+    if (step === "impl" && (await git.touchedFiles(worktree, run.baseSha ?? headBefore)).length === 0) {
+      if ((sectionBody(content ?? "", /^fait/i) ?? "") === "")
+        return "aucun fichier du dépôt n'a changé, et `## Fait` d'impl.md ne dit pas où chaque critère est déjà livré";
+    }
+    if (
+      step === "fix" &&
+      !dirtyBefore &&
+      !(await git.isDirty(worktree)) &&
+      (await git.revParse(worktree, "HEAD")) === headBefore
+    )
+      return "aucune correction n'a été faite";
+    if (step === "review" && live.verdict === null) return "le verdict n'a pas été rendu par `review_verdict`";
+    return null;
+  }
+
+  /** Fin d'une étape réussie : artefacts ingérés, checkpoint de fin, issue pour la machine. */
+  async #close(live: LiveRun, run: RunRow, stepRow: StepRow): Promise<StepOutcome> {
+    const { store, git, config } = this.#ctx;
+    const worktree = run.worktree as string;
+    const step = run.step as StepKind;
+    const repo = this.#ctx.repo(run.repo);
+    this.#ingest(run, stepRow.id);
+    if ((step === "impl" || step === "fix") && live.lastTests !== null)
+      await this.#reportTests(live.lastTests, run, step);
+
+    if (step === "req") {
+      // Seuls les titres de besoins (`B-n`) rejoignent l'oracle : un souvenir court, qui se rappelle bien.
+      // Sans l'attendre : une écriture lente se retente des minutes durant, l'étape suivante lit req.md.
+      const brief = briefOfReq(store.getArtifact(run.id, "req.md") ?? "");
+      if (brief !== "")
+        void this.#ctx.oracle.retain(repo.scope, `Compte rendu de besoins — « ${run.title} » :\n${brief}`, [
+          "harness",
+          "besoins",
+        ]);
+    }
+    let gate: string[] | null = null;
+    if (step === "specs") gate = this.#closeSpecs(run, stepRow.id);
+    const remaining = step === "impl" ? await this.#closeImpl(run, worktree) : null;
+    if (await git.mergeInProgress(worktree))
+      await git.commitAll(worktree, `merge: main dans ${run.branch} (conflits résolus en revue)`);
+    else if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip(${step}): ${run.title}`.slice(0, 120));
+
+    const escalations = store.listEscalations({ runId: run.id, status: "open", stepId: stepRow.id }).length;
+    let outcome: StepOutcome = {
+      kind: "done",
+      escalations,
+      ...(gate !== null ? { gateNeeded: gate.length > 0, gateReasons: gate } : {}),
+      ...(remaining !== null ? { continueImpl: remaining } : {}),
+    };
+    let review: { verdict: Verdict; merge: MergeDecision; evidence: ReviewEvidence } | null = null;
+    if (step === "review") {
+      // La revue a pu rebaser à la main (conflits) : la base suit main si elle la contient.
+      await this.#adoptMainIfRebased(run);
+      run = store.getRun(run.id) as RunRow;
+      const base = run.baseSha ?? repo.mainBranch;
+      let fullTests = await this.#fullTests(live, run);
+      let verdict = live.verdict as Verdict;
+      // Une suite rouge est un bloquant, quoi qu'en dise la revue : sauf les échecs que main a déjà.
+      if (fullTests === "fail") {
+        const judged = live.lastFull ? await this.#ctx.baseline.judge(run, repo, live.lastFull) : null;
+        if (judged) this.#ctx.baseline.record(run.id, "review", judged);
+        if (judged !== null && judged.new.length === 0) {
+          fullTests = "pass";
+          verdict = { ...verdict, summary: `${verdict.summary}\n\n${baselineSummary(judged)}` };
+        } else {
+          const detail = judged
+            ? newFailuresText(judged)
+            : live.lastFull
+              ? failSummary(live.lastFull)
+              : "voir le dernier résultat heavy";
+          verdict = { ...verdict, blockers: [...verdict.blockers, `suite complète rouge : ${detail}`] };
+        }
+      }
+      // Une suite que rien n'a jugée (push refusé, forge muette, CI trop lente) : l'humain lit pourquoi, sans bloquant.
+      const last = live.lastFull;
+      if (fullTests === "not_run" && last !== null && fullOutcome(last) === "not_run")
+        verdict = {
+          ...verdict,
+          summary: `${verdict.summary}\n\nSuite complète non jugée (${last.outcome}) : ${last.output.trim().slice(0, 500)}`,
+        };
+      // Le contrat est celui des specs gelées, plus les critères ajoutés depuis.
+      const acIds = this.#specsAcIds(run.id);
+      const mergeEvidence = {
+        fullTests,
+        diffLines: await git.diffLines(worktree, base, config.review.diffCount),
+        maxDiffLines: config.review.maxDiffLines,
+        openEscalations: escalations,
+        acIds,
+        specsDrift: this.#specsDrift(run.id),
+        autoMergeRisk: config.review.autoMergeRisk,
+        touchedFiles: await git.touchedFiles(worktree, base),
+      };
+      const merge = mergeDecision(verdict, mergeEvidence);
+      const criteriaMissing = acIds.filter(
+        (id) => !verdict.criteria.some((criterion) => criterion.id === id && criterion.status === "pass"),
+      );
+      // Les tests que le run ajoute ou modifie (un test supprimé ne prouve rien) : selon `tests.pattern`, sinon par convention.
+      const reproTests = (await git.changes(worktree, base))
+        .filter(
+          (change) =>
+            (change.status === "A" || change.status === "M") &&
+            (repo.tests.pattern !== null ? matchesGlob(repo.tests.pattern, change.path) : isTestFile(change.path)),
+        )
+        .map((change) => change.path);
+      const head = await git.revParse(worktree, "HEAD");
+      review = { verdict, merge, evidence: { ...mergeEvidence, reproTests, reviewSha: head } };
+      outcome = {
+        kind: "done",
+        escalations,
+        blockers: verdict.blockers.length,
+        merge,
+        ...(criteriaMissing.length > 0 ? { criteriaMissing } : {}),
+      };
+    }
+    store.transaction(() => {
+      if (review) {
+        store.updateRun(run.id, { verdict: review.verdict, lastReviewSha: review.evidence.reviewSha });
+        store.putArtifact(
+          run.id,
+          REVIEW_EVIDENCE,
+          JSON.stringify({ merge: review.merge, evidence: review.evidence }),
+          stepRow.id,
+        );
+        this.#ctx.event("review", run.id, { verdict: review.verdict, merge: review.merge });
+      }
+      if (remaining !== null) {
+        // La reprise sait ce qui reste, et ne refait pas ce qui est fait.
+        store.addInstructions(
+          run.id,
+          `/impl a laissé un reste à livrer ; livre-le maintenant, sur la même branche :\n${remaining}\n\n` +
+            `Ne refais pas ce qui est fait (\`git diff ${run.baseSha ?? "main"}\` et \`## Fait\` de \`${ARTIFACTS_DIR}/impl.md\`). ` +
+            `Mets à jour \`${ARTIFACTS_DIR}/impl.md\` : \`## Fait\` complété, \`## Reste\` vidé, ou réduit à ce qui ne peut pas être livré ici, avec la raison.`,
+        );
+        this.#ctx.event("impl_continued", run.id, { remaining: remaining.slice(0, 500) });
+      }
+      store.finishStep(stepRow.id, escalations > 0 ? "escalated" : "done", null);
+      this.#ctx.event("step_done", run.id, {
+        step,
+        stepId: stepRow.id,
+        escalations,
+        ...(gate !== null ? { gateNeeded: gate.length > 0 } : {}),
+      });
+    });
+    return outcome;
+  }
+
+  /** Les critères du contrat d'un run : ceux des specs gelées, plus ceux ajoutés depuis. */
+  #specsAcIds(runId: string): string[] {
+    const current = this.#ctx.store.getArtifact(runId, "specs.md") ?? "";
+    const baseline = this.#ctx.store.getArtifact(runId, SPECS_BASELINE) ?? current;
+    return [...new Set([...parseAcIds(baseline), ...parseAcIds(current)])];
+  }
+
+  /**
+   * Joint à l'étape /impl ou /impl --fix son rapport de tests, tiré du dernier passage `run_tests`. Une preuve
+   * refusée (borne) ou un diff illisible se journalise : une preuve ne fait jamais échouer l'étape.
+   */
+  async #reportTests(tests: NonNullable<LiveRun["lastTests"]>, run: RunRow, step: "impl" | "fix"): Promise<void> {
+    const { git, proofs } = this.#ctx;
+    try {
+      const repo = this.#ctx.repo(run.repo);
+      const touched = await git.touchedFiles(run.worktree as string, run.baseSha ?? repo.mainBranch);
+      const report = testReport(tests.result, tests.scope, step, {
+        slugs: reportSlugs(repo, touched),
+        acIds: this.#specsAcIds(run.id),
+      });
+      const added = proofs.add(run.id, {
+        kind: "test_report",
+        title: report.title,
+        step,
+        mime: "application/json",
+        data: report.data,
+        acRef: null,
+        side: null,
+      });
+      if (!added.ok)
+        this.#ctx.log(`run ${run.id} : rapport de tests refusé — ${added.reason}`, {
+          level: "warn",
+          runId: run.id,
+          repo: run.repo,
+        });
+    } catch (err) {
+      this.#ctx.log(
+        `run ${run.id} : rapport de tests impossible — ${err instanceof Error ? err.message : String(err)}`,
+        {
+          level: "warn",
+          runId: run.id,
+          repo: run.repo,
+        },
+      );
+    }
+  }
+
+  /**
+   * Fin de /specs : specs gelées, modules posés ; rend les raisons de la porte humaine
+   * (désaccords avec le contradicteur compris). Le `## Découpage` ne part pas d'ici :
+   * seulement quand les specs sont acceptées (split.ts).
+   */
+  #closeSpecs(run: RunRow, stepId: number): string[] {
+    const { store } = this.#ctx;
+    const specs = store.getArtifact(run.id, "specs.md") ?? "";
+    store.putArtifact(run.id, SPECS_BASELINE, specs, stepId);
+    const declared = parseModulesSection(specs);
+    // Une correction de la vigie ne réserve que des fichiers : les dossiers entiers de la section sont écartés.
+    const broad = new Set(store.vigieIncidentByFixRun(run.id) ? broadModules(declared, run.worktree) : []);
+    const modules = declared.filter((module) => !broad.has(module));
+    if (modules.length > 0) {
+      store.transaction(() => {
+        store.updateRun(run.id, { modules });
+        this.#ctx.event("modules", run.id, { modules });
+      });
+    }
+    return specsGateFacts(store, run).map(gateText);
+  }
+
+  /**
+   * Fin de /impl : le `## Reste` à reprendre sur la même branche, ou `null` (la revue
+   * juge ce qui manque). Une seule reprise par run (`impl_continued`), et aucune si cette
+   * implémentation n'a rien changé : la reprise referait la même chose (un reste qui exige
+   * un outillage absent du runner reviendrait sans fin).
+   */
+  async #closeImpl(run: RunRow, worktree: string): Promise<string | null> {
+    const { store, git } = this.#ctx;
+    const remaining = parseRemaining(store.getArtifact(run.id, "impl.md") ?? "");
+    if (remaining === "") return null;
+    if (run.baseSha !== null && (await git.touchedFiles(worktree, run.baseSha)).length === 0) {
+      this.#ctx.log(`run ${run.id} : /impl sans diff — pas de reprise pour son « ## Reste »`, {
+        runId: run.id,
+        repo: run.repo,
+      });
+      return null;
+    }
+    if (store.eventsSince(0, run.id).some((event) => event.type === "impl_continued")) return null;
+    return remaining;
+  }
+
+  /** Les artefacts du run, écrits dans `.harness/` avant l'étape (le runner lit ceux de N-1). */
+  #materialize(run: RunRow): void {
+    const dir = ensureArtifactsDir(run.worktree as string, ARTIFACTS_DIR);
+    for (const artifact of this.#ctx.store.listArtifacts(run.id)) {
+      if (artifact.name.startsWith("_") || !/^[\w.-]+\.md$/.test(artifact.name)) continue;
+      writeArtifact(dir, artifact.name, artifact.content);
+    }
+  }
+
+  /**
+   * Les artefacts écrits par le runner, versés dans la base (source de vérité) — liens et
+   * fichiers spéciaux ignorés, comme le rapport du contradicteur, que seul le service écrit.
+   */
+  #ingest(run: RunRow, stepId: number): void {
+    const dir = expectedDir(run.worktree as string, ARTIFACTS_DIR);
+    let names: string[];
+    try {
+      const stat = fs.lstatSync(dir);
+      if (!stat.isDirectory()) return;
+      names = fs.readdirSync(dir);
+    } catch {
+      return;
+    }
+    const { store } = this.#ctx;
+    store.transaction(() => {
+      for (const name of names) {
+        if (!/^[\w.-]+\.md$/.test(name) || name.startsWith("_") || name === CHALLENGE_ARTIFACT) continue;
+        const content = readArtifact(dir, name);
+        if (content === null) continue;
+        if (store.getArtifact(run.id, name) !== content) store.putArtifact(run.id, name, content, stepId);
+      }
+    });
+  }
+
+  #decisionLines(runId: string): string[] {
+    return this.#ctx.store
+      .listDecisions({ runId, status: ["auto", "auto_timeout", "accepted", "reversed"] })
+      .map((decision) => {
+        const from =
+          decision.dependsOn.length > 0 ? ` [découle de ${decision.dependsOn.map((n) => `#${n}`).join(", ")}]` : "";
+        switch (decision.status) {
+          case "reversed":
+            return `#${decision.seq} ${decision.question} → « ${decision.reversalOption} » (TRANCHÉ PAR L'HUMAIN : ${decision.reversalReason})${from}`;
+          case "accepted":
+            return `#${decision.seq} ${decision.question} → « ${decision.chosen} » (validée par l'humain)${from}`;
+          case "auto_timeout":
+            return `#${decision.seq} ${decision.question} → « ${decision.chosen} » (choix de l'agent, non validé — tranché à l'échéance d'une escalade)${from}`;
+          case "auto":
+          case "superseded":
+            return `#${decision.seq} ${decision.question} → « ${decision.chosen} » (choix de l'agent, non validé)${from}`;
+          default: {
+            const _exhaustive: never = decision.status;
+            return _exhaustive;
+          }
+        }
+      });
+  }
+
+  /** Rebase sur main avant /review ; les checkpoints sont remappés, un conflit part dans le prompt. */
+  async #rebaseOnMain(live: LiveRun, run: RunRow): Promise<void> {
+    const { git, store } = this.#ctx;
+    const repo = this.#ctx.repo(run.repo);
+    const worktree = run.worktree as string;
+    await this.#ctx.fetchMain(repo);
+    const main = await git.revParse(repo.path, repo.mainBranch);
+    if (main === run.baseSha || (await git.mergeInProgress(worktree))) return;
+    if (await git.isDirty(worktree)) await git.commitAll(worktree, `wip: avant rebase — ${run.title}`.slice(0, 120));
+    const result = await git.rebase(worktree, main);
+    if (!result.ok) {
+      // Le runner n'écrit pas dans le gitdir : le SERVICE fusionne main (conflits laissés
+      // dans les fichiers), le runner les résout sans git, le service conclut la fusion.
+      await git.mergeNoCommit(worktree, main);
+      live.conflicts = await git.unmergedFiles(worktree);
+      this.#ctx.event("rebase_conflict", run.id, { conflicts: result.conflicts, strategy: "merge" });
+      return;
+    }
+    await this.#ctx.remapCheckpoints(run.id, worktree, main);
+    store.transaction(() => {
+      store.updateRun(run.id, { baseSha: main });
+      this.#ctx.event("rebased", run.id, { base: main });
+    });
+  }
+
+  async #adoptMainIfRebased(run: RunRow): Promise<void> {
+    const { git, store } = this.#ctx;
+    const repo = this.#ctx.repo(run.repo);
+    const main = await git.revParse(repo.path, repo.mainBranch);
+    if (main === run.baseSha) return;
+    if ((await git.raw(run.worktree as string, ["merge-base", "--is-ancestor", main, "HEAD"])).code === 0) {
+      await this.#ctx.remapCheckpoints(run.id, run.worktree as string, main);
+      store.transaction(() => {
+        store.updateRun(run.id, { baseSha: main });
+        this.#ctx.event("rebased", run.id, { base: main, by: "runner" });
+      });
+    }
+  }
+}

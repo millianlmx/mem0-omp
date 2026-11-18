@@ -1,0 +1,475 @@
+// La session d'un runner OMP : un process RPC, son modèle et sa chaîne de bascule.
+//
+// Partagée par les runs et les audits — une seule façon de lancer un runner, de
+// prendre un jeton de fournisseur par prompt, de basculer sur une erreur du
+// fournisseur (rate limit, 5xx, réseau : `runner.failoverOn`) vers le suivant de la
+// chaîne — ou, seul fournisseur, d'attendre son `retry-after` et de le réessayer —,
+// de changer de tier entre deux étapes et de BORNER un prompt dans le temps : au-delà
+// de l'échéance de l'étape, le runner est arrêté et le prompt rend une erreur
+// relançable, jamais une attente infinie.
+import type { ModelChoice, ModelPolicy, RepoConfig, Tier } from "../config/config.ts";
+import type { HarnessContext } from "../runs/context.ts";
+import type { EventType } from "../api/events.ts";
+import {
+  permits,
+  policyChain,
+  policySecretVars,
+  repoMemoryToken,
+  scoutModel,
+  spaceRule,
+  strictest,
+  syncMemoryTokenFile,
+} from "../config/policy.ts";
+import { FAILOVER_PROMPT } from "../runs/prompts.ts";
+import type { HostToolDefinition, HostToolHandler, PromptError, PromptErrorCause, PromptResult } from "./rpc.ts";
+import { RpcRunner, classifyPromptError, parseRetryAfter } from "./rpc.ts";
+import { runnerArgv, runnerEnv, spaceScope, stopRunner } from "./runner.ts";
+import { DEFAULT_COOLDOWN_MS } from "./scheduler.ts";
+
+export { classifyPromptError };
+export type { PromptErrorCause };
+
+/** Les réessais du MÊME fournisseur quand la chaîne n'en a qu'un (ou que tous sont à sec). */
+export const SAME_PROVIDER_RETRIES = 3;
+
+/** Le prompt de reprise après une erreur passagère du MÊME fournisseur (pas de bascule). */
+const RETRY_PROMPT =
+  "Reprends exactement où tu t'es arrêté : le fournisseur a rendu une erreur passagère, le même modèle reprend.";
+
+export type SessionHooks = {
+  onHostTool: HostToolHandler;
+  /** Un événement de la session (runner lancé ou arrêté, bascule, délai) au nom de son propriétaire. */
+  event: (type: EventType, payload: Record<string, unknown>) => void;
+  /** Chaque trame RPC du runner qui n'est pas un échange avec le service : le direct de la session. */
+  frame?: (frame: Record<string, unknown>) => void;
+  /** Le modèle ou l'unité du runner ont changé (lancement, bascule, changement de tier). */
+  runnerChanged?: (unit: string | null, model: string | null) => void;
+  /** L'attente avant de réessayer le même fournisseur (tests : temps simulé) ; défaut : un vrai délai. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+};
+
+/** Le début du message d'une erreur de prompt due à l'échéance de l'étape (Steps : cause `timeout`). */
+export const STEP_TIMEOUT_PREFIX = "délai d'étape dépassé";
+
+/** Le résultat d'un prompt arrêté à l'échéance de son étape. */
+export function timeoutResult(seconds: number): PromptResult {
+  return {
+    status: "error",
+    error: {
+      message: `${STEP_TIMEOUT_PREFIX} (${seconds} s) : runner arrêté`,
+      retryable: true,
+      cause: "other",
+      retryAfterMs: null,
+    },
+  };
+}
+
+export function modelLabel(model: ModelChoice | null): string | null {
+  return model ? `${model.provider}/${model.model}` : null;
+}
+
+/** Le fournisseur d'un libellé `fournisseur/modèle` (celui des étapes en base), ou `null`. */
+export function providerOfLabel(label: string | null): string | null {
+  const slash = label?.indexOf("/") ?? -1;
+  return label && slash > 0 ? label.slice(0, slash) : null;
+}
+
+/**
+ * Où commencer la chaîne pour un regard indépendant : le premier modèle d'un AUTRE
+ * fournisseur que `avoid`, sinon le début (un seul fournisseur : on fait avec).
+ */
+export function chainStart(chain: readonly ModelChoice[], avoid: string | null): number {
+  if (avoid === null) return 0;
+  const index = chain.findIndex((choice) => choice.provider !== avoid);
+  return index < 0 ? 0 : index;
+}
+
+/** L'erreur d'un prompt avec sa cause et le délai demandé par le fournisseur. */
+function annotate(error: PromptError): PromptError & { cause: PromptErrorCause; retryAfterMs: number | null } {
+  return { ...error, cause: error.cause ?? classifyPromptError(error), retryAfterMs: parseRetryAfter(error) };
+}
+
+/** Le message d'un prompt refusé parce que la politique de modèles a changé sous un runner vivant. */
+export const POLICY_CHANGED =
+  "politique de modèles changée pendant la session : runner arrêté, l'étape repart sur un modèle permis";
+
+/** Même fournisseur ET même modèle (jamais l'index : la chaîne change avec la politique). */
+function sameModel(a: ModelChoice, b: ModelChoice | null): boolean {
+  return b !== null && a.provider === b.provider && a.model === b.model;
+}
+
+/** La politique borne-t-elle les fournisseurs (liste blanche, ou « local-only ») ? */
+function restricts(policy: ModelPolicy): boolean {
+  return policy.providers !== undefined || policy.privacy === "local-only";
+}
+
+/** Un délai interrompu par `signal` (rejette alors). */
+function realSleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new Error("attente annulée : run arrêté"));
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("attente annulée : run arrêté"));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+export class RunnerSession {
+  readonly #ctx: HarnessContext;
+  readonly #repo: RepoConfig;
+  readonly #cwd: string;
+  readonly #hooks: SessionHooks;
+  #runner: RpcRunner | null = null;
+  #unit: string | null = null;
+  #tier: Tier | null = null;
+  #model: ModelChoice | null = null;
+  #modelIndex = 0;
+  /** Le jeton du fournisseur déjà pris au lancement (le premier prompt ne repaie pas). */
+  #prepaid = false;
+  /** Le runner vivant a été lancé en « local-only » : sans les clés des fournisseurs distants. */
+  #sealed = false;
+  /** Le modèle d'exploration (`scout`) du runner vivant, posé à son lancement dans son overlay : `null` sans override. */
+  #scout: ModelChoice | null = null;
+
+  readonly #memory: false | undefined;
+
+  constructor(ctx: HarnessContext, target: { repo: RepoConfig; cwd: string; memory?: false }, hooks: SessionHooks) {
+    this.#ctx = ctx;
+    this.#repo = target.repo;
+    this.#cwd = target.cwd;
+    this.#memory = target.memory;
+    this.#hooks = hooks;
+  }
+
+  get alive(): boolean {
+    return this.#runner?.alive === true;
+  }
+
+  get unit(): string | null {
+    return this.#unit;
+  }
+
+  get model(): string | null {
+    return modelLabel(this.#model);
+  }
+
+  get provider(): string | null {
+    return this.#model?.provider ?? null;
+  }
+
+  /**
+   * La politique de modèles de la session : celle du dépôt croisée, au plus strict, avec celle de son
+   * espace (policy.ts `strictest`) — relue à chaque lancement, à chaque changement de tier et à chaque
+   * prompt : un espace durci compte dès le prompt suivant d'un runner vivant (`prompt`). Un dépôt hors
+   * espace garde la sienne, telle quelle.
+   */
+  #policy(): { policy: ModelPolicy; owner: string } {
+    const rule = spaceRule(this.#ctx.store.listSpaces(), this.#repo.name);
+    return {
+      policy: strictest(this.#repo, rule?.policy ?? null),
+      owner: `le dépôt ${this.#repo.name}${rule ? ` (espace « ${rule.space} »)` : ""}`,
+    };
+  }
+
+  /**
+   * Le runner vivant n'est plus sous le régime de la politique : lancé sans (ou avec) les clés des
+   * fournisseurs distants alors qu'elle dit l'inverse, ou avec un modèle d'exploration (`scout`) qu'elle
+   * ne permet plus. Son modèle de session se change à chaud, ces deux-là non.
+   */
+  #drifted(policy: ModelPolicy): boolean {
+    return (
+      this.#sealed !== (policy.privacy === "local-only") || (this.#scout !== null && !permits(policy, this.#scout))
+    );
+  }
+
+  /**
+   * La chaîne de bascule d'un tier sous la politique du dépôt et de son espace (policy.ts) : jamais un
+   * fournisseur hors de la liste blanche ; aucun modèle permis lève `PolicyRefusal`.
+   */
+  #chain(tier: Tier, { policy, owner } = this.#policy()): ModelChoice[] {
+    return policyChain(this.#ctx.config, policy, tier, owner);
+  }
+
+  /**
+   * Un runner prêt pour `tier` : celui qui vit déjà (review ⇄ fix garde sa
+   * conversation, seul le modèle suit le tier), sinon un nouveau, sous `unit`.
+   * `avoidProvider` : un runner NEUF commence sa chaîne au premier modèle d'un autre
+   * fournisseur (le contradicteur, la revue). Rend `true` si le runner a été réutilisé.
+   */
+  async open(
+    tier: Tier,
+    unit: string,
+    signal: AbortSignal,
+    options: { avoidProvider?: string | null } = {},
+  ): Promise<boolean> {
+    const { config, scheduler } = this.#ctx;
+    // Un espace passé (ou sorti de) « local-only », ou durci au point de refuser le modèle d'exploration du
+    // runner, pendant qu'il vit : il a été lancé avec (ou sans) les clés des fournisseurs distants, ou avec
+    // cet override, il ne se réutilise pas — un runner neuf repart, permis.
+    if (this.#runner?.alive && this.#drifted(this.#policy().policy)) await this.stop();
+    if (this.#runner?.alive) {
+      if (this.#tier !== tier) {
+        const pick = await scheduler.waitModel(tier, this.#chain(tier), 0, signal);
+        this.#tier = tier;
+        this.#prepaid = pick !== null;
+        if (pick && !sameModel(pick.choice, this.#model)) await this.#switch(pick.choice, pick.index, "model_tier");
+        else if (pick) this.#modelIndex = pick.index;
+      }
+      return true;
+    }
+    const policy = this.#policy();
+    const chain = this.#chain(tier, policy);
+    // Le jeton mémoire du dépôt (policy.ts) : déclaré mais absent, aucun runner (jamais le jeton global).
+    const memoryToken = repoMemoryToken(this.#repo);
+    const localOnly = policy.policy.privacy === "local-only";
+    this.#sealed = localOnly;
+    this.#scout = scoutModel(config, policy.policy, policy.owner);
+    const pick = await scheduler.waitModel(tier, chain, chainStart(chain, options.avoidProvider ?? null), signal);
+    this.#tier = tier;
+    this.#model = pick?.choice ?? null;
+    this.#modelIndex = pick?.index ?? 0;
+    this.#prepaid = pick !== null;
+    const scope = this.#repo.scope;
+    // Un runner qui tourne POUR un espace — le dépôt d'un client, le poste ou le savoir d'un espace — n'a
+    // pas la portée mémoire `_global`, partagée entre tous les clients. Hors espace : rien ne change.
+    const noGlobal =
+      spaceScope(scope) || this.#ctx.store.listSpaces().some((space) => space.repos.includes(this.#repo.name));
+    const argv = runnerArgv(config, {
+      unit,
+      cwd: this.#cwd,
+      overlay: this.#ctx.overlay(this.#scout),
+      model: this.#model,
+      scope,
+      repo: this.#repo.path,
+      oracleUrl: config.oracle?.url ?? null,
+      memoryEnvFile: syncMemoryTokenFile(config, this.#repo.name, memoryToken),
+      localOnly,
+      noGlobal,
+      memory: this.#memory,
+    });
+    // Sans lanceur ni conteneur, les clés déclarées par l'API passent par l'environnement du runner.
+    const base =
+      config.runner.isolation === "none" && !localOnly
+        ? { ...process.env, ...this.#ctx.providers.runnerEnv() }
+        : process.env;
+    const proc = this.#ctx.spawn(argv.command, argv.args, {
+      cwd: this.#cwd,
+      env: runnerEnv(scope, config.oracle, base, config.memory.runnerMode, {
+        memoryToken,
+        hidden: policySecretVars(config),
+        localOnly,
+        noGlobal,
+      }),
+    });
+    const runner = new RpcRunner(proc, {
+      onHostTool: this.#hooks.onHostTool,
+      onFrame: (frame) => {
+        // L'activité des outils est ÉPHÉMÈRE : poussée en direct, jamais écrite au journal.
+        if (frame.type === "tool_execution_start")
+          this.#hooks.event("activity", { tool: frame.toolName, intent: frame.intent ?? null });
+        this.#hooks.frame?.(frame);
+      },
+    });
+    this.#runner = runner;
+    this.#unit = unit;
+    this.#hooks.runnerChanged?.(unit, this.model);
+    this.#hooks.event("runner_started", { unit, model: this.model });
+    await runner.ready();
+    // Un arrêt demandé pendant le lancement : le runner tout juste né ne survit pas.
+    if (signal.aborted) {
+      await this.stop();
+      throw new Error("runner arrêté pendant son lancement");
+    }
+    return false;
+  }
+
+  setHostTools(tools: HostToolDefinition[]): Promise<unknown> {
+    return this.#live().setHostTools(tools);
+  }
+
+  /**
+   * Le modèle courant du runner lit-il les images (`get_state` → `model.input`) ? Faux au
+   * moindre doute — runner absent, réponse illisible ou lente (`timeoutMs`) : échec fermé.
+   */
+  async acceptsImages(timeoutMs = 5000): Promise<boolean> {
+    const runner = this.#runner;
+    if (!runner?.alive) return false;
+    // Promise.withResolvers n'est pas dans la lib du harness (ES2023) : le délai en promesse.
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), timeoutMs);
+    });
+    try {
+      const state = await Promise.race([runner.request({ type: "get_state" }), timeout]);
+      const input = (state as { model?: { input?: unknown } } | null)?.model?.input;
+      return Array.isArray(input) && input.includes("image");
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  #live(): RpcRunner {
+    if (!this.#runner) throw new Error("aucun runner ouvert");
+    return this.#runner;
+  }
+
+  /**
+   * Injecte une consigne dans le prompt EN COURS (`steer` d'OMP) : l'agent la lit au
+   * prochain tour, sans attendre la fin de l'étape. Rend `false` sans rien envoyer si
+   * aucun prompt ne tourne (OMP lancerait alors un tour hors de tout prompt suivi), ou si
+   * le runner la refuse : la consigne est alors gardée pour le prompt suivant.
+   */
+  async steer(message: string): Promise<boolean> {
+    const runner = this.#runner;
+    if (!runner?.alive || !runner.busy) return false;
+    try {
+      await runner.steer(message);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Un prompt, avec un jeton du fournisseur courant (ou du suivant de la chaîne), la
+   * bascule sur les causes de `runner.failoverOn`, et l'échéance `deadlineAt` (ms) :
+   * passé ce temps, le runner est arrêté et le prompt rend une erreur relançable.
+   *
+   * Chaîne à un seul fournisseur (ou tous à sec) : on attend `retry-after` (sinon le
+   * refroidissement par défaut), borné par l'échéance, et on réessaie le même, au
+   * plus SAME_PROVIDER_RETRIES fois. Toute erreur rendue porte sa `cause`.
+   */
+  async prompt(message: string, signal: AbortSignal, deadlineAt: number): Promise<PromptResult> {
+    const { config, scheduler } = this.#ctx;
+    const tier = this.#tier ?? "heavy";
+    // La politique est relue à CHAQUE prompt : un espace durci pendant qu'un runner vit (review ⇄ fix,
+    // une relance) compte tout de suite — aucun modèle permis lève `PolicyRefusal`, rien n'est envoyé.
+    const policy = this.#policy();
+    const chain = this.#chain(tier, policy);
+    if (this.alive && this.#drifted(policy.policy)) {
+      // Le runner vivant a été lancé sous un autre régime (avec ou sans les clés des fournisseurs distants, ou un
+      // modèle d'exploration que la politique ne permet plus) : changer son modèle ne suffit pas. Il s'arrête ;
+      // l'étape relancée repart sur un runner neuf.
+      await this.stop();
+      return {
+        status: "error",
+        error: { message: POLICY_CHANGED, retryable: true, cause: "other", retryAfterMs: null },
+      };
+    }
+    const at = chain.findIndex((choice) => sameModel(choice, this.#model));
+    // Le modèle de la session n'est plus dans la chaîne permise (ou c'était le défaut d'omp, que
+    // la politique ne connaît pas) : le prompt part sur le premier modèle permis, jamais sur l'ancien.
+    const stale = chain.length > 0 && at < 0 && (this.#model !== null || restricts(policy.policy));
+    if (this.#prepaid && !stale) this.#prepaid = false;
+    else if (chain.length > 0 && (this.#model || stale)) {
+      this.#prepaid = false;
+      const pick = await scheduler.waitModel(tier, chain, Math.max(at, 0), signal);
+      if (pick && !sameModel(pick.choice, this.#model)) await this.#switch(pick.choice, pick.index, "model_failover");
+      else if (pick) this.#modelIndex = pick.index;
+    }
+    let text = message;
+    let failovers = 0;
+    let sameRetries = 0;
+    for (;;) {
+      const result = await this.#bounded(text, deadlineAt, signal);
+      if (result.status !== "error" || !result.error) return result;
+      const error = annotate(result.error);
+      const classified: PromptResult = { status: "error", error };
+      const failoverOn: readonly string[] = config.runner.failoverOn;
+      if (!failoverOn.includes(error.cause)) return classified;
+      const current = this.#model ? { provider: this.#model.provider, model: this.#model.model } : null;
+      if (error.cause === "rate_limit") {
+        if (current) scheduler.reportRateLimit(current.provider, error.retryAfterMs);
+        this.#hooks.event("rate_limited", { ...current, retryAfterMs: error.retryAfterMs });
+      } else this.#hooks.event("provider_error", { ...current, cause: error.cause });
+      if (sameRetries >= SAME_PROVIDER_RETRIES || !this.alive) return classified;
+      const next =
+        current && chain.length > 1 && failovers < chain.length
+          ? await scheduler.waitModel(tier, chain, (this.#modelIndex + 1) % chain.length, signal)
+          : null;
+      if (next && (next.choice.provider !== current?.provider || next.choice.model !== current?.model)) {
+        failovers++;
+        await this.#switch(next.choice, next.index, "model_failover");
+        text = FAILOVER_PROMPT;
+        continue;
+      }
+      // Personne d'autre : on attend ce que le fournisseur demande (le planificateur
+      // l'a déjà fait si la chaîne a tourné jusqu'à lui), puis on le réessaie.
+      sameRetries++;
+      const wait = next ? 0 : Math.min(error.retryAfterMs ?? DEFAULT_COOLDOWN_MS, Math.max(0, deadlineAt - Date.now()));
+      this.#hooks.event("provider_retry", { ...current, cause: error.cause, waitMs: wait, attempt: sameRetries });
+      if (deadlineAt - Date.now() <= 0) return classified;
+      if (wait > 0) await (this.#hooks.sleep ?? realSleep)(wait, signal);
+      text = RETRY_PROMPT;
+    }
+  }
+
+  /**
+   * Le prompt borné par l'échéance et par `signal` : à l'heure, le runner est arrêté
+   * (son prompt rejette, ignoré) ; sur un arrêt, il est arrêté aussi et le prompt lève.
+   */
+  async #bounded(text: string, deadlineAt: number, signal: AbortSignal): Promise<PromptResult> {
+    if (signal.aborted) throw new Error("prompt annulé : run arrêté");
+    const onAbort = () => void this.stop();
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      return await this.#timed(text, deadlineAt);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+
+  async #timed(text: string, deadlineAt: number): Promise<PromptResult> {
+    const seconds = this.#ctx.config.runner.stepTimeoutSec;
+    const remaining = deadlineAt - Date.now();
+    if (remaining <= 0) {
+      this.#hooks.event("step_timeout", { seconds });
+      await this.stop();
+      return timeoutResult(seconds);
+    }
+    const pending = this.#live().prompt(text);
+    let timer: NodeJS.Timeout | null = null;
+    const expired = new Promise<"expired">((resolve) => {
+      timer = setTimeout(() => resolve("expired"), remaining);
+    });
+    try {
+      const first = await Promise.race([pending, expired]);
+      if (first !== "expired") return first;
+      pending.catch(() => {});
+      this.#hooks.event("step_timeout", { seconds });
+      await this.stop();
+      return timeoutResult(seconds);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  async #switch(choice: ModelChoice, index: number, event: "model_failover" | "model_tier"): Promise<void> {
+    await this.#live().setModel(choice.provider, choice.model);
+    const from = this.model;
+    this.#model = choice;
+    this.#modelIndex = index;
+    this.#hooks.runnerChanged?.(this.#unit, this.model);
+    this.#hooks.event(event, { from, to: this.model });
+  }
+
+  /** Arrête le runner (borné : stdin, signaux, puis l'arrêt forcé de son unité). */
+  async stop(): Promise<void> {
+    const runner = this.#runner;
+    const unit = this.#unit;
+    this.#runner = null;
+    this.#unit = null;
+    this.#prepaid = false;
+    if (runner) {
+      await stopRunner(this.#ctx.config, this.#ctx.exec, runner, unit);
+      this.#hooks.event("runner_stopped", {});
+    }
+  }
+}

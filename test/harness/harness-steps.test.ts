@@ -11,7 +11,7 @@ import {
   memoryCategory,
   memoryChoice,
   parseSplitFeatures,
-} from "../../omp-harness/host-tools.ts";
+} from "../../omp-harness/runs/host-tools.ts";
 import {
   failCauseOf,
   gateNeeded,
@@ -19,7 +19,7 @@ import {
   parseSplitSection,
   sectionBody,
   specsCoverageGap,
-} from "../../omp-harness/steps.ts";
+} from "../../omp-harness/runs/steps.ts";
 
 function stateOf(world: FakeWorld, runId: string): string {
   const run = world.store.getRun(runId);

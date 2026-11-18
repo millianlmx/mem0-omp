@@ -6,10 +6,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
-import { defaultConfig, fixCapFor, validateConfig } from "../../omp-harness/config.ts";
-import { createHandler } from "../../omp-harness/http.ts";
-import { SPECS_BASELINE, expressSpecs } from "../../omp-harness/steps.ts";
-import { parseAcIds } from "../../omp-harness/verdict.ts";
+import { defaultConfig, fixCapFor, validateConfig } from "../../omp-harness/config/config.ts";
+import { createHandler } from "../../omp-harness/api/http.ts";
+import { SPECS_BASELINE, expressSpecs } from "../../omp-harness/runs/steps.ts";
+import { parseAcIds } from "../../omp-harness/runs/verdict.ts";
 import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 

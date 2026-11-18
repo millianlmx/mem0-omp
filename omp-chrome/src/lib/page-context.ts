@@ -12,7 +12,7 @@ export type ActivePage = { url: string; title: string };
 
 export type PageContext = { url?: string; title?: string; selection?: string };
 
-/** Les bornes du serveur (omp-harness/intake.ts), en caractères. */
+/** Les bornes du serveur (omp-harness/intake/intake.ts), en caractères. */
 export const PAGE_CONTEXT_MAX = { url: 2000, title: 300, selection: 4000 } as const;
 
 /**

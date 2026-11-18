@@ -530,7 +530,7 @@ avant le premier ; `last_error` : ses erreurs (`« portée » : …`, jointes pa
 ` ; `), `null` s'il a réussi.
 
 **Consolidation** (phases 3 et 4) : elle demande un modèle qui raisonne sur toute une
-portée. Le harness la confie à une session omp (`omp-harness/dreams.ts`), dont les
+portée. Le harness la confie à une session omp (`omp-harness/jobs/dreams.ts`), dont les
 modèles sont déjà configurés pour les runs : il lit le dossier, le fait raisonner, et
 rend le résultat, que mem0-rs valide puis applique en une transaction.
 

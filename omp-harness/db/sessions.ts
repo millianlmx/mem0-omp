@@ -2,8 +2,8 @@
 // d'un client qui se reconnecte, et leur détail (rendu lisible, sortie et JSON brut
 // d'un outil, texte entier d'un long paragraphe), lu à part.
 import { ProviderStore } from "./providers.ts";
-import type { SessionDetails, SessionEntry } from "../session-feed.ts";
-import type { AgentLine, ToolView } from "../tool-view.ts";
+import type { SessionDetails, SessionEntry } from "../sessions/session-feed.ts";
+import type { AgentLine, ToolView } from "../sessions/tool-view.ts";
 import { json, str, strOrNull, num, numOrNull } from "./sql.ts";
 import type { Row } from "./sql.ts";
 

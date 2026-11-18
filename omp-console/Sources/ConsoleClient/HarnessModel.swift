@@ -1530,7 +1530,7 @@ public final class HarnessModel: ObservableObject {
             throw HarnessFailure.stale
         case 403:
             let message = (try? JSONDecoder().decode(HarnessErrorBody.self, from: reply.body))?.error ?? ""
-            // Le refus d'un geste d'approbateur (`APPROVER_ONLY` d'omp-harness/http.ts) a
+            // Le refus d'un geste d'approbateur (`APPROVER_ONLY` d'omp-harness/workstation/workstation.ts) a
             // son échec propre : il dit comment obtenir le code approbateur.
             if message.contains(approverOnlyMarker) { throw HarnessFailure.approverOnly }
             throw HarnessFailure.forbidden(message)
@@ -1540,7 +1540,7 @@ public final class HarnessModel: ObservableObject {
         }
     }
 
-    /// Le fragment qui reconnaît `APPROVER_ONLY` (omp-harness/http.ts) dans un 403 ; la
+    /// Le fragment qui reconnaît `APPROVER_ONLY` (omp-harness/workstation/workstation.ts) dans un 403 ; la
     /// garde serveur-de-pipelines vérifie qu'il y figure toujours.
     nonisolated static let approverOnlyMarker = "seul l'appareil approbateur"
 

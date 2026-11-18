@@ -7,30 +7,30 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import type { EscalationRow, EventRow, RunRow, StepRow } from "../../omp-harness/db.ts";
-import { Store } from "../../omp-harness/db.ts";
-import { Briefings } from "../../omp-harness/briefing.ts";
-import type { Briefing } from "../../omp-harness/briefing.ts";
-import { buildCard } from "../../omp-harness/card.ts";
-import type { HarnessConfig } from "../../omp-harness/config.ts";
-import type { HarnessContext } from "../../omp-harness/context.ts";
-import { WAIT_REASON } from "../../omp-harness/machine.ts";
-import { notificationFor } from "../../omp-harness/notify.ts";
-import { alertFor } from "../../omp-harness/push-alerts.ts";
-import { EVIDENCE_MAX, planDecision } from "../../omp-harness/decisions.ts";
-import { EPHEMERAL_EVENTS, EVENT_TYPES } from "../../omp-harness/events.ts";
-import { autoAnswerOf } from "../../omp-harness/gestures.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/http.ts";
-import { Orchestrator } from "../../omp-harness/orchestrator.ts";
-import type { GraphNode, SessionGraphView } from "../../omp-harness/session-graph.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import type { EscalationRow, EventRow, RunRow, StepRow } from "../../omp-harness/db/db.ts";
+import { Store } from "../../omp-harness/db/db.ts";
+import { Briefings } from "../../omp-harness/human/briefing.ts";
+import type { Briefing } from "../../omp-harness/human/briefing.ts";
+import { buildCard } from "../../omp-harness/human/card.ts";
+import type { HarnessConfig } from "../../omp-harness/config/config.ts";
+import type { HarnessContext } from "../../omp-harness/runs/context.ts";
+import { WAIT_REASON } from "../../omp-harness/runs/machine.ts";
+import { notificationFor } from "../../omp-harness/notify/notify.ts";
+import { alertFor } from "../../omp-harness/notify/push-alerts.ts";
+import { EVIDENCE_MAX, planDecision } from "../../omp-harness/runs/decisions.ts";
+import { EPHEMERAL_EVENTS, EVENT_TYPES } from "../../omp-harness/api/events.ts";
+import { autoAnswerOf } from "../../omp-harness/human/gestures.ts";
+import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/api/http.ts";
+import { Orchestrator } from "../../omp-harness/runs/orchestrator.ts";
+import type { GraphNode, SessionGraphView } from "../../omp-harness/sessions/session-graph.ts";
 import {
   GRAPH_ARTIFACT,
   GRAPH_EVENT_MIN_MS,
   GRAPH_NODES_MAX,
   SessionGraphs,
   repoPath,
-} from "../../omp-harness/session-graph.ts";
+} from "../../omp-harness/sessions/session-graph.ts";
 import { CARD_CONTEXT, CARD_FIELDS, escalationArgs, readFrames } from "../support/card-fixtures.ts";
 import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";

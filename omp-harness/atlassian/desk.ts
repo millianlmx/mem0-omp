@@ -18,9 +18,9 @@
 // Tout est réservé au propriétaire (repo null des événements). Les jetons ne quittent jamais leur
 // fichier (`atlassian.tokenFile`, `atlassian-<espaceId>.json` à côté pour un espace).
 import * as fs from "node:fs";
-import type { AtlassianConfig, HarnessConfig } from "../config.ts";
-import { isRecord, repoByName } from "../config.ts";
-import type { HarnessContext } from "../context.ts";
+import type { AtlassianConfig, HarnessConfig } from "../config/config.ts";
+import { isRecord, repoByName } from "../config/config.ts";
+import type { HarnessContext } from "../runs/context.ts";
 import type {
   AtlassianPlan,
   AtlassianWrite,
@@ -28,12 +28,12 @@ import type {
   NewAtlassianWrite,
   PlanItem,
   PlanTrigger,
-} from "../db.ts";
-import { ATLASSIAN_WRITE_STATES, PLAN_SOURCES } from "../db.ts";
-import { HarnessError } from "../errors.ts";
-import { newId } from "../ids.ts";
-import { renderMemories } from "../oracle.ts";
-import type { HostToolResult } from "../rpc.ts";
+} from "../db/db.ts";
+import { ATLASSIAN_WRITE_STATES, PLAN_SOURCES } from "../db/db.ts";
+import { HarnessError } from "../api/errors.ts";
+import { newId } from "../runs/ids.ts";
+import { renderMemories } from "../memory/oracle.ts";
+import type { HostToolResult } from "../runners/rpc.ts";
 import { McpClient } from "./mcp.ts";
 import type { McpToolResult } from "./mcp.ts";
 import type { AtlassianFetch, AtlassianTokens } from "./oauth.ts";
@@ -56,7 +56,7 @@ export {
 } from "./tools.ts";
 export type { AtlassianToolName } from "./tools.ts";
 export type { AtlassianFetch } from "./oauth.ts";
-export type { AtlassianPlan, AtlassianWrite, PlanItem, PlanSource, PlanTrigger } from "../db.ts";
+export type { AtlassianPlan, AtlassianWrite, PlanItem, PlanSource, PlanTrigger } from "../db/db.ts";
 
 /** La portée mémoire du savoir de la boîte : étanche, jamais celle d'un dépôt. */
 export const CORPO_SCOPE = "corpo";

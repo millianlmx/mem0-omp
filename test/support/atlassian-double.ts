@@ -7,7 +7,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { LOOPBACK_REDIRECT } from "../../omp-harness/config.ts";
+import { LOOPBACK_REDIRECT } from "../../omp-harness/config/config.ts";
 import { spaceTokenFile } from "../../omp-harness/atlassian/oauth.ts";
 import type { AtlassianFetch, AtlassianResponse, AtlassianTokens } from "../../omp-harness/atlassian/oauth.ts";
 import type { FakeWorld } from "./harness-fixtures.ts";

@@ -46,7 +46,7 @@ private func ok(_ json: String) -> HarnessReply { HarnessReply(status: 200, body
     return model
 }
 
-/// La carte telle que `buildCard` l'écrit (omp-harness/card.ts).
+/// La carte telle que `buildCard` l'écrit (omp-harness/human/card.ts).
 private let cardJSON = #"""
 {"headline":"Où garder la liste des tests qui échouent déjà ?","stake":"Sans elle, chaque revue bloque sur 80 faux échecs.",
  "options":[{"label":"en base","impact":"Une table de plus, relue à chaque revue.","reversible":false,"cost":"moyen"},

@@ -297,7 +297,7 @@ struct WorkstationModelTests {
 
     @Test("un jeton ordinaire (403 APPROVER_ONLY) : approuver, refuser et régler disent comment obtenir le code approbateur ; le poste reste lisible")
     func approverOnlyIsItsOwnFailure() async {
-        // Le corps exact d'omp-harness/http.ts `APPROVER_ONLY`.
+        // Le corps exact d'omp-harness/workstation/workstation.ts `APPROVER_ONLY`.
         let denied = reply(#"{"error":"seul l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut approuver, refuser ou régler le poste"}"#, status: 403)
         let transport = ScriptedHarnessTransport()
         transport.respond(workstationServer([

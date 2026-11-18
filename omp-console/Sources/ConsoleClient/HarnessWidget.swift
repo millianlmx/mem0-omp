@@ -269,7 +269,7 @@ extension HarnessModel {
 /// Les gestes faits hors de l'app, sur un modèle relié par le groupe d'apps.
 public enum HarnessRemote {
     /// La source d'une Demande dictée ou tapée hors de l'app (Siri, Raccourcis, bouton
-    /// Action) : `INTAKE_SOURCES` d'omp-harness/intake.ts.
+    /// Action) : `INTAKE_SOURCES` d'omp-harness/intake/intake.ts.
     public static let voiceSource = "voice"
 
     /// Valide la revue d'une feature depuis sa Live Activity, à la révision que le serveur

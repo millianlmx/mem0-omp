@@ -4,8 +4,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { RpcRunner, classifyPromptError, isRateLimit, parseRetryAfter } from "../../omp-harness/rpc.ts";
-import type { PromptError, PromptErrorCause, RunnerProcess } from "../../omp-harness/rpc.ts";
+import { RpcRunner, classifyPromptError, isRateLimit, parseRetryAfter } from "../../omp-harness/runners/rpc.ts";
+import type { PromptError, PromptErrorCause, RunnerProcess } from "../../omp-harness/runners/rpc.ts";
 
 /** Un process factice : on écrit ses trames stdout, on lit ce que le runner lui envoie. */
 function fakeProc(): {
