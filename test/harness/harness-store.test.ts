@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { MIGRATIONS, Store } from "../../omp-harness/db.ts";
+import { MIGRATIONS, Store } from "../../omp-harness/db/db.ts";
 import { tmpdir } from "../support/repo.ts";
 
 function store(): Store {

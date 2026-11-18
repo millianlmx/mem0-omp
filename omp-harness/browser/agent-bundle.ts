@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** La racine des sources de l'extension, relative à ce fichier (même arborescence dans l'image). */
-export const EXTENSION_SRC = fileURLToPath(new URL("../../omp-chrome/src/", import.meta.url));
+export const EXTENSION_SRC = fileURLToPath(new URL("../../omp-chrome/src", import.meta.url));
 /** Le point d'entrée de la page, sous `EXTENSION_SRC`. */
 export const AGENT_ENTRY = "page/agent.ts";
 

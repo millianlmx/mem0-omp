@@ -1,0 +1,1112 @@
+// La boucle humaine : répondre aux escalades, accepter ou renverser une décision,
+// valider specs et verdicts, relancer, annuler, changer la priorité ou le budget,
+// parler à un run en cours (consigne) — et, quand l'humain ne répond pas, trancher à
+// l'échéance par l'option recommandée.
+//
+// Plusieurs clients peuvent agir sur le même run (le Mac, l'iPhone, un collègue) :
+// - les gestes d'un même run passent un par un (`serial`) ;
+// - un client qui donne la révision qu'il a lue (`If-Match`) est refusé (412) si le
+//   run a changé depuis — il relit au lieu d'agir sur une vue périmée ;
+// - les écritures d'un geste (état, décisions, escalades, consignes, événements)
+//   tiennent dans UNE transaction : un arrêt au milieu ne laisse rien à moitié fait.
+// L'auteur de chaque geste est gardé (`by`) dans la base et dans le journal.
+// Un pilote (celui d'un audit, ou un client `pilot` comme la vigie) emprunte ces gestes,
+// sauf ceux réservés à l'humain : il est refusé en 403, sans rien écrire.
+import { AUTONOMY_BY } from "../autonomy/autonomy-rules.ts";
+import type { Actor, HarnessContext } from "../runs/context.ts";
+import type { CancelCause, DecisionRow, EscalationRow, RunAutonomy, RunPatch, RunRow } from "../db/db.ts";
+import { IRREVERSIBLE, checkpointMessage, dependentsOf } from "../runs/decisions.ts";
+import { HarnessError } from "../api/errors.ts";
+import type { CancelMotive } from "../api/input.ts";
+import type { StepKind } from "../runs/machine.ts";
+import {
+  CANCELLABLE,
+  MERGE_CAP,
+  acceptsSpecs,
+  afterHumanValidation,
+  afterSpecsValidation,
+  cancelled,
+  isTerminal,
+  mergeStopOf,
+  resumeAfterEscalations,
+  resumeAfterMergeStop,
+  resumeAtCheckpoint,
+  retried,
+  reworkAfterReversal,
+  humanWaitOf,
+  specsBackToHuman,
+} from "../runs/machine.ts";
+import { humanDecisionMemory } from "../memory/oracle.ts";
+import type { RunBudget } from "../operations/monitor.ts";
+import { ASK_HUMAN_ONLY, HUMAN_ONLY, humanOnlyOf, raisesAutonomy } from "./pilot.ts";
+import type { StandingRules } from "./standing-rules.ts";
+import { pushTo } from "../runs/collections.ts";
+
+export type GestureHooks = {
+  /** Arrête le run s'il est conduit par ce process, et attend sa fin. */
+  halt: (runId: string) => Promise<void>;
+  /** Un tour de scheduling (un run remis en file repart tout de suite). */
+  tick: () => void;
+  /** Le run est-il enfilé ou en cours de merge ? */
+  merging: (runId: string) => boolean;
+  /** Ouvre un run de suite (décision renversée après le merge, sans revert possible). */
+  followUp: (
+    input: {
+      repo: string;
+      title: string;
+      request: string;
+      modules: string[];
+      priority: number;
+      /** Le curseur d'autonomie du run d'origine : son run de suite en hérite. */
+      autonomy: RunAutonomy | null;
+    },
+    actor: Actor,
+  ) => Promise<RunRow>;
+  /** Reverte le commit squash d'un run mergé sur main et rend le run de suite ouvert ; lève si le revert ou le push échoue. */
+  revertMerge: (runId: string, actor: Actor) => Promise<RunRow>;
+  /**
+   * Injecte `message` dans le prompt en cours de la session du run (`steer` d'OMP) ; `false`
+   * si le run n'est pas conduit par ce process ou qu'aucun prompt ne tourne.
+   */
+  steer: (runId: string, message: string) => Promise<boolean>;
+  /** Les specs du run viennent d'être acceptées (dans la transaction) : leur découpage part (split.ts). */
+  specsAccepted: (run: RunRow) => void;
+  /** Une règle d'autonomie pourrait-elle lever l'attente de ce run (autonomy-gates.ts `liftable`) ? */
+  liftable: (run: RunRow) => boolean;
+  /** Les consignes permanentes : une réponse ou une correction donnée avec `always: true` en devient une (standing-rules.ts). */
+  standing: Pick<StandingRules, "assertRoom" | "fromAnswer" | "fromCorrection">;
+};
+
+/** Où est allée une consigne : dans le prompt en cours (`session`), ou gardée pour le prochain (`pending`). */
+export type Delivered = "session" | "pending";
+
+/** Par où une correction atteint le run (`amend`) : specs refaites, correction, relance, ou consigne. */
+export type AmendVia = "specs" | "fix" | "retry" | "instruction";
+
+/** Le libellé de chaque motif d'annulation, dit dans la raison du run. */
+export const CANCEL_LABELS: Record<CancelCause, string> = {
+  off_target: "à côté de la demande",
+  too_big: "trop gros",
+  obsolete: "plus besoin",
+  duplicate: "doublon",
+  too_costly: "trop cher",
+  other: "autre",
+};
+
+/** Les motifs dont la note de l'humain devient une correction dans la mémoire du dépôt. */
+const LEARNED_CAUSES: readonly CancelCause[] = ["off_target", "too_big"];
+
+/** `always` : la réponse devient une consigne permanente du dépôt (« toujours faire ainsi »). */
+export type EscalationAnswer = { id: number; answer: string; reason?: string; always?: boolean };
+
+/** Une réponse d'escalade telle qu'elle est écrite, et par qui (`null` : le service, à l'échéance). */
+type Answered = { item: EscalationRow; answer: string; reason: string | null; by: string | null };
+
+/** Les escalades ouvertes d'un run, répondues, dont la reprise reste à faire. */
+type ResumeLine = { question: string; answer: string; timedOut: boolean };
+
+/** Le début de la raison d'une réponse donnée par le service à l'échéance (la relecture la reconnaît). */
+const TIMEOUT_REASON = "échéance de";
+
+/**
+ * Quand l'option recommandée d'une escalade s'appliquera seule, et laquelle ; `null` si elle ne le fera
+ * jamais : échéance coupée (`review.escalationTimeoutSec: null`), escalade répondue, suppression, pas de
+ * recommandation, run terminé ou en « tout me demander ». La même règle tranche à l'échéance
+ * (`autoDecideExpired`) et se lit dans l'API (`autoAt`, `autoAnswer`).
+ */
+export function autoAnswerOf(
+  item: Pick<EscalationRow, "status" | "category" | "recommended" | "createdAt">,
+  run: Pick<RunRow, "state" | "autonomy"> | null,
+  timeoutSec: number | null,
+): { autoAt: number | null; autoAnswer: string | null } {
+  const recommended = item.recommended?.trim() ?? "";
+  if (
+    timeoutSec === null ||
+    item.status !== "open" ||
+    item.category === "deletion" ||
+    recommended === "" ||
+    run === null ||
+    isTerminal(run.state) ||
+    run.autonomy === "ask"
+  )
+    return { autoAt: null, autoAnswer: null };
+  return { autoAt: item.createdAt + timeoutSec * 1000, autoAnswer: recommended };
+}
+
+function byOf(actor: Actor): { by?: string } {
+  return actor.by ? { by: actor.by } : {};
+}
+
+/** Qui tranche, dans la raison écrite sur le run. */
+function whoOf(actor: Actor): string {
+  if (actor.by?.startsWith(AUTONOMY_BY)) return "l'autonomie";
+  if (!actor.pilot) return "l'humain";
+  return actor.by === null || actor.by.startsWith("pilote:") ? "le pilote de l'audit" : `le pilote ${actor.by}`;
+}
+
+function list(seqs: readonly number[]): string {
+  return seqs.map((n) => `#${n}`).join(", ");
+}
+
+/** La voie d'une correction selon ce que le run attend ; 409 s'il n'y a plus rien à corriger. */
+function amendViaOf(run: RunRow): AmendVia {
+  switch (run.state) {
+    case "awaiting_human": {
+      const wait = humanWaitOf(run);
+      if (wait === "specs" || wait === "irreversible") return "specs";
+      return wait === "verdict" || wait === "arbitration" ? "fix" : "retry";
+    }
+    case "failed":
+      return "retry";
+    case "queued":
+    case "running":
+    case "escalated":
+      return "instruction";
+    case "merging":
+      throw new HarnessError(409, "merge en cours : plus rien à corriger");
+    case "merged":
+    case "cancelled":
+      throw new HarnessError(409, `run déjà ${run.state} : plus rien à corriger`);
+  }
+}
+
+export class HumanLoop {
+  readonly #ctx: HarnessContext;
+  readonly #hooks: GestureHooks;
+  /** Les gestes d'un même run passent un par un (deux renversements simultanés…). */
+  readonly #gestures = new Map<string, Promise<unknown>>();
+
+  constructor(ctx: HarnessContext, hooks: GestureHooks) {
+    this.#ctx = ctx;
+    this.#hooks = hooks;
+  }
+
+  #serial<T>(runId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.#gestures.get(runId) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(fn);
+    this.#gestures.set(runId, next);
+    void next
+      .finally(() => {
+        if (this.#gestures.get(runId) === next) this.#gestures.delete(runId);
+      })
+      .catch(() => {});
+    return next;
+  }
+
+  /** Le run, à la révision que l'acteur a lue s'il en donne une. */
+  #fresh(runId: string, actor: Actor): RunRow {
+    const run = this.#ctx.run(runId);
+    if (actor.rev !== undefined && run.rev !== actor.rev) {
+      throw new HarnessError(
+        412,
+        `le run a changé depuis ta lecture (révision ${run.rev}, la tienne ${actor.rev}) : relis-le`,
+      );
+    }
+    return run;
+  }
+
+  /**
+   * Un pilote (audit ou client pilote) ne fait jamais un geste réservé à l'humain : sur une
+   * attente de `HUMAN_ONLY` (geste irréversible, budget dépassé) ou d'un run en « tout me
+   * demander », 403 sans rien écrire. Les specs sont relues (`humanOnlyOf`) : la raison nue que
+   * pose `review.specsGate: true` ne dit pas leur geste irréversible.
+   */
+  assertPilotMay(run: RunRow, actor: Actor): void {
+    if (!actor.pilot) return;
+    const reason = humanOnlyOf(run, this.#ctx.store);
+    if (reason !== undefined) throw new HarnessError(403, `geste réservé à l'humain — ${reason}`);
+  }
+
+  /** `always: true` : refuse le geste (400) AVANT qu'il n'écrive si le dépôt porte déjà toutes ses consignes ; sans effet pour un pilote. */
+  #alwaysRoom(run: RunRow, actor: Actor, adding = 1): void {
+    if (!actor.pilot) this.#hooks.standing.assertRoom(run.repo, adding);
+  }
+
+  /** `always: true` : la correction donnée au run devient une consigne permanente de son dépôt ; ignoré pour un pilote. */
+  #alwaysKeep(run: RunRow, text: string, actor: Actor): void {
+    this.#hooks.standing.fromCorrection(run, text, actor);
+  }
+
+  // -- escalades --------------------------------------------------------------
+
+  /** Réponses aux escalades d'un run ; quand toutes sont répondues, le run reprend son étape. */
+  answerEscalations(runId: string, answers: EscalationAnswer[], actor: Actor): Promise<RunRow> {
+    return this.#serial(runId, () => this.#answerEscalations(runId, answers, actor));
+  }
+
+  async #answerEscalations(runId: string, answers: EscalationAnswer[], actor: Actor): Promise<RunRow> {
+    const { store } = this.#ctx;
+    const run = this.#fresh(runId, actor);
+    if (run.state !== "escalated") throw new HarnessError(409, `le run n'attend pas de réponse (état ${run.state})`);
+    const open = new Map(store.listEscalations({ runId, status: "open" }).map((item) => [item.id, item]));
+    // Une escalade porte un geste irréversible (schema, public_api, deletion) : l'humain seul y répond.
+    if (actor.pilot && answers.some(({ id }) => IRREVERSIBLE.some((category) => category === open.get(id)?.category)))
+      throw new HarnessError(
+        403,
+        "geste réservé à l'humain — une escalade (schema, public_api, deletion) n'est tranchée que par l'humain",
+      );
+    // « Tout me demander » : aucun pilote ne répond à la place de l'humain, même à une question réversible.
+    if (actor.pilot && run.autonomy === "ask")
+      throw new HarnessError(403, `geste réservé à l'humain — ${ASK_HUMAN_ONLY}`);
+    for (const { id, answer, reason } of answers) {
+      if (!open.get(id)) throw new HarnessError(404, `escalade ouverte inconnue : ${id}`);
+      if (typeof answer !== "string" || answer.trim() === "")
+        throw new HarnessError(400, `réponse vide pour l'escalade ${id}`);
+      if (reason !== undefined && typeof reason !== "string")
+        throw new HarnessError(400, `reason de l'escalade ${id} : une chaîne`);
+    }
+    const kept = answers.filter((entry) => entry.always === true).length;
+    if (kept > 0) this.#alwaysRoom(run, actor, kept);
+    const answered = store.transaction(() =>
+      answers.flatMap(({ id, answer, reason, always }) => {
+        const item = open.get(id);
+        if (!item) return [];
+        const text = answer.trim();
+        const why = reason?.trim() ? reason.trim() : null;
+        store.answerEscalation(id, text, actor.by, why);
+        this.#ctx.event("escalation_answered", runId, {
+          id,
+          answer: text,
+          ...(why ? { reason: why } : {}),
+          ...byOf(actor),
+          ...(actor.pilot ? { pilot: true } : {}),
+        });
+        if (always === true) this.#hooks.standing.fromAnswer(run, item, text, actor);
+        return [{ item, answer: text, reason: why, by: actor.by }];
+      }),
+    );
+    this.#retainAnswers(run, answered);
+    await this.#resumeIfAllAnswered(runId, actor);
+    return this.#ctx.run(runId);
+  }
+
+  /**
+   * Chaque réponse humaine retourne à l'oracle : la raison d'abord, avec les options et le
+   * contexte. Sans l'attendre : une écriture lente se retente des minutes durant.
+   */
+  #retainAnswers(run: RunRow, answered: readonly Answered[]): void {
+    const repo = this.#ctx.repo(run.repo);
+    for (const { item, answer, reason } of answered) {
+      void this.#ctx.oracle.retain(
+        repo.scope,
+        humanDecisionMemory({
+          feature: run.title,
+          question: item.question,
+          chosen: answer,
+          reason: reason ?? "",
+          category: item.category,
+          options: item.options,
+          context: item.context,
+        }),
+        ["harness", "decision", item.category],
+      );
+    }
+  }
+
+  /**
+   * Quand plus aucune escalade n'est ouverte, le run reprend son étape avec les réponses
+   * du lot (toutes les escalades de la DERNIÈRE étape escaladée). Relu : un geste a pu
+   * passer entre-temps.
+   */
+  async #resumeIfAllAnswered(runId: string, actor: Actor): Promise<void> {
+    const { store } = this.#ctx;
+    const current = this.#ctx.run(runId);
+    if (current.state !== "escalated" || store.listEscalations({ runId, status: "open" }).length > 0) return;
+    const lastEscalated = store
+      .listSteps(runId)
+      .filter((step) => step.status === "escalated")
+      .pop();
+    const batch: ResumeLine[] = store
+      .listEscalations({ runId, status: "answered" })
+      .filter((item) => item.stepId === lastEscalated?.id)
+      .map((item) => ({
+        question: item.question,
+        answer: item.answer ?? "",
+        timedOut: item.answeredBy === null && (item.answerReason?.startsWith(TIMEOUT_REASON) ?? false),
+      }));
+    const timedOut = batch.some((line) => line.timedOut);
+    store.transaction(() => {
+      const moved = this.#ctx.transition(
+        current,
+        resumeAfterEscalations({ step: current.step ?? "impl", fixes: current.fixes, attempts: 0 }),
+        ["escalated"],
+        { actor: { by: actor.by } },
+      );
+      if (moved) {
+        store.addInstructions(
+          runId,
+          (timedOut
+            ? "Les escalades de l'étape sont tranchées — par l'humain, ou à l'échéance par l'option recommandée (marquées « à l'échéance », décisions à relire). "
+            : "L'humain a tranché les escalades de l'étape. ") +
+            "Applique ces réponses, puis termine l'étape :\n" +
+            batch
+              .map((line) => `- ${line.question} → ${line.answer}${line.timedOut ? " (à l'échéance)" : ""}`)
+              .join("\n"),
+        );
+      }
+    });
+    this.#hooks.tick();
+  }
+
+  /**
+   * L'humain ne répond pas : passé `review.escalationTimeoutSec`, chaque escalade ouverte
+   * (sauf une suppression, jamais tranchée seule) reçoit l'option recommandée par l'agent,
+   * devient une décision `auto_timeout` — renversable comme les autres — et le run reprend.
+   * `null` : jamais d'auto-décision. Appelé par l'orchestrateur à chaque tour. `held` : les dépôts
+   * dont l'espace est en pause — leurs échéances attendent la reprise, comme sous la pause globale.
+   */
+  async autoDecideExpired(now: number, held?: (repo: string) => boolean): Promise<void> {
+    const { store } = this.#ctx;
+    const timeoutSec = this.#ctx.config.review.escalationTimeoutSec;
+    if (timeoutSec === null) return;
+    const runs = new Map<string, RunRow | null>();
+    const byRun = new Map<string, EscalationRow[]>();
+    for (const item of store.listEscalations({ status: "open" })) {
+      if (!runs.has(item.runId)) runs.set(item.runId, store.getRun(item.runId));
+      const repo = runs.get(item.runId)?.repo;
+      if (repo !== undefined && held?.(repo)) continue;
+      const { autoAt } = autoAnswerOf(item, runs.get(item.runId) ?? null, timeoutSec);
+      if (autoAt === null || autoAt > now) continue;
+      pushTo(byRun, item.runId, item);
+    }
+    for (const [runId, items] of byRun) {
+      await this.#serial(runId, () => this.#autoDecide(runId, items, timeoutSec)).catch((err: unknown) =>
+        this.#ctx.log(
+          `run ${runId} : auto-décision à l'échéance écartée (${err instanceof Error ? err.message : err})`,
+          { level: "warn", runId, repo: this.#ctx.store.getRun(runId)?.repo ?? null },
+        ),
+      );
+    }
+  }
+
+  async #autoDecide(runId: string, candidates: readonly EscalationRow[], timeoutSec: number): Promise<void> {
+    const { store, git } = this.#ctx;
+    const run = store.getRun(runId);
+    // Seul un run qui ATTEND ses réponses se tranche : un runner vivant finit son étape d'abord.
+    // « Tout me demander » : ses escalades n'expirent jamais.
+    if (run?.state !== "escalated" || run.autonomy === "ask") return;
+    const open = new Set(store.listEscalations({ runId, status: "open" }).map((item) => item.id));
+    const rationale = `${TIMEOUT_REASON} ${timeoutSec} s sans réponse humaine`;
+    const decided: { item: EscalationRow; decision: DecisionRow }[] = [];
+    for (const item of candidates) {
+      if (!open.has(item.id) || item.recommended === null) continue;
+      const chosen = item.recommended.trim();
+      const decision = store.transaction(() => {
+        store.answerEscalation(item.id, chosen, null, rationale);
+        const row = store.addDecision(
+          {
+            runId,
+            stepId: item.stepId,
+            question: item.question,
+            options: item.options,
+            chosen,
+            rationale,
+            context: item.context,
+            impacts: item.impacts,
+            category: item.category,
+            checkpointSha: null,
+            dependsOn: [],
+          },
+          "auto_timeout",
+        );
+        this.#ctx.event("decision_auto_timeout", runId, {
+          id: item.id,
+          seq: row.seq,
+          category: item.category,
+          question: item.question,
+          chosen,
+          timeoutSec,
+        });
+        return row;
+      });
+      decided.push({ item, decision });
+    }
+    if (decided.length === 0) return;
+    // Le checkpoint : l'état d'AVANT l'application de l'option, d'où l'on repart si l'humain renverse.
+    if (run.worktree !== null) {
+      const sha = await git.commitAll(
+        run.worktree,
+        checkpointMessage(runId, decided[decided.length - 1]?.decision.seq ?? 0, {
+          question: decided.map(({ decision }) => decision.question).join(" ; "),
+          chosen: decided.map(({ decision }) => decision.chosen).join(" ; "),
+          rationale,
+        }),
+      );
+      store.transaction(() => {
+        for (const { decision } of decided) store.setCheckpoint(decision.id, sha);
+      });
+    }
+    const repo = this.#ctx.repo(run.repo);
+    // L'oracle n'est pas attendu : une écriture lente se retente des minutes durant.
+    for (const { item, decision } of decided) {
+      void this.#ctx.oracle.retain(
+        repo.scope,
+        `Décision tranchée à l'échéance (${rationale}) — feature « ${run.title} » : ${decision.question} → « ${decision.chosen} » (recommandation de l'agent, non validée par l'humain). ` +
+          `Options : ${item.options.join(" | ")}.${item.context ? ` Contexte : ${item.context}` : ""}`,
+        ["harness", "decision", "auto_timeout"],
+      );
+    }
+    await this.#resumeIfAllAnswered(runId, { by: null });
+  }
+
+  // -- décisions --------------------------------------------------------------
+
+  acceptDecision(runId: string, seq: number, actor: Actor): Promise<DecisionRow> {
+    return this.#serial(runId, async () => {
+      const { store } = this.#ctx;
+      this.#fresh(runId, actor);
+      const decision = store.transaction(() => {
+        const accepted = store.acceptDecision(runId, seq, actor.by);
+        if (accepted) this.#ctx.event("decision_accepted", runId, { seq, ...byOf(actor) });
+        return accepted;
+      });
+      if (!decision) throw new HarnessError(404, `décision inconnue : ${runId}#${seq}`);
+      return decision;
+    });
+  }
+
+  /** Toutes les décisions prises seules (`auto`, `auto_timeout`) du run passent en `accepted`, d'un geste. */
+  acceptAllDecisions(runId: string, actor: Actor): Promise<{ accepted: number }> {
+    return this.#serial(runId, async () => {
+      const { store } = this.#ctx;
+      this.#fresh(runId, actor);
+      const accepted = store.transaction(() => {
+        const pending = store.listDecisions({ runId, status: ["auto", "auto_timeout"] });
+        const count = store.acceptAllDecisions(runId, actor.by);
+        for (const decision of pending)
+          this.#ctx.event("decision_accepted", runId, { seq: decision.seq, ...byOf(actor) });
+        return count;
+      });
+      return { accepted };
+    });
+  }
+
+  /**
+   * Renverse la décision `seq` ; la raison de l'humain part dans l'oracle.
+   * - Rien n'en dépend : pas de retour arrière, l'étape en cours (ou une correction
+   *   après la revue) applique l'option sur l'état courant ; les autres décisions tiennent.
+   * - Des décisions en découlent (`dependsOn`, transitivement) : les commits de la
+   *   décision et de ses dépendantes sont REVERTÉS (le travail indépendant d'après
+   *   reste dans l'arbre) ; si le revert entre en conflit, retour dur au checkpoint et
+   *   les indépendantes sont réappliquées par consigne.
+   * Un run déjà mergé : revert du commit squash sur main, puis un run de suite.
+   */
+  reverseDecision(runId: string, seq: number, option: string, reason: string, actor: Actor): Promise<RunRow> {
+    return this.#serial(runId, () => this.#reverseDecision(runId, seq, option.trim(), reason.trim(), actor));
+  }
+
+  async #reverseDecision(runId: string, seq: number, option: string, reason: string, actor: Actor): Promise<RunRow> {
+    const { store, git, oracle } = this.#ctx;
+    const run = this.#fresh(runId, actor);
+    if (run.state === "cancelled") throw new HarnessError(409, "run annulé");
+    const decision = store.getDecision(runId, seq);
+    if (!decision) throw new HarnessError(404, `décision inconnue : ${runId}#${seq}`);
+    if (decision.status === "reversed" || decision.status === "superseded")
+      throw new HarnessError(409, `décision #${seq} déjà ${decision.status}`);
+    if (option === "" || reason === "")
+      throw new HarnessError(400, "option et reason sont requises : la raison retourne dans l'oracle");
+    if (run.state === "merging" || this.#hooks.merging(runId))
+      throw new HarnessError(409, "merge en cours : renverse après le merge (un run de suite sera ouvert)");
+    const repo = this.#ctx.repo(run.repo);
+    void oracle.retain(
+      repo.scope,
+      humanDecisionMemory({
+        feature: run.title,
+        question: decision.question,
+        chosen: option,
+        reason,
+        category: decision.category,
+        options: decision.options,
+        reversedFrom: decision.chosen,
+      }),
+      ["harness", "decision", "renversement"],
+    );
+    const standing = store.listDecisions({ runId, status: ["auto", "auto_timeout", "accepted"] });
+    const fallen = dependentsOf(standing, seq);
+
+    if (run.state === "merged") return this.#reverseAfterMerge(run, decision, option, reason, fallen, actor);
+
+    await this.#hooks.halt(runId);
+    const fresh = this.#ctx.run(runId);
+    if (fresh.state === "merging" || fresh.state === "merged" || fresh.state === "cancelled")
+      throw new HarnessError(409, `le run est passé en ${fresh.state} pendant le renversement`);
+    // Une validation de specs prise seule par l'autonomie : les specs reviennent à l'humain.
+    if (decision.autonomy?.gate === "specs")
+      return this.#specsBackToHuman(fresh, decision, option, reason, fallen, actor);
+
+    if (fallen.length === 0 || fresh.worktree === null || decision.checkpointSha === null)
+      return this.#reworkOver(fresh, decision, option, reason, fallen, actor);
+
+    const worktree = fresh.worktree;
+    const stepKind = store.getStep(decision.stepId)?.kind ?? "impl";
+    const cursor = { step: stepKind, fixes: fresh.fixes, attempts: 0 };
+    // Tout ce qui est en cours entre dans l'historique : la plage à reverter va jusqu'à HEAD.
+    if (await git.isDirty(worktree))
+      await git.commitAll(worktree, `wip(${fresh.step ?? "fix"}): avant le renversement de #${seq}`.slice(0, 120));
+    const chain = [seq, ...fallen];
+    const last = Math.max(...chain);
+    // La plage de la décision et de ses dépendantes : du checkpoint de `seq` à celui de la
+    // première décision survivante postérieure (son commit porte le travail d'avant elle), sinon HEAD.
+    const boundary = standing.filter((d) => d.seq > last && d.checkpointSha !== null).sort((a, b) => a.seq - b.seq)[0];
+    const to = boundary?.checkpointSha ?? "HEAD";
+    const reverted = await git.revertRange(worktree, decision.checkpointSha, to);
+    const kept = standing.filter((d) => d.seq > seq && !chain.includes(d.seq));
+    const common = () => {
+      store.updateRun(runId, { verdict: null });
+      store.reverseDecision(runId, seq, option, reason, fallen, actor.by);
+      // Les escalades encore ouvertes portaient sur un travail qui vient d'être défait.
+      for (const item of store.listEscalations({ runId, status: "open" }))
+        store.answerEscalation(item.id, `caduque : reprise après le renversement de #${seq}`);
+    };
+
+    if (reverted.ok) {
+      // Les survivantes prises dans la plage ont perdu leur travail, pas leur checkpoint ; celles d'après tiennent.
+      const inside = kept.filter((d) => d.seq < last).map((d) => d.seq);
+      const outside = kept.filter((d) => d.seq > last).map((d) => d.seq);
+      store.transaction(() => {
+        common();
+        store.setInstructions(
+          runId,
+          `L'humain a renversé la décision #${seq} « ${decision.question} » : les commits après le checkpoint #${seq} ` +
+            `(jusqu'à ${to === "HEAD" ? "HEAD" : `#${boundary?.seq}`}) ont été revertés (${reverted.sha.slice(0, 12)}) ; ` +
+            `applique « ${option} » (raison : ${reason}). ` +
+            `Les décisions ${list(fallen)} en découlaient : elles tombent, retranche-les si la question se repose.` +
+            (inside.length > 0
+              ? ` Les décisions ${list(inside)} n'en dépendaient pas mais leur travail était dans la plage revertée : réapplique-les telles quelles.`
+              : "") +
+            (outside.length > 0
+              ? ` Les décisions ${list(outside)} n'en dépendent pas : elles tiennent et restent dans l'arbre.`
+              : ""),
+        );
+        this.#ctx.event("decision_reversed", runId, {
+          seq,
+          option,
+          step: stepKind,
+          revert: reverted.sha,
+          mode: "revert",
+          superseded: fallen,
+          ...byOf(actor),
+        });
+        this.#ctx.transition(this.#ctx.run(runId), resumeAtCheckpoint(cursor, stepKind, seq), [fresh.state], {
+          actor: { by: actor.by },
+        });
+      });
+      this.#hooks.tick();
+      return this.#ctx.run(runId);
+    }
+
+    // Conflit : retour dur au checkpoint, seules les dépendantes tombent, les indépendantes sont réappliquées.
+    await git.resetTo(worktree, decision.checkpointSha);
+    const sha = await git.commitAll(
+      worktree,
+      checkpointMessage(runId, seq, {
+        question: `${decision.question} (renversée)`,
+        chosen: option,
+        rationale: `Tranché par l'humain : ${reason}`,
+      }),
+    );
+    store.transaction(() => {
+      common();
+      // Les indépendantes postérieures ont perdu leur commit : elles repartent de ce checkpoint.
+      store.setCheckpoint(decision.id, sha);
+      for (const survivor of kept) store.setCheckpoint(survivor.id, sha);
+      store.setInstructions(
+        runId,
+        `Reprise au checkpoint #${seq} : l'humain a renversé « ${decision.question} ». Applique « ${option} » (raison : ${reason}). ` +
+          `Le revert des commits suivants entrait en conflit (${reverted.conflicts.join(", ")}) : tout ce qui a été fait après ce checkpoint a été annulé ; refais la suite de l'étape avec ce choix. ` +
+          `Les décisions ${list(fallen)} en découlaient : elles sont annulées, retranche-les si la question se repose.` +
+          (kept.length > 0
+            ? ` Les décisions ${list(kept.map((d) => d.seq))} n'en dépendaient pas : réapplique-les telles quelles.`
+            : ""),
+      );
+      this.#ctx.event("decision_reversed", runId, {
+        seq,
+        option,
+        step: stepKind,
+        checkpoint: sha,
+        conflicts: reverted.conflicts,
+        mode: "reset",
+        superseded: fallen,
+        ...byOf(actor),
+      });
+      this.#ctx.transition(this.#ctx.run(runId), resumeAtCheckpoint(cursor, stepKind, seq), [fresh.state], {
+        actor: { by: actor.by },
+      });
+    });
+    this.#hooks.tick();
+    return this.#ctx.run(runId);
+  }
+
+  /**
+   * L'humain désavoue une validation de specs prise seule, avant le merge : le travail déjà commité reste sur la
+   * branche, et les specs reviennent à l'humain (`specs_ready`). Aucune attente de ce run n'est plus levée seule
+   * (autonomy-gates.ts). Le renverser « comme une décision d'agent » relancerait /impl avec une consigne
+   * qu'aucun runner ne peut appliquer.
+   */
+  async #specsBackToHuman(
+    fresh: RunRow,
+    decision: DecisionRow,
+    option: string,
+    reason: string,
+    fallen: readonly number[],
+    actor: Actor,
+  ): Promise<RunRow> {
+    const { store, git } = this.#ctx;
+    const runId = fresh.id;
+    const seq = decision.seq;
+    if (fresh.worktree !== null && (await git.isDirty(fresh.worktree)))
+      await git.commitAll(
+        fresh.worktree,
+        `wip(${fresh.step ?? "fix"}): avant le renversement de #${seq}`.slice(0, 120),
+      );
+    store.transaction(() => {
+      store.updateRun(runId, { verdict: null });
+      store.reverseDecision(runId, seq, option, reason, fallen, actor.by);
+      for (const item of store.listEscalations({ runId, status: "open" }))
+        store.answerEscalation(item.id, `caduque : specs rendues à l'humain après le renversement de #${seq}`);
+      store.addInstructions(
+        runId,
+        `L'humain a renversé la validation des specs par l'autonomie (#${seq}, raison : ${reason}) et les relit. ` +
+          "Le travail déjà commité reste sur la branche : garde ce qui tient avec specs.md, défais le reste.",
+      );
+      this.#ctx.event("decision_reversed", runId, { seq, option, mode: "rework", superseded: fallen, ...byOf(actor) });
+      this.#ctx.transition(
+        this.#ctx.run(runId),
+        specsBackToHuman({ step: "specs", fixes: fresh.fixes, attempts: 0 }, seq),
+        [fresh.state],
+        { actor: { by: actor.by } },
+      );
+    });
+    this.#hooks.tick();
+    return this.#ctx.run(runId);
+  }
+
+  /** Rien à défaire : on garde tout le travail, l'option s'applique par-dessus (l'étape, ou une correction). */
+  async #reworkOver(
+    fresh: RunRow,
+    decision: DecisionRow,
+    option: string,
+    reason: string,
+    fallen: readonly number[],
+    actor: Actor,
+  ): Promise<RunRow> {
+    const { store, git } = this.#ctx;
+    const runId = fresh.id;
+    const seq = decision.seq;
+    if (fresh.worktree !== null && (await git.isDirty(fresh.worktree)))
+      await git.commitAll(
+        fresh.worktree,
+        `wip(${fresh.step ?? "fix"}): avant le renversement de #${seq}`.slice(0, 120),
+      );
+    store.transaction(() => {
+      store.updateRun(runId, { verdict: null });
+      store.reverseDecision(runId, seq, option, reason, fallen, actor.by);
+      store.addInstructions(
+        runId,
+        `L'humain a renversé la décision #${seq} « ${decision.question} » : remplace « ${decision.chosen} » par « ${option} » (raison : ${reason}). ` +
+          "Applique ce changement sur l'état actuel du code (et des artefacts qui le citent) ; rien n'a été annulé, les autres décisions tiennent." +
+          (fallen.length > 0
+            ? ` Les décisions ${list(fallen)} en découlaient : elles tombent, retranche-les si la question se repose.`
+            : ""),
+      );
+      this.#ctx.event("decision_reversed", runId, { seq, option, mode: "rework", superseded: fallen, ...byOf(actor) });
+      // Une étape qui attend ses escalades reprendra d'elle-même, avec la consigne ; sinon on la relance.
+      if (fresh.state !== "escalated" && fresh.state !== "queued") {
+        const step: StepKind = fresh.step === null || fresh.step === "review" ? "fix" : fresh.step;
+        if (fresh.state === "running") {
+          for (const item of store.listEscalations({ runId, status: "open" }))
+            store.answerEscalation(item.id, `caduque : étape relancée après le renversement de #${seq}`);
+        }
+        this.#ctx.transition(
+          this.#ctx.run(runId),
+          reworkAfterReversal({ step, fixes: fresh.fixes, attempts: 0 }, step, seq),
+          [fresh.state],
+          { actor: { by: actor.by } },
+        );
+      }
+    });
+    this.#hooks.tick();
+    return this.#ctx.run(runId);
+  }
+
+  /**
+   * Le run est mergé : le commit squash est reverté sur main, puis un run de suite
+   * réapplique la feature avec l'option de l'humain. Si le revert ne passe pas (push
+   * refusé, conflit), le run de suite part seul et corrige par-dessus main.
+   */
+  async #reverseAfterMerge(
+    run: RunRow,
+    decision: DecisionRow,
+    option: string,
+    reason: string,
+    fallen: readonly number[],
+    actor: Actor,
+  ): Promise<RunRow> {
+    const { store } = this.#ctx;
+    const seq = decision.seq;
+    const change =
+      `L'humain renverse la décision #${seq} « ${decision.question} → ${decision.chosen} » de la feature « ${run.title} » : « ${option} ». Raison : ${reason}.` +
+      (fallen.length > 0 ? ` Les décisions qui en découlaient (${list(fallen)}) sont à revoir.` : "");
+    store.transaction(() => {
+      store.reverseDecision(run.id, seq, option, reason, fallen, actor.by);
+      this.#ctx.event("decision_reversed", run.id, { seq, option, followUp: true, superseded: fallen, ...byOf(actor) });
+    });
+    try {
+      const follow = await this.#hooks.revertMerge(run.id, actor);
+      store.addInstructions(
+        follow.id,
+        `Le commit squash de « ${run.title} » a été reverté sur main. ${change} Réapplique la feature avec ce choix ; les autres décisions tiennent, reprends-les telles quelles.`,
+      );
+      return follow;
+    } catch (err: unknown) {
+      const why = err instanceof Error ? err.message : String(err);
+      this.#ctx.event("revert_failed", run.id, { seq, reason: why.slice(0, 500), ...byOf(actor) });
+      this.#ctx.log(`run ${run.id} : revert du merge impossible (${why.slice(0, 200)}) — run de suite seul`, {
+        level: "warn",
+        runId: run.id,
+        repo: run.repo,
+      });
+      const follow = await this.#hooks.followUp(
+        {
+          repo: run.repo,
+          title: `Suite de « ${run.title} » : ${decision.question}`.slice(0, 120),
+          request: `La feature « ${run.title} » a été mergée avec la décision « ${decision.question} → ${decision.chosen} » et son commit n'a pas pu être reverté. ${change} Applique ce changement par-dessus main.`,
+          modules: run.modules,
+          priority: run.priority,
+          autonomy: run.autonomy,
+        },
+        actor,
+      );
+      // Le lien du run de suite vers son parent : la lignée (vigie, pilote) et le gabarit « refaire » le lisent.
+      this.#ctx.event("follow_up", run.id, { runId: follow.id });
+      return follow;
+    }
+  }
+
+  // -- validation, relance, annulation, priorité ---------------------------------
+
+  /**
+   * La validation humaine en attente : les specs (avant /impl) ou le verdict de revue. `inscribe` : l'autonomie
+   * inscrit sa décision dans la transaction du geste (autonomy-gates.ts). `always` : la raison d'un refus devient
+   * une consigne permanente du dépôt (ignoré pour une validation, et pour un pilote).
+   */
+  validate(
+    runId: string,
+    approve: boolean,
+    reason: string,
+    actor: Actor,
+    options: { inscribe?: (next: RunRow) => void; always?: boolean } = {},
+  ): Promise<RunRow> {
+    return this.#serial(runId, () => this.#validate(runId, approve, reason.trim(), actor, options));
+  }
+
+  async #validate(
+    runId: string,
+    approve: boolean,
+    why: string,
+    actor: Actor,
+    options: { inscribe?: (next: RunRow) => void; always?: boolean },
+  ): Promise<RunRow> {
+    const { store, oracle } = this.#ctx;
+    const run = this.#fresh(runId, actor);
+    this.assertPilotMay(run, actor);
+    if (run.state !== "awaiting_human")
+      throw new HarnessError(409, `le run n'attend pas de validation (état ${run.state})`);
+    const specs = run.step === "specs";
+    const always = options.always === true && !approve;
+    if (!approve) {
+      if (why === "") throw new HarnessError(400, "un refus porte sa raison");
+      if (always) this.#alwaysRoom(run, actor);
+      // Un refus du pilote n'est pas une correction humaine : l'oracle ne le rappellera pas comme tel.
+      if (!actor.pilot)
+        void oracle.retain(
+          this.#ctx.repo(run.repo).scope,
+          `Correction humaine — ${specs ? "specs de la " : ""}feature « ${run.title} » : ${why}`,
+          ["harness", "correction"],
+        );
+    }
+    const current = this.#ctx.run(runId);
+    // Ce que la porte pourrait lever, constaté avant le geste : le journal ne le recalcule jamais après coup.
+    const liftable = this.#hooks.liftable(current);
+    const cursor = { step: current.step ?? "review", fixes: current.fixes, attempts: 0 };
+    const who = whoOf(actor);
+    // Un merge arrêté au plafond : le valider rejouerait le même merge, qui buterait pareil.
+    const stop = mergeStopOf(current);
+    const transition =
+      approve && stop !== null
+        ? resumeAfterMergeStop({ ...cursor, step: stop }, who)
+        : current.step === "specs"
+          ? afterSpecsValidation(cursor, approve, why, who)
+          : afterHumanValidation(cursor, approve, why, who);
+    const patch: RunPatch =
+      approve && stop !== null
+        ? this.#mergeStopPatch(current)
+        : !approve && current.step !== "specs"
+          ? { verdict: current.verdict ? { ...current.verdict, blockers: [why] } : null }
+          : {};
+    const moved = store.transaction(() => {
+      const next = this.#ctx.transition(current, transition, ["awaiting_human"], { patch, actor: { by: actor.by } });
+      if (next) {
+        this.#ctx.event("validation", runId, {
+          gate: humanWaitOf(current),
+          approve,
+          liftable,
+          ...byOf(actor),
+          ...(actor.pilot ? { pilot: true } : {}),
+        });
+        options.inscribe?.(next);
+      }
+      if (next && approve && stop !== null) store.addInstructions(runId, this.#mergeStopInstructions(current, stop));
+      if (next && acceptsSpecs(current.step, transition)) this.#hooks.specsAccepted(next);
+      if (next && !approve) {
+        const author = who.charAt(0).toUpperCase() + who.slice(1);
+        store.addInstructions(
+          runId,
+          current.step === "specs"
+            ? `${author} a refusé les specs : ${why}. Réécris \`specs.md\` en conséquence.`
+            : `${author} a refusé le verdict : ${why}`,
+        );
+        if (always) this.#alwaysKeep(current, why, actor);
+      }
+      return next;
+    });
+    if (!moved) throw new HarnessError(409, `le run n'attend plus de validation (état ${current.state})`);
+    this.#hooks.tick();
+    return this.#ctx.run(runId);
+  }
+
+  /** La cause qui a arrêté le merge, sans la mention du plafond. */
+  #mergeStopReason(run: RunRow): string {
+    return (run.reason ?? "").replace(` — ${MERGE_CAP}`, "");
+  }
+
+  /** Un run repris après un merge arrêté : de nouvelles tentatives, la cause en bloquant (comme le merger). */
+  #mergeStopPatch(run: RunRow): RunPatch {
+    return {
+      mergeRetries: 0,
+      verdict: run.verdict ? { ...run.verdict, blockers: [this.#mergeStopReason(run)] } : null,
+    };
+  }
+
+  #mergeStopInstructions(run: RunRow, step: "review" | "fix"): string {
+    return `Le merge a été arrêté : ${this.#mergeStopReason(run)}. ${step === "fix" ? "Corrige, puis la revue reprendra." : "Reprends la revue."}`;
+  }
+
+  /**
+   * Relance un run échoué ou en attente : même étape, compteur de tentatives à zéro, tout
+   * de suite. `instructions` : la consigne que l'étape relancée recevra.
+   */
+  retry(runId: string, actor: Actor, instructions = ""): Promise<RunRow> {
+    return this.#serial(runId, async () => {
+      const { store } = this.#ctx;
+      const run = this.#fresh(runId, actor);
+      this.assertPilotMay(run, actor);
+      if (run.state !== "failed" && run.state !== "awaiting_human")
+        throw new HarnessError(409, `seul un run échoué ou en attente se relance (état ${run.state})`);
+      const stop = mergeStopOf(run);
+      const moved = store.transaction(() => {
+        const next = this.#ctx.transition(
+          run,
+          retried({ step: stop ?? run.step ?? "review", fixes: run.fixes, attempts: run.attempts }, whoOf(actor)),
+          ["failed", "awaiting_human"],
+          {
+            patch: { notBefore: null, lastFailCause: null, ...(stop !== null ? this.#mergeStopPatch(run) : {}) },
+            actor: { by: actor.by },
+          },
+        );
+        if (next && stop !== null) store.addInstructions(runId, this.#mergeStopInstructions(run, stop));
+        if (next && instructions.trim() !== "") store.addInstructions(runId, instructions.trim());
+        if (next)
+          this.#ctx.event("retried", runId, {
+            from: run.state,
+            step: next.step,
+            ...byOf(actor),
+            ...(actor.pilot ? { pilot: true } : {}),
+          });
+        return next;
+      });
+      if (!moved) throw new HarnessError(409, `le run a changé d'état (${this.#ctx.run(runId).state})`);
+      this.#hooks.tick();
+      return this.#ctx.run(runId);
+    });
+  }
+
+  /**
+   * L'annulation. `motive` : le motif que l'humain donne (cause, note), gardé sur le run
+   * (`cancelCause`) et dit dans sa raison ; sans motif, l'annulation d'avant.
+   */
+  cancel(runId: string, actor: Actor, motive: CancelMotive | null = null): Promise<RunRow> {
+    return this.#serial(runId, () => this.#cancel(runId, actor, motive));
+  }
+
+  async #cancel(runId: string, actor: Actor, motive: CancelMotive | null): Promise<RunRow> {
+    const { git, oracle } = this.#ctx;
+    const run = this.#fresh(runId, actor);
+    this.assertPilotMay(run, actor);
+    if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
+    // Un merge en cours touche main et le worktree : on ne l'interrompt pas à mi-chemin.
+    if (run.state === "merging" || this.#hooks.merging(runId))
+      throw new HarnessError(409, "merge en cours : impossible d'annuler");
+    const label = motive === null ? "" : CANCEL_LABELS[motive.cause];
+    const said = motive === null || motive.note === "" ? label : `${label} — ${motive.note}`;
+    const options = { actor: { by: actor.by }, ...(motive ? { patch: { cancelCause: motive.cause } } : {}) };
+    if (!this.#ctx.transition(run, cancelled(run, said), CANCELLABLE, options)) {
+      throw new HarnessError(409, `le run a changé d'état (${this.#ctx.run(runId).state})`);
+    }
+    // « À côté » ou « trop gros », avec une note : une correction que le prochain cadrage du dépôt rappellera
+    // (comme un refus de specs) — jamais celle d'un pilote, ni sur un dépôt retiré de la configuration.
+    const scope = this.#ctx.config.repos.find((entry) => entry.name === run.repo)?.scope;
+    if (motive && motive.note !== "" && !actor.pilot && scope !== undefined && LEARNED_CAUSES.includes(motive.cause))
+      void oracle.retain(scope, `Correction humaine — feature « ${run.title} » annulée (${label}) : ${motive.note}`, [
+        "harness",
+        "correction",
+      ]);
+    await this.#hooks.halt(runId);
+    // La branche reste (inspection) ; seul le worktree est rendu.
+    if (run.worktree) await git.removeWorktree(this.#ctx.repo(run.repo).path, run.worktree, null).catch(() => {});
+    return this.#ctx.run(runId);
+  }
+
+  /**
+   * Corriger un run là où il est, d'un seul geste (au lieu de l'annuler) : des specs en attente
+   * sont refusées et réécrites (`specs`), un verdict ou un arbitrage renvoie en correction (`fix`),
+   * une autre attente ou un échec est relancé avec la consigne (`retry`), un run en cours, en file
+   * ou escaladé la reçoit (`instruction`). Un run en merge, mergé ou annulé : 409. Chaque voie garde
+   * les gardes de son geste (révision lue, pilote) ; `always` en fait aussi une consigne permanente.
+   */
+  async amend(runId: string, text: string, actor: Actor, always = false): Promise<{ run: RunRow; via: AmendVia }> {
+    const consigne = text.trim();
+    if (consigne === "") throw new HarnessError(400, "text : correction vide");
+    const run = this.#fresh(runId, actor);
+    const via = amendViaOf(run);
+    if (via === "specs" || via === "fix")
+      return { run: await this.validate(runId, false, consigne, actor, { always }), via };
+    // always : le dépôt plein refuse la correction AVANT le geste ; la consigne est gardée après lui.
+    if (always) this.#alwaysRoom(run, actor);
+    if (via === "instruction") {
+      const instructed = await this.instruct(runId, consigne, actor);
+      if (always) this.#alwaysKeep(run, consigne, actor);
+      return { run: instructed.run, via };
+    }
+    // Un pilote est refusé sur un budget dépassé AVANT que la relance n'en accorde un autre (comme `retry`).
+    this.assertPilotMay(run, actor);
+    this.#ctx.monitor.acknowledgeBudget(runId, actor.by);
+    const relaunched = await this.retry(runId, actor, consigne);
+    if (always) this.#alwaysKeep(run, consigne, actor);
+    return { run: relaunched, via };
+  }
+
+  /**
+   * Les modules d'un run, restreints par l'humain (`POST /v1/runs/{id}/modules`) : le planificateur
+   * les lit dès le prochain tour — un run qui en retenait d'autres les libère. Les chemins sont
+   * déjà contrôlés (`modulesInput`). Geste d'humain : un pilote est refusé (403). Un run terminal est refusé (409).
+   */
+  setModules(runId: string, modules: string[], actor: Actor): Promise<RunRow> {
+    return this.#serial(runId, async () => {
+      const { store } = this.#ctx;
+      const run = this.#fresh(runId, actor);
+      // Choisir ce qu'un run touche est un geste d'humain : un pilote (la vigie sur sa correction) n'élargit rien.
+      if (actor.pilot)
+        throw new HarnessError(403, "geste réservé à l'humain — un pilote ne change pas les modules d'un run");
+      if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
+      store.transaction(() => {
+        store.updateRun(runId, { modules });
+        this.#ctx.event("modules_set", runId, { modules, ...byOf(actor) });
+      });
+      this.#hooks.tick();
+      return this.#ctx.run(runId);
+    });
+  }
+
+  /**
+   * Une consigne de l'humain à un run. S'il tourne et que son runner est en plein prompt,
+   * elle y est injectée : l'agent la lit au prochain tour. Sinon elle rejoint les consignes
+   * en attente, que le prompt suivant porte (même étape ou suivante). Un run mergé ou
+   * annulé n'en reçoit plus (409). Elle entre dans le direct du run (`instructions`).
+   */
+  instruct(runId: string, text: string, actor: Actor): Promise<{ run: RunRow; delivered: Delivered }> {
+    return this.#serial(runId, async () => {
+      const { store } = this.#ctx;
+      const consigne = text.trim();
+      if (consigne === "") throw new HarnessError(400, "text : consigne vide");
+      const run = this.#fresh(runId, actor);
+      if (run.state === "merged" || run.state === "cancelled")
+        throw new HarnessError(409, `run déjà ${run.state} : il ne reçoit plus de consigne`);
+      const author = `${whoOf(actor)}${actor.by ? ` (${actor.by})` : ""}`;
+      const live =
+        run.state === "running" &&
+        (await this.#hooks.steer(
+          runId,
+          `Consigne de ${author}, reçue pendant ton travail : ${consigne}\n\nApplique-la dès maintenant, sans refaire ce qui est fait.`,
+        ));
+      const delivered: Delivered = live ? "session" : "pending";
+      store.transaction(() => {
+        if (!live) store.addInstructions(runId, `Consigne de ${author} : ${consigne}`);
+        this.#ctx.event("instructions", runId, {
+          text: consigne,
+          delivered,
+          step: run.step,
+          ...byOf(actor),
+          ...(actor.pilot ? { pilot: true } : {}),
+        });
+      });
+      this.#ctx.sessions.instructions(runId, run.step, consigne);
+      return { run: this.#ctx.run(runId), delivered };
+    });
+  }
+
+  /**
+   * Le budget propre d'un run (`null` : retour à `monitoring.runBudgetUsd`). Sous le
+   * nouveau seuil, l'alerte de dépassement s'éteint ; au-delà, la veille la lève et
+   * arrête l'étape gardée (`pauseOnBudget`). Un run terminé est refusé (409).
+   */
+  setBudget(runId: string, budget: number | null, actor: Actor): Promise<{ run: RunRow; budget: RunBudget }> {
+    return this.#serial(runId, async () => {
+      const run = this.#fresh(runId, actor);
+      // Accorder un budget est réservé à l'humain : jamais un pilote (audit ou vigie).
+      if (actor.pilot) throw new HarnessError(403, `geste réservé à l'humain — ${HUMAN_ONLY.budget}`);
+      if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
+      this.#ctx.event("run_budget", runId, { budgetUsd: budget, ...byOf(actor) });
+      const view = this.#ctx.monitor.setRunBudget(runId, budget, actor.by);
+      this.#hooks.tick();
+      return { run: this.#ctx.run(runId), budget: view };
+    });
+  }
+
+  /** La priorité d'un run : à la prochaine admission (runner) et dans la file des tests (heavy). */
+  setPriority(runId: string, priority: number, actor: Actor): Promise<RunRow> {
+    return this.#serial(runId, async () => {
+      const { store } = this.#ctx;
+      const run = this.#fresh(runId, actor);
+      if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
+      if (!Number.isInteger(priority) || Math.abs(priority) > 1000)
+        throw new HarnessError(400, "priority : entier entre -1000 et 1000");
+      store.transaction(() => {
+        store.updateRun(runId, { priority });
+        this.#ctx.event("priority", runId, { priority, ...byOf(actor) });
+      });
+      this.#hooks.tick();
+      return this.#ctx.run(runId);
+    });
+  }
+
+  /**
+   * Le curseur d'autonomie d'un run : `ask` (tout me demander), `null` (les règles du dépôt) ou
+   * `deliver` (livre et préviens-moi). Un pilote ne le monte jamais (403) ; un run terminé est refusé (409).
+   */
+  setAutonomy(runId: string, level: RunAutonomy | null, actor: Actor): Promise<RunRow> {
+    return this.#serial(runId, async () => {
+      const { store } = this.#ctx;
+      const run = this.#fresh(runId, actor);
+      if (actor.pilot && raisesAutonomy(run.autonomy, level))
+        throw new HarnessError(403, "geste réservé à l'humain — un pilote ne monte pas l'autonomie d'un run");
+      if (isTerminal(run.state)) throw new HarnessError(409, `run déjà ${run.state}`);
+      store.transaction(() => {
+        store.updateRun(runId, { autonomy: level });
+        this.#ctx.event("autonomy_level", runId, { level, ...byOf(actor) });
+      });
+      this.#hooks.tick();
+      return this.#ctx.run(runId);
+    });
+  }
+}

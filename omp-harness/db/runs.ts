@@ -1,10 +1,10 @@
 // Les runs : une feature de sa demande à son merge. Création, lecture, filtres,
 // compare-and-swap (`updateRunIf`) et consignes de reprise en attente.
-import { WORK_KINDS } from "../autonomy-rules.ts";
-import type { WorkKind } from "../autonomy-rules.ts";
+import { WORK_KINDS } from "../autonomy/autonomy-rules.ts";
+import type { WorkKind } from "../autonomy/autonomy-rules.ts";
 import { StoreCore } from "./core.ts";
-import type { FailCause, StepKind, RunState } from "../machine.ts";
-import type { Verdict } from "../verdict.ts";
+import type { FailCause, StepKind, RunState } from "../runs/machine.ts";
+import type { Verdict } from "../runs/verdict.ts";
 import { str, strOrNull, num, numOrNull, json, encode } from "./sql.ts";
 import type { SqlValue, Row, RepoFilter } from "./sql.ts";
 

@@ -48,6 +48,35 @@ mem0-omp/                              racine = marketplace OMP
 └── scripts/release-simulation.sh      simule la release d'une PR sur une copie jetable
 ```
 
+### Le serveur, dossier par dossier
+
+La racine de `omp-harness/` ne garde que `main.ts` et `cli.ts`, les deux points d'entrée lancés par leur chemin ; l'ancien chemin d'un fichier se retrouve dans `omp-harness/CORRESPONDANCE.md`.
+
+| Dossier | Responsabilité |
+| --- | --- |
+| `api/` | L'API des clients : serveur HTTP et SSE, routes, serveur MCP, clients et appairage, corps d'entrée, idempotence, erreurs rendues, lectures, catalogue des événements. |
+| `atlassian/` | Le connecteur Atlassian : Jira et Confluence par le serveur Rovo MCP, OAuth et outils des agents. |
+| `autonomy/` | L'autonomie par paliers : règles, portes levées seules, apprentissage borné. |
+| `browser/` | Les navigateurs du serveur : exécuteur `vps` du poste, QA de /review, CDP et gardes. |
+| `config/` | La configuration et l'installation : fichier de config, dépôts déclarés, politique par dépôt, fournisseurs et connexions OAuth, modèle local, `--check`. |
+| `corporate/` | Le pont corpo ↔ usine : signalements de collègues devenus propositions. |
+| `db/` | La base SQLite, unique source de vérité : une couche par domaine et la façade `Store` (`db.ts`). |
+| `forge/` | Git et les forges : worktrees, checkpoints et merges git, PR et issues GitHub et GitLab. |
+| `heavy/` | Les tests heavy et leurs preuves : jobs et cache, rouge de base, juge CI, décompte TAP, sortie en direct, rapport, preuves. |
+| `human/` | La boucle humaine : gestes, pilote, carte d'escalade et son relecteur, carte des specs, consignes permanentes, propositions. |
+| `intake/` | Les Demandes : classement et confirmation. |
+| `jobs/` | Les jobs lancés sans feature : audits, rêve de la mémoire, planifications récurrentes et leurs expressions cron. |
+| `memory/` | Le lien avec le service mémoire : oracle du projet, scope mémoire d'un dépôt. |
+| `notify/` | Les notifications sortantes : ntfy et webhooks, Live Activities, alertes push. |
+| `operations/` | L'exploitation du service : journal structuré, métriques, veille des coûts, observabilité, export Prometheus, commit construit, sauvegardes. |
+| `reports/` | Les rapports et les chiffres : rapport du matin, brief d'absence, statistiques, indicateurs, consommation d'un espace. |
+| `runners/` | Le lancement des runners OMP : process, canal RPC, session et bascule de modèle, slots du scheduler. |
+| `runs/` | La conduite d'un run, de l'admission au merge : orchestrateur, machine à états, étapes, prompts, outils hôtes, décisions, verdict, contradicteur, découpage, merge. |
+| `sessions/` | Ce que les apps voient des sessions : direct d'un runner, graphe de session, rendu des outils, sessions omp locales. |
+| `spaces/` | Les espaces clients et leur étanchéité. |
+| `vigie/` | La vigie : surveillance de la pile, incidents, triage et attribution (point d'entrée `vigie/main.ts`). |
+| `workstation/` | Le poste de travail : relais de l'extension Chrome, agent 24/24, gardes du poste. |
+
 ## Tests et scripts
 
 La suite node vit dans `test/`, rangée par **ce qu'elle éprouve** ; un fichier =
@@ -75,7 +104,7 @@ npm test                                                        # = bash scripts
 node --test --experimental-strip-types 'test/**/*.test.ts'      # toute la suite
 node --test --experimental-strip-types test/req/client-harness.test.ts   # un fichier
 bash scripts/test-files.sh --scope=changed | xargs node --test --experimental-strip-types   # les tests du diff
-npm run -s test:touched -- omp-harness/verdict.ts               # les tests que ces fichiers concernent
+npm run -s test:touched -- omp-harness/runs/verdict.ts               # les tests que ces fichiers concernent
 bash scripts/test-ac.sh AC-1 AC-2                                # preuve par critère
 ```
 

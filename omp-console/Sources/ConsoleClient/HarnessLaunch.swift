@@ -1,5 +1,5 @@
 // Le lancement d'une feature AVEC ses options, tel que `POST /v1/runs` les accepte
-// (omp-harness/input.ts `newRunInput`) : la priorité d'admission, la voie, les modules
+// (omp-harness/api/input.ts `newRunInput`) : la priorité d'admission, la voie, les modules
 // touchés, le cadrage `/req` déjà écrit, le budget propre à la feature (contrat C3,
 // `budgetUsd`), le type de travail et les labels (autonomie par paliers, `kind` et
 // `labels`). Chaque option vide reste HORS du corps : un serveur antérieur reçoit le

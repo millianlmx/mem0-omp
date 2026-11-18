@@ -12,8 +12,8 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/http.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/api/http.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
@@ -149,7 +149,7 @@ function routeFaults(files: Map<string, string>, redeemPath: string, features: r
 }
 
 test("appairage-qr-apps/AC-2 : la création est servie en admin, l'échange est public (hors routeur, sans Authorization) et vit dans son fichier ; la capacité est annoncée", () => {
-  const redeemPath = /const REDEEM_PATH = "([^"]+)"/.exec(read("omp-harness", "http.ts"))?.[1] ?? "";
+  const redeemPath = /const REDEEM_PATH = "([^"]+)"/.exec(read("omp-harness", "api", "http.ts"))?.[1] ?? "";
   assert.ok(redeemPath, "REDEEM_PATH introuvable dans http.ts");
   const files = sources(
     LINK,
@@ -206,7 +206,7 @@ test("appairage-qr-apps/AC-3 : le lien est ompconsole://pair?u=<adresse>&t=<tick
   const files = sources(LINK, ...plists);
   assert.deepEqual(linkFaults(files, plists), []);
   assert.match(
-    read("omp-harness", "pairing.ts"),
+    read("omp-harness", "api", "pairing.ts"),
     /ompconsole:\/\/pair\?u=<adresse>&t=<ticket>/,
     "le serveur documente un autre lien",
   );

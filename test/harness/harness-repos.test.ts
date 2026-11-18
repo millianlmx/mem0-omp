@@ -8,10 +8,10 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { loadConfig } from "../../omp-harness/config.ts";
-import { Git, remoteEnv } from "../../omp-harness/git.ts";
-import { execProcess, type Exec } from "../../omp-harness/proc.ts";
-import { addRepo, detectTests, repoName, type KeyGen } from "../../omp-harness/repos.ts";
+import { loadConfig } from "../../omp-harness/config/config.ts";
+import { Git, remoteEnv } from "../../omp-harness/forge/git.ts";
+import { execProcess, type Exec } from "../../omp-harness/runners/proc.ts";
+import { addRepo, detectTests, repoName, type KeyGen } from "../../omp-harness/config/repos.ts";
 import { git, harnessRepo } from "../support/harness-fixtures.ts";
 import { tmpdir } from "../support/repo.ts";
 

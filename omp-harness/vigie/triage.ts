@@ -4,10 +4,10 @@
 // est bornée dans le temps, coûte ce que rapporte omp (`usage.cost` de chaque message),
 // et ne reçoit ni le jeton de la vigie, ni celui de GitHub, ni celui de la mémoire : son
 // contexte est dans le prompt, ses gestes passent par la vigie, sous les gardes du serveur.
-import type { HostToolDefinition, HostToolResult, RunnerProcess } from "../rpc.ts";
-import { RpcRunner } from "../rpc.ts";
-import { usageOf } from "../session-feed.ts";
-import type { VigieTriage } from "../db.ts";
+import type { HostToolDefinition, HostToolResult, RunnerProcess } from "../runners/rpc.ts";
+import { RpcRunner } from "../runners/rpc.ts";
+import { usageOf } from "../sessions/session-feed.ts";
+import type { VigieTriage } from "../db/db.ts";
 
 export type SpawnOmp = (
   command: string,

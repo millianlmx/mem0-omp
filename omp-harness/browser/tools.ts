@@ -3,9 +3,9 @@
 // par le client qui l'a ouvert. Aucun argument ne choisit un navigateur ou une URL CDP : le
 // seul navigateur contacté est `browser.url` (jamais `moli-poste`). Tout texte tiré de la
 // page est enveloppé par `untrusted()` (renderPage, browserError).
-import { HarnessError } from "../errors.ts";
-import { text } from "../input.ts";
-import type { McpCall, Tool, ToolArgs } from "../mcp.ts";
+import { HarnessError } from "../api/errors.ts";
+import { text } from "../api/input.ts";
+import type { McpCall, Tool, ToolArgs } from "../api/mcp.ts";
 import { browserError } from "./desk.ts";
 import type { BrowserSession } from "./session.ts";
 import { KEYS } from "./session.ts";

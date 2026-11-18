@@ -12,8 +12,8 @@ import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import { loadConfig } from "../../omp-harness/config.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import { loadConfig } from "../../omp-harness/config/config.ts";
 import { APPROVER_CODE_REFUSAL, decodePairing } from "../../omp-mem0-req/harness.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 

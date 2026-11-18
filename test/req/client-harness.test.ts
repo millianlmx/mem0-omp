@@ -11,7 +11,7 @@ import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import reqExtension, { LAUNCH_APPROVAL, PROJECT_SEED, REQ_SEED } from "../../omp-mem0-req/extension.ts";
 import { parsePicks, resolveTarget } from "../../omp-mem0-req/harness.ts";
-import { createHandler } from "../../omp-harness/http.ts";
+import { createHandler } from "../../omp-harness/api/http.ts";
 import { fakeSchema } from "../support/fake-zod.ts";
 import { fakeWorld, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";

@@ -8,11 +8,11 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import { HARNESS_VERSION, createHandler } from "../../omp-harness/http.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import { HARNESS_VERSION, createHandler } from "../../omp-harness/api/http.ts";
 import { fakeWorld, harnessRepo } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { repoDefaults } from "../../omp-harness/config.ts";
+import { repoDefaults } from "../../omp-harness/config/config.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
 const ADMIN = "t".repeat(64);

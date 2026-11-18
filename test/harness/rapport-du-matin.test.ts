@@ -5,11 +5,11 @@ import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import { Store } from "../../omp-harness/db.ts";
-import { DigestSender, digestOf } from "../../omp-harness/digest.ts";
-import { createHandler } from "../../omp-harness/http.ts";
-import { Notifier } from "../../omp-harness/notify.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import { Store } from "../../omp-harness/db/db.ts";
+import { DigestSender, digestOf } from "../../omp-harness/reports/digest.ts";
+import { createHandler } from "../../omp-harness/api/http.ts";
+import { Notifier } from "../../omp-harness/notify/notify.ts";
 import { fakeWorld, harnessRepo, testConfig } from "../support/harness-fixtures.ts";
 import { tmpdir } from "../support/repo.ts";
 

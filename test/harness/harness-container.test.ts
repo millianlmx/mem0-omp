@@ -7,10 +7,10 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { defaultConfig, loadConfig, repoDefaults, validateConfig } from "../../omp-harness/config.ts";
-import { heavyArgv, heavyEnv } from "../../omp-harness/heavy.ts";
-import { forceStop, runnerArgv } from "../../omp-harness/runner.ts";
-import type { ProcOptions, ProcResult } from "../../omp-harness/proc.ts";
+import { defaultConfig, loadConfig, repoDefaults, validateConfig } from "../../omp-harness/config/config.ts";
+import { heavyArgv, heavyEnv } from "../../omp-harness/heavy/heavy.ts";
+import { forceStop, runnerArgv } from "../../omp-harness/runners/runner.ts";
+import type { ProcOptions, ProcResult } from "../../omp-harness/runners/proc.ts";
 import { OK, fakeWorld, git, waitFor } from "../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
@@ -247,7 +247,7 @@ test("harness-container/AC-5 : le déploiement tient la même promesse — omp �
     read("harness-entrypoint"),
     /GIT_SSH_COMMAND="ssh -i \$HOME\/\.ssh\/id_ed25519 -F \$HOME\/\.ssh\/config/,
   );
-  assert.match(fs.readFileSync(path.join(ROOT, "omp-harness", "git.ts"), "utf8"), /"GIT_SSH_COMMAND"\]\) \{/);
+  assert.match(fs.readFileSync(path.join(ROOT, "omp-harness", "forge", "git.ts"), "utf8"), /"GIT_SSH_COMMAND"\]\) \{/);
 
   const script = path.join(BOX, "harness.sh");
   assert.equal(spawnSync("bash", ["-n", script]).status, 0);

@@ -1,7 +1,7 @@
 // Feature harness-machine : la machine à états pure req → specs → impl → review ⇄ fix.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_STEP_TIERS } from "../../omp-harness/config.ts";
+import { DEFAULT_STEP_TIERS } from "../../omp-harness/config/config.ts";
 import {
   CANCELLABLE,
   MERGE_BACKOFF_MS,
@@ -20,8 +20,8 @@ import {
   resumeAtCheckpoint,
   retried,
   stepTier,
-} from "../../omp-harness/machine.ts";
-import type { FailCause, Limits, StepOutcome } from "../../omp-harness/machine.ts";
+} from "../../omp-harness/runs/machine.ts";
+import type { FailCause, Limits, StepOutcome } from "../../omp-harness/runs/machine.ts";
 
 const limits: Limits = { fixCap: 2, retryBackoffSec: [0], specsGate: false, mergeRetries: 2 };
 const done = { kind: "done" as const, escalations: 0 };

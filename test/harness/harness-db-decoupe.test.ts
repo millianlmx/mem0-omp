@@ -1,12 +1,12 @@
 // Feature harness-db-decoupe : la base du harness vit dans omp-harness/db/, un fichier
-// par domaine, et `Store` (omp-harness/db.ts) en est la façade. Les couches forment
+// par domaine, et `Store` (omp-harness/db/db.ts) en est la façade. Les couches forment
 // une chaîne d'héritage linéaire : chacune ne dépend que de celles du dessous, et
 // aucune ne redéfinit en silence une méthode d'une autre.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Store } from "../../omp-harness/db.ts";
+import { Store } from "../../omp-harness/db/db.ts";
 import { StoreCore } from "../../omp-harness/db/core.ts";
 import { ROOT } from "../support/repo.ts";
 
@@ -61,7 +61,7 @@ test("harness-db-decoupe/AC-2 : une couche n'importe en valeur que sa couche par
 test(`harness-db-decoupe/AC-3 : aucun fichier de omp-harness/db/ ni la façade db.ts ne dépasse ${MAX_LINES} lignes`, () => {
   const files = [
     ...fs.readdirSync(DB_DIR).map((file) => path.join(DB_DIR, file)),
-    path.join(ROOT, "omp-harness", "db.ts"),
+    path.join(ROOT, "omp-harness", "db", "db.ts"),
   ];
   for (const file of files) {
     const lines = fs.readFileSync(file, "utf8").split("\n").length;

@@ -9,9 +9,9 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/http.ts";
-import { FAILURES_PER_MINUTE, MAX_TICKETS, PairingDesk, TICKET_TTL_MS } from "../../omp-harness/pairing.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
+import { FAILURES_PER_MINUTE, MAX_TICKETS, PairingDesk, TICKET_TTL_MS } from "../../omp-harness/api/pairing.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 

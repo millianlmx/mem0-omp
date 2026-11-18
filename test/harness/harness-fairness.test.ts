@@ -4,11 +4,11 @@
 // merges sérialisés par dépôt, dépôts ajoutés à chaud.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { repoDefaults } from "../../omp-harness/config.ts";
-import { defaultConfig } from "../../omp-harness/config.ts";
-import { Scheduler } from "../../omp-harness/scheduler.ts";
-import { Store } from "../../omp-harness/db.ts";
-import type { Slot } from "../../omp-harness/scheduler.ts";
+import { repoDefaults } from "../../omp-harness/config/config.ts";
+import { defaultConfig } from "../../omp-harness/config/config.ts";
+import { Scheduler } from "../../omp-harness/runners/scheduler.ts";
+import { Store } from "../../omp-harness/db/db.ts";
+import type { Slot } from "../../omp-harness/runners/scheduler.ts";
 import { OK, fakeWorld, git, harnessRepo, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 

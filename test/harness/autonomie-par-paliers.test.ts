@@ -6,21 +6,21 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import test from "node:test";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import type { Client } from "../../omp-harness/auth.ts";
-import { autonomyProposals } from "../../omp-harness/autonomy-learning.ts";
-import type { AutonomyProposal } from "../../omp-harness/autonomy-learning.ts";
-import type { AutonomyProof, AutonomyRule, WorkKind } from "../../omp-harness/autonomy-rules.ts";
-import { repoDefaults, validateConfig } from "../../omp-harness/config.ts";
-import type { HarnessConfig, RepoConfig } from "../../omp-harness/config.ts";
-import { Store } from "../../omp-harness/db.ts";
-import { digestOf } from "../../omp-harness/digest.ts";
-import { createHandler } from "../../omp-harness/http.ts";
-import { newRunInput } from "../../omp-harness/input.ts";
-import { WAIT_REASON, humanWaitOf } from "../../omp-harness/machine.ts";
-import { REVIEW_EVIDENCE, SPECS_BASELINE } from "../../omp-harness/steps.ts";
-import { mergeDecision } from "../../omp-harness/verdict.ts";
-import type { ReviewEvidence, Verdict } from "../../omp-harness/verdict.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import type { Client } from "../../omp-harness/api/auth.ts";
+import { autonomyProposals } from "../../omp-harness/autonomy/autonomy-learning.ts";
+import type { AutonomyProposal } from "../../omp-harness/autonomy/autonomy-learning.ts";
+import type { AutonomyProof, AutonomyRule, WorkKind } from "../../omp-harness/autonomy/autonomy-rules.ts";
+import { repoDefaults, validateConfig } from "../../omp-harness/config/config.ts";
+import type { HarnessConfig, RepoConfig } from "../../omp-harness/config/config.ts";
+import { Store } from "../../omp-harness/db/db.ts";
+import { digestOf } from "../../omp-harness/reports/digest.ts";
+import { createHandler } from "../../omp-harness/api/http.ts";
+import { newRunInput } from "../../omp-harness/api/input.ts";
+import { WAIT_REASON, humanWaitOf } from "../../omp-harness/runs/machine.ts";
+import { REVIEW_EVIDENCE, SPECS_BASELINE } from "../../omp-harness/runs/steps.ts";
+import { mergeDecision } from "../../omp-harness/runs/verdict.ts";
+import type { ReviewEvidence, Verdict } from "../../omp-harness/runs/verdict.ts";
 import {
   BUG_REVIEW_RULE,
   autonomyDecisions,

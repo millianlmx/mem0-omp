@@ -16,10 +16,15 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import type { WorkstationAction as ServerAction } from "../../omp-harness/db.ts";
-import { createHandler } from "../../omp-harness/http.ts";
-import { MAX_UPLOAD_BYTES, describeGesture, parseActionInput, uploadDir } from "../../omp-harness/workstation.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import type { WorkstationAction as ServerAction } from "../../omp-harness/db/db.ts";
+import { createHandler } from "../../omp-harness/api/http.ts";
+import {
+  MAX_UPLOAD_BYTES,
+  describeGesture,
+  parseActionInput,
+  uploadDir,
+} from "../../omp-harness/workstation/workstation.ts";
 import type { ActionOutcome, WorkstationAction } from "../../omp-chrome/src/lib/actions.ts";
 import { validateAction } from "../../omp-chrome/src/lib/actions.ts";
 import { cdpKeyEvents, domKeyInit, parseKeyCombo } from "../../omp-chrome/src/lib/keys.ts";

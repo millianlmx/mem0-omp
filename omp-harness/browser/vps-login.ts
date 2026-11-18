@@ -9,9 +9,9 @@
 // Le harness n'intercepte aucune requête : l'adresse est contrôlée APRÈS chaque navigation (les
 // redirections sont suivies par le moteur).
 import { randomBytes } from "node:crypto";
-import type { LogLine } from "../logger.ts";
-import { HarnessError } from "../errors.ts";
-import { hostOf } from "../workstation-guards.ts";
+import type { LogLine } from "../operations/logger.ts";
+import { HarnessError } from "../api/errors.ts";
+import { hostOf } from "../workstation/workstation-guards.ts";
 import { CdpError } from "./cdp.ts";
 import type { CdpConnection } from "./cdp.ts";
 import { setTimeout as sleep } from "node:timers/promises";

@@ -1,6 +1,6 @@
 // Les lectures de runs qui ne lisent pas toute la table : les terminés les plus récents (la première lecture
 // des apps, `GET /v1/runs?recent=`) et les compteurs par dépôt ou par projet (`/v1/status`, `/v1/projects`).
-import type { RunState } from "../machine.ts";
+import type { RunState } from "../runs/machine.ts";
 import { RunStore, runOf } from "./runs.ts";
 import type { RunRow } from "./runs.ts";
 import { num, str, strOrNull } from "./sql.ts";

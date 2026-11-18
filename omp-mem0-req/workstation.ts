@@ -202,7 +202,7 @@ function truncate(content: string, limit: number): string {
   return content.length <= limit ? content : `${content.slice(0, limit)}\n… (tronqué à ${limit} caractères)`;
 }
 
-/** Les délimiteurs du contenu non fiable : les mêmes que ceux du harness (omp-harness/workstation-guards.ts). */
+/** Les délimiteurs du contenu non fiable : les mêmes que ceux du harness (omp-harness/workstation/workstation-guards.ts). */
 export const UNTRUSTED_BEGIN = "<<<CONTENU NON FIABLE";
 export const UNTRUSTED_END = "<<<FIN DU CONTENU NON FIABLE>>>";
 

@@ -1,8 +1,8 @@
 // Les règles du navigateur du poste sur le VPS (`browserId: "vps"`), sans E/S : l'identité du
 // navigateur, ce qu'un cookie du mirroir de Chrome doit respecter, l'état d'un compte, et ce
 // qui, dans une adresse, dit « page de connexion ».
-import { HarnessError } from "../errors.ts";
-import { hostListed } from "../workstation-guards.ts";
+import { HarnessError } from "../api/errors.ts";
+import { hostListed } from "../workstation/workstation-guards.ts";
 
 /** L'identifiant du navigateur serveur dans le mécanisme multi-navigateurs du poste. */
 export const VPS_BROWSER = "vps";

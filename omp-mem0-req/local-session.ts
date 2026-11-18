@@ -101,7 +101,7 @@ function gitLine(cwd: string, args: string[]): Promise<string | null> {
   });
 }
 
-/** Les noms de branche que le serveur accepte (omp-harness/local-sessions.ts `isSafeBranch`). */
+/** Les noms de branche que le serveur accepte (omp-harness/sessions/local-sessions.ts `isSafeBranch`). */
 const SAFE_BRANCH = /^(?!-)[\w./-]{1,250}$/;
 
 /**

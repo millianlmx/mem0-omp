@@ -1,6 +1,6 @@
 // Les étapes d'un run (une tentative d'un runner) et leurs artefacts.
 import { JournalStore } from "./journal.ts";
-import type { StepKind } from "../machine.ts";
+import type { StepKind } from "../runs/machine.ts";
 import { str, strOrNull, num, numOrNull } from "./sql.ts";
 import type { Row } from "./sql.ts";
 

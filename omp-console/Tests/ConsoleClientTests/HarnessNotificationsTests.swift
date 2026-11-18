@@ -1,5 +1,5 @@
 // Les notifications actionnables, côté client et sans système : la charge que le
-// serveur pousse (omp-harness/push-alerts.ts), les gestes de chaque catégorie, le
+// serveur pousse (omp-harness/notify/push-alerts.ts), les gestes de chaque catégorie, le
 // routage d'une action vers un geste ou une destination, l'exécution du geste avec la
 // révision de la notification (If-Match), l'enregistrement du jeton de l'appareil, et
 // les alertes locales que le Mac tire du flux.

@@ -17,16 +17,16 @@
 // - après le merge d'une correction, l'empreinte est surveillée WATCH_MS : sans
 //   récidive, l'issue est fermée et le souvenir écrit ; revenue, l'issue est rouverte
 //   et l'incident rendu à l'humain.
-import type { Client } from "../auth.ts";
-import type { RepoConfig } from "../config.ts";
-import { repoByName } from "../config.ts";
-import type { Actor, HarnessContext } from "../context.ts";
-import type { RepoFilter, Store, VigieIncident, VigieStatus, VigieTriage } from "../db.ts";
-import { VIGIE_STATUSES } from "../db.ts";
-import { HarnessError } from "../errors.ts";
-import type { Forge } from "../forge.ts";
-import type { IssueDesk } from "../issues.ts";
-import { isTerminal } from "../machine.ts";
+import type { Client } from "../api/auth.ts";
+import type { RepoConfig } from "../config/config.ts";
+import { repoByName } from "../config/config.ts";
+import type { Actor, HarnessContext } from "../runs/context.ts";
+import type { RepoFilter, Store, VigieIncident, VigieStatus, VigieTriage } from "../db/db.ts";
+import { VIGIE_STATUSES } from "../db/db.ts";
+import { HarnessError } from "../api/errors.ts";
+import type { Forge } from "../forge/forge.ts";
+import type { IssueDesk } from "../forge/issues.ts";
+import { isTerminal } from "../runs/machine.ts";
 import { namedFiles, runnerTraceOf } from "./attribution.ts";
 import { isFingerprint } from "./fingerprint.ts";
 import { record } from "./json.ts";

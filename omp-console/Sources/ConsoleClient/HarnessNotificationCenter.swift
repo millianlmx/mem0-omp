@@ -4,7 +4,7 @@
 // un toucher ouvre l'app à l'endroit dit par `openRequest`) et, sur Mac, les
 // notifications LOCALES tirées du flux du serveur quand l'app est en arrière-plan.
 //
-// L'iPhone reçoit ses alertes du serveur par APNs (omp-harness/push-alerts.ts) ; le
+// L'iPhone reçoit ses alertes du serveur par APNs (omp-harness/notify/push-alerts.ts) ; le
 // jeton de l'appareil est enregistré par l'app (`HarnessModel.registerDevice`). Le Mac
 // n'a pas d'APNs : tant qu'il tourne, chaque événement du flux qui attend l'humain
 // devient une notification locale, avec les mêmes catégories.

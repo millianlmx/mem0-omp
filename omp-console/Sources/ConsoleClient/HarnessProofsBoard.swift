@@ -1,6 +1,6 @@
 // Les PREUVES d'une feature vues par les apps (Captures de « Comprendre » et carte de
 // décision, Mac et iOS) : la liste servie par `GET /v1/runs/{id}/proofs`, rangée par tour de revue
-// (`currentRound` d'omp-harness/proofs.ts), puis, dans un tour, les captures avant et
+// (`currentRound` d'omp-harness/heavy/proofs.ts), puis, dans un tour, les captures avant et
 // après appariées par critère, les autres captures, les rapports de tests, les
 // journaux et les vidéos. Le contenu d'une preuve (`/proofs/{n}`) se lit à la demande
 // et se garde le temps de la page.
@@ -17,7 +17,7 @@ public struct HarnessProofRounds: Equatable, Sendable {
     public var current: HarnessProofRound
     public var previous: HarnessProofRound
 
-    /// Le découpage de `currentRound` (omp-harness/proofs.ts) : `start` est le début de
+    /// Le découpage de `currentRound` (omp-harness/heavy/proofs.ts) : `start` est le début de
     /// la DERNIÈRE étape `impl` ou `fix` de la frise ; le tour courant prend les preuves
     /// de `createdAt ≥ start`. Sans frise, ou sans étape d'implémentation ni de
     /// correction, tout forme un seul tour.

@@ -20,20 +20,20 @@ import {
 import type { AtlassianDesk, AtlassianStatus } from "../../omp-harness/atlassian/desk.ts";
 import { spaceOfState, spaceTokenFile } from "../../omp-harness/atlassian/oauth.ts";
 import type { AtlassianFetch } from "../../omp-harness/atlassian/oauth.ts";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import type { Client } from "../../omp-harness/auth.ts";
-import type { HarnessConfig, RepoConfig } from "../../omp-harness/config.ts";
-import { repoByName, repoDefaults } from "../../omp-harness/config.ts";
-import type { Actor } from "../../omp-harness/context.ts";
-import type { PlanItem, SignalRow, Space, StandingRule } from "../../omp-harness/db.ts";
-import { HarnessError } from "../../omp-harness/errors.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/http.ts";
-import type { Exec } from "../../omp-harness/proc.ts";
-import { execProcess } from "../../omp-harness/proc.ts";
-import { workstationPlanPrompt } from "../../omp-harness/prompts.ts";
-import { hostToolsFor } from "../../omp-harness/runner.ts";
-import { spaceInput } from "../../omp-harness/spaces.ts";
-import { MAX_ACTIVE_RULES } from "../../omp-harness/standing-rules.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import type { Client } from "../../omp-harness/api/auth.ts";
+import type { HarnessConfig, RepoConfig } from "../../omp-harness/config/config.ts";
+import { repoByName, repoDefaults } from "../../omp-harness/config/config.ts";
+import type { Actor } from "../../omp-harness/runs/context.ts";
+import type { PlanItem, SignalRow, Space, StandingRule } from "../../omp-harness/db/db.ts";
+import { HarnessError } from "../../omp-harness/api/errors.ts";
+import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
+import type { Exec } from "../../omp-harness/runners/proc.ts";
+import { execProcess } from "../../omp-harness/runners/proc.ts";
+import { workstationPlanPrompt } from "../../omp-harness/runs/prompts.ts";
+import { hostToolsFor } from "../../omp-harness/runners/runner.ts";
+import { spaceInput } from "../../omp-harness/spaces/spaces.ts";
+import { MAX_ACTIVE_RULES } from "../../omp-harness/human/standing-rules.ts";
 import { Vigie } from "../../omp-harness/vigie/agent.ts";
 import { HarnessApi } from "../../omp-harness/vigie/api.ts";
 import type { SpawnOmp } from "../../omp-harness/vigie/triage.ts";
@@ -1384,6 +1384,6 @@ test("mc-savoir/AC-15 : la capacité `space-knowledge` est annoncée, le README 
   assert.doesNotMatch(neutral, /adeo/i);
   // Un espace dont aucun projet Jira n'est lisible ne cherche aucun ticket (échec fermé).
   assert.match(workstationPlanPrompt({ ...base, projects: [] }), /ne cherche aucun ticket/);
-  for (const file of ["prompts.ts", "atlassian/desk.ts", "atlassian/oauth.ts", "atlassian/tools.ts"])
+  for (const file of ["runs/prompts.ts", "atlassian/desk.ts", "atlassian/oauth.ts", "atlassian/tools.ts"])
     assert.doesNotMatch(fs.readFileSync(path.join(ROOT, "omp-harness", file), "utf8"), /adeo/i, file);
 });

@@ -581,7 +581,7 @@ public struct HarnessRepoTests: Codable, Equatable, Sendable {
 }
 
 /// Les réglages d'un dépôt tels qu'ils servent, défauts compris (`GET /v1/repos/{name}`,
-/// omp-harness/repos.ts `RepoSettings`). Jamais un chemin ni la clé privée.
+/// omp-harness/config/repos.ts `RepoSettings`). Jamais un chemin ni la clé privée.
 public struct HarnessRepoSettings: Codable, Equatable, Sendable, Identifiable {
     public var name: String
     public var mainBranch: String

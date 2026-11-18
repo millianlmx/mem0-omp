@@ -13,21 +13,21 @@
 //   le dépôt, ni le prompt d'un runner, ni un outil MCP, ni un journal ne la portent. Les
 //   raisons et les erreurs levées ici ne citent donc que des identifiants, des états et des
 //   noms de champs.
-import type { Client } from "../auth.ts";
-import type { CorporatePolicy, RepoConfig } from "../config.ts";
-import { corporatePolicy } from "../config.ts";
-import type { Actor, HarnessContext } from "../context.ts";
-import type { RunRow, SignalChannel, SignalKind, SignalPatch, SignalRow, SignalState } from "../db.ts";
-import { SIGNAL_CHANNELS } from "../db.ts";
-import { HarnessError } from "../errors.ts";
-import type { Forge } from "../forge.ts";
-import { text } from "../input.ts";
-import type { FixOutcome, IssueDesk } from "../issues.ts";
-import { newId } from "../ids.ts";
-import type { HostToolResult } from "../rpc.ts";
+import type { Client } from "../api/auth.ts";
+import type { CorporatePolicy, RepoConfig } from "../config/config.ts";
+import { corporatePolicy } from "../config/config.ts";
+import type { Actor, HarnessContext } from "../runs/context.ts";
+import type { RunRow, SignalChannel, SignalKind, SignalPatch, SignalRow, SignalState } from "../db/db.ts";
+import { SIGNAL_CHANNELS } from "../db/db.ts";
+import { HarnessError } from "../api/errors.ts";
+import type { Forge } from "../forge/forge.ts";
+import { text } from "../api/input.ts";
+import type { FixOutcome, IssueDesk } from "../forge/issues.ts";
+import { newId } from "../runs/ids.ts";
+import type { HostToolResult } from "../runners/rpc.ts";
 import { redactSecrets } from "../vigie/redact.ts";
-import { APPROVER_ONLY } from "../workstation.ts";
-import type { Workstation } from "../workstation.ts";
+import { APPROVER_ONLY } from "../workstation/workstation.ts";
+import type { Workstation } from "../workstation/workstation.ts";
 import {
   FIELD_MAX,
   PERSON_MAX,

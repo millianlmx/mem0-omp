@@ -1,7 +1,7 @@
 // Le client HTTP de la vigie vers le harness : son jeton de client pilote, l'API REST,
 // les outils MCP (`POST /v1/mcp`) et le flux `GET /v1/events`, repris par `Last-Event-ID`.
 // La vigie n'a ni la base, ni le socket du moteur, ni le jeton GitHub : tout passe ici.
-import type { EventRow } from "../db.ts";
+import type { EventRow } from "../db/db.ts";
 import { record, textOf } from "./json.ts";
 
 /** Le harness ne répond pas (réseau, conteneur arrêté) : la vigie garde ses signaux pour plus tard. */

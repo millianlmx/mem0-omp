@@ -1,4 +1,4 @@
-// L'AUTONOMIE PAR PALIERS vue du client (omp-harness/autonomy-rules.ts, autonomy-gates.ts,
+// L'AUTONOMIE PAR PALIERS vue du client (omp-harness/autonomy/autonomy-rules.ts, autonomy-gates.ts,
 // autonomy-learning.ts) : le type de travail d'un lancement, la validation prise seule
 // portée par une décision (`decision.autonomy`) et la page Système › Autonomie
 // (`GET /v1/autonomy` : règles par dépôt, validations prises seules, propositions de

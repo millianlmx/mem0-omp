@@ -7,7 +7,7 @@
 // Un nom inconnu, une paraphrase, une donnée métier passent : la relecture humaine, dans la
 // feuille, est la dernière garde (best-effort, comme vigie/redact.ts).
 import { createHash } from "node:crypto";
-import type { SignalRow } from "../db.ts";
+import type { SignalRow } from "../db/db.ts";
 import { POSTE, redactPoste, redactSecrets } from "../vigie/redact.ts";
 
 export const EXCERPT_MAX = 2000;

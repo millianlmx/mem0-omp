@@ -9,7 +9,7 @@
 // Une correction de la vigie ne réserve que les FICHIERS que son incident nomme (piles,
 // chemins, fichiers du tri), jamais un dossier entier : `omp-harness` ou `test/harness`
 // chevaucheraient tous les runs créés après elle, admis dans l'ordre de création.
-import { isRunnerOom } from "../machine.ts";
+import { isRunnerOom } from "../runs/machine.ts";
 import type { Signal } from "./fingerprint.ts";
 
 const RUNNER_UNIT = /\bomp-runner-([a-z0-9]+)(?:-\d+)?/i;

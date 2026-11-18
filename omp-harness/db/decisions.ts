@@ -1,9 +1,9 @@
 // Les décisions (les checkpoints : prises seules, acceptées, renversées, caduques)
 // et les escalades (les questions posées à l'humain).
-import type { AutonomyProof } from "../autonomy-rules.ts";
+import type { AutonomyProof } from "../autonomy/autonomy-rules.ts";
 import { StepStore } from "./steps.ts";
-import type { DecisionCategory } from "../decisions.ts";
-import type { DecisionCard } from "../card.ts";
+import type { DecisionCategory } from "../runs/decisions.ts";
+import type { DecisionCard } from "../human/card.ts";
 import { str, strOrNull, num, numOrNull, json, repoClause } from "./sql.ts";
 import type { SqlValue, Row, RepoFilter } from "./sql.ts";
 

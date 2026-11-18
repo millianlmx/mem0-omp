@@ -9,7 +9,7 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import reqExtension from "../../omp-mem0-req/extension.ts";
 import { intakeApproval } from "../../omp-mem0-req/intake.ts";
-import { createHandler } from "../../omp-harness/http.ts";
+import { createHandler } from "../../omp-harness/api/http.ts";
 import { fakeSchema } from "../support/fake-zod.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";

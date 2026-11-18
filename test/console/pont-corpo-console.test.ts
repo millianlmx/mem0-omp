@@ -20,7 +20,7 @@ const code = (source: string) =>
 
 test("pont-corpo-console/AC-1 : « Propositions » montre les signalements dans les deux apps, comptés au badge, et rien pour un client restreint", () => {
   // Le serveur compose les propositions : chaque signalement proposé en devient une, au propriétaire seul.
-  const proposals = fs.readFileSync(path.join(ROOT, "omp-harness", "proposals.ts"), "utf8");
+  const proposals = fs.readFileSync(path.join(ROOT, "omp-harness", "human", "proposals.ts"), "utf8");
   assert.match(proposals, /add\(\{ source: "signal", signalId: signal\.id \}/);
   assert.match(
     proposals,
@@ -41,7 +41,7 @@ test("pont-corpo-console/AC-2 : accepter un signalement le confirme vers son dé
     code(read("Sources", "ConsoleUI", "OS", "OSProposalsView.swift")),
     /await proposals\.accept\(proposal\)/,
   );
-  const proposals = fs.readFileSync(path.join(ROOT, "omp-harness", "proposals.ts"), "utf8");
+  const proposals = fs.readFileSync(path.join(ROOT, "omp-harness", "human", "proposals.ts"), "utf8");
   assert.match(
     proposals,
     /case "signal": \{[\s\S]*?if \(!by\.client\.approver\) throw new HarnessError\(403, APPROVER_ONLY\);[\s\S]*?this\.#hooks\.signals\.confirm\(cause\.signalId, input, by\.client, actor\)/,

@@ -9,7 +9,7 @@ import {
   overlaps,
   parseModulesSection,
   schedulable,
-} from "../../omp-harness/planner.ts";
+} from "../../omp-harness/runs/planner.ts";
 import { MemoryOracle, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
 
 test("harness-planner/AC-1 : deux ensembles se chevauchent par préfixe de chemin ; un ensemble inconnu chevauche tout", () => {

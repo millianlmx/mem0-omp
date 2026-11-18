@@ -2,7 +2,7 @@
 // vers le cycle de vie de la prévisualisation (browser/qa.ts), pour que le lanceur des runners
 // (`hostToolsFor`) les liste sans tirer le moteur de conteneurs. Le harness les exécute ; le
 // runner n'a ni navigateur ni réseau.
-import type { HostToolDefinition } from "../rpc.ts";
+import type { HostToolDefinition } from "../runners/rpc.ts";
 import { KEYS } from "./session.ts";
 
 const WHAT =

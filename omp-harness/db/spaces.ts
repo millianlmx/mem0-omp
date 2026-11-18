@@ -1,6 +1,6 @@
 // Les espaces : un client ou un contexte de travail, qui réunit des dépôts, des projets Jira, un
 // budget journalier et un curseur d'autonomie par défaut. Table `spaces`.
-import type { ModelPolicy } from "../config.ts";
+import type { ModelPolicy } from "../config/config.ts";
 import type { RunAutonomy } from "./runs.ts";
 import { StandingRuleStore } from "./standing-rules.ts";
 import { json, num, numOrNull, str, strOrNull } from "./sql.ts";

@@ -13,10 +13,10 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { AtlassianConfig } from "../config.ts";
-import { LOOPBACK_REDIRECT, isLoopbackUrl, isRecord } from "../config.ts";
-import type { FetchResponse } from "../oracle.ts";
-import { atomicWrite } from "../providers.ts";
+import type { AtlassianConfig } from "../config/config.ts";
+import { LOOPBACK_REDIRECT, isLoopbackUrl, isRecord } from "../config/config.ts";
+import type { FetchResponse } from "../memory/oracle.ts";
+import { atomicWrite } from "../config/providers.ts";
 
 /** Ce que le connecteur lit d'une réponse : celle de l'oracle, plus ses en-têtes (`Mcp-Session-Id`). */
 export type AtlassianResponse = FetchResponse & { headers?: { get(name: string): string | null } };

@@ -2,7 +2,7 @@
 // demande (`initialize`, puis `notifications/initialized`), son `Mcp-Session-Id` renvoyé
 // ensuite, la réponse lue en JSON ou en SSE. Un 401 vaut un rafraîchissement du jeton puis
 // UNE nouvelle tentative ; une session perdue (404) en rouvre une, puis UNE nouvelle tentative.
-import { isRecord } from "../config.ts";
+import { isRecord } from "../config/config.ts";
 import type { AtlassianFetch, AtlassianResponse } from "./oauth.ts";
 
 export const MCP_PROTOCOL_VERSION = "2025-06-18";

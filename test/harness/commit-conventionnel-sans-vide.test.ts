@@ -5,10 +5,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { RunRow } from "../../omp-harness/db.ts";
-import { hostToolsFor } from "../../omp-harness/runner.ts";
-import type { Verdict } from "../../omp-harness/verdict.ts";
-import { parseVerdict } from "../../omp-harness/verdict.ts";
+import type { RunRow } from "../../omp-harness/db/db.ts";
+import { hostToolsFor } from "../../omp-harness/runners/runner.ts";
+import type { Verdict } from "../../omp-harness/runs/verdict.ts";
+import { parseVerdict } from "../../omp-harness/runs/verdict.ts";
 import { OK, commitOnMain, fakeWorld, git, harnessRepo, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
 

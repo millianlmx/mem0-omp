@@ -2,8 +2,8 @@
 // fournisseur LLM avec bascule, admission sur MemAvailable.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Scheduler, TokenBucket, parseMemAvailableMiB } from "../../omp-harness/scheduler.ts";
-import { defaultConfig } from "../../omp-harness/config.ts";
+import { Scheduler, TokenBucket, parseMemAvailableMiB } from "../../omp-harness/runners/scheduler.ts";
+import { defaultConfig } from "../../omp-harness/config/config.ts";
 
 function scheduler(options: { mem?: number | null; now?: () => number } = {}): Scheduler {
   const config = defaultConfig("/tmp/harness-unused");

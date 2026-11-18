@@ -16,12 +16,12 @@ import {
   parseAnswers,
   parseFindings,
   unanswered,
-} from "../../omp-harness/challenge.ts";
-import type { Finding } from "../../omp-harness/challenge.ts";
-import { defaultConfig, validateConfig } from "../../omp-harness/config.ts";
-import { nextAfter } from "../../omp-harness/machine.ts";
-import { chainStart, providerOfLabel } from "../../omp-harness/runner-session.ts";
-import { challengeUnit, gateReasons } from "../../omp-harness/steps.ts";
+} from "../../omp-harness/runs/challenge.ts";
+import type { Finding } from "../../omp-harness/runs/challenge.ts";
+import { defaultConfig, validateConfig } from "../../omp-harness/config/config.ts";
+import { nextAfter } from "../../omp-harness/runs/machine.ts";
+import { chainStart, providerOfLabel } from "../../omp-harness/runners/runner-session.ts";
+import { challengeUnit, gateReasons } from "../../omp-harness/runs/steps.ts";
 
 const SPECS = OK.specs[0]?.content ?? "";
 

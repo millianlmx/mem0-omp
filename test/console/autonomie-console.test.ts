@@ -11,10 +11,10 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 import type { AddressInfo } from "node:net";
-import { ClientRegistry } from "../../omp-harness/auth.ts";
-import { type AutonomyProof, type AutonomyRule, WORK_KINDS } from "../../omp-harness/autonomy-rules.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/http.ts";
-import type { HarnessConfig } from "../../omp-harness/config.ts";
+import { ClientRegistry } from "../../omp-harness/api/auth.ts";
+import { type AutonomyProof, type AutonomyRule, WORK_KINDS } from "../../omp-harness/autonomy/autonomy-rules.ts";
+import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/api/http.ts";
+import type { HarnessConfig } from "../../omp-harness/config/config.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT } from "../support/repo.ts";
 
@@ -171,7 +171,7 @@ test("autonomie-console/AC-2 : la carte d'une décision prise seule montre la po
     covers(rule.require, swiftFields(autonomyWire, "HarnessAutonomyRequire"), "HarnessAutonomyRequire");
     covers(rule.gates, swiftFields(autonomyWire, "HarnessAutonomyGates"), "HarnessAutonomyGates");
     // Chaque preuve lue par l'app est une preuve que l'évaluation du serveur écrit.
-    const gates = fs.readFileSync(path.join(ROOT, "omp-harness", "autonomy-gates.ts"), "utf8");
+    const gates = fs.readFileSync(path.join(ROOT, "omp-harness", "autonomy", "autonomy-gates.ts"), "utf8");
     for (const name of swiftFields(autonomyWire, "HarnessAutonomyProofs").keys())
       assert.match(gates, new RegExp(`\\b${name}\\b`), `preuve ${name} inconnue d'autonomy-gates.ts`);
   } finally {

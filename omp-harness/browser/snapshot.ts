@@ -2,7 +2,7 @@
 // (`Accessibility.getFullAXTree`) réduit aux éléments utiles, chaque élément interactif
 // portant une référence stable `eN`. Pur, sans E/S. Même modèle que omp-chrome/src/lib/snapshot.ts
 // (qui tourne, lui, dans la page : on reproduit le modèle, on ne l'importe pas).
-import { untrusted } from "../workstation-guards.ts";
+import { untrusted } from "../workstation/workstation-guards.ts";
 
 export const INTERACTIVE_ROLES: readonly string[] = [
   "button",

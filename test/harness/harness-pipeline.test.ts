@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { escalationArgs, readFrames } from "../support/card-fixtures.ts";
 import { OK, commitOnMain, fakeWorld, git, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { Orchestrator } from "../../omp-harness/orchestrator.ts";
+import { Orchestrator } from "../../omp-harness/runs/orchestrator.ts";
 
 function stateOf(world: FakeWorld, runId: string): string {
   const run = world.store.getRun(runId);

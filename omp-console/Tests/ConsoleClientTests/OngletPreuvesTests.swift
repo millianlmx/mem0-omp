@@ -3,7 +3,7 @@
 // par critère, rien sur un 404,
 // l'échec visible sur une réponse illisible, et le nombre de preuves dans la
 // notification locale d'un verdict. Sur la doublure de transport, avec les formes
-// JSON que le serveur écrit (omp-harness/proofs.ts, test-report.ts).
+// JSON que le serveur écrit (omp-harness/heavy/proofs.ts, test-report.ts).
 
 import ConsoleClient
 import ConsoleCore
@@ -51,7 +51,7 @@ private func proof(_ n: Int, _ kind: String, at: Int, acRef: String? = nil, side
     return #"{"n":\#(n),"kind":"\#(kind)","title":"Preuve \#(n)","step":"review","mime":"\#(mime)","size":8,"createdAt":\#(at),"acRef":\#(ac),"side":\#(sd)}"#
 }
 
-/// La forme exacte de `testReport` (omp-harness/test-report.ts).
+/// La forme exacte de `testReport` (omp-harness/heavy/test-report.ts).
 private let reportJSON = #"""
 {"step":"fix","scope":"touched","outcome":"fail","exitCode":1,"cached":true,"skipped":false,"truncated":true,
  "criteria":[{"id":"AC-1","slug":null,"ac":"AC-1","tests":1,"passed":1,"failed":0},
