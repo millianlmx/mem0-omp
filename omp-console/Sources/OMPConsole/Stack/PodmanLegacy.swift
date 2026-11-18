@@ -424,10 +424,10 @@ final class PodmanLegacy {
             }
         }
         let url = Self.qdrantURL.appendingPathComponent("readyz")
-        let deadline = Date().addingTimeInterval(readyBudget)
+        let deadline = ContinuousClock.now + .seconds(readyBudget)
         while true {
             if await readyProbe(url, apiKey) == 200 { return }
-            if Date() >= deadline { break }
+            if ContinuousClock.now >= deadline { break }
             await pause()
         }
         throw PodmanMigrationError.qdrantUnreachable(detail: "readyz sans réponse en \(Self.seconds(readyBudget)) s")

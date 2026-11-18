@@ -250,10 +250,10 @@ test("check/AC-17 : la CI exerce check.sh sur macOS et Ubuntu", () => {
   assert.match(workflow, /^ {4}name: check \(macos-latest\)$/m);
   const macosJobs = workflow
     .split(/^ {2}(?=[A-Za-z0-9_-]+:$)/m)
-    .filter((job) => /^ {4}runs-on: macos-latest$/m.test(job));
+    .filter((job) => /^ {4}runs-on: \[self-hosted, macOS, ARM64\]$/m.test(job));
   assert.ok(
     macosJobs.some((job) => job.includes("./scripts/check.sh --sections=")),
-    `aucun job macos-latest ne lance ./scripts/check.sh --sections= :\n${workflow}`,
+    `aucun job macOS auto-hébergé ne lance ./scripts/check.sh --sections= :\n${workflow}`,
   );
 });
 

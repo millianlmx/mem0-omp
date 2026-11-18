@@ -114,8 +114,11 @@ test("release-assets/AC-4 : release.yml appelle le workflow après la publicatio
   // Lecture seule par défaut ; seul le job qui téléverse écrit.
   assert.match(WORKFLOW, /^permissions:\n {2}contents: read$/m);
   const job = WORKFLOW.split(/^jobs:$/m)[1] ?? "";
-  // Les apps sur macOS, l'extension (node seul) sur Linux.
-  assert.match(job, /^ {4}runs-on: \$\{\{ matrix\.app == 'chrome' && 'ubuntu-latest' \|\| 'macos-latest' \}\}$/m);
+  // Les apps sur le Mac auto-hébergé, l'extension (node seul) sur Linux.
+  assert.match(
+    job,
+    /^ {4}runs-on: \$\{\{ matrix\.app == 'chrome' && 'ubuntu-latest' \|\| fromJSON\('\["self-hosted","macOS","ARM64"\]'\) \}\}$/m,
+  );
   assert.match(job, /^ {6}contents: write$/m);
   assert.match(job, /^ {8}app: \[mac, ios, chrome\]$/m);
   assert.match(job, /^ {6}fail-fast: false$/m);
