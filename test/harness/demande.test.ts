@@ -915,12 +915,12 @@ test("demande/AC-24 : le texte d'une demande, quelle que soit sa source, et ses 
   }
 });
 
-test("demande/AC-25 : le classeur n'a que `progress` et `intake_classify`, aucun worktree, aucun plugin mémoire, une scope mémoire propre à la demande, et ne nomme que les dépôts de l'auteur", async () => {
+test("demande/AC-25 : le classeur n'a que `progress`, `intake_recall` (la mémoire d'un dépôt, lue par le service) et `intake_classify`, aucun worktree, aucun plugin mémoire, une scope mémoire propre à la demande, et ne nomme que les dépôts de l'auteur", async () => {
   const { world, api, done } = await setup({ demande: [classify(FEATURE)] });
   try {
     assert.deepEqual(
       hostToolsFor("intake").map((tool) => tool.name),
-      ["progress", "intake_classify"],
+      ["progress", "intake_recall", "intake_classify"],
     );
     const a = await classified(api, "a", {}, api.demo);
     const b = await classified(api, "b", {}, api.other);

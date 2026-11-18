@@ -125,6 +125,19 @@ export function strictest(own: ModelPolicy, space: ModelPolicy | null): ModelPol
   };
 }
 
+/**
+ * La session sous `session` peut-elle lire ce qui relève de `bound` (la politique en vigueur d'un dépôt) ?
+ * Oui quand elle est au moins aussi fermée sur ce qui protège les données : « local-only » si le dépôt
+ * l'impose, et une liste blanche de fournisseurs incluse dans la sienne. Les chaînes de modèles (`models`)
+ * ne bornent pas l'accès : elles choisissent, la liste blanche et `local-only` restreignent.
+ */
+export function covers(session: ModelPolicy, bound: ModelPolicy): boolean {
+  if (bound.privacy === "local-only" && session.privacy !== "local-only") return false;
+  if (bound.providers === undefined) return true;
+  const allowed = bound.providers;
+  return session.providers?.every((name) => allowed.includes(name)) === true;
+}
+
 /** L'espace d'un dépôt quand il porte une politique de modèles : son nom (pour le dire) et elle ; sinon `null`. */
 export function spaceRule(
   spaces: readonly Pick<Space, "name" | "repos" | "policy">[],
