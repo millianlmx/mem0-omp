@@ -75,7 +75,7 @@ case "$1" in
     while [ $# -gt 0 ]; do [ "$1" = -archivePath ] && archive="$2"; shift; done
     mkdir -p "$archive/Products/Applications/OMPConsoleIOS.app"
     ls "$HOME/Library/MobileDevice/Provisioning Profiles" > "$DEVELOPER_DIR/profils-vus.txt"
-    ls -lO "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" > "$DEVELOPER_DIR/profils-drapeaux.txt" 2>/dev/null ;;
+    ls -lO "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" > "$DEVELOPER_DIR/profils-drapeaux.txt" 2>/dev/null || true ;;
   -exportArchive)
     while [ $# -gt 0 ]; do
       [ "$1" = -exportOptionsPlist ] && cp "$2" "$DEVELOPER_DIR/ExportOptions.vu.plist"
