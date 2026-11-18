@@ -319,10 +319,10 @@ final class MemoryAgent {
         } catch {
             throw MemoryAgentError.launchctlFailed(command: "bootout", detail: Self.bounded(error.localizedDescription))
         }
-        let deadline = Date().addingTimeInterval(unloadBudget)
+        let deadline = ContinuousClock.now + .seconds(unloadBudget)
         while true {
             if await !printService().loaded { return }
-            if Date() >= deadline {
+            if ContinuousClock.now >= deadline {
                 throw MemoryAgentError.launchctlFailed(command: "bootout", detail: "le service est toujours chargé")
             }
             await pause()
@@ -369,11 +369,11 @@ final class MemoryAgent {
     }
 
     private func guardPort(loaded: Bool, jobPid: Int32?) async throws {
-        let deadline = Date().addingTimeInterval(portFreeBudget)
+        let deadline = ContinuousClock.now + .seconds(portFreeBudget)
         while true {
             let owner = await holder()
             if Self.portAllows(owner, jobPid: jobPid) { return }
-            if Date() >= deadline {
+            if ContinuousClock.now >= deadline {
                 if loaded { try? await bootoutAndWait() }
                 throw MemoryAgentError.portConflict(port: port, owner: owner)
             }
@@ -387,10 +387,10 @@ final class MemoryAgent {
         progress: @escaping @MainActor (AgentStep) -> Void
     ) async throws {
         progress(.health)
-        let deadline = Date().addingTimeInterval(healthBudget)
+        let deadline = ContinuousClock.now + .seconds(healthBudget)
         while true {
             if let result = await healthProbe(healthURL), Self.isOurMem0(result, token: token) { return }
-            if Date() >= deadline { break }
+            if ContinuousClock.now >= deadline { break }
             await pause()
         }
         let owner = await holder()

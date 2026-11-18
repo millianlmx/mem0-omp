@@ -127,9 +127,11 @@ fi
 # Appareil de test, cherché AVANT toute compilation : le premier disponible sur le
 # runtime iOS le PLUS RÉCENT dont la version est ≥ 26.0. La version du runtime est
 # LUE dans `simctl list runtimes` (jamais devinée du nom de l'appareil : deux
-# runtimes peuvent porter le même).
+# runtimes peuvent porter le même). `OMP_IOS_SIMULATOR=<udid>` impose un appareil
+# disponible d'un de ces runtimes : le runner auto-hébergé teste sur le sien, pas
+# sur le simulateur que le poste utilise (testmanagerd injoignable sinon).
 udid="$(python3 - <<'PY'
-import json, subprocess
+import json, os, subprocess
 
 def simctl_json(*args):
     out = subprocess.run(["xcrun", "simctl", *args], capture_output=True, text=True)
@@ -150,8 +152,12 @@ runtimes = [
 ]
 if not runtimes:
     raise SystemExit(0)
-runtime = max(runtimes, key=lambda r: major(r.get("version")))
 devices = simctl_json("list", "devices", "available", "-j").get("devices", {})
+wanted = os.environ.get("OMP_IOS_SIMULATOR", "")
+if wanted and any(d["udid"] == wanted for r in runtimes for d in devices.get(r["identifier"], [])):
+    print(wanted)
+    raise SystemExit(0)
+runtime = max(runtimes, key=lambda r: major(r.get("version")))
 for device in devices.get(runtime["identifier"], []):
     print(device["udid"])
     break

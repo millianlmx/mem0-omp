@@ -290,7 +290,9 @@ la suite node tourne entière (filet des trous de sélection). Les jobs macOS ne
 qu'en pull_request, en **parallèle**, sur des runners distincts et sans `needs` entre
 eux, tous sur le Mac auto-hébergé (`runs-on: [self-hosted, macOS, ARM64]`, runner
 `~/actions-runner/mem0-omp` lancé par launchd ; la file des macOS hébergés laissait
-des jobs en attente) — un seul runner les enchaîne, en ajouter un par parallélisme voulu : `macos-app-swift` (`--sections=app-swift`), `macos-app-ios` (`--sections=app-ios`)
+des jobs en attente) — un seul runner les enchaîne, en ajouter un par parallélisme voulu.
+Son `.env` pose `OMP_IOS_SIMULATOR=<udid>` (simulateur `mem0-omp-ci`, réservé à la CI) :
+sur le simulateur que le poste utilise, `xcodebuild test` perd testmanagerd. Les jobs : `macos-app-swift` (`--sections=app-swift`), `macos-app-ios` (`--sections=app-ios`)
 et `macos-tests (1/2)`, `macos-tests (2/2)`. Les deux jobs d'app commencent par
 `scripts/ci-scope.sh --base=<sha de la base> app-swift|app-ios` : si rien dans le diff ne
 commence par `omp-console/`, `scripts/`, `mem0-stack/` (app Swift seulement) ou

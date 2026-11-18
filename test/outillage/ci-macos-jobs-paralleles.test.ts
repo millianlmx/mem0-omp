@@ -419,7 +419,7 @@ test("ci-macos-jobs-paralleles/AC-1 : les jobs macOS App Swift, App iOS et tests
   const jobs = workflowJobs(readWorkflow());
   assert.equal([...jobs.keys()][0], "check", "le job ubuntu `check` reste le premier du fichier");
 
-  const onMacos = [...jobs].filter(([, job]) => jobKey(job, "runs-on") === "macos-latest").map(([id]) => id);
+  const onMacos = [...jobs].filter(([, job]) => jobKey(job, "runs-on") === "[self-hosted, macOS, ARM64]").map(([id]) => id);
   assert.deepEqual(onMacos, MACOS_JOBS, "exactement trois définitions de jobs macOS (4 runners avec la matrice)");
   for (const [id, job] of jobs) {
     assert.equal(
