@@ -1,9 +1,16 @@
 name: check
 
+# Les tests tournent sur les PR, jamais au push d'une branche sans PR ni au push
+# vers `main` : le commit de release y arrive en `[skip ci]` (release.yml), et
+# l'arbre fusionné a été prouvé par sa PR. Le filet des trous de sélection
+# (tests réduits au diff en PR) est le run NOCTURNE sur `main`, suite entière ;
+# `workflow_dispatch` le relance à la main.
 on:
-  push:
-    branches: [main]
   pull_request:
+  schedule:
+    # 03:17 UTC : hors de l'heure pleine, où GitHub retarde les runs planifiés.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 
 # Moindre privilège : aucun job n'écrit avec le GITHUB_TOKEN (ni commentaire, ni
 # statut, ni push). Le cache et l'artefact de l'app Mac passent par le jeton
@@ -26,9 +33,9 @@ env:
 
 # Un nouveau commit sur une PR annule le run en cours de cette PR : seul le sha le
 # plus récent décide, et le run annulé libère ses runners macOS (4 par run, sur
-# une limite de 5 par compte). Au push vers `main`, le groupe porte l'identifiant
-# du run, unique : il ne contient jamais qu'un run, donc rien n'y est annulé ni
-# remplacé en attente — un run de `main` va toujours au bout. Le préfixe `check-`
+# une limite de 5 par compte). Hors PR (run nocturne ou manuel), le groupe porte
+# l'identifiant du run, unique : il ne contient jamais qu'un run, donc rien n'y
+# est annulé ni remplacé en attente — un run de `main` va toujours au bout. Le préfixe `check-`
 # évite tout partage de groupe avec `release-simulation-<n>` : un groupe partagé
 # entre workflows annulerait aussi les runs de l'autre.
 concurrency:
@@ -131,19 +138,18 @@ jobs:
           MEM0_OMP_REQUIRE_RUST: "1"
         # En pull_request, `── Tests` ne lance que les fichiers que le diff de la
         # PR concerne (`--tests-base`, scripts/test-files.sh) : la base de la PR
-        # est connue grâce à fetch-depth: 0. Au push vers `main`, l'option est
-        # vide et la suite entière tourne : c'est le filet des trous de sélection.
+        # est connue grâce à fetch-depth: 0. Au run nocturne (ou manuel) sur
+        # `main`, l'option est vide et la suite entière tourne : c'est le filet
+        # des trous de sélection.
         run: ./scripts/check.sh --strict ${{ github.event_name == 'pull_request' && format('--tests-base={0}', github.event.pull_request.base.sha) || '' }}
 
   # Le contrôle macOS est éclaté en jobs PARALLÈLES sur des runners distincts : en
-  # un seul job, il durait ≈ 36 min, au-delà des 2100 s d'attente de fusion que
-  # release.yml accorde à scripts/release.ts (`--merge-timeout 2100`). Aucun de
-  # ces jobs n'a de `needs` — ils démarrent ensemble. Leur seul `if:` est
-  # `github.event_name == 'pull_request'`, toujours vrai pour l'événement qui
-  # porte les statuts requis : un job ne peut pas être sauté sur une PR. Au push
-  # vers `main`, ils ne tournent pas (mesuré le 2026-10-22 : 16 jobs macOS par
-  # feature pour 5 runners, dont 8 au push qui reprouvaient l'arbre que la PR de
-  # release venait de prouver). L'union de leurs `--sections` couvre
+  # un seul job, il durait ≈ 36 min. Aucun de ces jobs n'a de `needs` — ils
+  # démarrent ensemble. Leur seul `if:` est `github.event_name == 'pull_request'`,
+  # toujours vrai pour l'événement qui porte les statuts requis : un job ne peut
+  # pas être sauté sur une PR. Au run nocturne, ils ne tournent pas (mesuré le
+  # 2026-10-22 : 16 jobs macOS par feature pour 5 runners, dont 8 hors PR qui
+  # reprouvaient un arbre déjà prouvé). L'union de leurs `--sections` couvre
   # les 14 sections de check.sh : rien de ce que le job macOS vérifiait ne disparaît.
   #
   # Les deux jobs d'app ne compilent que si le diff de la PR peut avoir changé
@@ -161,8 +167,7 @@ jobs:
   macos-app-swift:
     runs-on: macos-latest
     if: github.event_name == 'pull_request'
-    # Médiane 258 s, max 578 s (2026-10-24). 30 min tiennent sous l'attente de fusion
-    # que release.yml accorde à release.ts (`--merge-timeout 2100`).
+    # Médiane 258 s, max 578 s (2026-10-24) : 30 min, plus du double du pire run.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

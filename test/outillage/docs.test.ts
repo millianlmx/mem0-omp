@@ -217,18 +217,23 @@ test("docs/AC-6 : PUBLISHING et DEVELOPPEMENT décrivent le flux réel et le pr�
   const doc = read("PUBLISHING.md");
   const dev = read("DEVELOPPEMENT.md");
 
-  // (a) Le flux RÉELLEMENT exécuté : PR de bot auto-mergée après les statuts
-  // requis, bump par le job, journal, rattrapage, idempotence.
+  // (a) Le flux RÉELLEMENT exécuté : commit de release poussé sur main par le
+  // job (jeton qui contourne la protection, avance rapide, `[skip ci]`), bump par
+  // le job, journal, rattrapage, idempotence — et plus aucune PR de release.
   const release = section(doc, "Release automatique");
-  assert.match(release, /Rien n'est jamais poussé directement sur `main`/);
-  assert.match(release, /squash/);
+  assert.match(release, /pas de PR de release/);
+  assert.match(release, /poussé directement sur `main`/);
+  assert.match(release, /contourner/);
+  assert.match(release, /avance rapide/);
+  assert.match(release, /\[skip ci\]/);
   assert.match(release, /[Ss]tatuts requis/);
+  assert.doesNotMatch(release, /squash/, "le commit de release n'est plus une fusion de PR");
   assert.match(release, /CHANGELOG\.md/);
   assert.match(release, /[Rr]attrapage/);
   assert.match(release, /[Ii]dempotence/);
   assert.doesNotMatch(release, /puis committe, pousse/, "l'ancien flux (push direct) doit avoir disparu");
   assert.doesNotMatch(release, /pas de rattrapage automatique/, "le rattrapage existe désormais");
-  assert.doesNotMatch(release, /git push/, "aucune commande ne pousse main dans cette section");
+  assert.doesNotMatch(release, /git push/, "aucune commande à lancer à la main ne pousse main dans cette section");
 
   // (b) Aucun bump manuel, et l'amorçage est le seul push admis sur main.
   const update = section(doc, "Mettre à jour");
@@ -240,7 +245,8 @@ test("docs/AC-6 : PUBLISHING et DEVELOPPEMENT décrivent le flux réel et le pr�
   assert.match(publish, /ce n'est pas le chemin de release/);
 
   const ci = section(dev, "CI et release");
-  assert.match(ci, /directement sur `main`/, "DEVELOPPEMENT.md dit que main n'est jamais poussé directement");
+  assert.match(ci, /directement sur `main`/, "DEVELOPPEMENT.md dit que le job pousse le commit de release sur main");
+  assert.match(ci, /\[skip ci\]/);
   assert.match(ci, /job/);
   assert.match(ci, /CHANGELOG\.md/);
   assert.match(ci, /PUBLISHING\.md` § Jeton de release/, "DEVELOPPEMENT.md renvoie au prérequis du jeton");
@@ -251,7 +257,9 @@ test("docs/AC-6 : PUBLISHING et DEVELOPPEMENT décrivent le flux réel et le pr�
     "RELEASE_TOKEN",
     "`.github/workflows/release.yml`",
     "Contents",
-    "Pull requests",
+    "contourner",
+    "enforce_admins",
+    "Bypass list",
     "Only select repositories",
     "Resource owner",
     "Fine-grained",

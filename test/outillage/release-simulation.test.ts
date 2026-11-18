@@ -358,8 +358,8 @@ const COUPLING_STEPS: Step[] = [
 /**
  * Le commit de release tel que `scripts/release.ts` l'écrit : `package.json` du
  * plugin bumpé, les deux catalogues (`metadata.version` = la plus grande version)
- * et l'entrée de `CHANGELOG.md`. C'est l'état de la PR de release du bot, dont le
- * tag n'existe pas encore.
+ * et l'entrée de `CHANGELOG.md`. C'est l'état d'une PR dont la base porte déjà le
+ * commit de release, avant que son tag n'existe.
  */
 function releaseStep(): Step {
   const target = PATCH_TARGET;
@@ -549,7 +549,7 @@ test("release-simulation/AC-1 : une PR qui fige une version en dur fait échouer
   assert.ok(!output(run).includes("✓ release simulée"), output(run));
 });
 
-test("release-simulation/AC-4 : la PR de release (arbre déjà bumpé) sort verte, sans fausse écriture", (t) => {
+test("release-simulation/AC-4 : un arbre déjà bumpé (commit de release, tag pas encore posé) sort vert, sans fausse écriture", (t) => {
   if (outilEpingleAbsent(t, "biome", "typescript")) return;
   const built = scenario(SCENARIOS?.released, t);
   if (built === null) return;

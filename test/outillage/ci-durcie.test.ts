@@ -52,22 +52,35 @@ test("ci-durcie/AC-1 : chaque workflow déclare ses permissions avant ses jobs, 
   }
 });
 
-test("ci-durcie/AC-2 : chaque job a un plafond de durée, et ceux dont release.ts attend les statuts finissent avant son budget d'attente", () => {
-  const release = lire("release.yml");
-  const budget = Number(/--merge-timeout (\d+)/.exec(release)?.[1]);
-  assert.ok(budget > 0, "--merge-timeout introuvable dans release.yml");
+test("ci-durcie/AC-2 : chaque job a un plafond de durée — celui qui appelle un workflow réutilisable le délègue aux jobs appelés — et les statuts requis d'une PR tiennent en 30 min", () => {
+  let appels = 0;
   for (const nom of WORKFLOWS) {
     for (const [id, job] of jobs(lire(nom))) {
+      // Un job `uses:` (workflow réutilisable) n'admet pas `timeout-minutes` : le
+      // plafond est porté par chaque job du workflow appelé, local et jugé ici aussi.
+      const appel = cleDeJob(job, "uses");
+      if (appel !== null) {
+        appels += 1;
+        assert.match(
+          appel,
+          /^\.\/\.github\/workflows\/[\w.-]+\.yml$/,
+          `${nom} › ${id} : workflow appelé hors du dépôt`,
+        );
+        assert.ok(WORKFLOWS.includes(path.basename(appel)), `${nom} › ${id} : ${appel} absent`);
+        assert.equal(cleDeJob(job, "timeout-minutes"), null, `${nom} › ${id}`);
+        continue;
+      }
       const plafond = Number(cleDeJob(job, "timeout-minutes"));
       assert.ok(Number.isInteger(plafond) && plafond > 0, `${nom} › ${id} : timeout-minutes absent`);
       assert.ok(plafond <= 60, `${nom} › ${id} : plafond de ${plafond} min`);
-      // Les statuts requis d'une PR de release (check.yml, release-simulation.yml)
-      // doivent pouvoir aboutir, ou échouer, avant que release.ts n'abandonne.
+      // Les statuts requis d'une PR (check.yml, release-simulation.yml) rendent
+      // leur verdict, ou échouent, en une demi-heure au plus.
       if (nom === "check.yml" || nom === "release-simulation.yml") {
-        assert.ok(plafond * 60 < budget, `${nom} › ${id} : ${plafond} min ≥ --merge-timeout ${budget} s`);
+        assert.ok(plafond <= 30, `${nom} › ${id} : ${plafond} min > 30`);
       }
     }
   }
+  assert.ok(appels > 0, "release.yml appelle release-assets.yml");
 });
 
 test("ci-durcie/AC-3 : chaque `uses:` est épinglé par un sha de commit de 40 caractères, sa version en commentaire", () => {
@@ -75,6 +88,8 @@ test("ci-durcie/AC-3 : chaque `uses:` est épinglé par un sha de commit de 40 c
   for (const nom of WORKFLOWS) {
     const yaml = lire(nom);
     for (const ligne of yaml.split("\n").filter((l) => /^\s*-?\s*uses:/.test(l))) {
+      // Un workflow réutilisable DU DÉPÔT s'appelle par son chemin : il suit le commit courant.
+      if (/^ {4}uses: \.\/\.github\/workflows\/[\w.-]+\.yml$/.test(ligne)) continue;
       vus += 1;
       assert.match(
         ligne,

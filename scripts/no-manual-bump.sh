@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Garde anti-bump manuel (S-3, BR-3) : une PR — autre qu'une PR de release — ne
-# monte JAMAIS une version. Le seul auteur du bump est le job de release, qui le
-# calcule d'après les commits conventionnels de la fusion ; un bump manuel
-# produirait un double bump (version de la PR, puis version calculée par le job).
+# Garde anti-bump manuel (S-3, BR-3) : une PR ne monte JAMAIS une version. Le
+# seul auteur du bump est le job de release, qui le calcule d'après les commits
+# conventionnels de la fusion et pousse son commit directement sur `main` (sans
+# PR) ; un bump manuel produirait un double bump (version de la PR, puis version
+# calculée par le job). Aucune exemption : un trailer `Release-Event:` dans la PR
+# n'y change rien.
 #
 # Appelé par une étape du job `check` de `.github/workflows/check.yml` :
 #   ./scripts/no-manual-bump.sh --base "${{ github.event.pull_request.base.sha }}"
@@ -113,14 +115,6 @@ bumped = [
 
 if not bumped:
     print("  ✓ aucune version montée à la main dans la PR")
-    sys.exit(0)
-
-# Une PR de release porte le trailer du commit de release : c'est le job lui-même
-# qui a écrit ces versions, la garde n'a rien à redire.
-trailer = git("log", "--fixed-strings", "--grep=Release-Event:", "--format=%H", "-n", "1",
-              f"{base}..{head}").strip()
-if trailer != "":
-    print("  ✓ PR de release (trailer Release-Event) : les versions sont bumpées par le job")
     sys.exit(0)
 
 for path, label, old, new in bumped:

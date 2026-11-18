@@ -135,7 +135,7 @@ test("catalogue : une entrée et `metadata.version` montées à la main sont nom
   }
 });
 
-test("PR de release : le trailer `Release-Event:` exempte les versions écrites par le job", () => {
+test("trailer `Release-Event:` dans la PR : aucune exemption, le bump reste refusé", () => {
   const dir = makeRepo();
   const memory = PLUGINS[0] as { name: string; dir: string };
   const rel = `${memory.dir}/package.json`;
@@ -148,12 +148,12 @@ test("PR de release : le trailer `Release-Event:` exempte les versions écrites 
   // Le trailer est dans le CORPS du commit, comme celui que le job écrit.
   commitAll(dir, "chore(release): omp-mem0-memory 0.0.1", "Release-Event: 0123456789abcdef");
 
+  // Le job de release pousse son commit sur `main` sans PR : une PR qui imite
+  // son trailer ne contourne pas la garde.
   const run = runGuard(dir, ["--base", base]);
-  assert.equal(run.status, 0, output(run));
-  assert.ok(
-    output(run).includes("  ✓ PR de release (trailer Release-Event) : les versions sont bumpées par le job"),
-    output(run),
-  );
+  assert.equal(run.status, 1, output(run));
+  assert.ok(output(run).includes(`  ✗ ${rel} : version modifiée à la main`), output(run));
+  assert.ok(!output(run).includes("PR de release"), output(run));
 });
 
 test("sans porteur de version touché : la garde passe", () => {
