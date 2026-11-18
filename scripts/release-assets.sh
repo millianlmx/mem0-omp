@@ -162,7 +162,9 @@ nettoyer_signature() {
   local fichier
   if [ -f "$PROFILS_INSTALLES" ]; then
     while IFS= read -r fichier; do
-      [ -n "$fichier" ] && rm -f "$fichier"
+      [ -n "$fichier" ] || continue
+      if command -v chflags >/dev/null 2>&1; then chflags nouchg "$fichier" 2>/dev/null; fi
+      rm -f "$fichier"
     done < "$PROFILS_INSTALLES"
   fi
   if [ -e "$KEYCHAIN" ] && command -v security >/dev/null 2>&1; then
@@ -485,9 +487,13 @@ installer_profil() {
     echo "✗ $1 : le profil vise « ${appid:-rien} », attendu « $IOS_TEAM_ID.$2 » (un profil par cible : l'app et l'extension de widgets)" >&2
     return 1
   fi
+  # Verrouillé (`chflags uchg`) jusqu'à `nettoyer_signature` : sur un Mac où Xcode
+  # tourne avec un compte (runner auto-hébergé), un profil inconnu posé là
+  # disparaît en quelques secondes, avant que `xcodebuild archive` le lise.
   for dossier in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
     mkdir -p "$dossier" && cp "$brut" "$dossier/$uuid.mobileprovision" || return 1
     echo "$dossier/$uuid.mobileprovision" >> "$PROFILS_INSTALLES"
+    if command -v chflags >/dev/null 2>&1; then chflags uchg "$dossier/$uuid.mobileprovision"; fi
   done
   echo "$uuid"
 }

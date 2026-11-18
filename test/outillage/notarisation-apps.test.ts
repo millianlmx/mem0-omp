@@ -74,7 +74,8 @@ case "$1" in
   archive)
     while [ $# -gt 0 ]; do [ "$1" = -archivePath ] && archive="$2"; shift; done
     mkdir -p "$archive/Products/Applications/OMPConsoleIOS.app"
-    ls "$HOME/Library/MobileDevice/Provisioning Profiles" > "$DEVELOPER_DIR/profils-vus.txt" ;;
+    ls "$HOME/Library/MobileDevice/Provisioning Profiles" > "$DEVELOPER_DIR/profils-vus.txt"
+    ls -lO "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" > "$DEVELOPER_DIR/profils-drapeaux.txt" 2>/dev/null || true ;;
   -exportArchive)
     while [ $# -gt 0 ]; do
       [ "$1" = -exportOptionsPlist ] && cp "$2" "$DEVELOPER_DIR/ExportOptions.vu.plist"
@@ -364,6 +365,13 @@ test("notarisation-apps/AC-5 : avec les secrets iOS, profils installés, archive
     `${UUID_APP}.mobileprovision`,
     `${UUID_WIDGETS}.mobileprovision`,
   ]);
+  // Verrouillés pendant l'archive (chflags, macOS seul) : un Xcode connecté à un
+  // compte retire sinon un profil inconnu avant que l'archive le lise.
+  if (process.platform === "darwin") {
+    const drapeaux = fs.readFileSync(path.join(box.dir, "profils-drapeaux.txt"), "utf8");
+    for (const uuid of [UUID_APP, UUID_WIDGETS])
+      assert.match(drapeaux, new RegExp(`\\buchg\\b.*${uuid}\\.mobileprovision`), drapeaux);
+  }
   assert.deepEqual(fs.readdirSync(path.join(box.home, "Library", "MobileDevice", "Provisioning Profiles")), []);
   assert.equal(fs.existsSync(box.signing), false);
 
