@@ -1,5 +1,13 @@
 # Journal des versions
 
+## omp-harness 1.42.0 — 2026-11-18
+
+- feat(harness,console): le classeur d'une Demande type le run sur sa voie, et « Refaire » garde l'express (#482) (0cfad2c)
+
+## omp-console 1.4.0 — 2026-11-18
+
+- feat(harness,console): le classeur d'une Demande type le run sur sa voie, et « Refaire » garde l'express (#482) (0cfad2c)
+
 ## omp-harness 1.41.2 — 2026-11-17
 
 - Premier chargement : stats en base, flux sans rejouer le journal (#479) (55a7eff)
