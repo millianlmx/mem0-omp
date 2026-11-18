@@ -192,7 +192,7 @@ test("reorganisation-de-la-base-de-code/AC-6 : `main.ts --check` rend 0 ou 1 san
   assert.ok(check.status === 0 || check.status === 1, `--check : code ${check.status}\n${check.stderr}`);
   const lines = check.stdout.split("\n").filter((line) => line.trim() !== "");
   assert.ok(lines.length > 0, `--check n'a rien imprimé\n${check.stderr}`);
-  for (const line of lines) assert.ok(/^(✓ |! |✗ |    → )/.test(line), `--check : ligne inattendue « ${line} »`);
+  for (const line of lines) assert.ok(/^(✓ |! |✗ | {4}→ )/.test(line), `--check : ligne inattendue « ${line} »`);
 
   // (2) le serveur lui-même : à l'écoute, en bonne santé, arrêté par SIGTERM.
   const dir = tmpdir("reorganisation-serveur-");
