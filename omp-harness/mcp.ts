@@ -903,7 +903,7 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "intake",
     title: "Poser ou lire une demande",
     description:
-      "Confie une demande en langage libre à l'OS (`POST /v1/intake`) : un job la classe (feature, bug, audit, tâche du poste, planification ou question) et rend un PLAN lisible, ou une question de clarification. Rien n'est créé avant `intake_confirm`. Avec `id`, lit la demande (état, plan, question, réponse, objet créé). Relis-la tant que son état est `classifying`.",
+      "Confie une demande en langage libre à l'OS (`POST /v1/intake`) : un job la classe (feature, bug, audit, tâche du poste, planification ou question) et rend un PLAN lisible, une question de clarification, ou la réponse à une question (lue dans le code du dépôt quand elle en dépend). Rien n'est créé avant `intake_confirm`. Avec `id`, lit la demande (état, plan, question, réponse, objet créé). Relis-la tant que son état est `classifying`.",
     role: "operator",
     readOnly: false,
     properties: {

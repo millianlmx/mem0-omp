@@ -621,6 +621,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `pilot.tier` | `"heavy"` | le niveau de modèle de la session du pilote |
 | `pilot.allRuns` | `true` | le pilote tranche aussi les runs qui ne descendent d'aucun audit (pilote de l'usine) ; `false` : seulement ceux des audits lancés |
 | `intake.tier` | `"standard"` | le niveau de modèle de la session qui classe une Demande (§ « Les demandes en langage libre ») |
+| `intake.answerTier` | `"heavy"` | le niveau de modèle de la session qui répond à une question de Demande en lisant le code de son dépôt |
 | `repos[].tests.pattern` | `null` | le glob des fichiers de test (`test/**/*.test.ts`) qui filtre `{files}` de `tests.touched` ; aucun fichier retenu ⇒ « aucun test touché », réussi |
 | `repos[].checks` | `{}` | des commandes nommées (`{ "lint": "bash scripts/lint.sh" }`) que l'agent lance par `run_tests {scope: "check", check: "lint"}` |
 | `repos[].preview` | absente | `{ "command", "port", "path"?, "readyTimeoutSec"? }` : la prévisualisation du worktree pour la QA de `/review` (§ « La QA de `/review` par Moli »). `command` est lancée par `bash -c` dans un conteneur de l'image des tests, sans réseau, en isolation `container` ; `port` (1–65535, ni 9222 ni 9223) est celui qu'elle écoute ; `path` (défaut `/`) sa page d'accueil, capturée d'office ; `readyTimeoutSec` (1–600, défaut 60) le temps pour répondre. Une valeur mal formée refuse la configuration en nommant le champ |
@@ -2209,9 +2210,26 @@ et exécute après UNE confirmation. Rien n'est créé avant `POST /v1/intake/{i
 - **Cycle de vie.** `classifying` (un job léger, comme les audits, sur `intake.tier`) →
   `planned` (le plan : type, dépôt, titre, énoncé reformulé, planification éventuelle, voie du run et critères, et
   `creates`, ce qui sera créé, rédigé par le serveur), `clarifying` (une question ; `answer`
-  renvoie la même demande en classement), `answered` (un `question` : réponse directe, rien à
-  créer) ou `failed` (`reason`) ; puis `confirmed` (`created` : le run, l'audit, la
-  planification ou la demande au poste) ou `cancelled`.
+  renvoie la même demande en classement), `answered` (une `question` : sa réponse, directe ou lue
+  dans le code d'un dépôt, rien à créer) ou `failed` (`reason`) ; puis `confirmed` (`created` : le
+  run, l'audit, la planification ou la demande au poste) ou `cancelled`.
+- **Ce que le classeur fait d'une demande qui interroge.** Une demande d'idées, de features ou
+  d'améliorations pour un dépôt devient un plan `audit` (son `focus` reprend la question) : l'audit
+  lit le code et propose. Une demande qui désigne son dépôt sans le nommer (« ce projet »,
+  « this ») alors que l'auteur en voit plusieurs reçoit une `clarification` : le classeur ne devine
+  jamais le dépôt. Seule une question qui ne dépend d'aucun dépôt reçoit une réponse directe.
+- **Une question sur le code.** Une `question` rendue avec un `repo` (ou posée avec un dépôt
+  imposé) et sans `answer` n'est pas répondue à l'aveugle : le classement rendu, une seconde
+  session, sur `intake.answerTier`, lit la branche principale du dépôt dans un worktree détaché
+  (`<worktrees>/<dépôt>/_demande-<id>`, comme un audit : rien n'y est commité), sans plugin mémoire,
+  avec `progress`, `oracle_recall` (la mémoire de CE dépôt, par le service, en lecture seule) et
+  `intake_answer`. La question (la reformulation du classeur, sinon la demande et ses réponses) et
+  la mémoire rappelée lui arrivent en `untrusted()`. Sa réponse (4000 caractères au plus) passe la
+  demande à `answered`, `repo` sur le dépôt lu : elle se lit par les clients de ce dépôt. Le dépôt
+  est jugé comme celui d'un plan (déclaré, dans la portée de l'auteur) ; une réponse non rendue ou
+  une session en erreur met la demande en échec. La demande reste `classifying` jusqu'à la réponse,
+  sur le slot de son classement ; l'annuler arrête la session, et le worktree est rendu dans tous
+  les cas, redémarrage du service compris.
 - **La voie du run.** Pour un plan `feature` ou `bug`, le classeur choisit la voie du run
   (`plan.lane`) et dit pourquoi en une phrase (`plan.laneReason`) : `express` pour une demande
   triviale et localisée (petite, évidente, sans décision produit ni migration, vérifiable par un
@@ -2229,9 +2247,16 @@ et exécute après UNE confirmation. Rien n'est créé avant `POST /v1/intake/{i
   l'irréversible, l'autonomie « tout me demander » ou `specsGate: true` refusent l'express
   (`laneRefused`), et la porte des specs peut rendre la directe complète. Un plan sans voie (classé
   avant elles, ou sans `lane` rendu) garde le tri d'avant, `lanes.default` compris.
-- **Le classeur ne lit ni dépôt ni mémoire.** Son répertoire de travail est vide, aucun
-  plugin mémoire n'est chargé (ni scope projet ni `_global` : un texte non fiable d'un client ne
-  ressort pas chez un autre), ses seuls outils sont `progress` et `intake_classify`. Le texte de
+- **Le classeur ne lit pas le code, et ne lit qu'une mémoire.** Son répertoire de travail est
+  vide, aucun plugin mémoire n'est chargé (ni scope projet ni `_global` : un texte non fiable d'un
+  client ne ressort pas chez un autre), ses seuls outils sont `progress`, `intake_recall` et
+  `intake_classify`. `intake_recall {repo, query}` lit, par le service et en lecture seule, la
+  mémoire d'UN dépôt : un dépôt de la portée de l'auteur, le dépôt imposé s'il y en a un, trois
+  recherches au plus, et seulement si la politique de modèles du classement couvre celle du dépôt
+  (`local-only` s'il l'impose, une liste blanche de fournisseurs incluse dans la sienne). Le premier
+  dépôt lu verrouille le classement : un autre est refusé, et un plan ou une question sur le code
+  qui porte un autre dépôt est en échec (ce qu'il rapporterait se lirait par d'autres clients). Ce
+  qui revient est passé par `untrusted()`. Le texte de
   la demande, les réponses de l'humain et les questions déjà posées passent par
   `untrusted()`. Le serveur juge le rendu : type connu, dépôt déclaré et dans la portée de
   l'auteur, cron valide, cible `run`, `audit` ou `issues` (pas `automation`) ; sinon la
