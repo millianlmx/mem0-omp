@@ -121,10 +121,19 @@ export type RunTemplate = {
   kind: WorkKind | null;
   labels: string[];
   modules: string[];
-  lane: "full" | null;
+  lane: "full" | "express" | null;
   budgetUsd: number | null;
   autonomy: RunAutonomy | null;
 };
+
+/**
+ * La voie qu'un « refaire » redemande : celle que le premier run a eue à sa création (`run_created`),
+ * quand un `POST /v1/runs` sait la demander — `full` et `express` ; la voie directe n'en demande pas,
+ * la demande d'origine porte ses critères et la retrouve.
+ */
+function laneOfTemplate(lane: unknown): RunTemplate["lane"] {
+  return lane === "full" || lane === "express" ? lane : null;
+}
 
 export type ProposalHooks = {
   issues: IssueDesk;
@@ -833,7 +842,8 @@ export class ProposalDesk {
   /**
    * Le corps d'un `POST /v1/runs` qui relancerait la feature de ce run : la demande d'ORIGINE du fil — on
    * remonte le parent d'une feature découpée (`afterRun`) et celui d'un run de suite (`follow_up`) jusqu'au
-   * premier run. `lane` : `full` si ce premier run est passé par /req ; `budgetUsd` : son budget propre.
+   * premier run. `lane` : `full` si ce premier run est passé par /req, `express` s'il est né en voie express,
+   * `null` sinon (la voie directe se retrouve à ses critères) ; `budgetUsd` : son budget propre.
    */
   template(runId: string): RunTemplate {
     const { store, monitor } = this.#ctx;
@@ -859,7 +869,7 @@ export class ProposalDesk {
       kind: origin.kind,
       labels: origin.labels,
       modules: origin.modules,
-      lane: store.lastRunEvent(origin.id, "run_created")?.payload.lane === "full" ? "full" : null,
+      lane: laneOfTemplate(store.lastRunEvent(origin.id, "run_created")?.payload.lane),
       budgetUsd: budget.source === "run" ? budget.budget : null,
       autonomy: origin.autonomy,
     };

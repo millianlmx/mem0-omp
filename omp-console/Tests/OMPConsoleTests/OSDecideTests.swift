@@ -429,6 +429,12 @@ struct OSDecideTests {
         #expect(elsewhere.modules.isEmpty)
         #expect(elsewhere.options?.kind == .feature && elsewhere.options?.labels == ["export", "csv"])
         #expect(OSRedo.amount(12) == "12")
+
+        // Un run né en voie express se refait en express ; une voie inconnue revient au tri du serveur.
+        let express = HarnessRunTemplate(repo: "demo", title: "Libellé", request: "Renommer le bouton.", lane: "express")
+        #expect(OSRedo.launchDraft(express, repo: "demo").lane == .express)
+        let unknown = HarnessRunTemplate(repo: "demo", title: "Libellé", request: "Renommer le bouton.", lane: "direct")
+        #expect(OSRedo.launchDraft(unknown, repo: "demo").lane == .auto)
     }
 
     @Test("« En faire une routine » prépare une planification de feature à laquelle il ne manque que son horaire")
