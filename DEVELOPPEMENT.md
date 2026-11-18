@@ -42,7 +42,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/run-console.sh             recompile et relance l'app Mac
 ├── scripts/recette/                   recettes manuelles, jamais lancées par la CI
 ├── scripts/mem0-http-contrat.sh       contrat HTTP boîte noire du service mémoire
-├── scripts/release.ts                 PR de release, tags et releases au merge
+├── scripts/release.ts                 commit de release sur main, tags et releases au merge
 ├── scripts/release-assets.sh          construit l'app Mac et l'IPA jointes à chaque release
 ├── scripts/no-manual-bump.sh          refuse un bump de version manuel
 └── scripts/release-simulation.sh      simule la release d'une PR sur une copie jetable
@@ -285,8 +285,11 @@ ainsi que `release-simulation` : le merge est bloqué.
 
 Sur Ubuntu, le job `check` lance `./scripts/check.sh --strict` : ses 14
 sections à chaque run ; en pull_request il ajoute `--tests-base=<sha de la base>` et la
-section tests se réduit aux fichiers que le diff de la PR concerne, au push vers `main`
-la suite node tourne entière (filet des trous de sélection). Les jobs macOS ne tournent
+section tests se réduit aux fichiers que le diff de la PR concerne. `check.yml` ne tourne
+qu'en pull_request, plus un run **nocturne** sur `main` (`schedule`, 03:17 UTC) et
+un run manuel (`workflow_dispatch`) : jamais au push d'une branche sans PR ni au push
+vers `main`. Hors PR, la suite node tourne entière (filet des trous de sélection,
+qui remplace l'ancien run au push vers `main`). Les jobs macOS ne tournent
 qu'en pull_request, en **parallèle**, sur des runners distincts et sans `needs` entre
 eux, tous sur le Mac auto-hébergé (`runs-on: [self-hosted, macOS, ARM64]`, runner
 `~/actions-runner/mem0-omp` lancé par launchd ; la file des macOS hébergés laissait
@@ -318,7 +321,7 @@ les fichiers de test qui appellent swift ou xcodebuild (`scripts/test-files.sh -
 nom en `ios-*`, ou mention de `swift`, `swiftc`, `xcodebuild`, `xcrun`, `swift-app.sh` ou
 `ios-build.sh`), réduits à ceux que le diff concerne ; un ensemble vide laisse la
 section verte. Un nouveau commit sur une PR annule le run `check` en cours de cette PR ;
-un run déclenché par un push vers `main` n'est jamais annulé.
+un run nocturne ou manuel n'est jamais annulé.
 
 **Caches de la CI.** Les jobs qui installent ou compilent restaurent un cache
 `actions/cache@v6` avant `check.sh` : `check` et `macos-tests` le cache npm
@@ -352,10 +355,12 @@ chaque run : l'étape de simulation pose `CARGO_TARGET_DIR` sur
 
 **Garde-fous des workflows.** Chaque workflow déclare `permissions:` au premier
 niveau — `contents: read` pour `check.yml`, dont aucun job n'écrit avec le
-`GITHUB_TOKEN` —, chaque job porte un `timeout-minutes` (30 pour les jobs de
-`check.yml`, sous le budget `--merge-timeout 2100` de la release, 10 pour
-l'agrégateur), et chaque action est épinglée par le sha de son commit, sa
-version en commentaire (`uses: actions/cache@<sha> # v6.1.0`).
+`GITHUB_TOKEN` —, chaque job porte un `timeout-minutes` (30 au plus pour les jobs
+de `check.yml` et `release-simulation.yml`, 10 pour l'agrégateur) — sauf le job
+`assets` de `release.yml`, qui appelle un workflow réutilisable du dépôt
+(`uses: ./.github/workflows/release-assets.yml`) dont chaque job porte le sien —,
+et chaque action est épinglée par le sha de son commit, sa version en commentaire
+(`uses: actions/cache@<sha> # v6.1.0`).
 `.github/dependabot.yml` tient chaque semaine ces épingles, la crate
 `mem0-stack/mem0-rs` et les images des Dockerfile et des compose à jour,
 mineures et correctifs groupés en une PR ; jamais npm, dont les outils sont
@@ -405,7 +410,9 @@ release de la PR **sur une copie jetable** — plan de `scripts/release.ts`,
 `./scripts/check.sh` limité aux sections que la release peut casser
 (`--sections=catalogue,noms,plugins,versions,extension,types,lint,smoke,noyau,tests`
 avec `--tests-base=HEAD` : les tests que les fichiers écrits concernent) — sans rien
-pousser, sans tag et sans PR. Le job de release lance la même commande. Mesuré le
+pousser, sans tag et sans PR. Le job de release lance la même commande avant de
+pousser son commit sur `main` : c'est la seule preuve que ce commit reçoit, il ne
+repasse par aucune PR. Mesuré le
 2026-10-22 avant cette réduction : 18 min, dont 989 s de `check.sh` complet. Son statut,
 `release-simulation`, est requis : une PR dont la release simulée échouerait ne
 peut pas être fusionnée.
@@ -567,28 +574,37 @@ clippy (`rustup component add clippy`) et pose `MEM0_OMP_REQUIRE_RUST=1`, qui
 change ce saut en échec. `MEM0_OMP_SKIP_RUST` non vide ignore la section : les
 copies jetables des tests le posent.
 
-Un merge sur `main` déclenche `.github/workflows/release.yml`. Le job ne pousse
-**jamais** directement sur `main` (la protection de branche refuse un commit neuf
-sans statuts) : il ouvre une PR de release, attend que les trois statuts passent,
-la fusionne en squash, puis pousse les tags `<plugin>-v<version>` et publie les
+Un merge sur `main` déclenche `.github/workflows/release.yml`. Il n'y a plus de PR
+de release : le job écrit versions, catalogues et `CHANGELOG.md`, les prouve avec
+`check.sh`, puis pousse le commit de release directement sur `main` — en avance
+rapide seulement, jamais forcé, avec le jeton dédié autorisé à contourner la
+protection de branche, et marqué `[skip ci]` pour ne relancer ni `check.yml` ni
+`release.yml`. GitHub lit cette marque n'importe où dans le message : un commit
+humain qui la cite telle quelle saute lui aussi les workflows de sa PR (aucun
+statut requis ne démarre) et, fusionné en squash, le run de release — pour en
+parler dans un message, écris-la sans crochets (« skip ci »). Un run de release
+sauté ou perdu se relance à la main (`workflow_dispatch`, sur `main` seulement) :
+`PUBLISHING.md` § Release automatique. Il pousse ensuite les tags `<plugin>-v<version>` et publie les
 releases GitHub. Les versions elles-mêmes sont décidées **par le job** — `fix` ⇒
 patch, `feat` ⇒ mineure, rupture déclarée ⇒ majeure, d'après les commits touchant
 chaque plugin — et non par la PR mergée : personne ne monte une version à la main
 (une PR qui le tente échoue en CI). `CHANGELOG.md` est écrit au même moment, une
 section datée par version publiée, et les versions historiques jamais publiées sont
-rattrapées par le même run. Si une autre PR est fusionnée pendant que le job attend
-les statuts de sa PR de release, il ne la fusionne pas : il recalcule la release
-depuis le nouveau `main` et remet la même PR à jour, si bien que deux fusions
-rapprochées donnent une seule version, au bump de l'ensemble, et une entrée de
-journal qui les nomme toutes. Après les tags, il avance la branche `deploy` sur le
-dernier tag `omp-harness-v*` : le serveur la suit (pile Portainer en GitOps,
-`harness.sh up --ref deploy`). Le jeton dédié que ce job exige, ses permissions et sa
-création sont dans `PUBLISHING.md` § Jeton de release ; les règles de décision, le
-flux en huit étapes et la commande de protection de branche aussi.
+rattrapées par le même run. Si une autre PR est fusionnée entre le plan et la
+poussée, le remote refuse la poussée : le job recalcule la release depuis le
+nouveau `main` et retente, si bien que deux fusions rapprochées donnent une seule
+version, au bump de l'ensemble, et une entrée de journal qui les nomme toutes.
+Après les tags, il avance la branche `deploy` sur le dernier tag `omp-harness-v*` :
+le serveur la suit (pile Portainer en GitOps, `harness.sh up --ref deploy`). Le
+jeton dédié que ce job exige, ses permissions, le contournement de la protection et
+sa création sont dans `PUBLISHING.md` § Jeton de release ; les règles de décision,
+le flux étape par étape et la commande de protection de branche aussi.
 
-Chaque release publiée déclenche ensuite `.github/workflows/release-assets.yml` :
-deux jobs macOS construisent OMP Console depuis le tag (`scripts/release-assets.sh
-mac|ios`) et joignent à la release `OMP-Console-macOS.zip` et `OMP-Console-iOS.ipa`,
+Le job `assets` du même workflow appelle ensuite
+`.github/workflows/release-assets.yml` (réutilisable), une fois par commit tagué
+des releases publiées — un seul pour tous les bumps d'un run : deux jobs macOS
+construisent OMP Console depuis ce commit (`scripts/release-assets.sh mac|ios`) et
+joignent à chacune de ses releases `OMP-Console-macOS.zip` et `OMP-Console-iOS.ipa`,
 avec leurs `.sha256` : app Mac signée Developer ID et notarisée, IPA signée, quand
 les secrets de signature existent ; sinon app Mac ad hoc et IPA non signée, avec
 un `⚠` dans le journal. Un troisième job, Linux, construit l'extension Chrome

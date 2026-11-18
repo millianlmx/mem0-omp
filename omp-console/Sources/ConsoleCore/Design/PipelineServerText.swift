@@ -564,7 +564,7 @@ public enum PipelineServerText {
     public static let priorityLabel = L10n.text("Priorité")
     public static let priorityPrompt = L10n.text("0 par défaut, de -1000 à 1000")
     public static let laneLabel = L10n.text("Voie")
-    public static let laneHint = L10n.text("Automatique : la voie directe quand la demande porte ses critères d’acceptation, sinon la voie complète (besoins, specs, implémentation, revue).")
+    public static let laneHint = L10n.text("Automatique : la voie directe quand la demande porte ses critères d’acceptation, sinon la voie complète (besoins, specs, implémentation, revue). Express : l’implémentation tout de suite, une revue courte, une seule correction.")
     public static let reqLabel = L10n.text("Cadrage /req (facultatif)")
     public static let reqHint = L10n.text("Un cadrage déjà écrit : l’étape /req est sautée.")
     public static let budgetLabel = L10n.text("Budget en dollars (facultatif)")
@@ -576,6 +576,7 @@ public enum PipelineServerText {
     public static func lane(_ raw: String) -> String {
         switch raw {
         case "full": L10n.text("Complète")
+        case "express": L10n.text("Express")
         default: L10n.text("Automatique")
         }
     }

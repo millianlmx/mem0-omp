@@ -74,16 +74,30 @@ public struct MemoryReader: Sendable {
 
     /// Les portées de la mémoire, de la plus récemment écrite à la plus ancienne.
     public func scopes() async throws -> [String] {
-        let rows = try await all(scope: nil).rows
+        Self.scopes(in: try await everything())
+    }
+
+    /// Les portées d'une lecture sans portée, de la plus récemment écrite à la plus ancienne.
+    static func scopes(in page: MemoryPage) -> [String] {
         var seen: Set<String> = []
-        return rows.compactMap(\.agentId).filter { !$0.isEmpty && seen.insert($0).inserted }
+        return page.rows.compactMap(\.agentId).filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    /// Toute la mémoire, toutes portées : de quoi trouver les portées ET, sans second
+    /// téléchargement, les lignes de la plus récente (`restricted(to:)`).
+    func everything() async throws -> MemoryPage {
+        try await all(scope: nil)
     }
 
     /// La tranche `[offset, offset+limit)` du sommaire de `scope`, dans l'ordre du
     /// service ; sans portée, une page vide `scope: nil` sans appel.
     public func page(scope: String?, offset: Int, limit: Int? = nil) async throws -> RemoteMemoryPagePayload {
         guard let scope else { return RemoteMemoryPagePayload(scope: nil, total: 0, offset: 0, rows: [], nextOffset: nil) }
-        let page = try await all(scope: scope)
+        return Self.slice(try await all(scope: scope), scope: scope, offset: offset, limit: limit)
+    }
+
+    /// La tranche d'une lecture déjà faite : aucun appel.
+    static func slice(_ page: MemoryPage, scope: String, offset: Int, limit: Int? = nil) -> RemoteMemoryPagePayload {
         let start = min(max(0, offset), page.rows.count)
         let kept = page.rows[start...].prefix(max(1, limit ?? Self.pageSize)).map(RemoteMemoryRow.init)
         let next = start + kept.count
@@ -94,6 +108,20 @@ public struct MemoryReader: Sendable {
             rows: Array(kept),
             nextOffset: next < page.rows.count ? next : nil
         )
+    }
+
+    /// Les lignes d'une lecture sans portée qui sont celles de `scope`. Le service
+    /// filtre `agent_id` en SQL et trie pareil avec ou sans filtre (`updated_at`
+    /// décroissant, puis `id`) : c'est donc exactement ce que rendrait `read(scope:)`,
+    /// sans le second téléchargement.
+    static func restricted(_ page: MemoryPage, to scope: String) -> MemoryPage {
+        let rows = page.rows.filter { $0.agentId == scope }
+        return MemoryPage(total: rows.count, rows: rows)
+    }
+
+    /// La lecture complète d'une portée : le service la rend d'un bloc, sans pagination.
+    func read(scope: String) async throws -> MemoryPage {
+        try await all(scope: scope)
     }
 
     /// La recherche de `mem0_search` : pool sur-échantillonné, seuil du plugin, tri
@@ -123,6 +151,11 @@ public struct MemoryReader: Sendable {
     public func graph(scope: String?) async throws -> RemoteMemoryGraphPayload {
         guard let scope else { return RemoteMemoryGraphPayload(scope: nil, nodes: [], links: [], total: 0) }
         let rows = try await all(scope: scope).rows
+        return try await graph(scope: scope, rows: rows)
+    }
+
+    /// Le graphe de `scope` sur des lignes déjà lues : seules les arêtes sont lues.
+    func graph(scope: String, rows: [MemoryRow]) async throws -> RemoteMemoryGraphPayload {
         let edges = MemoryGraphEdges.decode(try await send(path: "/memory/graph", method: "GET", body: nil, timeout: Self.readTimeout))
         return Self.graphPayload(scope: scope, rows: rows, edges: edges.edges)
     }
@@ -194,6 +227,11 @@ public struct MemoryReader: Sendable {
             reply = try await transport.send(request)
         } catch let error as URLError where error.code == .timedOut {
             throw MemoryReadError.timedOut
+        } catch let error as URLError where error.code == .cancelled {
+            // Une annulation (écran quitté, actualisation relancée) n'est jamais une panne à annoncer.
+            throw CancellationError()
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw MemoryReadError.unreachable
         }

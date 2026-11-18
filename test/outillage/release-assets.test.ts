@@ -1,6 +1,7 @@
-// Feature release-assets : chaque release GitHub publiée reçoit les apps OMP Console,
-// le bundle macOS et l'IPA iOS, construits depuis le code du tag par
-// `scripts/release-assets.sh` et joints par `.github/workflows/release-assets.yml`.
+// Feature release-assets : chaque release publiée par le job de release reçoit les
+// apps OMP Console, le bundle macOS et l'IPA iOS, construits depuis le commit tagué
+// par `scripts/release-assets.sh` et joints par `.github/workflows/release-assets.yml`,
+// que release.yml appelle après la publication.
 // Le script tourne ici pour de vrai, dans une copie jetable de `scripts/` ; seuls
 // `uname`, `xcodebuild`, `ditto` et `scripts/swift-app.sh` sont doublés.
 import test from "node:test";
@@ -103,9 +104,12 @@ test("release-assets/AC-3 : hors macOS ou sans Xcode utilisable, « non exécut�
   assert.match(unknown.stderr, /usage : scripts\/release-assets\.sh mac\|ios/);
 });
 
-test("release-assets/AC-4 : le workflow suit chaque release publiée, construit les deux apps et l'extension depuis le tag et les joint à la release", () => {
+test("release-assets/AC-4 : release.yml appelle le workflow après la publication, une fois par commit tagué ; il construit les deux apps et l'extension depuis ce commit et les joint à chacune de ses releases", () => {
   const on = WORKFLOW.split(/^permissions:/m)[0] ?? "";
-  assert.match(on, /^ {2}release:\n {4}types: \[published\]$/m);
+  // Réutilisable : le commit tagué et ses tags ; plus aucun déclenchement par l'événement release.
+  assert.match(on, /^ {2}workflow_call:\n {4}inputs:\n {6}ref:\n/m);
+  assert.match(on, /^ {6}tags:\n(?: {8}.*\n)*? {8}required: true$/m);
+  assert.doesNotMatch(on, /^ {2}release:$/m, "les apps ne suivent plus l'événement release : release.yml les appelle");
   assert.match(on, /^ {2}workflow_dispatch:$/m, "une release déjà publiée se complète à la main");
   // Lecture seule par défaut ; seul le job qui téléverse écrit.
   assert.match(WORKFLOW, /^permissions:\n {2}contents: read$/m);
@@ -129,12 +133,30 @@ test("release-assets/AC-4 : le workflow suit chaque release publiée, construit 
   )) {
     assert.notEqual(app, "chrome", `${name} irait au job chrome`);
   }
-  assert.match(job, /ref: refs\/tags\/\$\{\{ env\.TAG \}\}/, "le code du tag, jamais celui de main");
+  // Le code du commit tagué (appel) ou du tag (à la main), jamais celui de main.
+  assert.match(job, /^ {6}REF: \$\{\{ inputs\.ref \|\| format\('refs\/tags\/\{0\}', inputs\.tag\) \}\}$/m);
+  assert.match(job, /^ {6}TAGS: \$\{\{ inputs\.tags \|\| inputs\.tag \}\}$/m);
+  assert.match(job, /ref: \$\{\{ env\.REF \}\}/);
   const build = job.indexOf("bash scripts/release-assets.sh ${{ matrix.app }}");
-  const upload = job.indexOf('gh release upload "$TAG" omp-console/build/release-assets/* --clobber');
+  const upload = job.indexOf('gh release upload "$tag" omp-console/build/release-assets/* --clobber');
   assert.ok(build !== -1 && upload > build, "construction, puis téléversement");
-  // Le tag passe par l'environnement, jamais interpolé dans le shell.
-  assert.doesNotMatch(job, /run:.*\$\{\{ (github\.event\.release\.tag_name|inputs\.tag) \}\}/);
+  assert.ok(job.lastIndexOf("for tag in $TAGS; do", upload) > build, "les mêmes fichiers à chaque release du commit");
+  // Les tags passent par l'environnement, jamais interpolés dans le shell.
+  assert.doesNotMatch(job, /run:.*\$\{\{ inputs\.(tag|tags|ref) \}\}/);
+
+  // L'appel : après le job de release, seulement s'il a publié, un appel par groupe de sa sortie `assets`.
+  const release = fs.readFileSync(path.join(ROOT, ".github", "workflows", "release.yml"), "utf8");
+  const assets = release.split(/^ {2}assets:$/m)[1] ?? "";
+  assert.ok(assets !== "", "job assets absent de release.yml");
+  assert.match(assets, /^ {4}needs: release$/m);
+  assert.match(assets, /^ {4}if: needs\.release\.outputs\.assets != '' && needs\.release\.outputs\.assets != '\[\]'$/m);
+  assert.match(assets, /^ {8}include: \$\{\{ fromJSON\(needs\.release\.outputs\.assets\) \}\}$/m);
+  assert.match(assets, /^ {4}uses: \.\/\.github\/workflows\/release-assets\.yml$/m);
+  assert.match(assets, /^ {6}ref: \$\{\{ matrix\.ref \}\}\n {6}tags: \$\{\{ matrix\.tags \}\}$/m);
+  assert.match(assets, /^ {6}contents: write$/m);
+  assert.match(assets, /^ {4}secrets: inherit$/m);
+  assert.match(release, /^ {6}assets: \$\{\{ steps\.publier\.outputs\.assets \}\}$/m);
+  assert.match(release, /^ {8}id: publier$/m);
 });
 
 test("release-assets/AC-5 : l'extension Chrome s'archive sur tout OS, manifest.json à la racine, à la version de omp-chrome/package.json, avec son empreinte", () => {

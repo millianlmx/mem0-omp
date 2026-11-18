@@ -86,8 +86,14 @@ public protocol HarnessTransport: Sendable {
 public struct URLSessionHarnessTransport: HarnessTransport {
     private let session: URLSession
     private let streamSession: URLSession
+    /// La porte des lectures : au plus `readsInFlight` appels confiés à `session` par hôte.
+    private let gate: HarnessReadGate
 
-    public init(configuration: URLSessionConfiguration = .ephemeral) {
+    /// `readsInFlight` : le nombre d'appels que `send` confie à URLSession en même temps, par hôte
+    /// (défaut : la limite de connexions de la session, 6). Les suivants attendent dans l'app, sans
+    /// tâche URLSession : le délai de 15 s de la requête ne court pas pendant cette attente.
+    public init(configuration: URLSessionConfiguration = .ephemeral, readsInFlight: Int? = nil) {
+        gate = HarnessReadGate(limit: max(1, readsInFlight ?? configuration.httpMaximumConnectionsPerHost))
         let plain = configuration.copy() as! URLSessionConfiguration
         plain.urlCache = nil
         plain.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -106,13 +112,20 @@ public struct URLSessionHarnessTransport: HarnessTransport {
 
     public func send(_ call: HarnessCall, server: HarnessServer) async throws -> HarnessReply {
         let request = try Self.request(call, server: server, stream: false)
+        let host = HarnessReadGate.host(of: server.baseURL)
+        try await gate.enter(host)
         do {
+            // Annulé entre la place obtenue et l'envoi : aucune tâche URLSession ne naît.
+            try Task.checkCancellation()
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw HarnessFailure.unreadable }
+            await gate.leave(host)
             return HarnessReply(status: http.statusCode, body: data)
         } catch let failure as HarnessFailure {
+            await gate.leave(host)
             throw failure
         } catch {
+            await gate.leave(host)
             throw Self.failure(of: error)
         }
     }

@@ -366,6 +366,12 @@ export class HeavyRunner {
       store.appendEvent("heavy_skipped", job.runId, { scope: job.scope, files: job.files.length, note });
       return { ...NOTHING_RAN, skipped: true, note, output: note };
     }
+    // La CI de la forge juge un commit poussé : la branche est rendue poussable AVANT de lire l'arbre jugé
+    // (fusion résolue commitée, commits poussés ailleurs repris), pour que la clé du cache soit la sienne.
+    if (job.scope === "full" && testsJudge(job.repo) === "ci") {
+      const refused = await this.#ci.prepare(job);
+      if (refused !== null) return refused;
+    }
     const tree = await this.#deps.git.workingTreeHash(job.worktree);
     const key = cacheKey(tree, command, env);
 

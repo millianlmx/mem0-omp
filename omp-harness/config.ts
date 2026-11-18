@@ -1,9 +1,9 @@
 // La configuration du harness : un fichier JSON unique, complété par des défauts, validé au démarrage.
 //
-// Les valeurs par défaut SONT le budget du schéma d'architecture (VPS 32 Go, ~16 Go
-// pour le harness) : 5 runners plafonnés à 1 Go, 2 slots heavy à 4 Go, 1 Go pour le
-// service — 5 + 8 + 1 = 14 Go, 2 Go de marge. Un fichier de configuration ne fait
-// que les surcharger.
+// Les valeurs par défaut SONT le budget du schéma d'architecture (VPS 32 Go, ~23 Go
+// pour le harness) : 5 runners et 3 prêtables (`lendMax`) plafonnés à 1 Go, 3 slots
+// heavy à 4 Go, 1 Go pour le service — 8 + 12 + 1 = 21 Go, 2 Go de marge. Un fichier
+// de configuration ne fait que les surcharger.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -311,6 +311,14 @@ export type RepoConfig = {
    * forge du dépôt (`forge`), fusionnée par elle en squash.
    */
   merge: "local" | "gh";
+  /**
+   * `merge: "gh"` seulement : la forge a sa file de merge (merge queue de GitHub, merge train de GitLab), qui
+   * teste chaque PR sur main et celles qui la précèdent, puis la fusionne. Le harness prépare alors ses PR une
+   * à une (rebase, poussée, auto-merge) mais n'attend plus la fusion de l'une pour préparer la suivante : les
+   * attentes de CI courent en parallèle. À ne poser que si la file est ACTIVE sur la branche principale :
+   * sans elle, des PR fusionnées ensemble ne seraient jamais testées ensemble.
+   */
+  mergeQueue: boolean;
   /** Le remote poussé après un merge local, ou `null` (aucun push). */
   remote: string | null;
   /** L'image des tests de ce dépôt en isolation `container` ; `null` : `container.testImage`. */
@@ -422,6 +430,12 @@ export type HarnessConfig = {
      * slot indéfiniment.
      */
     stepTimeoutSec: number;
+    /**
+     * Les slots runner prêtables au plus : pendant qu'un agent attend ses tests (`run_tests` : file
+     * heavy, job, CI de la forge), son slot est prêté et un autre run part. Les process d'agents restent
+     * bornés à `slots + lendMax` (la tranche des runners est dimensionnée dessus) ; `0` : aucun prêt.
+     */
+    lendMax: number;
     /**
      * Les extensions chargées par chaque runner (`-e`) EN PLUS du plugin mémoire
      * (`omp-mem0-memory/extension.ts`), que la pile charge toujours (`runnerExtensions`).
@@ -544,8 +558,11 @@ export type HarnessConfig = {
    * l'humain que pour l'irréversible, le budget, et ce que le pilote lui laisse.
    */
   pilot: { actionsPerRun: number; tier: Tier; allRuns: boolean };
-  /** Le classement des Demandes (intake.ts) : la session qui classe une phrase libre tourne sur `tier`. */
-  intake: { tier: Tier };
+  /**
+   * Le classement des Demandes (intake.ts) : la session qui classe une phrase libre tourne sur `tier` ;
+   * celle qui répond à une question en lisant le code de son dépôt, sur `answerTier`.
+   */
+  intake: { tier: Tier; answerTier: Tier };
   /** Le journal d'événements : au-delà de `retentionDays`, il est purgé (au démarrage, puis chaque heure). */
   events: { retentionDays: number };
   /**
@@ -584,9 +601,15 @@ export type HarnessConfig = {
   /**
    * Les voies d'un run (orchestrator.ts) : `direct` laisse une demande qui porte déjà ses
    * critères d'acceptation (`## Critères d'acceptation`, au moins un `AC-n`) partir à /impl
-   * sans /req ni /specs ; `false` : tout run passe par /req.
+   * sans /req ni /specs ; `false` : tout run passe par /req. `express` autorise la voie express
+   * (`lane: "express"` à la création) : ni /req ni /specs même sans critères (un critère est
+   * synthétisé de la demande), une revue qui ne bloque que sur ce qui casse, sans QA de
+   * prévisualisation, et au plus `expressFixCap` corrections avant l'humain. `default` : la voie
+   * d'un run créé sans `lane` — `auto` (défaut : directe si la demande porte ses critères, sinon
+   * complète) ou `express`. L'irréversible, la porte des specs toujours posée et l'autonomie `ask` gardent la
+   * voie complète, même demandée express.
    */
-  lanes: { direct: boolean };
+  lanes: { direct: boolean; express: boolean; default: "auto" | "express"; expressFixCap: number };
   /**
    * Les planifications récurrentes (schedules.ts) : leurs expressions cron se lisent en heure
    * murale de `timezone` (IANA) ; une échéance passée pendant un arrêt du service n'est
@@ -628,13 +651,18 @@ export function launch(config: HarnessConfig, args: string[]): { command: string
   return { command: config.launcher[0] as string, args: [...config.launcher.slice(1), ...args] };
 }
 
-/** Le budget pire cas en Mio : runners + heavy + service. */
+/** Le budget pire cas en Mio : runners (prêtés compris) + heavy + service. */
 export function worstCaseBudgetMiB(config: HarnessConfig, serviceMiB = 1024): number {
   return (
-    config.runner.slots * sizeMiB(config.runner.memoryMax) +
+    (config.runner.slots + config.runner.lendMax) * sizeMiB(config.runner.memoryMax) +
     config.heavy.slots * sizeMiB(config.heavy.memoryMax) +
     serviceMiB
   );
+}
+
+/** Le plafond de corrections d'un run : `review.fixCap`, ramené à `lanes.expressFixCap` en voie express. */
+export function fixCapFor(config: HarnessConfig, run: { lane: string | null }): number {
+  return run.lane === "express" ? Math.min(config.review.fixCap, config.lanes.expressFixCap) : config.review.fixCap;
 }
 
 /** La chaîne de bascule d'un tier : la sienne, sinon celle du premier tier au-dessus qui en a une. */
@@ -678,10 +706,11 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       retryBackoffSec: [...DEFAULT_RETRY_BACKOFF_SEC],
       failoverOn: [...FAILOVER_CAUSES],
       stepTimeoutSec: 5400,
+      lendMax: 3,
       extensions: [],
     },
     heavy: {
-      slots: 2,
+      slots: 3,
       memoryMax: "4G",
       cpuQuota: "300%",
       user: "omp-heavy",
@@ -728,7 +757,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
     oracle: null,
     dreams: { checkMinutes: 60, minFacts: 5, maxDelayHours: 24, tier: "standard" },
     pilot: { actionsPerRun: 3, tier: "heavy", allRuns: true },
-    intake: { tier: "standard" },
+    intake: { tier: "standard", answerTier: "heavy" },
     events: { retentionDays: 30 },
     backups: { dir: null, intervalHours: 24, keep: 7, beforeMigration: true, remote: null },
     logs: { dir: null, retentionDays: 14, level: "info" },
@@ -762,7 +791,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       vps: { url: null, token: null },
     },
     issues: { label: "omp:fix", maxLaunch: 5, pollSec: 900 },
-    lanes: { direct: true },
+    lanes: { direct: true, express: true, default: "auto", expressFixCap: 1 },
     schedules: { timezone: "Europe/Paris", catchUpMin: 60 },
     browser: {
       url: null,
@@ -965,6 +994,8 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!Number.isInteger(config.runner.slots) || config.runner.slots < 1) fail("runner.slots doit être ≥ 1");
   if (!Number.isInteger(config.heavy.slots) || config.heavy.slots < 1) fail("heavy.slots doit être ≥ 1");
   if (!(config.runner.stepTimeoutSec >= 1)) fail("runner.stepTimeoutSec doit être ≥ 1");
+  if (!Number.isInteger(config.runner.lendMax) || config.runner.lendMax < 0)
+    fail("runner.lendMax doit être un entier ≥ 0");
   if (!(config.events.retentionDays > 0)) fail("events.retentionDays doit être > 0");
   const { backups, health } = config;
   if (backups.dir !== null && (typeof backups.dir !== "string" || !path.isAbsolute(backups.dir)))
@@ -1032,6 +1063,9 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
     names.add(repo.name);
     if (typeof repo.path !== "string" || !path.isAbsolute(repo.path)) fail(`repos.${repo.name}.path doit être absolu`);
     if (repo.merge !== "local" && repo.merge !== "gh") fail(`repos.${repo.name}.merge : local | gh`);
+    if (typeof repo.mergeQueue !== "boolean") fail(`repos.${repo.name}.mergeQueue : booléen`);
+    if (repo.mergeQueue && repo.merge !== "gh")
+      fail(`repos.${repo.name}.mergeQueue : la file de merge de la forge demande \`merge: "gh"\``);
     if (repo.maxParallel !== null && !(Number.isInteger(repo.maxParallel) && repo.maxParallel >= 1))
       fail(`repos.${repo.name}.maxParallel : entier ≥ 1, ou null`);
     if (
@@ -1132,6 +1166,8 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (typeof config.pilot.allRuns !== "boolean") fail("pilot.allRuns : booléen");
   if (!(TIERS as readonly string[]).includes(config.intake.tier))
     fail(`intake.tier : tier inconnu (${TIERS.join(" | ")})`);
+  if (!(TIERS as readonly string[]).includes(config.intake.answerTier))
+    fail(`intake.answerTier : tier inconnu (${TIERS.join(" | ")})`);
   const monitoring = config.monitoring;
   for (const key of ["runBudgetUsd", "dailyBudgetUsd", "stallMin", "stallToolMin", "slowFactor", "fixLoop"] as const) {
     const value = monitoring[key];
@@ -1194,6 +1230,11 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!(Number.isInteger(config.issues.maxLaunch) && config.issues.maxLaunch >= 1))
     fail("issues.maxLaunch : entier ≥ 1");
   if (typeof config.lanes.direct !== "boolean") fail("lanes.direct : booléen");
+  if (typeof config.lanes.express !== "boolean") fail("lanes.express : booléen");
+  if (config.lanes.default !== "auto" && config.lanes.default !== "express")
+    fail('lanes.default : "auto" ou "express"');
+  if (!(Number.isInteger(config.lanes.expressFixCap) && config.lanes.expressFixCap >= 0))
+    fail("lanes.expressFixCap : entier ≥ 0");
   if (config.issues.pollSec !== null && !(Number.isInteger(config.issues.pollSec) && config.issues.pollSec >= 60))
     fail("issues.pollSec : entier ≥ 60 (secondes), ou null");
   if (typeof config.schedules.timezone !== "string" || !isTimeZone(config.schedules.timezone))
@@ -1392,6 +1433,7 @@ export function repoDefaults(raw: Record<string, unknown>): RepoConfig {
       tests: { touched: "npm test -- {files}", full: "npm test", pattern: null },
       checks: {},
       merge: "local",
+      mergeQueue: false,
       remote: null,
       testImage: null,
       maxParallel: null,

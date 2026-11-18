@@ -397,7 +397,7 @@ test("ci-macos-jobs-paralleles/AC-6 : un fichier de test nouveau qui appelle xco
   assert.equal(unknown.stderr, "✗ option inconnue : --scope=linux\n");
 });
 
-test("ci-macos-jobs-paralleles/AC-7 : au push vers main, les tests node macOS ne sont pas filtrés — test-files.sh sans --scope liste tous les test/*.test.ts", () => {
+test("ci-macos-jobs-paralleles/AC-7 : hors sélection par le diff, les tests node ne sont pas filtrés — test-files.sh sans --scope liste tous les test/*.test.ts", () => {
   const listed = testFiles(ROOT);
   assert.equal(listed.status, 0, output(listed));
   assert.deepEqual(lines(listed.stdout), listTestFiles(ROOT));
@@ -560,8 +560,8 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique 
   const steps = stepsOf(check);
   const runs = steps.filter((line) => line.startsWith(STRICT_RUN));
   assert.equal(runs.length, 1, "check.sh --strict, une seule fois, sur ubuntu");
-  // La sélection par le diff n'a de base qu'en pull_request ; au push vers main,
-  // l'option est vide et la suite entière tourne.
+  // La sélection par le diff n'a de base qu'en pull_request ; au run nocturne
+  // (ou manuel) sur main, l'option est vide et la suite entière tourne.
   assert.match(
     runs[0] ?? "",
     /\$\{\{ github\.event_name == 'pull_request' && format\('--tests-base=\{0\}', github\.event\.pull_request\.base\.sha\) \|\| '' \}\}$/,
@@ -670,9 +670,13 @@ test("ci-macos-jobs-paralleles/AC-9 : un nouveau commit sur une PR annule le run
   assert.ok(block[2]?.endsWith("${{ github.event_name == 'pull_request' }}"));
 });
 
-test("ci-macos-jobs-paralleles/AC-10 : un push vers main n'annule jamais un run check", () => {
+test("ci-macos-jobs-paralleles/AC-10 : un run hors PR (nocturne ou manuel) n'annule jamais un run check", () => {
   const block = workflowConcurrency();
   assert.deepEqual(block, WORKFLOW_CONCURRENCY);
+  // Déclencheurs : les PR, le run nocturne et le lancement manuel — jamais un push.
+  const on = (readWorkflow().split(/^permissions:/m)[0] ?? "").replace(/^\s*#.*$\n?/gm, "");
+  assert.match(on, /^on:\n {2}pull_request:\n {2}schedule:\n {4}- cron: "[^"]+"\n {2}workflow_dispatch:\n/m);
+  assert.doesNotMatch(on, /^ {2}push:/m, "check.yml ne tourne plus au push : la release pousse en [skip ci]");
   // Hors pull_request : groupe unique par run (rien à remplacer) et pas d'annulation.
   assert.ok(block[1]?.endsWith("|| format('check-run-{0}', github.run_id) }}"));
   // Préfixe propre : aucun groupe partagé avec release-simulation.yml.

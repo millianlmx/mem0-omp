@@ -93,7 +93,10 @@ export class MemoryOracle implements Oracle {
   readonly retained: { scope: string; text: string; tags: string[] }[] = [];
   memories: Memory[] = [];
   readonly queries: string[] = [];
-  async recall(_scope: string, query: string): Promise<Memory[]> {
+  /** Les portées interrogées par `recall`, dans l'ordre. */
+  readonly scopes: string[] = [];
+  async recall(scope: string, query: string): Promise<Memory[]> {
+    this.scopes.push(scope);
     this.queries.push(query);
     return this.memories;
   }
@@ -196,6 +199,7 @@ export function fakeWorld(
   const scheduler = new Scheduler({
     runnerSlots: config.runner.slots,
     heavySlots: config.heavy.slots,
+    runnerLendMax: config.runner.lendMax,
     admission: config.admission,
     providers: config.providers,
     memAvailableMiB: options.memAvailableMiB ?? (() => null),

@@ -1,4 +1,4 @@
-// Feature harness-scheduler : 5 slots runners, 2 slots heavy, seau à jetons par
+// Feature harness-scheduler : 5 slots runners, 3 slots heavy, seau à jetons par
 // fournisseur LLM avec bascule, admission sur MemAvailable.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -18,7 +18,7 @@ function scheduler(options: { mem?: number | null; now?: () => number } = {}): S
   });
 }
 
-test("harness-scheduler/AC-1 : 5 runners et 2 heavy au plus ; un slot rendu se reprend", () => {
+test("harness-scheduler/AC-1 : 5 runners et 3 heavy au plus ; un slot rendu se reprend", () => {
   const s = scheduler();
   const runners = Array.from({ length: 5 }, (_, i) => s.tryAcquire("runner", `r${i}`));
   assert.ok(runners.every((slot) => !("refused" in slot)));
@@ -28,12 +28,13 @@ test("harness-scheduler/AC-1 : 5 runners et 2 heavy au plus ; un slot rendu se r
     used: 5,
     slots: 5,
   });
-  const heavy = [s.tryAcquire("heavy", "h0"), s.tryAcquire("heavy", "h1")];
-  assert.equal("refused" in (s.tryAcquire("heavy", "h2") as object), true);
+  const heavy = [s.tryAcquire("heavy", "h0"), s.tryAcquire("heavy", "h1"), s.tryAcquire("heavy", "h2")];
+  assert.ok(heavy.every((slot) => !("refused" in slot)));
+  assert.equal("refused" in (s.tryAcquire("heavy", "h2b") as object), true);
   (heavy[0] as { release: () => void }).release();
   (heavy[0] as { release: () => void }).release();
   assert.equal("refused" in (s.tryAcquire("heavy", "h3") as object), false);
-  assert.equal(s.snapshot().heavy.used, 2);
+  assert.equal(s.snapshot().heavy.used, 3);
 });
 
 test("harness-scheduler/AC-2 : admission sur MemAvailable — un process ne part que s'il laisse la réserve libre", () => {

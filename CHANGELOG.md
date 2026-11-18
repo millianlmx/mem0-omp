@@ -1,5 +1,46 @@
 # Journal des versions
 
+## omp-harness 1.43.0 — 2026-11-18
+
+- feat(harness): le classeur d'une Demande ne répond plus à l'aveugle — audit pour les idées, réponse lue dans le code, mémoire d'un dépôt (#486) (401fb24)
+
+## omp-harness 1.42.0 — 2026-11-18
+
+- feat(harness,console): le classeur d'une Demande type le run sur sa voie, et « Refaire » garde l'express (#482) (0cfad2c)
+
+## omp-console 1.4.0 — 2026-11-18
+
+- feat(harness,console): le classeur d'une Demande type le run sur sa voie, et « Refaire » garde l'express (#482) (0cfad2c)
+
+## omp-harness 1.41.2 — 2026-11-17
+
+- Premier chargement : stats en base, flux sans rejouer le journal (#479) (55a7eff)
+- perf: runs plus rapides (prêt de slot, voie express, file libérée) et apps temps réel légères (#477) (6118562)
+
+## omp-console 1.3.2 — 2026-11-17
+
+- Premier chargement : stats en base, flux sans rejouer le journal (#479) (55a7eff)
+- perf: runs plus rapides (prêt de slot, voie express, file libérée) et apps temps réel légères (#477) (6118562)
+
+## omp-console 1.3.1 — 2026-11-16
+
+- fix(console): lecture iOS coupée par l'arrière-plan relue au retour (a2841f0)
+- fix(console): chargement iOS en parallèle, lectures partagées, délais (ebdbea5)
+
+## omp-harness 1.41.1 — 2026-11-15
+
+- fix(harness): une CI non jugée ne coûte plus de correction, les commits poussés hors du harness sont repris, une PR fusionnée à la main clôt son run (#471) (5bde12c)
+
+## omp-harness 1.41.0 — 2026-11-12
+
+- feat(console,harness): la liste des dépôts se dessine d'une seule lecture (forge et espace dans GET /v1/repos), coche d'envoi en symbole, et la release dit pourquoi elle ne publie rien (#463) (fb8fb80)
+- omp-console : une seule interface, fluide avec beaucoup de données, et l'écran Dépôts (#462) (9b88d2d)
+
+## omp-console 1.3.0 — 2026-11-12
+
+- feat(console,harness): la liste des dépôts se dessine d'une seule lecture (forge et espace dans GET /v1/repos), coche d'envoi en symbole, et la release dit pourquoi elle ne publie rien (#463) (fb8fb80)
+- omp-console : une seule interface, fluide avec beaucoup de données, et l'écran Dépôts (#462) (9b88d2d)
+
 ## omp-harness 1.40.2 — 2026-11-11
 
 - fix(harness): l'extrait de CI transmis au correcteur porte l'erreur de compilation, pas les lignes de code citées (#460) (a3b378a)

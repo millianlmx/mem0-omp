@@ -329,22 +329,26 @@ extension HarnessModel {
         guard let server else { return }
         if let reply = try? await transport.send(HarnessCall(method: "GET", path: "/v1/health"), server: server) {
             // 503 au moindre échec, corps lisible quand même.
+            // Chaque valeur n'est reposée que si elle change : une relecture identique (toutes les
+            // 60 s) ne fait redessiner aucun écran.
             if reply.status == 200 || reply.status == 503 {
-                health = try? JSONDecoder().decode(HarnessHealth.self, from: reply.body)
-                if health == nil { reportUnreadable(HarnessCall(method: "GET", path: "/v1/health"), type: HarnessHealth.self) }
+                let read = try? JSONDecoder().decode(HarnessHealth.self, from: reply.body)
+                update(\.health, read)
+                if read == nil { reportUnreadable(HarnessCall(method: "GET", path: "/v1/health"), type: HarnessHealth.self) }
             } else {
-                health = nil
+                update(\.health, nil)
                 reportIfUnexpected(reply, for: HarnessCall(method: "GET", path: "/v1/health"))
             }
-            healthReached = true
+            update(\.healthReached, true)
         } else {
-            health = nil
-            healthReached = false
+            update(\.health, nil)
+            update(\.healthReached, false)
         }
         if let read: HarnessStatus = try? await perform(HarnessCall(method: "GET", path: "/v1/status"), on: server) {
-            status = read
+            update(\.status, read)
         }
-        digest = try? await perform(HarnessCall(method: "GET", path: "/v1/digest"), on: server)
+        let digest: HarnessDigest? = try? await perform(HarnessCall(method: "GET", path: "/v1/digest"), on: server)
+        update(\.digest, digest)
     }
 
     /// Les lignes de la carte « Services », extension du poste comprise.

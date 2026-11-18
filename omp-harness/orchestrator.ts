@@ -32,10 +32,10 @@ import { createFromPlan } from "./intake-create.ts";
 import { Intaker } from "./intake.ts";
 import { AuditPilot, raisesAutonomy } from "./pilot.ts";
 import type { HarnessConfig, RepoConfig } from "./config.ts";
-import { configWarnings, retryBackoff } from "./config.ts";
+import { configWarnings, fixCapFor, retryBackoff } from "./config.ts";
 import type { Actor, HarnessDeps } from "./context.ts";
 import { HarnessContext, SERVICE } from "./context.ts";
-import type { DecisionRow, RepoFilter, RunAutonomy, RunRow, ScheduleTarget, Space } from "./db.ts";
+import type { DecisionRow, RepoFilter, RunAutonomy, RunLane, RunRow, ScheduleTarget, Space } from "./db.ts";
 import { detectIrreversible } from "./decisions.ts";
 import { DigestSender } from "./digest.ts";
 import { HarnessError } from "./errors.ts";
@@ -88,6 +88,7 @@ import {
   StepExecutor,
   challengeUnit,
   directSpecs,
+  expressSpecs,
   liveRun,
   specsGateFacts,
 } from "./steps.ts";
@@ -107,6 +108,7 @@ import { NO_SPACE_HOLDS, SpaceDesk } from "./spaces.ts";
 import type { SpaceHold, SpaceHolds } from "./spaces.ts";
 import { LocalSessionDesk } from "./local-sessions.ts";
 import { ProposalDesk } from "./proposals.ts";
+import { pushTo } from "./collections.ts";
 
 export { HarnessError } from "./errors.ts";
 export type { Actor, SpawnRunner } from "./context.ts";
@@ -126,7 +128,8 @@ export type NewRunInput = {
   modules?: string[];
   req?: string;
   priority?: number;
-  lane?: "full";
+  /** `express` : la voie express (`lanes.express`) ; absent : `lanes.default`. */
+  lane?: "full" | "express";
   budgetUsd?: number;
   /** Le type de travail et les labels déclarés par le créateur (`POST /v1/runs`), lus par l'autonomie par paliers. */
   kind?: WorkKind;
@@ -141,7 +144,8 @@ export type NewProjectInput = {
   priority?: number;
   /** Le curseur d'autonomie de toutes ses features ; absent : celui de l'espace du dépôt. */
   autonomy?: RunAutonomy | null;
-  features: { title: string; request: string; slug?: string; modules?: string[] }[];
+  /** `after` (découpage seulement) : la feature attend le merge du run parent (`afterRun`). */
+  features: { title: string; request: string; slug?: string; modules?: string[]; after?: boolean }[];
 };
 
 /** Une heure : la cadence de la purge du journal. */
@@ -347,6 +351,10 @@ export class Orchestrator {
     this.#ctx = new HarnessContext(deps);
     this.#pause = pauseOf(this.#ctx.store.getSetting<unknown>(PAUSE_KEY));
     this.#tickMs = deps.tickMs ?? 1000;
+    // Un slot runner prêté (son agent attend ses tests) : le suivant de la file part sans attendre le tour.
+    this.#ctx.scheduler.onLend((kind) => {
+      if (kind === "runner" && !this.#stopping) this.#kick();
+    });
     // L'étanchéité d'un espace lit autour de lui sa connexion Atlassian et les réglages de la vigie ; son
     // retrait lit sa pause et la connexion Atlassian par défaut, puis oublie ce qui n'était qu'à lui.
     this.spaces = new SpaceDesk(this.#ctx, {
@@ -704,9 +712,13 @@ export class Orchestrator {
     // quels : le premier tour après la reprise les reprend. La pause est relue avant chacun des trois : une
     // pause posée pendant que le tour attend (`await`) vaut pour la suite du tour. La pause d'un ESPACE
     // retient de même les trois pour ses seuls dépôts (`#spaceHeld`) : les autres espaces continuent.
-    if (this.#pauseHold() === null)
+    if (this.#pauseHold() === null) {
       for (const run of store.listRuns({ state: ["merging"] }))
         if (!this.#spaceHeld(run.repo)) this.#merger.enqueue(run);
+      // Une PR fusionnée sur la forge hors du harness : le run qui l'attendait passe au merge, qui le constate.
+      const waiting = store.listRuns({ state: ["awaiting_human"] }).filter((run) => !this.#spaceHeld(run.repo));
+      void this.#merger.reconcile(waiting, Date.now());
+    }
     // Une escalade ouverte depuis trop longtemps est tranchée sur la recommandation de l'agent.
     try {
       if (this.#pauseHold() === null) await this.#human.autoDecideExpired(Date.now(), this.#spaceHeld);
@@ -837,7 +849,7 @@ export class Orchestrator {
       activeByGroup.set(groupOf(run), (activeByGroup.get(groupOf(run)) ?? 0) + 1);
     }
     const byRepo = new Map<string, RunRow[]>();
-    for (const run of queued) byRepo.set(run.repo, [...(byRepo.get(run.repo) ?? []), run]);
+    for (const run of queued) pushTo(byRepo, run.repo, run);
     const candidates: Candidate[] = [];
     for (const [name, runs] of byRepo) {
       const repo = this.#ctx.config.repos.find((entry) => entry.name === name);
@@ -865,7 +877,11 @@ export class Orchestrator {
       const fresh = runs.filter((run) => run.worktree === null);
       // Un run garé chez l'humain (`awaiting_human`) ne tient plus ses modules : il peut y rester des heures, et la
       // file entière l'attendrait pour rien. À sa reprise, la revue et le merge rebasent sur main (conflits compris).
-      const others = active.filter((run) => run.repo === name && run.state !== "awaiting_human");
+      // Un run en `merging` non plus : son code est jugé, il n'attend que sa CI (jusqu'à `review.mergeWaitSec`) ; le
+      // run suivant part de main et rebasera sur lui à sa revue, comme après un run garé.
+      const others = active.filter(
+        (run) => run.repo === name && run.state !== "awaiting_human" && run.state !== "merging",
+      );
       const free = new Set(
         schedulable(
           fresh.map((run) => ({ id: run.id, modules: run.modules })),
@@ -1018,7 +1034,7 @@ export class Orchestrator {
         return { spent: cost, budget: threshold };
       },
       openQuestions: () => store.listEscalations({ runId: run.id, status: "open" }).length,
-      fixCap: config.review.fixCap,
+      fixCap: fixCapFor(config, run),
     });
   }
 
@@ -1169,7 +1185,7 @@ export class Orchestrator {
           { step: run.step as StepKind, fixes: run.fixes, attempts: run.attempts, lastFailCause: run.lastFailCause },
           outcome,
           {
-            fixCap: config.review.fixCap,
+            fixCap: fixCapFor(config, run),
             retryBackoffSec: retryBackoff(config),
             specsGate: config.review.specsGate,
             mergeRetries: config.review.mergeRetries,
@@ -1267,7 +1283,7 @@ export class Orchestrator {
     const autonomy = input.autonomy === undefined ? fallback : input.autonomy;
     if (actor.pilot && raisesAutonomy(fallback, autonomy))
       throw new HarnessError(403, "geste réservé à l'humain — un pilote ne monte pas l'autonomie d'un run");
-    const specs = req === "" && autonomy !== "ask" ? this.#directSpecs(input) : null;
+    const { lane, specs, refused } = this.#laneOf(input, req, autonomy);
     if (req !== "" && !/^##\s+Besoins/m.test(req)) throw new HarnessError(400, "req : la section `## Besoins` manque");
     const priority = input.priority ?? 0;
     if (!Number.isInteger(priority) || Math.abs(priority) > 1000)
@@ -1289,6 +1305,7 @@ export class Orchestrator {
         ...(input.kind !== undefined ? { kind: input.kind } : {}),
         ...(input.labels !== undefined ? { labels: input.labels } : {}),
         autonomy,
+        lane,
         ...(req !== "" ? { step: "specs" as const } : specs !== null ? { step: "impl" as const } : {}),
         ...(input.projectId ? { projectId: input.projectId, projectOrder: input.projectOrder ?? 0 } : {}),
         ...(input.afterRun ? { afterRun: input.afterRun.id, reason: waitReason(input.afterRun) } : {}),
@@ -1309,7 +1326,8 @@ export class Orchestrator {
         priority,
         ...(created.autonomy !== null ? { autonomy: created.autonomy } : {}),
         ...(budget !== undefined ? { budgetUsd: budget } : {}),
-        lane: specs !== null ? "direct" : "full",
+        lane,
+        ...(refused !== null ? { laneRefused: refused } : {}),
         ...(input.afterRun ? { afterRun: input.afterRun.id } : {}),
         ...(actor.by ? { by: actor.by } : {}),
       });
@@ -1325,6 +1343,38 @@ export class Orchestrator {
     if (input.inferModules !== false && (input.modules ?? []).length === 0) void this.#inferModules(run);
     else this.#kick();
     return run;
+  }
+
+  /**
+   * La voie d'un run neuf et son specs.md synthétisé (`null` : voie complète, /req écrira les besoins). Un `req`
+   * fourni part de /specs (voie complète). La voie express (`lane: "express"`, ou `lanes.default: "express"`
+   * sans `lane`) naît à /impl avec `expressSpecs` ; refusée (`#expressRefused`), le run prend la voie que la
+   * demande aurait eue sans elle, et `refused` dit pourquoi (événement `run_created`, `laneRefused`).
+   */
+  #laneOf(
+    input: NewRunInput & { projectId?: string; projectOrder?: number },
+    req: string,
+    autonomy: RunAutonomy | null,
+  ): { lane: RunLane; specs: string | null; refused: string | null } {
+    if (req !== "") return { lane: "full", specs: null, refused: null };
+    const wanted = input.lane ?? (this.#ctx.config.lanes.default === "express" ? "express" : undefined);
+    const refused = wanted === "express" ? this.#expressRefused(input, autonomy) : null;
+    if (wanted === "express" && refused === null)
+      return { lane: "express", specs: expressSpecs(input.title, input.request), refused: null };
+    const specs = autonomy !== "ask" ? this.#directSpecs(input) : null;
+    return { lane: specs !== null ? "direct" : "full", specs, refused };
+  }
+
+  /** Pourquoi la voie express est refusée à cette demande, ou `null` : elle part en express. */
+  #expressRefused(input: NewRunInput, autonomy: RunAutonomy | null): string | null {
+    const { config } = this.#ctx;
+    if (!config.lanes.express) return "voie express coupée (`lanes.express: false`)";
+    if (autonomy === "ask") return "autonomie « tout me demander » : la voie complète";
+    if (config.review.specsGate === true) return "porte des specs toujours posée (`review.specsGate: true`)";
+    const irreversible = detectIrreversible(`${input.title}\n${input.request}`);
+    return irreversible === null
+      ? null
+      : `geste irréversible (${irreversible}) : la voie complète le soumet à l'humain`;
   }
 
   /**
@@ -1394,7 +1444,8 @@ export class Orchestrator {
    * Le projet et ses runs, nés ensemble : un client ne voit jamais un projet à moitié créé.
    * `inferModules` : les features sans modules les demandent à l'oracle après coup (un
    * découpage, qui naît dans la transaction d'une transition, ne l'attend pas) ;
-   * `afterRun` : le parent dont chaque feature attend le merge.
+   * `afterRun` : le run découpé ; seules ses features marquées `after` attendent son merge, les autres
+   * sont des runs normaux, admis tout de suite (le planificateur départage par modules).
    */
   #openProject(
     input: NewProjectInput,
@@ -1411,7 +1462,7 @@ export class Orchestrator {
         : {};
     return store.transaction(() => {
       const project = store.createProject({ id: newId("p"), repo: repo.name, title: input.title });
-      const runs = input.features.map((feature, order) =>
+      const runs = input.features.map(({ after, ...feature }, order) =>
         this.createRun(
           {
             ...feature,
@@ -1420,7 +1471,7 @@ export class Orchestrator {
             projectId: project.id,
             projectOrder: order,
             ...(options.inferModules === false ? { inferModules: false } : {}),
-            ...(options.afterRun ? { afterRun: options.afterRun } : {}),
+            ...(options.afterRun && after === true ? { afterRun: options.afterRun } : {}),
             ...inherit,
             ...(input.priority !== undefined ? { priority: input.priority } : {}),
           },
@@ -1434,7 +1485,9 @@ export class Orchestrator {
           projectId: project.id,
           repo: repo.name,
           runs: runs.map((run) => ({ id: run.id, modules: run.modules })),
-          ...(options.afterRun ? { afterRun: options.afterRun.id } : {}),
+          ...(options.afterRun && input.features.some((feature) => feature.after === true)
+            ? { afterRun: options.afterRun.id }
+            : {}),
           ...(actor.by ? { by: actor.by } : {}),
         },
         repo.name,
@@ -1999,7 +2052,8 @@ export class Orchestrator {
   async oracleStatus(): Promise<{ configured: boolean; ok: boolean; lostWrites: LostWrites }> {
     const lostWrites = this.#ctx.oracle.lostWrites();
     if (!this.#ctx.config.oracle) return { configured: false, ok: false, lostWrites };
-    return { configured: true, ok: await this.#ctx.oracle.health(), lostWrites };
+    // La santé déjà lue par l'observabilité (gardée 30 s) : `/v1/status` ne fait plus attendre ses lecteurs sur mem0.
+    return { configured: true, ok: (await this.#ctx.observability.memoryStatus()).ok, lostWrites };
   }
 }
 

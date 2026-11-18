@@ -49,10 +49,25 @@ public struct HarnessIntakePlan: Codable, Equatable, Sendable {
     public var schedule: HarnessIntakeSchedule?
     /// Ce qui sera créé, rédigé par le serveur (absent d'une correction envoyée).
     public var creates: String?
+    /// La voie du run d'un `feature` ou d'un `bug`, choisie par le classeur : `express`, `direct` ou
+    /// `full` ; `nil` : le serveur trie à la création. Absente d'une correction : inchangée.
+    public var lane: String?
+    /// Pourquoi cette voie, en une phrase (du classeur, ou « choisie à la confirmation »).
+    public var laneReason: String?
+    /// Les critères d'acceptation établis par la demande, numérotés `AC-n : …` par le serveur.
+    /// Envoyés avec une correction, ils remplacent ceux du plan (le serveur les renumérote).
+    public var criteria: [String]
+
+    /// Les voies qu'une correction du plan peut choisir.
+    public static let lanes = ["express", "direct", "full"]
+
+    /// Le plan d'un type qui crée un run : lui seul porte une voie et des critères.
+    public var createsRun: Bool { kind == "feature" || kind == "bug" }
 
     public init(
         kind: String, repo: String?, title: String, statement: String, focus: String? = nil,
-        schedule: HarnessIntakeSchedule? = nil, creates: String? = nil
+        schedule: HarnessIntakeSchedule? = nil, creates: String? = nil, lane: String? = nil,
+        laneReason: String? = nil, criteria: [String] = []
     ) {
         self.kind = kind
         self.repo = repo
@@ -61,6 +76,28 @@ public struct HarnessIntakePlan: Codable, Equatable, Sendable {
         self.focus = focus
         self.schedule = schedule
         self.creates = creates
+        self.lane = lane
+        self.laneReason = laneReason
+        self.criteria = criteria
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, repo, title, statement, focus, schedule, creates, lane, laneReason, criteria
+    }
+
+    /// Un serveur antérieur aux voies n'envoie ni `lane` ni `criteria` : aucune voie, aucun critère.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(String.self, forKey: .kind)
+        repo = try container.decodeIfPresent(String.self, forKey: .repo)
+        title = try container.decode(String.self, forKey: .title)
+        statement = try container.decode(String.self, forKey: .statement)
+        focus = try container.decodeIfPresent(String.self, forKey: .focus)
+        schedule = try container.decodeIfPresent(HarnessIntakeSchedule.self, forKey: .schedule)
+        creates = try container.decodeIfPresent(String.self, forKey: .creates)
+        lane = try container.decodeIfPresent(String.self, forKey: .lane)
+        laneReason = try container.decodeIfPresent(String.self, forKey: .laneReason)
+        criteria = try container.decodeIfPresent([String].self, forKey: .criteria) ?? []
     }
 }
 
@@ -229,7 +266,7 @@ public final class HarnessIntakes: ObservableObject {
             availability = .available
             failure = nil
         } catch {
-            failure = HarnessModel.failure(of: error)
+            failure = HarnessModel.failure(after: error, keeping: failure)
         }
     }
 

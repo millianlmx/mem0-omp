@@ -82,10 +82,23 @@ public final class HarnessNotificationCenter: NSObject, ObservableObject {
 
     // MARK: - Mac : le flux devient des notifications locales
 
+    /// L'âge au-delà duquel un événement du flux ne devient plus une notification locale.
+    nonisolated static let freshness: TimeInterval = 10 * 60
+
+    /// L'événement est-il trop vieux pour être notifié ? Un flux qui rejoue le journal (rouvert sans curseur
+    /// après un redéploiement, par un serveur ancien) ne doit pas réveiller le Mac avec les alertes d'hier.
+    /// Un événement sans date (`at`) n'est pas jugé vieux.
+    nonisolated static func isStale(_ event: HarnessStreamEvent, now: Date) -> Bool {
+        guard let stamp = try? JSONDecoder().decode(EventStamp.self, from: event.data), let at = stamp.at else { return false }
+        return now.timeIntervalSince1970 - at / 1000 > freshness
+    }
+
     private func receive(_ events: [HarnessStreamEvent]) {
         guard let server, postsLocally?() == true, Self.isAvailable else { return }
+        let now = Date()
         for event in events {
-            guard let local = HarnessNotificationRouting.localAlert(for: event, client: server.client),
+            guard !Self.isStale(event, now: now),
+                  let local = HarnessNotificationRouting.localAlert(for: event, client: server.client),
                   local.eventId > lastEventId
             else { continue }
             lastEventId = local.eventId
@@ -104,7 +117,15 @@ public final class HarnessNotificationCenter: NSObject, ObservableObject {
 
     // MARK: - Réponse à une notification
 
+    /// iOS exécute la réponse l'app encore en arrière-plan : ses lectures partent aussitôt, sans attendre un retour
+    /// au premier plan qui ne viendra peut-être pas (`HarnessModel.answeringNotification`).
     private func respond(category: String, action: HarnessNotificationAction?, alert: HarnessPushAlert?, text: String?) async {
+        await HarnessModel.$answeringNotification.withValue(true) {
+            await answer(category: category, action: action, alert: alert, text: text)
+        }
+    }
+
+    private func answer(category: String, action: HarnessNotificationAction?, alert: HarnessPushAlert?, text: String?) async {
         guard let server else { return }
         // Une action app fermée : le serveur, le jeton et le client (`/v1/me`) d'abord.
         await server.load()
@@ -154,4 +175,9 @@ extension HarnessNotificationCenter: UNUserNotificationCenterDelegate {
         let text = (response as? UNTextInputNotificationResponse)?.userText
         await respond(category: category, action: action, alert: alert, text: text)
     }
+}
+
+/// La date d'un événement du flux (`at`, en millisecondes) : seule lue pour juger de sa fraîcheur.
+private struct EventStamp: Decodable {
+    var at: Double?
 }

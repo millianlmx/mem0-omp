@@ -133,7 +133,7 @@ export function renderMetrics(orchestrator: Orchestrator, version: string, now =
   const out = new Exposition();
   const status = orchestrator.status();
   const scheduler = status.scheduler as {
-    runner: { used: number; capacity: number; waiting: number };
+    runner: { used: number; capacity: number; waiting: number; lent: number };
     heavy: { used: number; capacity: number; waiting: number };
     memAvailableMiB: number | null;
   };
@@ -194,6 +194,9 @@ export function renderMetrics(orchestrator: Orchestrator, version: string, now =
   out.gauge("omp_harness_slots_waiting", "Demandes de slot en file.", [
     { labels: { kind: "runner" }, value: scheduler.runner.waiting },
     { labels: { kind: "heavy" }, value: scheduler.heavy.waiting },
+  ]);
+  out.gauge("omp_harness_slots_lent", "Slots prêtés : leur agent attend ses tests (file heavy, job, CI).", [
+    { labels: { kind: "runner" }, value: scheduler.runner.lent },
   ]);
   if (scheduler.memAvailableMiB !== null)
     out.gauge("omp_harness_mem_available_bytes", "MemAvailable de l'hôte.", [

@@ -52,4 +52,43 @@ public enum IntakeText {
     public static let targetFeature = L10n.text("Une feature")
     public static let targetAudit = L10n.text("Un audit")
     public static let targetIssues = L10n.text("Les issues")
+
+    // MARK: - Voie du run
+
+    public static let laneLabel = L10n.text("Voie")
+    public static let criteriaLabel = L10n.text("Critères d’acceptation")
+    public static let criteriaPrompt = L10n.text("Un critère par ligne : Given … When … Then …")
+    public static let laneHint = L10n.text("Express : l’implémentation tout de suite, une revue courte. Directe : l’implémentation sur ces critères. Complète : besoins et specs d’abord. Le serveur garde ses refus (geste irréversible, autonomie « tout me demander »).")
+    public static let criteriaRequired = L10n.text("La voie directe demande au moins un critère.")
+
+    /// La voie d'un plan, en français ; `nil` : le serveur la choisira.
+    public static func lane(_ lane: String?) -> String {
+        switch lane {
+        case "express": L10n.text("Express")
+        case "direct": L10n.text("Directe")
+        case "full": L10n.text("Complète")
+        default: L10n.text("Choisie par le serveur")
+        }
+    }
+
+    /// Le symbole d'une voie.
+    public static func laneSymbol(_ lane: String?) -> String {
+        switch lane {
+        case "express": "hare"
+        case "direct": "arrow.right.circle"
+        case "full": "list.bullet.clipboard"
+        default: "questionmark.circle"
+        }
+    }
+
+    /// La voie et sa raison, sur une ligne de la carte du plan.
+    public static func laneLine(_ lane: String?, reason: String?) -> String {
+        guard let reason, !reason.isEmpty else { return L10n.format("Voie %@", Self.lane(lane)) }
+        return L10n.format("Voie %@ : %@", Self.lane(lane), reason)
+    }
+
+    /// Le nombre de critères d'acceptation d'un plan.
+    public static func criteriaCount(_ count: Int) -> String {
+        count == 1 ? L10n.text("1 critère d’acceptation") : L10n.format("%lld critères d’acceptation", count)
+    }
 }

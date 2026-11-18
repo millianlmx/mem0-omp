@@ -501,8 +501,19 @@ elle-même.
   boîte — escalades ouvertes, specs et verdicts à valider — et les envois du poste à
   approuver, qui expirent) et sur « Propositions » ce que les agents proposent ; les
   tuiles du hub Système portent leur état (envois à approuver au Poste, vigie muette,
-  planifications actives…). Sur iOS, le retour au premier plan (`scenePhase` active)
-  ferme le flux, relit la boîte et le poste, puis rouvre le flux.
+  planifications actives…). Sur iOS, l'ouverture, le retour au premier plan et « tirer
+  pour actualiser » lancent leurs lectures en même temps (`HarnessModel.readShell`), et
+  deux lectures identiques en vol n'en font qu'une. Au-delà de la limite de connexions de
+  la session (6 par défaut), une lecture attend son tour dans l'app avant d'être confiée à
+  URLSession, dont le délai de 15 s ne court donc pas pendant cette attente. Le passage de
+  l'app en arrière-plan ferme les flux (boîte, direct) ; le retour les rouvre une fois,
+  après une boîte fraîche. Chaque fenêtre arrête son pouls quand elle est cachée, sans
+  toucher aux flux des autres. Un simple passage par l'état inactif (Centre de contrôle,
+  bannière, Face ID) ne relit rien. Une lecture en vol quand l'app passe en arrière-plan est
+  coupée, sans bandeau ; elle est refaite une fois au retour, et partage sa réponse avec la
+  même lecture du retour. Une lecture qui partirait pendant l'arrière-plan attend le retour,
+  sauf celles d'une réponse à une notification. Une lecture annulée (écran quitté,
+  actualisation relancée) n'efface pas le bandeau d'avant.
 - **Code partagé.** Le modèle (`HarnessModel`, qui porte `WorkstationModel`), les
   brouillons (`HarnessDrafts`), le transport (`HarnessTransport`) et le contrat
   (`HarnessWire`, `WorkstationWire`) vivent dans `ConsoleClient` ; les mots vivent
@@ -742,7 +753,9 @@ sa route (404) — rien ne s'affiche alors, sans échec.
 - **Champs lus** : `HarnessRun.autonomy`, `cancelCause`, `blockedBy` (ce qui retient une feature en
   file), `waitUntil` ; `HarnessEscalation.autoAt` et `autoAnswer` (l'instant où la recommandation
   s'appliquera seule) ; `HarnessStatus.paused` ; `HarnessIntake.context` (page d'origine d'une Demande,
-  envoyée par `intakes.submit(…, context:)`).
+  envoyée par `intakes.submit(…, context:)`) ; `HarnessIntakePlan.lane`, `laneReason` et `criteria` (la
+  voie du run qu'a choisie le classeur, sa raison et les critères d'acceptation : la carte du plan les
+  montre, « Modifier le plan » change la voie et les critères, un critère par ligne).
 - **Notifications** : la catégorie `omp.answer` (une seule question ouverte, avec sa recommandation)
   offre « prendre la recommandation » et « répondre » (saisie) ; `HarnessPushAlert.question` porte
   `omp.question {id, recommended, options}`, et `HarnessNotificationRouting.gesture` en fait la réponse à
@@ -2054,6 +2067,48 @@ Recette pas à pas :
 5. Couper le serveur (`harness.sh down`), tirer pour actualiser. Attendu : « Mémoire
    du serveur injoignable. » et son remède, les lignes déjà lues restent, et
    « Réessayer » relit une fois le serveur revenu.
+
+Une portée entière pèse lourd sur un réseau mobile, et le service la rend d'un bloc : l'app
+la télécharge UNE fois par actualisation (`MemoryAccess`). Ouvrir le sommaire, ouvrir
+le graphe, ou choisir un projet lit `/memory/all` de la portée ; les pages suivantes
+tranchent cette lecture sans rien télécharger, et le graphe ne lit que ses arêtes
+(`/memory/graph`) sur les lignes que le sommaire vient de lire. Tirer pour actualiser, « Réessayer »
+et le second graphe (⌘R) relisent la portée. Sans projet choisi, la première lecture est celle de
+TOUTE la mémoire (elle sert à trouver les portées) : le service filtre `agent_id` en SQL et trie de la
+même façon avec ou sans filtre, donc les lignes de la portée la plus récente en sont tirées sans second
+téléchargement.
+
+### Recette en réseau dégradé
+
+Les preuves automatiques des délais dépassés tournent sur un serveur local à vraies sockets
+(`OMPConsoleIOSTests/IOSDelaisSurSocketsTests.swift`, en CI macOS) : elles ne disent rien d'un vrai
+réseau mobile. Cette recette se joue À LA MAIN avant la fusion, sur les deux états du code, sous un profil
+nommé de Network Link Conditioner (« 3G », « Very Bad Network » ou « High Latency DNS », au choix, le même
+pour les deux passes) :
+
+1. `cd omp-console && swift test` sur macOS : la suite passe.
+2. Pour l'état d'AVANT, `ef574e5a040e355b93aa63833d6e3d1f562dcfe4` (le commit sur lequel la feature
+   « Lenteurs et timeouts du chargement sur iOS » est partie, jamais l'état après sa fusion), puis
+   pour l'état d'APRÈS (la branche de la feature) : compiler et lancer l'app sur un simulateur ou un iPhone
+   (`scripts/ios-build.sh`), reliée à un serveur, profil réseau activé.
+3. Chargement initial : tuer l'app, la lancer, et chronométrer jusqu'à ce que la barre de progression
+   disparaisse et que l'accueil soit rempli. Trois passes, noter la médiane.
+4. Retour au premier plan : mettre l'app en arrière-plan 30 s, la rouvrir, chronométrer jusqu'à ce que
+   les données soient relues (aucun bandeau). Trois passes, noter la médiane.
+5. Délais dépassés : sur cinq cycles (ouverture, arrière-plan 30 s, retour, tirer pour actualiser, Mémoire
+   ouverte puis graphe), compter les bandeaux « Le serveur de pipelines met trop de temps à répondre »
+   et « Délai dépassé : la mémoire a mis trop de temps à répondre ».
+6. Critère : l'état d'APRÈS ne montre pas plus de délais dépassés que celui d'AVANT, ni un chargement plus
+   long.
+
+Relevé à consigner par la personne qui joue la recette (aucun agent ne le remplit) :
+
+| | Chargement initial | Retour au premier plan | Délais dépassés (5 cycles) |
+|---|---|---|---|
+| Avant (`ef574e5`) | non consigné | non consigné | non consigné |
+| Après (branche) | non consigné | non consigné | non consigné |
+
+Tant que ce relevé n'est pas rempli, le critère reste « non vérifié ».
 
 ### Clavier de l'iPad
 

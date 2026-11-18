@@ -2,8 +2,8 @@
 // en a coûté — runs par état, étapes et leurs durées, corrections, tests heavy,
 // décisions, audits, consommation des agents et comparaison des modèles. Fonction
 // PURE sur la base : rien n'est tenu à part.
-import type { RepoFilter, Store, UsageRow } from "./db.ts";
-import { groupUsage, modelKey, sumUsage } from "./db.ts";
+import type { EventRow, RepoFilter, RunRow, StepRow, Store, UsageTotals } from "./db.ts";
+import { pushTo } from "./collections.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -71,8 +71,63 @@ export function computeStats(store: Store, now = Date.now(), repos: RepoFilter =
     escalations: countBy(store.listEscalations({ repos }), (item) => item.status),
     audits: countBy(store.listAudits([], repos), (audit) => audit.state),
     projects: countBy(store.listProjects(repos), (project) => project.status),
-    usage: usageStats(store.usageSince(0, repos), now),
-    models: modelStats(runs, steps, store.usageSince(0, repos)),
+    usage: usageStats(store, now, repos),
+    models: modelStats(runs, steps, store.usageGroups("model", 0, repos)),
+    cancellations: cancellationStats(runs, steps, store.eventsOfType("pilot", repos)),
+  };
+}
+
+/** D'où vient l'annulation d'un run : l'humain, le pilote, la chute d'un parent (`— après`), un découpage remplacé. */
+export type CancelSource = "human" | "pilot" | "cascade" | "replaced";
+
+/** La source d'une annulation, lue dans le journal du pilote puis dans la raison du run. */
+export function cancelSource(run: Pick<RunRow, "id" | "reason">, cancelledByPilot: ReadonlySet<string>): CancelSource {
+  if (cancelledByPilot.has(run.id)) return "pilot";
+  if (/dont elle attendait le merge/.test(run.reason ?? "")) return "cascade";
+  if (/^remplacée\b/.test(run.reason ?? "")) return "replaced";
+  return "human";
+}
+
+/**
+ * Les runs annulés, par source (et, pour l'humain, par motif `cancelCause`), avec le travail qu'ils ont coûté : les
+ * heures de leurs étapes terminées, jetées avec eux. `withoutWork` : ceux qui n'avaient encore rien fait.
+ */
+function cancellationStats(runs: RunRow[], steps: StepRow[], pilot: EventRow[]): Record<string, unknown> {
+  const byPilot = new Set(
+    pilot
+      .filter((event) => event.payload.action === "cancel" && event.runId !== null)
+      .map((event) => event.runId as string),
+  );
+  const hours = new Map<string, number>();
+  for (const step of steps)
+    if (step.endedAt !== null)
+      hours.set(step.runId, (hours.get(step.runId) ?? 0) + (step.endedAt - step.startedAt) / 3_600_000);
+  const bySource: Record<string, { count: number; hours: number }> = {};
+  const humanMotives: Record<string, number> = {};
+  let wasted = 0;
+  let withoutWork = 0;
+  const cancelled = runs.filter((run) => run.state === "cancelled");
+  for (const run of cancelled) {
+    const source = cancelSource(run, byPilot);
+    const spent = hours.get(run.id) ?? 0;
+    const entry = bySource[source] ?? { count: 0, hours: 0 };
+    entry.count += 1;
+    entry.hours += spent;
+    bySource[source] = entry;
+    if (source === "human")
+      humanMotives[run.cancelCause ?? "none"] = (humanMotives[run.cancelCause ?? "none"] ?? 0) + 1;
+    wasted += spent;
+    if (spent === 0) withoutWork += 1;
+  }
+  const round = (value: number): number => Math.round(value * 10) / 10;
+  return {
+    total: cancelled.length,
+    bySource: Object.fromEntries(
+      Object.entries(bySource).map(([source, entry]) => [source, { count: entry.count, hours: round(entry.hours) }]),
+    ),
+    humanMotives,
+    wastedHours: round(wasted),
+    withoutWork,
   };
 }
 
@@ -144,20 +199,22 @@ function runsByRepo(runs: ReturnType<Store["listRuns"]>, now: number): Record<st
   return repos;
 }
 
-/** Ce que les agents ont consommé : en tout, sur 7 jours, jour par jour (14 derniers), par dépôt. */
-function usageStats(rows: UsageRow[], now: number): Record<string, unknown> {
-  const recent = rows.filter((row) => now - row.at <= SERIES_DAYS * DAY_MS);
-  const week = rows.filter((row) => now - row.at <= 7 * DAY_MS);
-  const byDay = groupUsage(recent, (row) => dayOf(row.at));
+/**
+ * Ce que les agents ont consommé : en tout, sur 7 jours, jour par jour (14 derniers), par dépôt. Les sommes sont
+ * faites en base (`usageGroups`) : aucune ligne d'usage n'est chargée en mémoire.
+ */
+function usageStats(store: Store, now: number, repos: RepoFilter): Record<string, unknown> {
+  const week = now - 7 * DAY_MS;
+  const byDay = store.usageGroups("day", now - SERIES_DAYS * DAY_MS, repos);
   return {
-    total: sumUsage(rows),
-    last7Days: sumUsage(week),
+    total: store.usageGroups("all", 0, repos)["*"],
+    last7Days: store.usageGroups("all", week, repos)["*"],
     byDay: Object.entries(byDay)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([day, totals]) => ({ day, ...totals })),
-    byRepo: groupUsage(rows, (row) => row.repo ?? "?"),
+    byRepo: store.usageGroups("repo", 0, repos),
     /** Le coût de chaque dépôt sur 7 jours : ce que l'Accueil compare. */
-    byRepoLast7Days: groupUsage(week, (row) => row.repo ?? "?"),
+    byRepoLast7Days: store.usageGroups("repo", week, repos),
   };
 }
 
@@ -169,12 +226,11 @@ function usageStats(rows: UsageRow[], now: number): Record<string, unknown> {
 function modelStats(
   runs: ReturnType<Store["listRuns"]>,
   steps: ReturnType<Store["allSteps"]>,
-  usage: UsageRow[],
+  costs: Record<string, UsageTotals>,
 ): Record<string, unknown>[] {
   const merged = new Set(runs.filter((run) => run.state === "merged").map((run) => run.id));
   const byRun = new Map<string, typeof steps>();
-  for (const step of steps) byRun.set(step.runId, [...(byRun.get(step.runId) ?? []), step]);
-  const costs = groupUsage(usage, (row) => modelKey(row));
+  for (const step of steps) pushTo(byRun, step.runId, step);
   const models = new Set([...steps.map((step) => step.model).filter((model) => model !== null), ...Object.keys(costs)]);
   return [...models]
     .map((model) => {

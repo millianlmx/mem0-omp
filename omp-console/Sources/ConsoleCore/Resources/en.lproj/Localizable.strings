@@ -10,7 +10,14 @@
  */
 
 "%@ : %lld" = "%@: %lld";
+"%lld critères d’acceptation" = "%lld acceptance criteria";
+"1 critère d’acceptation" = "1 acceptance criterion";
 "Ce qui vous attend" = "What needs you";
+"Choisie par le serveur" = "Chosen by the server";
+"Critères d’acceptation" = "Acceptance criteria";
+"Directe" = "Direct";
+"Express : l’implémentation tout de suite, une revue courte. Directe : l’implémentation sur ces critères. Complète : besoins et specs d’abord. Le serveur garde ses refus (geste irréversible, autonomie « tout me demander »)." = "Express: implementation right away, then a short review. Direct: implementation against these criteria. Full: requirements and specs first. The server keeps its refusals (irreversible action, Ask me everything autonomy).";
+"La voie directe demande au moins un critère." = "The direct lane needs at least one criterion.";
 "Par projet : questions à trancher, specs et verdicts à valider, décisions à relire." = "By project: questions to settle, specs and verdicts to approve, decisions to review.";
 "Aucun projet n’attend votre décision." = "No project is waiting on you.";
 "Débit" = "Throughput";
@@ -21,6 +28,9 @@
 "Santé" = "Health";
 "La part des passages en échec par étape, et l’occupation du serveur." = "The share of failed passes by step, and how busy the server is.";
 "Les graphiques arrivent avec les statistiques du serveur." = "Charts arrive with the server statistics.";
+"Un critère par ligne : Given … When … Then …" = "One criterion per line: Given … When … Then …";
+"Voie %@" = "%@ lane";
+"Voie %@ : %@" = "%1$@ lane: %2$@";
 "À traiter" = "To handle";
 "Questions" = "Questions";
 "Specs" = "Specs";
@@ -747,7 +757,7 @@
 "Options du lancement" = "Launch options";
 "0 par défaut, de -1000 à 1000" = "0 by default, from -1000 to 1000";
 "Voie" = "Lane";
-"Automatique : la voie directe quand la demande porte ses critères d’acceptation, sinon la voie complète (besoins, specs, implémentation, revue)." = "Automatic: the direct lane when the request carries its acceptance criteria, otherwise the full lane (requirements, specs, implementation, review).";
+"Automatique : la voie directe quand la demande porte ses critères d’acceptation, sinon la voie complète (besoins, specs, implémentation, revue). Express : l’implémentation tout de suite, une revue courte, une seule correction." = "Automatic: the direct lane when the request carries its acceptance criteria, otherwise the full lane (requirements, specs, implementation, review). Express: implementation right away, a short review, a single fix.";
 "Cadrage /req (facultatif)" = "/req framing (optional)";
 "Un cadrage déjà écrit : l’étape /req est sautée." = "A framing already written: the /req step is skipped.";
 "Budget en dollars (facultatif)" = "Budget in dollars (optional)";
@@ -755,6 +765,7 @@
 "La priorité est un entier de -1000 à 1000." = "Priority is an integer from -1000 to 1000.";
 "Le budget est un montant positif, en dollars." = "The budget is a positive amount, in dollars.";
 "Complète" = "Full";
+"Express" = "Express";
 "Automatique" = "Automatic";
 "Monter de 10" = "Raise by 10";
 "Descendre de 10" = "Lower by 10";

@@ -1,7 +1,7 @@
 // Le journal d'événements : écrit en base et rejoué par le flux SSE, ou éphémère
 // (poussé en direct, jamais écrit). Un événement porte le dépôt de son run, qui sert
 // au filtrage par client.
-import { RunStore } from "./runs.ts";
+import { RunCountStore } from "./run-counts.ts";
 import { str, strOrNull, num, json } from "./sql.ts";
 import type { SqlValue, Row, RepoFilter } from "./sql.ts";
 
@@ -30,7 +30,7 @@ function eventOf(row: Row): EventRow {
   };
 }
 
-export class JournalStore extends RunStore {
+export class JournalStore extends RunCountStore {
   /**
    * Écrit un événement au journal et l'annonce aux abonnés (au COMMIT s'il est écrit
    * dans une transaction). `repo` est déduit du run quand il n'est pas donné.

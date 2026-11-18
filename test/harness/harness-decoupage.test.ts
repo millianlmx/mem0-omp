@@ -1,6 +1,8 @@
-// Feature harness-decoupage : un découpage (`## Découpage` des specs, `split_feature` en
-// /impl) ne part qu'avec des specs ACCEPTÉES, et ses features attendent le MERGE de leur
-// parent — annulé ou en échec, il les emporte. Faux runner : test/support/fake-omp-rpc.ts.
+// Feature harness-decoupage : un découpage (`## Découpage` des specs) ne part qu'avec des specs
+// ACCEPTÉES. Il se décide dès le départ, jamais en /impl (`split_feature` y est refusé). Une
+// feature marquée `— après` attend le MERGE de son parent — annulé ou en échec, il l'emporte ;
+// les autres sont des runs normaux, qui partent tout de suite et survivent au parent.
+// Faux runner : test/support/fake-omp-rpc.ts.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
@@ -14,9 +16,13 @@ function specsWith(split: string): string {
   return `Ce que fait cette feature : exporter les données au format CSV.\n## Relevé du dépôt\n- src/api : routes\n## Non-objectifs\n## Spécifications\nS-1 (AC-1) : export CSV\n## Critères d'acceptation\nAC-1 (B-1) : Given des données, When l'export est demandé, Then un CSV est produit\n## Modules\n- src/api\n## Découpage\n${split}\n`;
 }
 
-// Les features découpées touchent d'autres modules que le parent : seul le préalable du merge les retient.
-const FIRST = specsWith("- Export JSON — Exporter aussi en JSON — docs");
+// Les features découpées touchent d'autres modules que le parent : seul le préalable du merge (`— après`) les retient.
+const FIRST = specsWith("- Export JSON — Exporter aussi en JSON — docs — après");
 const FINAL = specsWith(
+  "- Client web — Afficher l'export dans le client web — src/web — après\n- Doc de l'export — Documenter l'export — docs — après",
+);
+// Les mêmes, indépendantes : des runs normaux.
+const FREE = specsWith(
   "- Client web — Afficher l'export dans le client web — src/web\n- Doc de l'export — Documenter l'export — docs",
 );
 const SLEEP = [{ sleep: 60_000 }];
@@ -234,7 +240,7 @@ test("harness-decoupage/AC-4 : sans porte humaine, le découpage part à l'accep
   }
 });
 
-test("harness-decoupage/AC-5 : `split_feature` en /impl crée des features qui attendent, elles aussi, le merge du parent", async () => {
+test("harness-decoupage/AC-5 : `split_feature` est refusé en /impl — le découpage se décide en /specs — et ne crée aucune feature", async () => {
   const world = fakeWorld({
     req: [OK.req],
     specs: [OK.specs],
@@ -246,7 +252,6 @@ test("harness-decoupage/AC-5 : `split_feature` en /impl crée des features qui a
         },
         ...OK.impl,
       ],
-      OK.impl,
     ],
     review: [OK.review],
   });
@@ -254,17 +259,17 @@ test("harness-decoupage/AC-5 : `split_feature` en /impl crée des features qui a
   try {
     const parent = world.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: "Exporter en CSV" });
     await waitFor(
-      () => childrenOf(world, parent.id).length === 1,
+      () => ["merged", "failed", "awaiting_human"].includes(world.store.getRun(parent.id)?.state ?? ""),
       () => describe(world),
       30_000,
     );
-    const [child] = childrenOf(world, parent.id);
-    assert.equal(child?.title, "Doc de l'export");
-    assert.match(child?.reason ?? "", /attend le merge de « Export CSV »/);
-    assert.ok(child?.request.includes(parent.id));
-    const split = world.store.eventsSince(0, parent.id).find((event) => event.type === "split");
-    assert.deepEqual([split?.payload.step, split?.payload.by, split?.payload.waitsFor], ["impl", "runner", parent.id]);
-    await startAfterMerge(world, parent.id, [child as RunRow]);
+    const refused = world.log().find((entry) => entry.kind === "tool" && entry.tool === "split_feature");
+    assert.match(String(refused?.result), /le découpage se décide en \/specs/);
+    assert.equal(world.store.listProjects().length, 0);
+    assert.deepEqual(
+      world.store.listRuns().map((run) => run.id),
+      [parent.id],
+    );
   } finally {
     await world.orchestrator.stop();
   }
@@ -313,4 +318,74 @@ test("harness-decoupage/AC-6 : un parent en échec annule ses features en attent
   const released = world.store.getRun(waiting.id);
   assert.equal(released?.state, "queued");
   assert.match(released?.reason ?? "", /« Socle » mergé/);
+});
+
+/** Les features d'un découpage, par le projet que l'événement `split` du parent nomme. */
+function splitRuns(world: FakeWorld, parentId: string): RunRow[] {
+  const split = world.store.eventsSince(0, parentId).find((event) => event.type === "split");
+  const projectId = split?.payload.projectId;
+  return typeof projectId === "string" ? world.store.listRuns({ projectId }) : [];
+}
+
+test("harness-decoupage/AC-7 : une feature sans `— après` est un run normal — ni afterRun ni raison d'attente, elle démarre pendant le /impl du parent", async () => {
+  const world = fakeWorld({
+    req: [OK.req, SLEEP],
+    specs: [[{ write: ".harness/specs.md", content: FREE }]],
+    impl: [SLEEP],
+  });
+  await world.orchestrator.start();
+  try {
+    const parent = world.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: "Exporter en CSV" });
+    await inImpl(world, parent.id);
+    const children = splitRuns(world, parent.id);
+    assert.equal(children.length, 2);
+    for (const child of children) {
+      assert.equal(child.afterRun, null);
+      assert.match(child.request, /Elle part en même temps que ce run/);
+    }
+    // Elles partent sans attendre le merge : le parent est encore en /impl.
+    await waitFor(
+      () => children.every((child) => started(world, child.id)),
+      () => describe(world),
+      30_000,
+    );
+    assert.equal(world.store.getRun(parent.id)?.state, "running");
+    const split = world.store.eventsSince(0, parent.id).find((event) => event.type === "split");
+    assert.equal(split?.payload.waitsFor, undefined);
+    assert.deepEqual(
+      ((split?.payload.features ?? []) as { after: boolean }[]).map((feature) => feature.after),
+      [false, false],
+    );
+  } finally {
+    await world.orchestrator.stop();
+  }
+});
+
+test("harness-decoupage/AC-8 : le parent annulé, ses features indépendantes continuent ; seules celles marquées `— après` sont annulées", async () => {
+  const world = fakeWorld({
+    req: [OK.req, SLEEP],
+    specs: [
+      [
+        {
+          write: ".harness/specs.md",
+          content: specsWith(
+            "- Client web — Afficher l'export dans le client web — src/web\n- Doc de l'export — Documenter l'export — docs — après",
+          ),
+        },
+      ],
+    ],
+    impl: [SLEEP],
+  });
+  await world.orchestrator.start();
+  try {
+    const parent = world.orchestrator.createRun({ repo: "demo", title: "Export CSV", request: "Exporter en CSV" });
+    await inImpl(world, parent.id);
+    const [free, after] = splitRuns(world, parent.id);
+    assert.deepEqual([free?.afterRun, after?.afterRun], [null, parent.id]);
+    await world.orchestrator.cancel(parent.id, { by: "test" });
+    assert.equal(world.store.getRun(after?.id ?? "")?.state, "cancelled");
+    assert.notEqual(world.store.getRun(free?.id ?? "")?.state, "cancelled", describe(world));
+  } finally {
+    await world.orchestrator.stop();
+  }
 });

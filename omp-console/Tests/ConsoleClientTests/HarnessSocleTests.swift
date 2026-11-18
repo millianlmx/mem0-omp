@@ -75,7 +75,7 @@ struct HarnessSocleTests {
         let transport = RecordingTransport { call in
             switch call.path {
             case "/v1/inbox": HarnessReply(status: 200, body: Data(inbox.utf8))
-            default: HarnessReply(status: call.path == "/v1/runs" ? 200 : 404, body: Data(#"{"runs":[\#(many.joined(separator: ","))]}"#.utf8))
+            default: HarnessReply(status: call.path.hasPrefix("/v1/runs?recent=") ? 200 : 404, body: Data(#"{"runs":[\#(many.joined(separator: ","))]}"#.utf8))
             }
         }
         let server = model(transport)
@@ -86,7 +86,7 @@ struct HarnessSocleTests {
         #expect(history.isWatched)
         #expect(history.runs.count == 120)
         #expect(history.run("r42")?.title == "Feature 42")
-        #expect(transport.calls.contains { $0.path == "/v1/runs" })
+        #expect(transport.calls.contains { $0.path == "/v1/runs?recent=500" })
     }
 
     @Test("la priorité se change tant que la feature n'est pas terminée")

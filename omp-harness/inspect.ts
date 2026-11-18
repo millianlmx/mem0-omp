@@ -35,6 +35,7 @@ export const TIMELINE_EVENTS: ReadonlySet<string> = new Set([
   "merge_retry",
   "merged",
   "push_failed",
+  "remote_adopted",
   "reverted",
   "stalled",
   "step_slow",

@@ -10,6 +10,20 @@ import { scheduleInput } from "./schedules.ts";
 import { approverFor } from "./workstation.ts";
 
 /**
+ * Le run d'un plan `feature` ou `bug` : sa demande — l'énoncé, suivi de ses critères sous
+ * `## Critères d'acceptation`, la section que lit la voie directe (steps.ts `directSpecs`) — et sa
+ * voie. `express` et `full` sont demandées telles quelles ; `direct` n'en demande aucune : la
+ * création la reconnaît à ses critères, avec ses propres gardes (porte des specs, irréversible). Sans
+ * voie, le serveur trie comme pour tout run (`lanes.default`). Pure.
+ */
+export function runOfPlan(plan: IntakePlan): { request: string; lane?: "express" | "full" } {
+  const criteria = plan.criteria ?? [];
+  const request =
+    criteria.length === 0 ? plan.statement : `${plan.statement}\n\n## Critères d'acceptation\n\n${criteria.join("\n")}`;
+  return plan.lane === "express" || plan.lane === "full" ? { request, lane: plan.lane } : { request };
+}
+
+/**
  * Crée l'objet du plan : `bug` et `feature` un run (`autonomy` : son curseur, s'il est demandé), `audit`,
  * `schedule` et `workstation_request` le leur. `spaceId` : l'espace de la demande — une tâche du poste
  * s'exécute dans un navigateur de cet espace (`Workstation.createRequest` refuse s'il n'en a pas) ; le
@@ -31,7 +45,7 @@ export function createFromPlan(
         {
           repo,
           title: plan.title,
-          request: plan.statement,
+          ...runOfPlan(plan),
           kind: plan.kind,
           ...(autonomy !== undefined ? { autonomy } : {}),
         },

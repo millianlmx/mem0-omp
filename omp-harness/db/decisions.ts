@@ -185,7 +185,10 @@ export class DecisionStore extends StepStore {
     return row ? decisionOf(row) : null;
   }
 
-  listDecisions(filter: { runId?: string; status?: DecisionStatus[]; repos?: RepoFilter } = {}): DecisionRow[] {
+  /** `limit` : seulement les `limit` plus récentes (par création), rendues dans le même ordre. */
+  listDecisions(
+    filter: { runId?: string; status?: DecisionStatus[]; repos?: RepoFilter; limit?: number } = {},
+  ): DecisionRow[] {
     const where: string[] = [];
     const params: SqlValue[] = [];
     if (!repoClause(filter.repos, where, params)) return [];
@@ -198,7 +201,27 @@ export class DecisionStore extends StepStore {
       params.push(...filter.status);
     }
     const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    if (filter.limit !== undefined)
+      return this.selectAll(
+        `SELECT * FROM (SELECT * FROM decisions ${clause} ORDER BY id DESC LIMIT ?) ORDER BY run_id, seq`,
+        ...params,
+        filter.limit,
+      ).map(decisionOf);
     return this.selectAll(`SELECT * FROM decisions ${clause} ORDER BY run_id, seq`, ...params).map(decisionOf);
+  }
+
+  /** Le nombre de décisions du filtre, sans les lire. */
+  countDecisions(filter: { status?: DecisionStatus[]; repos?: RepoFilter } = {}): number {
+    const where: string[] = [];
+    const params: SqlValue[] = [];
+    if (!repoClause(filter.repos, where, params)) return 0;
+    if (filter.status && filter.status.length > 0) {
+      where.push(`status IN (${filter.status.map(() => "?").join(", ")})`);
+      params.push(...filter.status);
+    }
+    const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    const row = this.selectAll(`SELECT COUNT(*) AS n FROM decisions ${clause}`, ...params)[0];
+    return Number(row?.n ?? 0);
   }
 
   setCheckpoint(id: number, sha: string): void {

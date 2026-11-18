@@ -1,18 +1,29 @@
 name: release-assets
 
-# Chaque release publiée reçoit les apps OMP Console : le bundle macOS
+# Les releases d'un run de release reçoivent les apps OMP Console : le bundle macOS
 # (OMP-Console-macOS.zip) et l'app iOS (OMP-Console-iOS.ipa), ainsi que l'extension
 # Chrome du poste de travail (omp-chrome.zip, construite par scripts/chrome-extension.sh),
 # chacune avec son empreinte .sha256. Quand les secrets de signature existent, l'app Mac est signée
 # Developer ID et notarisée, l'IPA signée ; sans eux (fork, ou secrets pas encore
 # créés), l'app Mac reste signée ad hoc et l'IPA non signée (PUBLISHING.md § Apps
-# jointes aux releases). Les releases sont créées par le job de release avec le
-# jeton dédié (RELEASE_TOKEN) : contrairement à celles du GITHUB_TOKEN, elles
-# déclenchent ce workflow. `workflow_dispatch` rejoint une release déjà publiée
-# (rattrapage, ou un job tombé).
+# jointes aux releases).
+#
+# Workflow RÉUTILISABLE : release.yml l'appelle (`workflow_call`) après la
+# publication, une fois par commit tagué — les tags d'un même run pointent sur le
+# commit de release, leurs apps se construisent donc une seule fois et se joignent
+# à chacune de leurs releases (`tags`, séparés par des espaces). `workflow_dispatch`
+# complète une release déjà publiée (rattrapage, ou un job tombé), depuis son tag.
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      ref:
+        description: "Commit tagué dont le code est construit"
+        type: string
+        required: true
+      tags:
+        description: "Tags des releases qui reçoivent les apps, séparés par des espaces"
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       tag:
@@ -22,10 +33,10 @@ on:
 permissions:
   contents: read
 
-# Une construction par release : un rejeu attend le précédent au lieu de téléverser
-# en même temps que lui.
+# Une construction par commit tagué : un rejeu attend le précédent au lieu de
+# téléverser en même temps que lui.
 concurrency:
-  group: release-assets-${{ github.event.release.tag_name || inputs.tag }}
+  group: release-assets-${{ inputs.ref || inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -47,12 +58,14 @@ jobs:
       matrix:
         app: [mac, ios, chrome]
     env:
-      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      # Appelé par release.yml : le commit tagué et ses tags. À la main : un tag.
+      REF: ${{ inputs.ref || format('refs/tags/{0}', inputs.tag) }}
+      TAGS: ${{ inputs.tags || inputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Le code du tag, jamais celui de main : l'app jointe est celle de la release.
-          ref: refs/tags/${{ env.TAG }}
+          # Le code du commit tagué, jamais celui de main : l'app jointe est celle de la release.
+          ref: ${{ env.REF }}
       # scripts/chrome-extension.sh exige node ≥ 22.13 (stripTypeScriptTypes de node:module).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: matrix.app == 'chrome'
@@ -83,7 +96,11 @@ jobs:
         if: always()
         run: bash scripts/release-assets.sh nettoyer
       # --clobber : un rejeu remplace les fichiers déjà joints au lieu d'échouer.
-      - name: Joindre à la release
+      # Les mêmes fichiers vont à chaque release du commit construit.
+      - name: Joindre aux releases
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" omp-console/build/release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+        run: |
+          for tag in $TAGS; do
+            gh release upload "$tag" omp-console/build/release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          done

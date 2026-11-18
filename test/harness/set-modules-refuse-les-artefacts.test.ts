@@ -126,8 +126,8 @@ test("set-modules-refuse-les-artefacts/attendu-modules : parseModulesSection et 
   const split =
     "## Découpage\n- Export JSON — Exporter en JSON — .harness/specs.md, src/api, ./.harness/req.md\n- Export XML — Exporter en XML — .harness/req.md\n";
   assert.deepEqual(parseSplitSection(split), [
-    { title: "Export JSON", request: "Exporter en JSON", modules: ["src/api"] },
-    { title: "Export XML", request: "Exporter en XML", modules: [] },
+    { title: "Export JSON", request: "Exporter en JSON", modules: ["src/api"], after: false },
+    { title: "Export XML", request: "Exporter en XML", modules: [], after: false },
   ]);
 });
 

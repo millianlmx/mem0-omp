@@ -472,7 +472,7 @@ struct OSThreadsTests {
         #expect(await eventually { pulse.activity[.run("r1")] != nil })
         pulse.stop()
 
-        #expect(transport.calls.contains { $0.path == "/v1/events?live=1&after=42" })
+        #expect(transport.calls.contains { $0.path == "/v1/events?live=1&after=42&pulse=1" })
         let first = try #require(pulse.activity[.localSession("s1")])
         #expect(first.tool == "edit" && first.line == "Corrige l'export" && first.at == Date(timeIntervalSince1970: 1_700_000_000))
         #expect(pulse.activity[.localSession("s2")] == OSActivity(tool: nil, line: "Relit les specs", at: Date(timeIntervalSince1970: 1_700_000_001)))

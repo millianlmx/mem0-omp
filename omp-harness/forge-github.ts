@@ -264,6 +264,12 @@ export class GitHubForge implements Forge {
     return view.code === 0 ? prState(view.stdout) : null;
   }
 
+  async mergeCommit(head: string): Promise<string | null> {
+    const view = await this.#run(["pr", "view", head, "--json", "mergeCommit"], PR_TIMEOUT_MS);
+    const oid = record(record(jsonOf(view)).mergeCommit).oid;
+    return typeof oid === "string" && oid !== "" ? oid : null;
+  }
+
   async markReady(head: string): Promise<void> {
     const ready = await this.#run(["pr", "ready", head], PR_TIMEOUT_MS);
     // Une PR qui n'est pas un brouillon : gh le dit (« already ready for review »), le geste est fait.

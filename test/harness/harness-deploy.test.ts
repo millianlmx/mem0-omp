@@ -35,14 +35,14 @@ function launcherArgs(line: { command: string; args: string[] }): string[] {
 
 const heavyLine = () => launcherArgs(heavyArgv(config, WT, "omp-heavy-r1-1", "npm test", heavyEnv(config, WT)));
 
-test("harness-deploy/AC-1 : le budget pire cas tient — 5 runners × 1 Go + 2 heavy × 4 Go + service 1 Go = 14 Go, 2 Go de marge sous la tranche de 16 Go", () => {
-  assert.equal(worstCaseBudgetMiB(config), 14 * 1024);
+test("harness-deploy/AC-1 : le budget pire cas tient — (5 runners + 3 prêtés) × 1 Go + 3 heavy × 4 Go + service 1 Go = 21 Go, 2 Go de marge sous la tranche de 23 Go", () => {
+  assert.equal(worstCaseBudgetMiB(config), 21 * 1024);
   const total = sizeMiB(directive(read("omp-harness.slice"), "MemoryMax") as string);
-  assert.equal(total, 16 * 1024);
+  assert.equal(total, 23 * 1024);
   assert.ok(total - worstCaseBudgetMiB(config) >= 2 * 1024);
   assert.equal(
     sizeMiB(directive(read("omp-harness-runners.slice"), "MemoryMax") as string),
-    config.runner.slots * sizeMiB(config.runner.memoryMax),
+    (config.runner.slots + config.runner.lendMax) * sizeMiB(config.runner.memoryMax),
   );
   assert.equal(
     sizeMiB(directive(read("omp-harness-heavy.slice"), "MemoryMax") as string),

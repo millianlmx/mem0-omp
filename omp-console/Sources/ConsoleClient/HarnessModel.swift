@@ -30,6 +30,9 @@ public final class HarnessModel: ObservableObject {
     /// Gardé à part de `inbox`, dont le curseur change à chaque événement : une boîte
     /// identique au curseur près n'est pas republiée.
     private(set) var eventCursor = 0
+    /// La boîte a donné son curseur. Sans lui (boîte pas encore lue : serveur qui redémarre, lecture en
+    /// échec), le flux part du dernier événement (`after=latest`) au lieu de rejouer tout le journal.
+    private var cursorKnown = false
     /// Le flux d'événements est ouvert : la boîte se met à jour seule.
     @Published public private(set) var isLive = false
     /// Les runs dont un geste attend la réponse du serveur.
@@ -188,6 +191,25 @@ public final class HarnessModel: ObservableObject {
     private var loginTask: Task<Void, Never>?
     /// Le flux du direct de la session suivie.
     private var sessionTask: Task<Void, Never>?
+    /// Les lectures GET en vol, partagées par leurs appelants identiques (`send`).
+    private var readsInFlight: [HarnessReadKey: Task<HarnessReply, Error>] = [:]
+    /// Le rang des lectures : une écriture, un lot d'événements, un passage en arrière-plan ou
+    /// un changement de serveur le font avancer, et une lecture partie avant n'est plus rejointe.
+    private var readGeneration = 0
+    /// Le nombre de passages en arrière-plan (`suspendStreams`) : une lecture qui le voit avancer a été coupée.
+    private var suspensions = 0
+    /// `suspensions` au dernier retour (`resumeReads`) ; plus petit, l'app est encore en arrière-plan.
+    private var resumedSuspensions = 0
+    /// Vrai entre `resumeReads` et `finishReturn` (ou le passage en arrière-plan suivant).
+    private var returnOpen = false
+    /// Les appelants d'une lecture coupée, en attente du retour.
+    private var awaitingReturn: [UUID: CheckedContinuation<Void, Error>] = [:]
+    /// Les relectures des lectures coupées, par clé : pendant le retour, une lecture identique reçoit leur
+    /// réponse, en vol ou déjà arrivée, au lieu de repartir.
+    private var returnReads: [HarnessReadKey: Task<HarnessReply, Error>] = [:]
+    /// Vrai dans la réponse à une notification (`HarnessNotificationCenter.respond`) : iOS l'exécute l'app
+    /// encore en arrière-plan, et ses lectures ne peuvent pas attendre un retour qui ne viendra peut-être pas.
+    @TaskLocal static var answeringNotification = false
 
     public init(
         transport: any HarnessTransport,
@@ -341,6 +363,7 @@ public final class HarnessModel: ObservableObject {
         address = nil
         inbox = nil
         eventCursor = 0
+        cursorKnown = false
         client = nil
         clientAsked = false
         update(\.repos, [])
@@ -362,6 +385,13 @@ public final class HarnessModel: ObservableObject {
 
     /// Ce qui appartient au serveur relié : poste, historique, services, remontée.
     private func resetServerState() {
+        readGeneration &+= 1
+        returnOpen = false
+        returnReads = [:]
+        resumedSuspensions = suspensions
+        let waiting = awaitingReturn
+        awaitingReturn = [:]
+        for continuation in waiting.values { continuation.resume(throwing: CancellationError()) }
         serverEpoch += 1
         scope = nil
         scopeEpoch += 1
@@ -416,7 +446,7 @@ public final class HarnessModel: ObservableObject {
             receive(inbox: try await perform(HarnessCall(method: "GET", path: "/v1/inbox"), on: server))
             update(\.failure, nil)
         } catch {
-            update(\.failure, Self.failure(of: error))
+            update(\.failure, Self.failure(after: error, keeping: failure))
         }
         if !clientAsked { await readClient() }
     }
@@ -425,6 +455,7 @@ public final class HarnessModel: ObservableObject {
     /// au-delà du curseur (qui avance à chaque événement du journal).
     private func receive(inbox fetched: HarnessInbox) {
         eventCursor = fetched.cursor
+        cursorKnown = true
         if var shown = inbox {
             shown.cursor = fetched.cursor
             if shown == fetched { return }
@@ -446,7 +477,12 @@ public final class HarnessModel: ObservableObject {
     /// premier appel, le flux le relit aussi, sur les seuls événements qui le changent.
     public func refreshCatalog() async {
         wantsCatalog = true
-        await readCatalog(CatalogParts.all)
+        // Les statistiques (un calcul sur toute la base du serveur) ne retiennent pas le reste :
+        // statut, projets et audits s'affichent dès qu'ils arrivent.
+        // Le bandeau d'échec reste celui du catalogue : des statistiques lues ne l'effacent pas, en échec ne le posent pas.
+        async let catalog: Void = readCatalog([.status, .projects, .audits])
+        async let figures: Void = readCatalog(.stats, reportsFailure: false)
+        _ = await (catalog, figures)
     }
 
     /// Les parties du catalogue qu'une relecture lit.
@@ -463,8 +499,9 @@ public final class HarnessModel: ObservableObject {
     /// les relit qu'une fois par période, pas à chaque événement.
     static let statsPeriod: Duration = .seconds(60)
 
-    /// Lit les parties demandées en même temps ; un échec n'en retient aucune.
-    private func readCatalog(_ parts: CatalogParts) async {
+    /// Lit les parties demandées en même temps ; un échec n'en retient aucune. `reportsFailure` faux : la
+    /// lecture ne touche pas au bandeau d'échec (ni ne le pose, ni ne l'efface).
+    private func readCatalog(_ parts: CatalogParts, reportsFailure: Bool = true) async {
         guard let server, !parts.isEmpty else { return }
         async let readStatus: HarnessStatus? = parts.contains(.status) ? perform(HarnessCall(method: "GET", path: "/v1/status"), on: server) : nil
         async let readProjects: HarnessProjects? = parts.contains(.projects) ? perform(HarnessCall(method: "GET", path: "/v1/projects"), on: server) : nil
@@ -482,9 +519,9 @@ public final class HarnessModel: ObservableObject {
                 statsReadAt = .now
                 update(\.stats, stats)
             }
-            update(\.failure, nil)
+            if reportsFailure { update(\.failure, nil) }
         } catch {
-            update(\.failure, Self.failure(of: error))
+            if reportsFailure { update(\.failure, Self.failure(after: error, keeping: failure)) }
         }
     }
 
@@ -496,7 +533,7 @@ public final class HarnessModel: ObservableObject {
             update(\.failure, nil)
             return view
         } catch {
-            update(\.failure, Self.failure(of: error))
+            update(\.failure, Self.failure(after: error, keeping: failure))
             return nil
         }
     }
@@ -521,19 +558,85 @@ public final class HarnessModel: ObservableObject {
         update(\.isLive, false)
     }
 
+    /// Ferme les flux partagés quand toute l'app passe en arrière-plan : la boîte et le direct
+    /// suivi, dont le dernier affichage reste visible (`direct.feed` gardé). Le retour les rouvre
+    /// (`HarnessAppLifecycle`). Les lectures en vol sont annulées : iOS coupe leurs connexions à la
+    /// suspension, et elles finiraient à la reprise en « délai dépassé » ou « injoignable ». Leurs
+    /// appelants attendent le retour, puis la relisent une fois (`send`) : une annulation n'est jamais
+    /// annoncée. Une écriture en vol, elle, n'est ni touchée ni rejouée.
+    public func suspendStreams() {
+        stopLive()
+        sessionTask?.cancel()
+        sessionTask = nil
+        direct.setLive(false)
+        suspensions += 1
+        returnOpen = false
+        returnReads = [:]
+        for read in readsInFlight.values { read.cancel() }
+        readsInFlight = [:]
+        readGeneration &+= 1
+    }
+
+    /// Le retour commence : les lectures coupées, et celles parties pendant l'arrière-plan, se relancent.
+    /// Elles ne peuvent pas attendre la FIN du retour, qui attend lui-même des tâches partagées qu'elles
+    /// peuvent avoir coupées.
+    public func resumeReads() {
+        resumedSuspensions = suspensions
+        returnOpen = true
+        let waiting = awaitingReturn
+        awaitingReturn = [:]
+        for continuation in waiting.values { continuation.resume() }
+    }
+
+    /// Le retour a fini : une lecture identique repart au lieu de recevoir la réponse d'une relecture.
+    public func finishReturn() {
+        returnOpen = false
+        returnReads = [:]
+    }
+
+    /// Attend `resumeReads` ; un appelant annulé (écran quitté) ou un serveur changé lève `CancellationError`.
+    private func untilReturn() async throws {
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    awaitingReturn[id] = continuation
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.awaitingReturn.removeValue(forKey: id)?.resume(throwing: CancellationError()) }
+        }
+    }
+
+    /// Rouvre le direct suivi après un arrière-plan, sans relire le tampon avant le flux : il est
+    /// déjà affiché, `sessionLoop` ne le relit qu'une fois, le flux ouvert.
+    public func resumeSession() {
+        guard sessionTask == nil, server != nil, let target = session?.target else { return }
+        sessionTask = Task { [weak self] in
+            await self?.sessionLoop(target, shown: true)
+        }
+    }
+
     private func liveLoop() async {
         // Une boucle finie (serveur oublié) libère sa place : un `startLive` suivant repart.
         defer { if !Task.isCancelled { liveTask = nil } }
         while !Task.isCancelled {
             guard let server else { return }
-            let cursor = eventCursor
+            // Sans curseur, rejouer le journal depuis le début ferait relire chaque écran à chaque lot et, sur Mac,
+            // notifier chaque vieil événement : le flux part du dernier événement, et la boîte est relue à côté.
+            let known = cursorKnown
+            let after = known ? String(eventCursor) : "latest"
             do {
-                let stream = try await transport.events(HarnessCall(method: "GET", path: "/v1/events?after=\(cursor)"), server: server)
+                let stream = try await transport.events(HarnessCall(method: "GET", path: "/v1/events?after=\(after)"), server: server)
                 update(\.isLive, true)
+                if !known { Task { [weak self] in await self?.refreshInbox() } }
                 var parser = HarnessEventParser()
                 for try await chunk in stream {
                     let events = parser.consumeEvents(chunk)
                     if !events.isEmpty {
+                        readGeneration &+= 1
                         let names = events.map(\.name)
                         scheduleRefresh(names)
                         workstation.receive(names)
@@ -624,14 +727,14 @@ public final class HarnessModel: ObservableObject {
         followSession(.workstation(job))
     }
 
-    private func sessionLoop(_ target: HarnessSessionTarget) async {
+    private func sessionLoop(_ target: HarnessSessionTarget, shown alreadyShown: Bool = false) async {
         guard let id = target.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return }
         guard let streamQuery = target.streamQuery(id) else {
             await pollSession(target, id: id)
             return
         }
-        // Le tampon a déjà été montré, avant l'ouverture du flux.
-        var shown = false
+        // Le tampon a déjà été montré, avant l'ouverture du flux (ou avant l'arrière-plan).
+        var shown = alreadyShown
         while !Task.isCancelled {
             guard let server else { return }
             do {
@@ -651,6 +754,8 @@ public final class HarnessModel: ObservableObject {
                     HarnessCall(method: "GET", path: "/v1/events?\(streamQuery)&live=1&after=\(cursor)"),
                     server: server
                 )
+                // Une lecture du tampon partie avant le flux ne doit pas être rejointe : celle-ci part après.
+                readGeneration &+= 1
                 let view: HarnessSessionView = try await perform(HarnessCall(method: "GET", path: target.sessionPath(id, query: [])), on: server)
                 guard !Task.isCancelled else { return }
                 // À l'ouverture, les pages plus anciennes déjà demandées restent ; après une coupure, le tampon fait foi.
@@ -1058,7 +1163,7 @@ public final class HarnessModel: ObservableObject {
             request: request,
             modules: options.modules.isEmpty ? nil : options.modules,
             priority: options.priority,
-            lane: options.lane == .full ? HarnessLane.full.rawValue : nil,
+            lane: options.lane == .auto ? nil : options.lane.rawValue,
             req: options.req,
             budgetUsd: options.budgetUsd,
             kind: options.kind?.rawValue,
@@ -1172,7 +1277,7 @@ public final class HarnessModel: ObservableObject {
             update(\.providerCatalog, catalog)
             update(\.failure, nil)
         } catch {
-            update(\.failure, Self.failure(of: error))
+            update(\.failure, Self.failure(after: error, keeping: failure))
         }
     }
 
@@ -1318,7 +1423,49 @@ public final class HarnessModel: ObservableObject {
     /// serveur (`HarnessErrorReporter`) avant de devenir l'échec de l'appelant. Le corps
     /// se décode hors du fil principal (`decodeOffMain`).
     func perform<T: Decodable>(_ call: HarnessCall, on server: HarnessServer) async throws -> T {
-        try await decodeOffMain(try await transport.send(call, server: server), for: call)
+        try await decodeOffMain(try await send(call, on: server), for: call)
+    }
+
+    /// Le seul passage vers le transport des échanges du modèle. Un GET sans corps identique à un GET
+    /// déjà en vol n'en fait qu'un : tous ses appelants reçoivent la même réponse (quel que soit son
+    /// statut) ou la même erreur. Seules les lectures EN VOL sont partagées, jamais une lecture finie.
+    /// Une écriture n'est jamais partagée et fait avancer `readGeneration` avant de partir.
+    ///
+    /// Une lecture coupée par le passage en arrière-plan attend le retour, puis est refaite UNE fois
+    /// (`rereading`) ; une lecture qui partirait pendant l'arrière-plan l'attend aussi, sauf dans la
+    /// réponse à une notification. Pendant le retour, `returnReads` fait recevoir leur réponse aux lectures
+    /// identiques de la coque.
+    func send(_ call: HarnessCall, on server: HarnessServer, rereading: Bool = false) async throws -> HarnessReply {
+        guard call.method == "GET", call.body == nil else {
+            readGeneration &+= 1
+            return try await transport.send(call, server: server)
+        }
+        if resumedSuspensions < suspensions, !Self.answeringNotification {
+            try await untilReturn()
+            return try await send(call, on: server, rereading: true)
+        }
+        let key = HarnessReadKey(call: call, server: server, generation: readGeneration)
+        let epoch = suspensions
+        let task: Task<HarnessReply, Error>
+        if let returned = returnReads[key] {
+            task = returned
+        } else if let running = readsInFlight[key] {
+            task = running
+        } else {
+            let transport = transport
+            task = Task { try await transport.send(call, server: server) }
+            readsInFlight[key] = task
+        }
+        if rereading, returnOpen { returnReads[key] = task }
+        // La requête partagée n'est jamais annulée par un appelant : elle finit, et ses autres attentes la reçoivent.
+        let result = await task.result
+        if readsInFlight[key] == task { readsInFlight[key] = nil }
+        try Task.checkCancellation()
+        if case let .failure(error) = result, error is CancellationError, suspensions > epoch {
+            if resumedSuspensions < suspensions { try await untilReturn() }
+            return try await send(call, on: server, rereading: true)
+        }
+        return try result.get()
     }
 
     /// Un échange décodé avec le serveur relié (`unreachable` sans serveur).
@@ -1332,7 +1479,7 @@ public final class HarnessModel: ObservableObject {
     /// inattendu est remonté.
     func exchange(_ call: HarnessCall) async throws -> HarnessReply {
         guard let server else { throw HarnessFailure.unreachable }
-        let reply = try await transport.send(call, server: server)
+        let reply = try await send(call, on: server)
         reportIfUnexpected(reply, for: call)
         return reply
     }
@@ -1404,6 +1551,15 @@ public final class HarnessModel: ObservableObject {
         if error is CancellationError { return nil }
         if let urlError = error as? URLError, urlError.code == .cancelled { return nil }
         return (error as? HarnessFailure) ?? .unreachable
+    }
+
+    /// L'échec d'une lecture qui vient de finir en erreur : une annulation (écran quitté, actualisation
+    /// relancée) garde l'échec d'avant, elle n'efface pas le bandeau d'une panne que l'utilisateur n'a
+    /// pas encore vue ; toute autre erreur donne `failure(of:)`.
+    nonisolated static func failure(after error: Error, keeping current: HarnessFailure?) -> HarnessFailure? {
+        if error is CancellationError { return current }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return current }
+        return failure(of: error)
     }
 }
 
@@ -1505,6 +1661,26 @@ private struct RunBody: Encodable {
     var kind: String?
     var labels: [String]?
     var autonomy: String?
+}
+
+/// Ce qui rend deux lectures GET identiques : même serveur, même jeton, même chemin, mêmes
+/// en-têtes, même rang de lecture (`HarnessModel.readGeneration`).
+private struct HarnessReadKey: Hashable {
+    let base: String
+    let token: String
+    let path: String
+    let headers: [String: String]
+    let authenticated: Bool
+    let generation: Int
+
+    init(call: HarnessCall, server: HarnessServer, generation: Int) {
+        base = server.baseURL.absoluteString
+        token = server.token
+        path = call.path
+        headers = call.headers
+        authenticated = call.authenticated
+        self.generation = generation
+    }
 }
 
 private struct ProjectBody: Encodable {

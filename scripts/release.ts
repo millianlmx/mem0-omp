@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 // Moteur de release (S-1/S-4/S-5) : à la fusion d'une PR sur `main`, décide du
 // bump de chaque plugin touché d'après les commits conventionnels, rattrape les
-// versions jamais publiées, écrit les versions et `CHANGELOG.md`, puis publie
-// par une PR de bot auto-mergée : branche `release/<after>` → PR → attente des
-// statuts requis → fusion squash → tags → releases GitHub. Le tout idempotent.
-// Les PR `release/*` laissées ouvertes par un run précédent sont fermées dès que
-// la PR courante existe, ou quand plus rien n'est à publier.
+// versions jamais publiées, écrit les versions et `CHANGELOG.md`, prouve l'arbre
+// écrit avec `check.sh`, puis pousse le commit de release DIRECTEMENT sur `main`
+// (jeton autorisé à contourner la protection de branche, commit marqué
+// `[skip ci]`) → tags → releases GitHub. Le tout idempotent.
 //
-// Quand `main` bouge sous la PR de release (une autre PR fusionnée pendant
-// l'attente des statuts), la PR n'est JAMAIS fusionnée telle quelle : le plan se
-// recalcule depuis le nouveau `main` (tous les commits depuis la version
-// courante, donc aucune entrée de journal perdue ni de bump sous-évalué), la même
-// branche est réécrite et la même PR remise à jour, puis l'attente reprend.
+// La poussée n'est jamais forcée : si `main` a bougé depuis le plan (une autre
+// PR fusionnée entre-temps), le remote la refuse, le plan se recalcule depuis le
+// nouveau `main` (tous les commits depuis la version courante, donc aucune
+// entrée de journal perdue ni de bump sous-évalué) et la poussée est retentée.
+//
+// Les releases publiées sont écrites dans la sortie `assets` du job
+// (`$GITHUB_OUTPUT`) : release.yml construit ensuite leurs apps, une fois par
+// commit tagué (.github/workflows/release-assets.yml).
 //
 // Après la publication, la branche `deploy` avance (avance rapide seulement) sur
 // le commit du dernier tag `omp-harness-v*` : c'est elle que suit le déploiement
@@ -40,19 +42,18 @@
 // PIÈGES MESURÉS (2026-09-24 → 2026-09-27, git 2.5x, gh 2.x) :
 //  * `git log --grep` SANS pathspec : avec `-- .`, le commit de release (vide)
 //    est exclu et la garde d'idempotence ne trouve jamais rien ;
-//  * RIEN ne pousse `refs/heads/main` : la protection de branche exige deux
-//    statuts qu'un commit neuf n'a pas encore, donc un push direct rend
+//  * la protection de `main` exige des statuts qu'un commit neuf n'a pas
+//    encore : un push direct sans droit de contournement rend
 //    `remote: error: GH006: Protected branch update failed for refs/heads/main.`
-//    Le seul chemin vers main est la fusion de la PR de release (G-1) ;
-//  * `git tag -a` en a besoin AUSSI : l'identité doit être posée sur le tag
+//    Le jeton de release doit donc appartenir à un acteur autorisé à la
+//    contourner (PUBLISHING.md § Jeton de release) ;
+//  * `git tag -a` a besoin d'une identité : elle doit être posée sur le tag
 //    annoté autant que sur le commit (sinon `empty ident name` sur ubuntu) ;
-//  * `gh pr merge --auto` est proscrit : le réglage `allow_auto_merge` du dépôt
-//    vaut `false`, la fusion doit être faite explicitement ;
 //  * `gh release create --verify-tag` : sans lui, `gh` crée le tag depuis la
 //    branche par défaut ; le tag doit donc être poussé AVANT ;
-//  * `GITHUB_TOKEN` ne peut pas tenir ce rôle : les événements qu'il crée ne
-//    déclenchent aucun run, donc la PR de release n'aurait jamais ses statuts
-//    requis et resterait « Expected » pour toujours ⇒ jeton dédié ;
+//  * `GITHUB_TOKEN` ne peut pas tenir ce rôle : son bot n'est pas administrateur
+//    et ne se déclare pas comme acteur de contournement de la protection ⇒
+//    jeton dédié ;
 //  * le format de `git log --name-only` est ambigu si on parse naïvement (le
 //    corps peut contenir des lignes vides) : d'où le terminateur `%x1d` posé
 //    dans le format, qui sépare le corps de la liste de fichiers.
@@ -115,7 +116,7 @@ export type Plan = {
   /** Plugins sans rien à publier (`· <plugin> : inchangé`). */
   unchanged: string[];
   /**
-   * Parmi eux, ceux qu'un commit a touchés depuis leur version sans être `feat`, `fix` ni une rupture
+   * Parmi eux, ceux qu'un commit a touchés depuis leur version sans être `feat`, `fix`, `perf` ni une rupture
    * (docs, chore, titre non conventionnel…) : le run le dit, au lieu de « aucun fichier touché ».
    */
   unreleased: Array<{ name: string; commits: number }>;
@@ -183,8 +184,9 @@ export function breakingText(body: string): string | null {
 
 /**
  * Niveau d'un commit : `major` si `!` avant le `:` ou footer de rupture, sinon
- * `minor` pour `feat`, `patch` pour `fix`, et **rien** pour tout le reste
- * (docs, chore, ci, refactor, perf, test, build, style, sujet non conventionnel).
+ * `minor` pour `feat`, `patch` pour `fix` et `perf` (un gain de performance doit
+ * atteindre le serveur, que `deploy` ne met à jour que par un tag), et **rien** pour
+ * tout le reste (docs, chore, ci, refactor, test, build, style, sujet non conventionnel).
  */
 export function levelOf(subject: string, body: string): Level | null {
   const match = SUBJECT.exec(subject);
@@ -193,7 +195,7 @@ export function levelOf(subject: string, body: string): Level | null {
   if (breakingText(body) !== null) return "major";
   const type = (match[1] ?? "").toLowerCase();
   if (type === "feat") return "minor";
-  if (type === "fix") return "patch";
+  if (type === "fix" || type === "perf") return "patch";
   return null;
 }
 
@@ -565,20 +567,6 @@ function gitQuiet(args: string[]): Run {
   return run("git", args);
 }
 
-/** Un appel `gh` : un binaire absent est nommé, jamais confondu avec un échec de commande. */
-function ghCall(args: string[], what: string): string | null {
-  const result = run("gh", args);
-  if (result.missing) {
-    console.error("✗ gh indisponible (GH_TOKEN ?)");
-    return null;
-  }
-  if (result.code !== 0) {
-    console.error(`✗ ${what} : ${result.stderr.trim() || "échec sans message"}`);
-    return null;
-  }
-  return result.stdout;
-}
-
 type Args = {
   before: string;
   after: string;
@@ -588,7 +576,6 @@ type Args = {
   /** Référence qui joue le rôle de `main` dans le plan ; la publication reste sur `origin/main`. */
   main: string;
   repo: string | null;
-  mergeTimeout: number;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -596,7 +583,6 @@ function parseArgs(argv: string[]): Args {
     const index = argv.indexOf(flag);
     return index === -1 ? null : (argv[index + 1] ?? null);
   };
-  const timeout = value("--merge-timeout");
   return {
     before: value("--before") ?? "",
     after: value("--after") ?? "",
@@ -604,7 +590,6 @@ function parseArgs(argv: string[]): Args {
     simulate: argv.includes("--simulate"),
     main: value("--main") ?? "origin/main",
     repo: value("--repo"),
-    mergeTimeout: timeout === null ? 1200 : Number(timeout),
   };
 }
 
@@ -716,8 +701,8 @@ type Planned = { plugins: Array<{ name: string; dir: string }>; plan: Plan; publ
  * l'arbre de travail, extrait de cette référence), les services hors catalogue
  * présents sur elle, leurs historiques, les tags du remote et la garde
  * d'idempotence de l'événement `after`. Appelé au départ du run, puis à chaque
- * recalcul quand `main` a bougé sous la PR de release. Lève sur un historique
- * illisible.
+ * recalcul quand `main` a bougé avant la poussée du commit de release. Lève sur
+ * un historique illisible.
  */
 function planOn(main: string, catalog: Catalog, after: string, eventDate: string): Planned {
   // Les services hors catalogue suivent les plugins, s'ils existent sur la référence `main`.
@@ -764,7 +749,7 @@ function printPlan(plugins: Array<{ name: string }>, plan: Plan, published: bool
       console.log(
         ignored === undefined
           ? `· ${plugin.name} : inchangé (aucun fichier touché)`
-          : `· ${plugin.name} : rien à publier (${ignored.commits} commit(s) depuis la version, aucun en feat, fix ni rupture)`,
+          : `· ${plugin.name} : rien à publier (${ignored.commits} commit(s) depuis la version, aucun en feat, fix, perf ni rupture)`,
       );
     }
   }
@@ -776,8 +761,8 @@ function printPlan(plugins: Array<{ name: string }>, plan: Plan, published: bool
   }
 }
 
-/** Titre de la PR et sujet de la fusion : les versions bumpées, ou le journal seul. */
-function mergeTitle(plan: Plan): string {
+/** Sujet du commit de release : les versions bumpées, ou le journal seul. */
+function releaseTitle(plan: Plan): string {
   const bumped = plan.releases.filter((release) => release.kind === "bump");
   const label =
     bumped.length > 0
@@ -786,14 +771,22 @@ function mergeTitle(plan: Plan): string {
   return `chore(release): ${label}`;
 }
 
-/** Corps du commit de branche, de la PR et de la fusion : le même partout (S-1). */
-function mergeBody(plan: Plan, after: string): string {
+/**
+ * Corps du commit de release : le trailer d'idempotence, une ligne par version,
+ * puis `[skip ci]` — le commit poussé sur `main` ne relance ni `check.yml` ni
+ * `release.yml` (son arbre a déjà passé `check.sh` dans ce run).
+ */
+function releaseBody(plan: Plan, after: string): string {
   const lines = [`Release-Event: ${after}`];
   for (const release of plan.releases) {
     lines.push(`${release.kind === "bump" ? "Released" : "Backfill"}: ${release.name} ${release.version}`);
   }
+  lines.push("", SKIP_CI);
   return lines.join("\n");
 }
+
+/** La marque qui empêche GitHub Actions de lancer les workflows `push` du commit de release. */
+export const SKIP_CI = "[skip ci]";
 
 /** Écritures du bump : package.json des plugins, les DEUX catalogues (identiques). */
 function writeBumpedVersions(plan: Plan, catalog: Catalog): string[] {
@@ -856,316 +849,59 @@ function writeReleaseFiles(
   return { written, changelog };
 }
 
-/** Le numéro de la PR ouverte d'une branche, `""` s'il n'y en a pas. */
-function prNumberOf(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed === "") return "";
-  try {
-    const parsed = JSON.parse(trimmed) as Array<{ number?: number }> | { number?: number };
-    const first = Array.isArray(parsed) ? parsed[0] : parsed;
-    return typeof first?.number === "number" ? String(first.number) : "";
-  } catch {
-    // `--jq '.[0].number // ""'` rend le nombre nu : on l'accepte aussi.
-    return /^\d+$/.test(trimmed) ? trimmed : "";
-  }
-}
-
 /**
- * La PR ouverte de la branche, réutilisée si elle existe déjà (relance). `refresh` :
- * le plan vient d'être recalculé, le titre et le corps de la PR réutilisée sont
- * remis à jour pour nommer les versions qu'elle porte désormais. Par l'API REST
- * (`gh api -X PATCH`) et non `gh pr edit` : ce dernier passe par GraphQL, qui exige
- * `read:org`, une portée que le jeton du job de release n'a pas (constaté le 2026-11-08).
- */
-async function openPullRequest(
-  branch: string,
-  title: string,
-  body: string,
-  ownerRepo: string,
-  refresh: boolean,
-): Promise<string | null> {
-  const listed = ghCall(
-    ["pr", "list", "--repo", ownerRepo, "--head", branch, "--state", "open", "--json", "number"],
-    `gh pr list --head ${branch}`,
-  );
-  if (listed === null) return null;
-  const existing = prNumberOf(listed);
-  if (existing !== "") {
-    const viewed = ghCall(["pr", "view", existing, "--repo", ownerRepo, "--json", "url"], `gh pr view ${existing}`);
-    if (viewed === null) return null;
-    let url = "";
-    try {
-      url = ((JSON.parse(viewed) as { url?: string }).url ?? "").trim();
-    } catch {
-      url = viewed.trim();
-    }
-    if (url === "") {
-      console.error(`✗ URL de la PR #${existing} introuvable : ${viewed.trim() || "(vide)"}`);
-      return null;
-    }
-    console.log(`· PR de release réutilisée : ${url}`);
-    if (refresh) {
-      const edited = ghCall(
-        ["api", "-X", "PATCH", `repos/${ownerRepo}/pulls/${existing}`, "-f", `title=${title}`, "-f", `body=${body}`],
-        `gh api PATCH pulls/${existing}`,
-      );
-      if (edited === null) return null;
-      console.log(`· PR #${existing} remise à jour : ${title}`);
-    }
-    return existing;
-  }
-
-  const created = ghCall(
-    ["pr", "create", "--repo", ownerRepo, "--base", "main", "--head", branch, "--title", title, "--body", body],
-    `gh pr create --head ${branch}`,
-  );
-  if (created === null) return null;
-  const number = /(\d+)\/?$/.exec(created.trim())?.[1] ?? "";
-  if (number === "") {
-    console.error(`✗ numéro de PR introuvable dans la réponse de gh : ${created.trim() || "(vide)"}`);
-    return null;
-  }
-  console.log(`· PR de release ouverte : ${created.trim()}`);
-  return number;
-}
-
-/** Une PR ouverte, telle que `gh pr list --json number,headRefName,isCrossRepository` la rend. */
-export type OpenPullRequest = { number: number; headRefName: string; isCrossRepository: boolean };
-
-/**
- * Les PR de release PÉRIMÉES parmi les PR ouvertes : branche `release/*` de CE
- * dépôt (jamais celle d'une fourche, qui ne nous appartient pas), autre que
- * `keep` — la branche de la PR courante, `null` quand plus rien n'est à publier.
- * Chaque run recalcule le plan depuis `main` : une PR de release laissée ouverte
- * par un run précédent (statuts requis jamais verts, budget d'attente épuisé)
- * porte un plan que le run courant remplace, et ne doit jamais être fusionnée.
- * Une réponse illisible rend `null`.
- */
-export function stalePullRequests(raw: string, keep: string | null): OpenPullRequest[] | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw.trim() === "" ? "[]" : raw);
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(parsed)) return null;
-  const open = parsed.filter(
-    (pr): pr is OpenPullRequest =>
-      typeof pr === "object" &&
-      pr !== null &&
-      typeof (pr as OpenPullRequest).number === "number" &&
-      typeof (pr as OpenPullRequest).headRefName === "string",
-  );
-  return open
-    .filter((pr) => pr.isCrossRepository !== true && pr.headRefName.startsWith("release/") && pr.headRefName !== keep)
-    .sort((a, b) => a.number - b.number);
-}
-
-/**
- * Ferme les PR de release périmées (`stalePullRequests`), chacune avec un
- * commentaire qui nomme ce qui la remplace, puis supprime sa branche : une
- * branche `release/<sha>` n'appartient qu'au job de release. Idempotent — un
- * rejeu ne liste que les PR encore ouvertes, et une branche déjà supprimée n'est
- * qu'une ligne `·`. Jamais bloquant : la publication du plan courant ne dépend
- * pas de ce ménage, donc un échec de `gh` ou de `git push --delete` est nommé
- * sans faire échouer le run. `dryRun` : la liste s'imprime, rien n'est fermé.
- */
-function closeStalePullRequests(
-  ownerRepo: string,
-  current: { branch: string; number: string | null } | null,
-  dryRun: boolean,
-  /** La raison écrite dans le commentaire de fermeture, quand ce n'est ni un remplacement ni un plan vide. */
-  reason: string | null = null,
-): void {
-  const listed = run("gh", [
-    "pr",
-    "list",
-    "--repo",
-    ownerRepo,
-    "--state",
-    "open",
-    "--limit",
-    "200",
-    "--json",
-    "number,headRefName,isCrossRepository",
-  ]);
-  if (listed.missing || listed.code !== 0) {
-    const reason = listed.missing ? "gh indisponible" : listed.stderr.trim() || "échec sans message";
-    console.log(`· PR de release périmées non vérifiées (gh pr list : ${reason})`);
-    return;
-  }
-  const stale = stalePullRequests(listed.stdout, current?.branch ?? null);
-  if (stale === null) {
-    console.log(`· PR de release périmées non vérifiées (gh pr list illisible : ${listed.stdout.trim() || "vide"})`);
-    return;
-  }
-  const replacement =
-    reason ??
-    (current === null
-      ? "plus rien n'est à publier depuis main"
-      : `remplacée par ${current.number === null ? `la PR de ${current.branch}` : `#${current.number}`}`);
-  for (const pr of stale) {
-    if (dryRun) {
-      console.log(`· PR de release périmée #${pr.number} (${pr.headRefName}) à fermer : ${replacement}`);
-      continue;
-    }
-    const comment =
-      `Fermée par le job de release : ${replacement}. Chaque run recalcule le plan depuis main, ` +
-      `donc cette PR (${pr.headRefName}) est périmée et ne doit pas être fusionnée.`;
-    const closed = run("gh", ["pr", "close", String(pr.number), "--repo", ownerRepo, "--comment", comment]);
-    if (closed.missing || closed.code !== 0) {
-      const reason = closed.missing ? "gh indisponible" : closed.stderr.trim() || "échec sans message";
-      console.log(`· PR de release périmée #${pr.number} non fermée (${reason}) — à fermer à la main`);
-      continue;
-    }
-    console.log(`· PR de release périmée #${pr.number} (${pr.headRefName}) fermée : ${replacement}`);
-    const deleted = run("git", ["push", "origin", "--delete", pr.headRefName]);
-    if (deleted.code !== 0) {
-      console.log(`· branche ${pr.headRefName} non supprimée (${deleted.stderr.trim() || "échec sans message"})`);
-    }
-  }
-}
-
-/** Les états de `mergeStateStatus` qui autorisent la fusion (Doc-3). */
-const MERGEABLE = new Set(["CLEAN", "UNSTABLE", "HAS_HOOKS"]);
-
-/** Le sha de `main` sur le remote, relu sans rien récupérer ; null si illisible. */
-function remoteMain(): string | null {
-  const listed = gitQuiet(["ls-remote", "origin", "refs/heads/main"]);
-  const sha = listed.code === 0 ? (listed.stdout.trim().split("\t")[0] ?? "") : "";
-  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
-}
-
-/** Issue de l'attente : fusionnable, `main` a bougé sous la PR, ou échec nommé. */
-type Waited = "ready" | "moved" | "failed";
-
-/**
- * Attend que les statuts requis aient passé, jusqu'à `deadline` (budget
- * `--merge-timeout`, commun à toutes les attentes du run). Un statut inconnu ne
- * fait jamais fusionner : on attend le budget, puis on échoue en le nommant.
- * `main` est relu à chaque tour : s'il n'est plus `base`, la PR porte un plan
- * périmé et l'attente s'arrête sur `moved` — AVANT tout autre verdict, car un
- * `DIRTY` peut justement venir de ce déplacement. `DIRTY` sur la même base
- * échoue immédiatement.
- */
-async function waitMergeable(
-  number: string,
-  ownerRepo: string,
-  base: string,
-  deadline: number,
-  budget: number,
-): Promise<Waited> {
-  let last = { status: "UNKNOWN", url: "" };
-  for (;;) {
-    const view = run("gh", [
-      "pr",
-      "view",
-      number,
-      "--repo",
-      ownerRepo,
-      "--json",
-      "state,mergeStateStatus,mergeCommit,url",
-    ]);
-    if (view.missing) {
-      console.error("✗ gh indisponible (GH_TOKEN ?)");
-      return "failed";
-    }
-    if (view.code !== 0) {
-      console.error(`✗ gh pr view ${number} : ${view.stderr.trim() || "échec sans message"}`);
-      return "failed";
-    }
-    try {
-      const parsed = JSON.parse(view.stdout) as { mergeStateStatus?: string; url?: string };
-      last = { status: parsed.mergeStateStatus ?? "INCONNU", url: parsed.url ?? "" };
-    } catch {
-      console.error(`✗ gh pr view ${number} : réponse illisible (${view.stdout.trim() || "vide"})`);
-      return "failed";
-    }
-    const main = remoteMain();
-    if (main !== null && main !== base) return "moved";
-    if (MERGEABLE.has(last.status)) return "ready";
-    if (last.status === "DIRTY") {
-      console.error(`✗ PR #${number} en conflit (DIRTY) : ${last.url}`);
-      return "failed";
-    }
-    if (Date.now() >= deadline) {
-      console.error(`✗ PR #${number} non fusionnable après ${budget} s (dernier état : ${last.status}) : ${last.url}`);
-      return "failed";
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(10_000, Math.max(0, deadline - Date.now()))));
-  }
-}
-
-/** Fusionne en squash et rend le sha du commit de fusion. */
-async function mergePullRequest(
-  number: string,
-  ownerRepo: string,
-  head: string,
-  title: string,
-  body: string,
-): Promise<string | null> {
-  // `--auto` est proscrit : `allow_auto_merge` vaut `false` sur ce dépôt.
-  const merged = ghCall(
-    [
-      "pr",
-      "merge",
-      number,
-      "--repo",
-      ownerRepo,
-      "--squash",
-      "--subject",
-      title,
-      "--body",
-      body,
-      "--match-head-commit",
-      head,
-    ],
-    `gh pr merge ${number}`,
-  );
-  if (merged === null) return null;
-
-  const view = ghCall(["pr", "view", number, "--repo", ownerRepo, "--json", "mergeCommit"], `gh pr view ${number}`);
-  if (view === null) return null;
-  let sha = "";
-  try {
-    sha = ((JSON.parse(view) as { mergeCommit?: { oid?: string } | null }).mergeCommit?.oid ?? "").trim();
-  } catch {
-    sha = "";
-  }
-  if (sha === "") {
-    console.error(`✗ commit de fusion introuvable pour la PR #${number}`);
-    return null;
-  }
-  return sha;
-}
-
-/**
- * Recalculs au plus par run quand `main` bouge sous la PR de release. Chacun
- * coûte un `check.sh` et une nouvelle attente des statuts (dans le même budget
- * `--merge-timeout`) ; au-delà, le run échoue SANS rien fusionner : le run de la
- * dernière fusion, en file derrière lui (`concurrency: release-main`), repart
- * alors du `main` courant et ne perd rien.
+ * Recalculs au plus par run quand `main` bouge entre le plan et la poussée du
+ * commit de release. Chacun coûte un `check.sh` ; au-delà, le run sort vert SANS
+ * rien publier : le run de la dernière fusion, en file derrière lui
+ * (`concurrency: release-main`), repart alors du `main` courant et ne perd rien.
  */
 const MAX_REPLANS = 3;
 
-/**
- * Le budget d'attente minimal pour tenter un recalcul (check.sh de la release puis
- * statuts requis de la PR remise à jour). En deçà, le run passe la main au run de la
- * fusion qui a bougé `main`, en file derrière lui : le job reste sous son plafond de 60 min.
- */
-const REPLAN_RESERVE_S = 1200;
-
 const short = (sha: string) => sha.slice(0, 12);
 
+/** Les releases publiées par un run, regroupées par commit tagué (`assets` de release.yml). */
+export type AssetGroup = { ref: string; tags: string };
+
 /**
- * Publie le plan : une branche de release, sa PR, sa fusion par le bot, puis les
- * tags et les releases. Ordre imposé, jamais inversé : **commit → fusion → tags
- * → releases** (S-1). Rien n'est poussé sur `refs/heads/main` (G-1).
+ * Les groupes d'apps à construire après la publication : un par commit tagué,
+ * avec les tags qu'il porte, dans l'ordre de publication. Les bumps d'un run
+ * pointent tous sur le commit de release : leurs apps se construisent UNE fois
+ * et se joignent à chacune de leurs releases. Un rattrapage garde son propre
+ * commit, donc son propre groupe.
+ */
+export function assetGroupsOf(published: Array<{ tag: string; commit: string }>): AssetGroup[] {
+  const groups = new Map<string, string[]>();
+  for (const release of published) groups.set(release.commit, [...(groups.get(release.commit) ?? []), release.tag]);
+  return [...groups].map(([ref, tags]) => ({ ref, tags: tags.join(" ") }));
+}
+
+/**
+ * Écrit une sortie d'étape GitHub Actions (`$GITHUB_OUTPUT`), si le moteur tourne
+ * dans un job : `release.yml` lit `assets` pour construire les apps des releases
+ * publiées. Hors Actions, rien n'est écrit.
+ */
+function writeOutput(name: string, value: string): void {
+  const file = process.env.GITHUB_OUTPUT ?? "";
+  if (file === "") return;
+  fs.appendFileSync(file, `${name}=${value}\n`);
+}
+
+/**
+ * Publie le plan : le commit de release poussé DIRECTEMENT sur `main`, puis les
+ * tags et les releases. Ordre imposé, jamais inversé : **commit → poussée → tags
+ * → releases** (S-1).
  *
- * La PR n'est fusionnée que si `main` est encore la base de son plan : sinon le
- * plan se recalcule depuis le nouveau `main` (`planOn`), la même branche
- * `release/<after>` est réécrite (poussée forcée : elle n'appartient qu'au job),
- * la même PR remise à jour, et l'attente reprend.
+ * La poussée n'est jamais forcée : elle n'aboutit que si `main` est encore la
+ * base du plan (avance rapide). Si une autre fusion est arrivée entre-temps, le
+ * remote la refuse ; le plan se recalcule alors depuis le nouveau `main`
+ * (`planOn`), `check.sh` rejoue sur le nouvel arbre écrit, et la poussée est
+ * retentée. Un refus alors que `main` n'a PAS bougé est celui de la protection de
+ * branche : le jeton de release n'a pas le droit de la contourner, le run échoue
+ * en le disant (PUBLISHING.md § Jeton de release).
+ *
+ * Le commit porte `[skip ci]` : il ne relance ni `check.yml` ni `release.yml`.
+ * Son arbre a déjà passé `check.sh` ici, et `release-simulation` l'avait prouvé
+ * sur la PR fusionnée.
  */
 async function publish(
   first: Plan,
@@ -1177,12 +913,11 @@ async function publish(
   const branch = `release/${args.after}`;
   let plan = first;
   let base = git(["rev-parse", "origin/main^{commit}"]).stdout.trim();
-  let mergeSha: string | null = null;
-  let deadline: number | null = null;
+  let releaseSha: string | null = null;
   for (let replans = 0; ; replans++) {
-    const title = mergeTitle(plan);
-    const body = mergeBody(plan, args.after);
-    // Les écritures partent de la base du plan et vivent sur la branche de release.
+    const title = releaseTitle(plan);
+    const body = releaseBody(plan, args.after);
+    // Les écritures partent de la base du plan, sur une branche LOCALE jamais poussée.
     git(["checkout", "-B", branch, base]);
     const changelogFile = path.join(ROOT, CHANGELOG_FILE);
     const existing = fs.existsSync(changelogFile) ? fs.readFileSync(changelogFile, "utf8") : null;
@@ -1191,12 +926,9 @@ async function publish(
     const { written } = writeReleaseFiles(plan, readCatalog(CATALOGS[0]), existing);
 
     if (written.length === 0) {
-      // Rien à écrire (rejeu après fusion, tags manquants) : ni branche, ni PR à
-      // ouvrir — mais l'état de main est relu avant de taguer. Aucune PR n'est
-      // courante : toute PR de release encore ouverte est périmée (celle de ce
-      // run comprise, si un recalcul l'a vidée).
+      // Rien à écrire (rejeu après publication, tags manquants) : aucun commit à
+      // pousser, mais l'état de main est relu avant de taguer.
       git(["fetch", "--force", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
-      closeStalePullRequests(ownerRepo, null, false);
       break;
     }
 
@@ -1206,77 +938,42 @@ async function publish(
       return 1;
     }
 
-    // Dates figées sur celles de l'événement : un rejeu produit le MÊME sha, donc
-    // un push sans effet (G-3).
+    // Dates figées sur celles de l'événement : un rejeu produit le MÊME sha (G-3).
     const dates = { GIT_AUTHOR_DATE: event.iso, GIT_COMMITTER_DATE: event.iso };
     git(["add", "--", ...written]);
     git([...IDENTITY, "commit", "-m", title, "-m", body], { env: dates });
     const head = git(["rev-parse", "HEAD"]).stdout.trim();
 
-    // Forcée : après un recalcul, la branche repart d'un autre `main`.
-    const pushed = run("git", ["push", "origin", `+HEAD:refs/heads/${branch}`]);
-    if (pushed.code !== 0) {
-      console.error(`✗ git push origin HEAD:refs/heads/${branch} : ${pushed.stderr.trim() || "échec sans message"}`);
-      return 1;
-    }
-
-    const number = await openPullRequest(branch, title, body, ownerRepo, replans > 0);
-    if (number === null) return 1;
-    // La PR courante existe : les PR de release des runs précédents sont périmées,
-    // fermées AVANT l'attente — même si ce run échoue ensuite sur son budget.
-    closeStalePullRequests(ownerRepo, { branch, number }, false);
-    deadline ??= Date.now() + args.mergeTimeout * 1000;
-    const waited = await waitMergeable(number, ownerRepo, base, deadline, args.mergeTimeout);
-    if (waited === "failed") return 1;
-    // Relu juste avant la fusion : l'attente a pu dormir jusqu'à 10 s.
-    const main = waited === "ready" ? remoteMain() : null;
-    if (waited === "ready" && main === null) {
-      console.error("✗ main illisible sur origin (git ls-remote) — rien n'est fusionné");
-      return 1;
-    }
-    if (waited === "ready" && main === base) {
-      mergeSha = await mergePullRequest(number, ownerRepo, head, title, body);
-      if (mergeSha === null) return 1;
+    // Jamais forcée : seule une avance rapide depuis `base` est acceptée.
+    const pushed = run("git", ["push", "origin", "HEAD:refs/heads/main"]);
+    if (pushed.code === 0) {
+      releaseSha = head;
       git(["fetch", "--force", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
-      // Invariant : l'arbre fusionné doit être EXACTEMENT celui qui a passé check.sh.
-      const mergedTree = git(["rev-parse", `${mergeSha}^{tree}`]).stdout.trim();
-      const validatedTree = git(["rev-parse", `${branch}^{tree}`]).stdout.trim();
-      if (mergedTree !== validatedTree) {
-        const parent = gitQuiet(["rev-parse", `${mergeSha}^1`]).stdout.trim();
-        console.error(`✗ l'arbre fusionné (${mergedTree}) n'est pas l'arbre validé (${validatedTree})`);
-        if (parent !== base) {
-          console.error(
-            `  main a bougé pendant la fusion (${short(base)} → ${short(parent)}) : rien n'est tagué. ` +
-              "Le commit de release est sur main ; compare CHANGELOG.md aux commits fusionnés entre les deux et complète-le par une PR `docs(changelog)`.",
-          );
-        }
-        return 1;
-      }
+      console.log(`→ commit de release poussé sur main : ${short(head)} (${title})`);
       break;
     }
 
-    // `main` a bougé sous la PR : elle ne sera jamais fusionnée telle quelle. Le
-    // recalcul rejoue check.sh puis une attente complète des statuts : sans assez
-    // de budget pour les deux, ou passé MAX_REPLANS, ce run passe la main.
-    const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
-    if (replans >= MAX_REPLANS || left < REPLAN_RESERVE_S) {
-      const why = replans >= MAX_REPLANS ? `${MAX_REPLANS} recalculs déjà faits` : `${left} s de budget restant`;
-      console.log(
-        `↷ main a bougé sous la PR de release #${number} (${why}) : rien n'est fusionné, la PR est fermée — ` +
-          "le run de la fusion qui a bougé main, en file derrière celui-ci, publie depuis le nouveau main",
+    // Refusée : main a-t-il bougé, ou la protection refuse-t-elle le jeton ?
+    git(["fetch", "--force", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
+    const moved = git(["rev-parse", "origin/main^{commit}"]).stdout.trim();
+    if (moved === base) {
+      console.error(
+        `✗ git push origin HEAD:refs/heads/main refusé alors que main n'a pas bougé : ${pushed.stderr.trim() || "échec sans message"}`,
       );
-      closeStalePullRequests(
-        ownerRepo,
-        null,
-        false,
-        "relayée au run de la fusion suivante, qui repart du nouveau main",
+      console.error(
+        "  le jeton de release doit pouvoir contourner la protection de main (PUBLISHING.md, § Jeton de release) — rien n'est tagué",
+      );
+      return 1;
+    }
+    if (replans >= MAX_REPLANS) {
+      console.log(
+        `↷ main a bougé de nouveau (${MAX_REPLANS} recalculs déjà faits) : rien n'est publié — ` +
+          "le run de la fusion qui a bougé main, en file derrière celui-ci, publie depuis le nouveau main",
       );
       return 0;
     }
-    git(["fetch", "--force", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
-    const moved = git(["rev-parse", "origin/main^{commit}"]).stdout.trim();
     console.log(
-      `↻ main a bougé sous la PR de release #${number} (${short(base)} → ${short(moved)}) : la release se recalcule depuis le nouveau main`,
+      `↻ main a bougé avant la poussée du commit de release (${short(base)} → ${short(moved)}) : la release se recalcule depuis le nouveau main`,
     );
     base = moved;
     // Le catalogue du recalcul est celui du nouveau main.
@@ -1290,17 +987,14 @@ async function publish(
     }
     printPlan(replanned.plugins, replanned.plan, replanned.published);
     plan = replanned.plan;
-    if (plan.releases.length === 0) {
-      // Le nouveau main n'a plus rien à publier : la PR de ce run est périmée.
-      closeStalePullRequests(ownerRepo, null, false);
-      return 0;
-    }
+    if (plan.releases.length === 0) return 0;
   }
 
   // Tous les tags D'ABORD, en une seule poussée, puis les releases (S-1).
   const tagRefs: string[] = [];
+  const targets: Array<{ tag: string; commit: string }> = [];
   for (const release of plan.releases) {
-    const target = release.kind === "bump" ? mergeSha : release.commit;
+    const target = release.kind === "bump" ? releaseSha : release.commit;
     if (target === null) {
       console.error(`✗ commit de publication introuvable pour ${release.tag}`);
       return 1;
@@ -1309,6 +1003,7 @@ async function publish(
       env: { GIT_COMMITTER_DATE: event.iso },
     });
     tagRefs.push(`refs/tags/${release.tag}`);
+    targets.push({ tag: release.tag, commit: git(["rev-parse", `${target}^{commit}`]).stdout.trim() });
   }
   const tagPush = run("git", ["push", "origin", ...tagRefs]);
   if (tagPush.code !== 0) {
@@ -1316,7 +1011,8 @@ async function publish(
     return 1;
   }
 
-  for (const release of plan.releases) {
+  const published: Array<{ tag: string; commit: string }> = [];
+  for (const [index, release] of plan.releases.entries()) {
     const notes = path.join(fs.realpathSync(os.tmpdir()), `release-${release.tag}-${process.pid}.md`);
     fs.writeFileSync(notes, renderReleaseBody([release], { ownerRepo, marketplace: catalog.name }));
     // --verify-tag : le tag est créé et poussé plus haut, `gh` ne doit pas en
@@ -1340,17 +1036,12 @@ async function publish(
       console.error(`✗ gh release create ${release.tag} : ${result.stderr.trim() || "échec sans message"}`);
       return 1;
     }
+    const target = targets[index];
+    if (target !== undefined) published.push(target);
     console.log(`  → ${release.name} ${release.version} publié (tag ${release.tag})`);
   }
-
-  if (mergeSha !== null) {
-    const deleted = run("git", ["push", "origin", "--delete", branch]);
-    if (deleted.code !== 0) {
-      console.log(
-        `· branche ${branch} non supprimée (${deleted.stderr.trim() || "échec sans message"}) — à nettoyer à la main`,
-      );
-    }
-  }
+  // Les apps de ces releases se construisent ensuite, dans le même workflow.
+  writeOutput("assets", JSON.stringify(assetGroupsOf(published)));
   return 0;
 }
 
@@ -1504,10 +1195,6 @@ async function main(argv: string[]): Promise<number> {
     console.error(`✗ plage ${range} inexploitable : before est nul (première poussée de la branche)`);
     return 1;
   }
-  if (!Number.isFinite(args.mergeTimeout) || args.mergeTimeout <= 0) {
-    console.error(`✗ --merge-timeout invalide : ${args.mergeTimeout}`);
-    return 1;
-  }
   if (gitQuiet(["merge-base", "--is-ancestor", args.before, args.after]).code !== 0) {
     console.error(`✗ plage ${range} inexploitable : before n'est pas un ancêtre de after`);
     return 1;
@@ -1569,23 +1256,14 @@ async function main(argv: string[]): Promise<number> {
   }
   if (published) console.log("· merge déjà publié");
   printPlan(plugins, plan, published);
-  // La simulation s'exécute MÊME quand le plan est vide : c'est le cas de la PR
-  // de release, dont l'arbre bumpé doit passer `check.sh` (S-1, AC-4).
+  // La simulation s'exécute MÊME quand le plan est vide : l'arbre d'une PR qui
+  // ne publie rien doit passer `check.sh` aussi (S-1, AC-4).
   if (args.simulate) return simulate(plan, catalog);
-  // Plus rien à publier : une PR de release encore ouverte est périmée (son plan
-  // est déjà sur main, ou remplacé). `--dry-run` la nomme sans la fermer. La
-  // branche `deploy` converge quand même : un run qui aurait échoué à l'avancer
-  // est rattrapé par le suivant.
-  if (plan.releases.length === 0) {
-    closeStalePullRequests(ownerRepo, null, args.dryRun);
-    return advanceDeploy(args.dryRun);
-  }
-  // `--dry-run` : le plan est imprimé, rien n'est écrit, rien n'est poussé — les
-  // PR de release que le run fermerait sont listées, aucune n'est fermée.
-  if (args.dryRun) {
-    closeStalePullRequests(ownerRepo, { branch: `release/${args.after}`, number: null }, true);
-    return advanceDeploy(true);
-  }
+  // Plus rien à publier : la branche `deploy` converge quand même — un run qui
+  // aurait échoué à l'avancer est rattrapé par le suivant.
+  if (plan.releases.length === 0) return advanceDeploy(args.dryRun);
+  // `--dry-run` : le plan est imprimé, rien n'est écrit, rien n'est poussé.
+  if (args.dryRun) return advanceDeploy(true);
 
   const code = await publish(plan, args, ownerRepo, catalog, event);
   return code === 0 ? advanceDeploy(false) : code;

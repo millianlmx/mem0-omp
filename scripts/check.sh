@@ -640,8 +640,8 @@ if command -v node >/dev/null 2>&1; then
       fail "tests unitaires — scripts/test-files.sh a échoué (relance : $tests_relance)"
     elif [ -n "$tests_base" ]; then
       # Sélection par le diff : un ensemble vide est un « rien à prouver ici »
-      # annoncé par test-files.sh ci-dessus, jamais un échec — le push vers main
-      # et la PR de release rejouent la suite entière.
+      # annoncé par test-files.sh ci-dessus, jamais un échec — le run nocturne
+      # de check.yml sur main rejoue la suite entière.
       echo "  · aucun fichier de test concerné par le diff depuis $tests_base (--tests-scope=${tests_scope:-aucun}, --tests-part=${tests_part:-aucune})"
     else
       fail "tests unitaires — aucun fichier de test retenu (--tests-scope=${tests_scope:-aucun}, --tests-part=${tests_part:-aucune})"
@@ -834,6 +834,25 @@ fi
 if section_on app-swift; then
 echo "── App Swift"
 
+# Sur GitHub Actions, le journal d'un job ne se lit qu'avec une session (l'API
+# répond 403 sans jeton), alors que ses annotations sont publiques
+# (`GET /repos/<dépôt>/check-runs/<job>/annotations`). Un échec de la section y
+# nomme donc sa cause, en dix annotations au plus (la limite d'erreurs par
+# étape) : les deux derniers verdicts ✗ du script, les cinq premières issues de
+# tests (Swift Testing : « Test … recorded an issue at Fichier.swift:L:C: … »),
+# puis trois erreurs du compilateur. Hors CI, rien ; le verdict n'en dépend pas.
+annoter_app_swift() {
+  [ "${GITHUB_ACTIONS:-}" = true ] || return 0
+  local propre
+  propre="$(printf '%s\n' "$1" | sed -e $'s/\x1b\\[[0-9;?]*[A-Za-z]//g' -e $'s/\r$//' -e 's/^[[:space:]]*//')"
+  {
+    printf '%s\n' "$propre" | grep '^✗' | tail -2
+    printf '%s\n' "$propre" | grep ' recorded an issue' | head -5
+    printf '%s\n' "$propre" | grep -E '\.swift:[0-9]+:[0-9]+: error:|^error: ' | head -3
+  } | sed -e 's/%/%25/g' -e 's/^/::error title=App Swift::/'
+  return 0
+}
+
 # L'assemblage du bundle .app vit dans scripts/swift-app.sh : check.sh l'appelle
 # et RECOPIE son verdict, comme pour `── Types`. Codes du script : 0 assemblé,
 # 2 « non exécuté » (hors macOS, un succès), tout autre échec. Sur un code 2, le
@@ -853,7 +872,10 @@ if [ -f scripts/swift-app.sh ]; then
     case "$swift_status" in
       0) pass "App Swift : compilation, tests et bundle .app assemblés" ;;
       2) : ;;
-      *) fail "App Swift — scripts/swift-app.sh a échoué (relance : bash scripts/swift-app.sh)" ;;
+      *)
+        annoter_app_swift "$swift_out"
+        fail "App Swift — scripts/swift-app.sh a échoué (relance : bash scripts/swift-app.sh)"
+        ;;
     esac
   fi
 else

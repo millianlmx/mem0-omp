@@ -1,6 +1,11 @@
 // Les Demandes : une phrase libre, de n'importe quel client, que l'OS classe (un job léger
-// comme les audits, sans dépôt ni mémoire), transforme en plan lisible et crée après UNE
+// comme les audits, sans dépôt ni plugin mémoire : il ne lit, en lecture seule, que la mémoire
+// d'UN dépôt de la portée de l'auteur), transforme en plan lisible et crée après UNE
 // confirmation, par les chemins existants (intake-create.ts). Rien n'existe avant.
+//
+// Une `question` qui dépend du code d'un dépôt n'est pas répondue à l'aveugle : une seconde
+// session lit `main` dans un worktree détaché (comme un audit, rien n'y est commité) et rend
+// la réponse. Rien n'est créé non plus.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Client } from "./auth.ts";
@@ -9,10 +14,11 @@ import { isRecord, repoByName, repoDefaults } from "./config.ts";
 import type { HarnessConfig, ModelPolicy, RepoConfig } from "./config.ts";
 import type { Actor, HarnessContext } from "./context.ts";
 import { parseCron } from "./cron.ts";
-import { INTAKE_STATES } from "./db.ts";
+import { INTAKE_LANES, INTAKE_STATES } from "./db.ts";
 import type {
   IntakeContext,
   IntakeExchange,
+  IntakeLane,
   IntakePatch,
   IntakePlan,
   IntakeRow,
@@ -24,8 +30,9 @@ import type {
 import { HarnessError } from "./errors.ts";
 import { newId } from "./ids.ts";
 import { MAX_INSTRUCTIONS, autonomyField, requireRepo, text } from "./input.ts";
-import { spaceRule, strictest } from "./policy.ts";
-import { INTAKE_TITLE_MAX, intakePrompt } from "./prompts.ts";
+import { covers, spaceRule, strictest } from "./policy.ts";
+import { renderMemories } from "./oracle.ts";
+import { INTAKE_TITLE_MAX, intakeAnswerPrompt, intakePrompt } from "./prompts.ts";
 import { shortTitle } from "./proposals.ts";
 import type { HostToolResult } from "./rpc.ts";
 import { forceStop, hostToolsFor, runnerUnit } from "./runner.ts";
@@ -35,6 +42,7 @@ import { NO_SPACE_HOLDS } from "./spaces.ts";
 import type { SpaceHolds } from "./spaces.ts";
 import { NAME_MAX } from "./schedules.ts";
 import { MAX_INSTRUCTION, stripUrl } from "./workstation.ts";
+import { untrusted } from "./workstation-guards.ts";
 
 export const INTAKE_SOURCES = ["console", "ios", "voice", "slack", "cli", "chrome"] as const;
 export const INTAKE_KINDS = ["feature", "bug", "audit", "workstation_request", "schedule", "question"] as const;
@@ -121,9 +129,32 @@ function spaceNote(space: Space): string {
 type LiveIntake = {
   abort: AbortController;
   session: RunnerSession | null;
+  /** La session en cours : le classement, puis, pour une question sur le code, la réponse. */
+  phase: "classify" | "answer";
   /** Les arguments de `intake_classify`, jugés après la session (rien n'est validé avant). */
   raw: Record<string, unknown> | null;
+  /** Le dépôt dont le classeur a lu la mémoire (`intake_recall`) : le plan doit le porter. */
+  memoryRepo: string | null;
+  /** Les recherches `intake_recall` déjà faites (RECALLS_MAX au plus). */
+  recalls: number;
+  /** Le dépôt d'une question sur le code, et la réponse rendue par `intake_answer`. */
+  answerRepo: string | null;
+  answer: string | null;
   done: Promise<void>;
+};
+
+/** Les recherches dans la mémoire d'un dépôt qu'un classement peut faire. */
+export const RECALLS_MAX = 3;
+/** La longueur d'une réponse, directe ou lue dans le code, en caractères. */
+const ANSWER_MAX = 4000;
+/** La longueur d'une requête `intake_recall`, en caractères. */
+const RECALL_QUERY_MAX = 500;
+
+/** La voie d'un run, telle que la description de ce qui sera créé la dit. */
+const LANE_CREATES: Record<IntakeLane, string> = {
+  express: "voie express : /impl tout de suite, revue courte",
+  direct: "voie directe : /impl sur ses critères d'acceptation",
+  full: "voie complète : /req et /specs avant /impl",
 };
 
 /** Ce que la confirmation du plan créera, rédigé par le serveur (jamais par le modèle). */
@@ -132,7 +163,7 @@ function creates(plan: IntakePlan): string {
   switch (plan.kind) {
     case "feature":
     case "bug":
-      return `Un run « ${plan.title} » sur ${repo}`;
+      return `Un run « ${plan.title} » sur ${repo}${plan.lane ? ` — ${LANE_CREATES[plan.lane]}` : ""}`;
     case "audit":
       return `Un audit de ${repo}${plan.focus ? ` (${plan.focus})` : ""}`;
     case "workstation_request":
@@ -150,6 +181,29 @@ function creates(plan: IntakePlan): string {
   }
 }
 
+/** Le texte d'origine d'une demande suivi des réponses de clarification. */
+function statementOf(row: IntakeRow): string {
+  return [row.text, ...row.exchanges.map((exchange) => exchange.answer)].join("\n\n");
+}
+
+/** Le plan tel que la vue le rend. */
+export type PlanView = Omit<IntakePlan, "lane" | "laneReason" | "criteria"> & {
+  lane: IntakeLane | null;
+  laneReason: string | null;
+  criteria: string[];
+  creates: string;
+};
+
+function planView(plan: IntakePlan): PlanView {
+  return {
+    ...plan,
+    lane: plan.lane ?? null,
+    laneReason: plan.laneReason ?? null,
+    criteria: plan.criteria ?? [],
+    creates: creates(plan),
+  };
+}
+
 /** La Demande telle que le contrat public de `/v1/intake` la rend. */
 export type IntakeView = {
   id: string;
@@ -159,7 +213,11 @@ export type IntakeView = {
   requestedRepo: string | null;
   state: IntakeState;
   kind: IntakeRow["kind"];
-  plan: (IntakePlan & { creates: string }) | null;
+  /**
+   * Le plan, avec `creates` ; `lane`, `laneReason` et `criteria` y sont toujours présents (`null`, `null`
+   * et `[]` quand le plan n'en porte pas : un autre type, ou un plan classé avant les voies).
+   */
+  plan: PlanView | null;
   question: string | null;
   answer: string | null;
   exchanges: IntakeExchange[];
@@ -193,11 +251,11 @@ export function intakeView(row: IntakeRow, reader: Client, spaces?: Pick<SpaceLo
     requestedRepo: row.requestedRepo,
     state: row.state,
     kind: row.kind,
-    plan: row.plan ? { ...row.plan, creates: creates(row.plan) } : null,
+    plan: row.plan ? planView(row.plan) : null,
     question: row.question,
     answer: row.answer,
     exchanges: row.exchanges,
-    statement: [row.text, ...row.exchanges.map((exchange) => exchange.answer)].join("\n\n"),
+    statement: statementOf(row),
     context: readsContext ? row.context : null,
     space: space === null ? null : { id: space.id, name: space.name },
     created: row.targetKind && row.targetId ? { kind: row.targetKind as Created["kind"], id: row.targetId } : null,
@@ -302,6 +360,102 @@ export function intakeTarget(
   };
 }
 
+/** Le worktree détaché où se lit `main` pour répondre à une question sur le code (`<dépôt>/_demande-<id>`). */
+export function intakeAnswerWorktree(config: HarnessConfig, repo: string, id: string): string {
+  return path.join(config.worktreesDir, repo, `_demande-${id}`);
+}
+
+/**
+ * La cible de la session qui répond à une question sur le code : un dépôt synthétique, comme celui du
+ * classeur — nommé `intake`, sans jeton mémoire (le fichier du jeton du vrai dépôt n'est jamais touché),
+ * avec la scope propre à la demande et sans plugin mémoire : le texte d'un client n'écrit jamais dans la
+ * mémoire d'un dépôt. Son `path` est le clone du dépôt (le lanceur le monte en lecture seule, git s'y
+ * lit) et sa politique de modèles celle du dépôt croisée avec celle de son espace, posée ici puisque
+ * le nom synthétique n'en porte aucune. Elle lit la mémoire par le service (`oracle_recall`).
+ */
+export function intakeAnswerTarget(
+  config: HarnessConfig,
+  row: IntakeRow,
+  repo: RepoConfig,
+  spaces: readonly Space[] = [],
+): { repo: RepoConfig; cwd: string; memory: false } {
+  const { models, providers, privacy } = strictest(repo, spaceRule(spaces, repo.name)?.policy ?? null);
+  return {
+    repo: {
+      ...repoDefaults({ name: "intake", path: repo.path, scope: `intake-${row.id}` }),
+      ...(models ? { models } : {}),
+      ...(providers ? { providers } : {}),
+      ...(privacy ? { privacy } : {}),
+    },
+    cwd: intakeAnswerWorktree(config, repo.name, row.id),
+    memory: false,
+  };
+}
+
+/**
+ * Pourquoi le classeur ne lit pas la mémoire de `repo` (`null` : il la lit). La portée de l'auteur et
+ * le dépôt imposé bornent ce qu'il lit ; une seule mémoire par classement (`locked` : celle déjà lue),
+ * RECALLS_MAX recherches au plus ; et la politique de modèles du classement doit couvrir celle du dépôt
+ * (policy.ts `covers`) : la mémoire d'un dépôt « local-only » ne part jamais chez un fournisseur distant.
+ */
+export function recallRefusal(
+  config: HarnessConfig,
+  row: IntakeRow,
+  spaces: readonly Space[],
+  repo: string,
+  locked: string | null,
+  done: number,
+): string | null {
+  if (done >= RECALLS_MAX) return `${RECALLS_MAX} recherches au plus par classement`;
+  if (repo === "" || !visibleRepos(config, row.scope).includes(repo))
+    return `le dépôt « ${repo} » n'est pas dans la liste des dépôts`;
+  if (row.requestedRepo !== null && repo !== row.requestedRepo)
+    return `le dépôt imposé est « ${row.requestedRepo} » : seule sa mémoire se lit`;
+  if (locked !== null && repo !== locked)
+    return `la mémoire de « ${locked} » a déjà été lue : une seule mémoire par classement`;
+  const declared = repoByName(config, repo) as RepoConfig;
+  const bound = strictest(declared, spaceRule(spaces, repo)?.policy ?? null);
+  if (!covers(intakePolicy(config, row, [...spaces]), bound))
+    return `la politique de modèles de « ${repo} » ne permet pas à ce classement de lire sa mémoire`;
+  return null;
+}
+
+/** Le contexte du jugement d'un classement. `memoryRepo` : le dépôt dont la mémoire a été lue. */
+type JudgeContext = {
+  declared: string[];
+  scope: IntakeRow["scope"];
+  requestedRepo: string | null;
+  memoryRepo?: string | null;
+};
+
+/** Le refus d'un objet qui porte un autre dépôt que celui dont la mémoire a été lue. */
+function memoryMismatch(memoryRepo: string | null | undefined, repo: string | null): string | null {
+  if (memoryRepo === null || memoryRepo === undefined || repo === null || repo === memoryRepo) return null;
+  return `le classement a lu la mémoire de « ${memoryRepo} » mais porte sur « ${repo} »`;
+}
+
+/**
+ * Une `question` sur le code d'un dépôt : `kind: question`, aucune `answer`, un dépôt (celui du rendu,
+ * ou le dépôt imposé). `null` : ce n'en est pas une (une réponse directe, une clarification, un plan, ou
+ * une question sans dépôt — `interpretClassification` la juge). Sinon le dépôt et la question reformulée
+ * (`""` : le rendu n'en a pas, la demande sert de question), ou la raison d'un refus. Pure.
+ */
+export function codeQuestionOf(
+  raw: Record<string, unknown>,
+  ctx: JudgeContext,
+): { repo: string; question: string } | { reason: string } | null {
+  const field = (key: string): string => (typeof raw[key] === "string" ? (raw[key] as string).trim() : "");
+  if (field("clarification") !== "" || field("kind") !== "question" || field("answer") !== "") return null;
+  const repo = ctx.requestedRepo ?? field("repo");
+  if (repo === "") return null;
+  if (!ctx.declared.includes(repo)) return { reason: `le dépôt « ${repo} » n'est pas déclaré sur le harness` };
+  if (ctx.scope !== "*" && !ctx.scope.includes(repo))
+    return { reason: `le dépôt « ${repo} » est hors de la portée de l'auteur` };
+  const mismatch = memoryMismatch(ctx.memoryRepo, repo);
+  if (mismatch !== null) return { reason: mismatch };
+  return { repo, question: field("statement").slice(0, MAX_INSTRUCTION) };
+}
+
 type Fields = {
   kind: string;
   title: string;
@@ -311,8 +465,53 @@ type Fields = {
   cron: string;
   target: string;
   label: string;
+  /** La voie (`""` : aucune, le serveur trie à la création) et sa raison ; `feature` et `bug` seulement. */
+  lane: string;
+  laneReason: string;
+  /** Les critères déjà normalisés (`criteriaOf`). */
+  criteria: string[];
 };
 type Judged = { plan: IntakePlan } | { reason: string };
+
+/** Les bornes des critères d'un plan : leur nombre, la longueur de chacun, et celle de la raison de la voie. */
+const CRITERIA_MAX = 20;
+const CRITERION_MAX = 500;
+const LANE_REASON_MAX = 300;
+
+/** Un `AC-n` (avec sa co-signature `(B-m)` et son séparateur) ou une puce en tête d'un critère : le serveur renumérote. */
+const CRITERION_PREFIX = /^\s*(?:[-*]\s+)?(?:\**AC-\d+\**\s*(?:\([^)]*\)\s*)?[:.)\u2013\u2014-]?\s*)?/i;
+
+/**
+ * Les critères d'acceptation d'un plan, rendus par le classeur ou corrigés à la confirmation : une liste
+ * de chaînes (sinon `null` : forme refusée), chacune ramenée à une ligne sans son `AC-n` ni sa puce,
+ * les vides écartées, bornées (CRITERIA_MAX, CRITERION_MAX), puis numérotées `AC-1 : …` dans l'ordre —
+ * le format que lit la voie directe (steps.ts `directSpecs`). Pure.
+ */
+export function criteriaOf(raw: unknown): string[] | null {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw) || !raw.every((item) => typeof item === "string")) return null;
+  return (raw as string[])
+    .map((item) => item.replace(/\s+/g, " ").replace(CRITERION_PREFIX, "").trim().slice(0, CRITERION_MAX).trim())
+    .filter((item) => item !== "")
+    .slice(0, CRITERIA_MAX)
+    .map((item, index) => `AC-${index + 1} : ${item}`);
+}
+
+/** La voie d'un plan `feature` ou `bug` et ses critères, jugés ; rien pour les autres types. */
+function judgeLane(plan: IntakePlan, fields: Fields): string | null {
+  if (plan.kind !== "feature" && plan.kind !== "bug") return null;
+  const { lane, criteria } = fields;
+  if (lane !== "") {
+    if (!(INTAKE_LANES as readonly string[]).includes(lane))
+      return `voie « ${lane} » inconnue (express, direct ou full)`;
+    if (lane === "direct" && criteria.length === 0) return "la voie directe demande au moins un critère d'acceptation";
+    plan.lane = lane as IntakeLane;
+    const reason = fields.laneReason.replace(/\s+/g, " ").trim().slice(0, LANE_REASON_MAX);
+    if (reason !== "") plan.laneReason = reason;
+  }
+  if (criteria.length > 0) plan.criteria = criteria;
+  return null;
+}
 
 /** Les règles d'un plan (S-4, règles 4 à 8), communes au classement et à la correction à la confirmation. */
 function judge(fields: Fields, scope: IntakeRow["scope"], declared: string[]): Judged {
@@ -327,6 +526,8 @@ function judge(fields: Fields, scope: IntakeRow["scope"], declared: string[]): J
   if (scope !== "*" && !scope.includes(repo))
     return { reason: `le dépôt « ${repo} » est hors de la portée de l'auteur` };
   const plan = { kind, repo, title, statement } as IntakePlan;
+  const refused = judgeLane(plan, fields);
+  if (refused !== null) return { reason: refused };
   if (kind === "audit" && focus !== "") plan.focus = focus;
   if (kind === "schedule") {
     let source: string;
@@ -350,10 +551,12 @@ function judge(fields: Fields, scope: IntakeRow["scope"], declared: string[]): J
 /**
  * Juge le rendu de `intake_classify` : un `IntakePatch` (clarification, réponse, plan ou échec). Pure.
  * `poste: false` : la demande est posée dans un espace sans poste de travail, une tâche du poste y est refusée.
+ * `memoryRepo` : le dépôt dont la mémoire a été lue ; un plan sur un autre dépôt est refusé (ce qu'il en
+ * rapporterait se lirait par les clients de cet autre dépôt).
  */
 export function interpretClassification(
   raw: Record<string, unknown>,
-  ctx: { declared: string[]; scope: IntakeRow["scope"]; requestedRepo: string | null; poste?: boolean },
+  ctx: JudgeContext & { poste?: boolean },
 ): IntakePatch {
   const field = (key: string): string => (typeof raw[key] === "string" ? (raw[key] as string).trim() : "");
   const failed = (reason: string): IntakePatch => ({ state: "failed", reason });
@@ -366,9 +569,17 @@ export function interpretClassification(
   if (kind === "question") {
     const answer = field("answer");
     if (answer === "") return failed("la réponse directe est vide");
-    return { state: "answered", kind: "question", answer: answer.slice(0, 4000), plan: null };
+    return { state: "answered", kind: "question", answer: answer.slice(0, ANSWER_MAX), plan: null };
   }
   if (kind === "workstation_request" && ctx.poste === false) return failed(NO_POSTE);
+  // Des critères d'une forme inattendue ne font pas échouer la demande : le plan part sans eux.
+  const criteria = criteriaOf(raw.criteria) ?? [];
+  let lane = field("lane");
+  let laneReason = field("laneReason");
+  if (lane === "direct" && criteria.length === 0) {
+    lane = "full";
+    laneReason = "voie directe proposée sans critère d'acceptation : /req et /specs les établiront";
+  }
   const judged = judge(
     {
       kind,
@@ -381,12 +592,17 @@ export function interpretClassification(
       cron: field("cron"),
       target: field("target"),
       label: field("label"),
+      lane,
+      laneReason,
+      criteria,
     },
     ctx.scope,
     ctx.declared,
   );
   if ("reason" in judged) return failed(judged.reason);
   const { plan } = judged;
+  const mismatch = memoryMismatch(ctx.memoryRepo, plan.repo);
+  if (mismatch !== null) return failed(mismatch);
   return { state: "planned", kind: plan.kind, plan, repo: plan.repo ?? "", question: null, reason: null };
 }
 
@@ -528,7 +744,17 @@ export class Intaker {
         const freed = store.updateIntakeIf(row.id, ["classifying"], { reason: null });
         if (freed) this.#event(freed);
       }
-      const live: LiveIntake = { abort: new AbortController(), session: null, raw: null, done: Promise.resolve() };
+      const live: LiveIntake = {
+        abort: new AbortController(),
+        session: null,
+        phase: "classify",
+        raw: null,
+        memoryRepo: null,
+        recalls: 0,
+        answerRepo: null,
+        answer: null,
+        done: Promise.resolve(),
+      };
       this.#live.set(row.id, live);
       live.done = this.#drive(row, live).finally(async () => {
         await live.session?.stop();
@@ -573,6 +799,7 @@ export class Intaker {
           requestedRepo: row.requestedRepo,
           exchanges: row.exchanges,
           context: row.context,
+          lanes: config.lanes,
         })}${space === null ? "" : spaceNote(space)}${this.#hooks.state?.(stateScope(row)) ?? ""}`,
         live.abort.signal,
         deadlineAt,
@@ -585,15 +812,23 @@ export class Intaker {
         );
       }
       if (result.status !== "completed") throw new Error(result.error?.message ?? "erreur du runner");
-      patch =
-        live.raw === null
-          ? { state: "failed", reason: "le classement n'a pas été rendu" }
-          : interpretClassification(live.raw, {
-              declared: config.repos.map((repo) => repo.name),
-              scope: row.scope,
-              requestedRepo: row.requestedRepo,
-              ...(space === null ? {} : { poste: space.poste }),
-            });
+      const judging: JudgeContext = {
+        declared: config.repos.map((repo) => repo.name),
+        scope: row.scope,
+        requestedRepo: row.requestedRepo,
+        memoryRepo: live.memoryRepo,
+      };
+      const code = live.raw === null ? null : codeQuestionOf(live.raw, judging);
+      if (live.raw === null) patch = { state: "failed", reason: "le classement n'a pas été rendu" };
+      else if (code === null)
+        patch = interpretClassification(live.raw, { ...judging, ...(space === null ? {} : { poste: space.poste }) });
+      else if ("reason" in code) patch = { state: "failed", reason: code.reason };
+      else {
+        // Le classement est rendu : sa session s'arrête avant que la réponse prenne le même slot.
+        await session.stop();
+        live.session = null;
+        patch = await this.#answer(row, live, code.repo, code.question === "" ? statementOf(row) : code.question);
+      }
     } catch (err) {
       patch = {
         state: "failed",
@@ -616,12 +851,76 @@ export class Intaker {
     }
   }
 
+  /**
+   * Répond à une question sur le code de `repoName` : une session lit `main` dans un worktree détaché,
+   * sans plugin mémoire (la mémoire du dépôt passe par le service, en lecture seule), et rend sa
+   * réponse par `intake_answer`. Le worktree est rendu quoi qu'il arrive ; une erreur devient un échec
+   * lisible. La demande reste `classifying` jusqu'à sa réponse : le slot du classement la porte.
+   */
+  async #answer(row: IntakeRow, live: LiveIntake, repoName: string, question: string): Promise<IntakePatch> {
+    const { config, git, oracle } = this.#ctx;
+    const repo = this.#ctx.repo(repoName);
+    const target = intakeAnswerTarget(config, row, repo, this.#ctx.store.listSpaces());
+    live.phase = "answer";
+    live.answerRepo = repoName;
+    live.answer = null;
+    this.#ctx.event(
+      "progress",
+      null,
+      { intakeId: row.id, message: `lecture de ${repoName} pour répondre` },
+      row.repo || null,
+    );
+    try {
+      await git.addWorktree(repo.path, target.cwd, null, await git.revParse(repo.path, repo.mainBranch));
+      const session = new RunnerSession(this.#ctx, target, {
+        onHostTool: (name, args) => this.#hostTool(row, live, name, args),
+        event: (type, payload) => this.#ctx.event(type, null, { intakeId: row.id, ...payload }, row.repo || null),
+        ...(row.spaceId === null
+          ? {}
+          : {
+              frame: (frame: Record<string, unknown>) =>
+                this.#ctx.monitor.recordFrame(intakeOwner(row.id), DEMANDE_STEP, frame),
+            }),
+      });
+      live.session = session;
+      const deadlineAt = Date.now() + config.runner.stepTimeoutSec * 1000;
+      await session.open(config.intake.answerTier, runnerUnit(row.id, 1), live.abort.signal);
+      await session.setHostTools(hostToolsFor("intake-answer"));
+      const memories = await oracle.recall(repo.scope, question);
+      let result = await session.prompt(
+        intakeAnswerPrompt({ repo: repoName, question, memories: renderMemories(memories) }),
+        live.abort.signal,
+        deadlineAt,
+      );
+      if (result.status === "completed" && live.answer === null) {
+        result = await session.prompt(
+          "L'étape /reponse n'est pas terminée : la réponse n'a pas été rendue par `intake_answer`. Rends-la maintenant.",
+          live.abort.signal,
+          deadlineAt,
+        );
+      }
+      if (result.status !== "completed") throw new Error(result.error?.message ?? "erreur du runner");
+      if (live.answer === null) return { state: "failed", reason: "la réponse lue dans le code n'a pas été rendue" };
+      return { state: "answered", kind: "question", repo: repoName, answer: live.answer, plan: null };
+    } catch (err) {
+      return {
+        state: "failed",
+        reason: `la réponse a échoué : ${err instanceof Error ? err.message : String(err)}`,
+      };
+    } finally {
+      await live.session?.stop();
+      live.session = null;
+      await git.removeWorktree(repo.path, target.cwd, null).catch(() => {});
+    }
+  }
+
   async #hostTool(
     row: IntakeRow,
     live: LiveIntake,
     name: string,
     args: Record<string, unknown>,
   ): Promise<HostToolResult> {
+    const refused = (text: string): HostToolResult => ({ text, isError: true });
     switch (name) {
       case "progress": {
         const message = typeof args.message === "string" ? args.message.slice(0, 500) : "";
@@ -629,11 +928,41 @@ export class Intaker {
         return { text: "noté" };
       }
       case "intake_classify":
-        if (live.abort.signal.aborted) return { text: "demande annulée", isError: true };
+        if (live.abort.signal.aborted) return refused("demande annulée");
+        if (live.phase !== "classify") return refused("le classement est déjà rendu");
         live.raw = args;
         return { text: "classement reçu. Termine ton tour." };
+      case "intake_recall": {
+        if (live.phase !== "classify") return refused("intake_recall : réservé au classement");
+        const repo = typeof args.repo === "string" ? args.repo.trim() : "";
+        const query = typeof args.query === "string" ? args.query.trim().slice(0, RECALL_QUERY_MAX) : "";
+        if (query === "") return refused("intake_recall refusé : `query` vide");
+        const { config, store, oracle } = this.#ctx;
+        const refusal = recallRefusal(config, row, store.listSpaces(), repo, live.memoryRepo, live.recalls);
+        if (refusal !== null) return refused(`intake_recall refusé : ${refusal}`);
+        live.memoryRepo = repo;
+        live.recalls += 1;
+        const scope = (repoByName(config, repo) as RepoConfig).scope;
+        return { text: untrusted(`mémoire du dépôt ${repo}`, renderMemories(await oracle.recall(scope, query))) };
+      }
+      case "oracle_recall": {
+        if (live.phase !== "answer" || live.answerRepo === null) return refused("oracle_recall : réservé à la réponse");
+        const query = typeof args.query === "string" ? args.query.trim().slice(0, RECALL_QUERY_MAX) : "";
+        if (query === "") return refused("oracle_recall refusé : `query` vide");
+        const scope = this.#ctx.repo(live.answerRepo).scope;
+        const memories = await this.#ctx.oracle.recall(scope, query);
+        return { text: untrusted(`mémoire du dépôt ${live.answerRepo}`, renderMemories(memories)) };
+      }
+      case "intake_answer": {
+        if (live.abort.signal.aborted) return refused("demande annulée");
+        if (live.phase !== "answer") return refused("intake_answer : réservé à la réponse");
+        const answer = typeof args.answer === "string" ? args.answer.trim() : "";
+        if (answer === "") return refused("intake_answer refusé : la réponse est vide");
+        live.answer = answer.slice(0, ANSWER_MAX);
+        return { text: "réponse reçue. Termine ton tour." };
+      }
       default:
-        return { text: `outil inconnu : ${name}`, isError: true };
+        return refused(`outil inconnu : ${name}`);
     }
   }
 
@@ -649,6 +978,10 @@ export class Intaker {
     const kind = correction(raw, "kind", plan.kind);
     if (raw.clarification !== undefined || !(PLAN_KINDS as readonly string[]).includes(kind))
       throw new HarnessError(400, "plan : type inconnu ou sans objet");
+    // La voie et les critères se corrigent ; la raison de la voie ne s'écrit pas : changée, la voie est celle de l'humain.
+    const lane = correction(raw, "lane", plan.lane ?? "");
+    const criteria = raw.criteria === undefined ? (plan.criteria ?? []) : criteriaOf(raw.criteria);
+    if (criteria === null) throw new HarnessError(400, "plan.criteria : liste de chaînes attendue");
     const judged = judge(
       {
         kind,
@@ -662,6 +995,9 @@ export class Intaker {
         cron: correction(schedule, "cron", plan.schedule?.cron ?? ""),
         target: correction(schedule, "target", plan.schedule?.target ?? ""),
         label: correction(schedule, "label", plan.schedule?.label ?? ""),
+        lane,
+        laneReason: lane === (plan.lane ?? "") ? (plan.laneReason ?? "") : "choisie à la confirmation",
+        criteria,
       },
       scope,
       this.#ctx.config.repos.map((repo) => repo.name),
@@ -744,11 +1080,19 @@ export class Intaker {
     });
   }
 
-  /** Un classement qu'un process mort a laissé en cours repart de zéro (rien n'a été écrit). */
+  /**
+   * Un classement qu'un process mort a laissé en cours repart de zéro (rien n'a été écrit) : ses
+   * runners (classement, réponse) sont arrêtés et le worktree d'une réponse en cours est rendu.
+   */
   async recover(): Promise<void> {
-    const { store, config, exec } = this.#ctx;
+    const { store, config, exec, git } = this.#ctx;
     for (const row of store.listIntakes({ states: ["classifying"] })) {
       await forceStop(config, exec, runnerUnit(row.id, 0));
+      await forceStop(config, exec, runnerUnit(row.id, 1));
+      for (const repo of config.repos) {
+        const worktree = intakeAnswerWorktree(config, repo.name, row.id);
+        if (fs.existsSync(worktree)) await git.removeWorktree(repo.path, worktree, null).catch(() => {});
+      }
       const requeued = store.updateIntakeIf(row.id, ["classifying"], {
         reason: "service redémarré — classement relancé",
       });
