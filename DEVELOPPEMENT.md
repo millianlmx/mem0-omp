@@ -575,7 +575,10 @@ de release : le job écrit versions, catalogues et `CHANGELOG.md`, les prouve av
 `check.sh`, puis pousse le commit de release directement sur `main` — en avance
 rapide seulement, jamais forcé, avec le jeton dédié autorisé à contourner la
 protection de branche, et marqué `[skip ci]` pour ne relancer ni `check.yml` ni
-`release.yml`. Il pousse ensuite les tags `<plugin>-v<version>` et publie les
+`release.yml`. GitHub lit cette marque n'importe où dans le message : un commit
+humain qui la cite telle quelle saute lui aussi les workflows de sa PR (aucun
+statut requis ne démarre) et, fusionné en squash, le run de release — pour en
+parler dans un message, écris-la sans crochets (« skip ci »). Il pousse ensuite les tags `<plugin>-v<version>` et publie les
 releases GitHub. Les versions elles-mêmes sont décidées **par le job** — `fix` ⇒
 patch, `feat` ⇒ mineure, rupture déclarée ⇒ majeure, d'après les commits touchant
 chaque plugin — et non par la PR mergée : personne ne monte une version à la main
