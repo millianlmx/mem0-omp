@@ -31,9 +31,9 @@ concurrency:
 jobs:
   app:
     name: app (${{ matrix.app }})
-    # L'extension Chrome ne demande que node : un runner Linux suffit, les macOS
-    # restent aux deux apps.
-    runs-on: ${{ matrix.app == 'chrome' && 'ubuntu-latest' || 'macos-latest' }}
+    # L'extension Chrome ne demande que node : un runner Linux suffit, les deux
+    # apps vont au Mac auto-hébergé (la file des macOS hébergés bloquait les jobs).
+    runs-on: ${{ matrix.app == 'chrome' && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     # Compilation (cargo, SwiftPM ou xcodebuild) puis, pour l'app Mac signée,
     # jusqu'à 30 min d'attente de la notarisation.
     timeout-minutes: 60

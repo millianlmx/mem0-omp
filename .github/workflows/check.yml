@@ -159,7 +159,7 @@ jobs:
   # mtimes du checkout invalidant tout, et la clé (Package.swift seul) n'était
   # jamais resauvegardée.
   macos-app-swift:
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64]
     if: github.event_name == 'pull_request'
     # Médiane 258 s, max 578 s (2026-10-24). 30 min tiennent sous l'attente de fusion
     # que release.yml accorde à release.ts (`--merge-timeout 2100`).
@@ -226,7 +226,7 @@ jobs:
 
   # Compilation et tests de l'app iOS : Xcode seul, aucune préparation.
   macos-app-ios:
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64]
     if: github.event_name == 'pull_request'
     # Médiane 186 s, max 688 s (2026-10-24) : même plafond que macos-app-swift.
     timeout-minutes: 30
@@ -276,7 +276,7 @@ jobs:
             sections: catalogue,noms,plugins,versions,extension,types,lint,plafond-types,rust,smoke,tests,noyau
           - part: "2/2"
             sections: tests
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64]
     if: github.event_name == 'pull_request'
     # Médiane 251 s, max 565 s par partie (2026-10-24) : même plafond.
     timeout-minutes: 30
