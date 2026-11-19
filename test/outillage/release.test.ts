@@ -823,7 +823,7 @@ function buildBacklogSteps(): Step[] {
   const pkg = readJson<Record<string, unknown>>(ROOT, `${MEMORY.dir}/package.json`);
   const aligned = readJson<Catalog>(ROOT, CATALOGS[0]);
   for (const entry of aligned.plugins) {
-    if (entry.name === MEMORY.name) entry.version = second;
+    if (entry.name === MEMORY.name || entry.name === RENAMED_PLUGINS[MEMORY.name]?.name) entry.version = second;
   }
   aligned.metadata = {
     ...(aligned.metadata ?? {}),

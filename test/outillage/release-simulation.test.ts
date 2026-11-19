@@ -380,7 +380,7 @@ function releaseStep(): Step {
       const pkg = readJson<Record<string, unknown>>(dir, `${MEMORY.dir}/package.json`);
       const catalog = readJson<Catalog>(dir, CATALOGS[0]);
       for (const entry of catalog.plugins) {
-        if (entry.name === MEMORY.name) entry.version = target;
+        if (entry.name === MEMORY.name || entry.name === RENAMED_PLUGINS[MEMORY.name]?.name) entry.version = target;
       }
       catalog.metadata = {
         ...(catalog.metadata ?? {}),
@@ -412,7 +412,7 @@ function prepareNonSemver(dir: string): void {
   const reqVersion = versionIn(dir, `${REQ.dir}/package.json`);
   const aligned = readJson<Catalog>(dir, CATALOGS[0]);
   for (const entry of aligned.plugins) {
-    if (entry.name === MEMORY.name) entry.version = "1.2";
+    if (entry.name === MEMORY.name || entry.name === RENAMED_PLUGINS[MEMORY.name]?.name) entry.version = "1.2";
   }
   aligned.metadata = { ...(aligned.metadata ?? {}), version: reqVersion };
   const serialized = `${JSON.stringify(aligned, null, 2)}\n`;
