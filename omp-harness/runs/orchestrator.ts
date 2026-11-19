@@ -51,6 +51,7 @@ import { Metrics } from "../operations/metrics.ts";
 import type { BudgetDue, RunBudget } from "../operations/monitor.ts";
 import type { StepKind } from "./machine.ts";
 import {
+  ACTIVE_STATES,
   acceptsSpecs,
   crashed,
   heldForDailyBudget,
@@ -71,7 +72,7 @@ import { Schedules } from "../jobs/schedules.ts";
 import { projectScope } from "../memory/scope.ts";
 import type { Slot } from "../runners/scheduler.ts";
 import type { LiveRun } from "./steps.ts";
-import { StepExecutor, challengeUnit } from "./steps.ts";
+import { StepExecutor, challengeUnit, liveRun } from "./steps.ts";
 import { Splitter } from "./split.ts";
 import { StandingRules } from "../human/standing-rules.ts";
 import { Workstation } from "../workstation/workstation.ts";
