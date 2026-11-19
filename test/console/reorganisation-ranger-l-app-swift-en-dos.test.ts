@@ -62,12 +62,7 @@ const CLIENT_LAYOUT: Record<string, string[]> = {
     "HarnessSession.swift",
     "HarnessSessionGraph.swift",
   ],
-  Spaces: [
-    "ConsoleSpacePreference.swift",
-    "HarnessScope.swift",
-    "HarnessSpaceFrontier.swift",
-    "HarnessSpaces.swift",
-  ],
+  Spaces: ["ConsoleSpacePreference.swift", "HarnessScope.swift", "HarnessSpaceFrontier.swift", "HarnessSpaces.swift"],
   Workstation: [
     "Atlassian.swift",
     "ServerBrowserModel.swift",
@@ -244,9 +239,9 @@ test("reorganisation-ranger-l-app-swift-en-dos/AC-202 : la carte de l'app Swift 
   assert.deepEqual(faults, []);
 });
 
-/** Les fichiers suivis (ou à suivre, hors .gitignore) lisibles comme du texte, hors CHANGELOG.md. */
+/** Les fichiers suivis (`git ls-files`) lisibles comme du texte, hors CHANGELOG.md. */
 function textFiles(): { file: string; text: string }[] {
-  const listed = spawnSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+  const listed = spawnSync("git", ["ls-files", "-z"], {
     cwd: ROOT,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,

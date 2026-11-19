@@ -45,7 +45,9 @@ function covers(object: unknown, fields: Map<string, boolean>, label: string): v
 
 test("tour-de-controle/AC-1 : chaque route de la tour de contrôle appelée par le client Swift est servie, au rôle du contrat", () => {
   const routes = apiRoutes({ store: {} } as never, new ClientRegistry(null, "t".repeat(64)));
-  const sources = swiftFiles(CLIENT).map((file) => fs.readFileSync(file, "utf8")).join("\n");
+  const sources = swiftFiles(CLIENT)
+    .map((file) => fs.readFileSync(file, "utf8"))
+    .join("\n");
   const calls: [string, string, string, string][] = [
     ['path: "/instructions"', "POST", "/v1/runs/r1/instructions", "operator"],
     ['path: "/budget"', "POST", "/v1/runs/r1/budget", "operator"],
