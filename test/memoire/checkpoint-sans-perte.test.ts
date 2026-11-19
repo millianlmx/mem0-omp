@@ -19,9 +19,7 @@ import { tmpdir } from "../support/repo.ts";
 process.env.HOME = tmpdir("checkpoint-home-");
 process.env.MEMORY_AUTOSETUP = "0";
 delete process.env.MEMORY_MODE;
-const { default: memoryPluginExtension, CHECKPOINT_THRESHOLD_NORMAL } = await import(
-  "../../omp-memory/extension.ts"
-);
+const { default: memoryPluginExtension, CHECKPOINT_THRESHOLD_NORMAL } = await import("../../omp-memory/extension.ts");
 
 const MEMORY = {
   id: "m-1",

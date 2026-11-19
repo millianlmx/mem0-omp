@@ -243,7 +243,7 @@ export function glabEnv(
  * contient `MEM0` (déclaré avant le renommage) a pour nouveau nom le même avec `MEMORY` ; un nom qui contient
  * `MEMORY` a pour ancien nom le même avec `MEM0` ; tout autre nom est seul.
  */
-function renamedPair(name: string): string[] {
+function renamedPair(name: string): [string] | [string, string] {
   if (name.includes("MEM0")) return [name.replaceAll("MEM0", "MEMORY"), name];
   if (name.includes("MEMORY")) return [name, name.replaceAll("MEMORY", "MEM0")];
   return [name];

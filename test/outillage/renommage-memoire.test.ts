@@ -348,12 +348,7 @@ const NOMS_N = [
   "CORPO_MEM0_TOKEN",
 ];
 // Classe P : l'ancienne pile Python (exceptions, laissées telles quelles).
-const NOMS_P = [
-  "MEM0_HTTP_PYTHON",
-  "MEM0_HTTP_VENV",
-  "MEM0_OMP_REQUIRE_HTTP_API",
-  "MEM0_OMP_SKIP_HTTP_CONTRAT",
-];
+const NOMS_P = ["MEM0_HTTP_PYTHON", "MEM0_HTTP_VENV", "MEM0_OMP_REQUIRE_HTTP_API", "MEM0_OMP_SKIP_HTTP_CONTRAT"];
 const TABLE_S4 = new Set([...NOMS_V, ...NOMS_F, ...NOMS_E, ...NOMS_K, ...NOMS_N, ...NOMS_P]);
 
 /** La règle de nom (S-3) : MEM0 → MEMORY, puis un doublon exact du mot se replie en un seul. */
@@ -396,9 +391,8 @@ function scanMentions(files: Fichier[], exceptions: Exceptions): string[] {
   }
   for (const file of files) {
     if (entier(file.path)) continue;
-    if (MOT.test(file.path) && !exceptions.paths.includes(file.path)) problemes.push(
-      `${file.path} : le chemin nomme mem0`,
-    );
+    if (MOT.test(file.path) && !exceptions.paths.includes(file.path))
+      problemes.push(`${file.path} : le chemin nomme mem0`);
     const motifs = (exceptions.patterns[file.path] ?? []).map(globale);
     const servis = motifs.map(() => false);
     const section = exceptions.sections.find((s) => s.path === file.path);
@@ -444,8 +438,7 @@ const MOTIFS = {
       `\\b(?:${[...NOMS_V, "MEM0_TOKEN_[A-Z0-9_]*", "MEM0_BACKUP_FILE", "MEM0_URL", "OMP_CONSOLE_MEM0_RS_SHA256"].join("|")})\\b|\\bOMP_HARNESS_REBUILD_MEM0\\b`,
       "g",
     ),
-    why:
-      "variable d'environnement renommée, lue sous son ancien nom quand le nouveau manque (B-3, liste fermée de S-4)",
+    why: "variable d'environnement renommée, lue sous son ancien nom quand le nouveau manque (B-3, liste fermée de S-4)",
   },
   ENV_PY: {
     re: /\b(?:MEM0_HTTP_PYTHON|MEM0_HTTP_VENV|MEM0_OMP_REQUIRE_HTTP_API|MEM0_OMP_SKIP_HTTP_CONTRAT)\b/g,
@@ -490,8 +483,7 @@ const MOTIFS = {
   },
   OLD_NAME_RS: {
     re: /mem0-rs\b(?!\.)/g,
-    why:
-      "ancien nom du binaire, du dossier de l'app et du conteneur de la pile manuelle de repli (B-5, B-10, décision #14)",
+    why: "ancien nom du binaire, du dossier de l'app et du conteneur de la pile manuelle de repli (B-5, B-10, décision #14)",
   },
   TOOL: { re: /\bmem0_(?:search|add|update|link|forget)\b/g, why: "alias d'outil de l'ancien nom (décision #3)" },
   CMD: {
@@ -500,8 +492,7 @@ const MOTIFS = {
   },
   PLUGIN: {
     re: /omp-mem0-(?:memory|req)\b/g,
-    why:
-      "anciennes entrées du catalogue, tags existants, table des plugins renommés et ancien chemin d'extension (B-2, B-8, B-13)",
+    why: "anciennes entrées du catalogue, tags existants, table des plugins renommés et ancien chemin d'extension (B-2, B-8, B-13)",
   },
   CATALOG: {
     re: /(?<![\w/])mem0-omp\b|@mem0-omp\b|mem0-omp(?=___)/g,
@@ -512,10 +503,8 @@ const MOTIFS = {
     why: "dépôt GitHub `millianlmx/mem0-omp` et ses dérivés (clone, runner de la CI) : geste de l'humain",
   },
   PY: {
-    re:
-      /mem0-http(?:-venv|-test\.sh)?|omp-console-mem0-http|mem0-qdrant(?:-repetition)?|\/home\/mem0\/\.mem0\/history\.db|mem0ai|mem0-local-qdrant-key|\.mem0\/history\.db/g,
-    why:
-      "noms de l'ancienne pile Python (conteneurs, chemins, clé, bibliothèque) que l'import et la détection adressent (B-2)",
+    re: /mem0-http(?:-venv|-test\.sh)?|omp-console-mem0-http|mem0-qdrant(?:-repetition)?|\/home\/mem0\/\.mem0\/history\.db|mem0ai|mem0-local-qdrant-key|\.mem0\/history\.db/g,
+    why: "noms de l'ancienne pile Python (conteneurs, chemins, clé, bibliothèque) que l'import et la détection adressent (B-2)",
   },
   STACK_DIR: {
     re: /mem0-stack\b|mem0-rs-data|mem0-rs:local/g,
@@ -526,8 +515,7 @@ const MOTIFS = {
     why: "clé de service compose `mem0` et son adresse `mem0:8321`, gardées pendant la transition (décision #19)",
   },
   DATA_DIR: {
-    re:
-      /(?:\$ROOT|\$1|\$SECRETS|\$\{OMP_HARNESS_(?:ROOT|SECRETS)\}|\$OMP_HARNESS_(?:ROOT|SECRETS))\/mem0(?:\.env)?|(?<![\w-])mem0\.env\b|\bln -s mem0\b/g,
+    re: /(?:\$ROOT|\$1|\$SECRETS|\$\{OMP_HARNESS_(?:ROOT|SECRETS)\}|\$OMP_HARNESS_(?:ROOT|SECRETS))\/mem0(?:\.env)?|(?<![\w-])mem0\.env\b|\bln -s mem0\b/g,
     why: "dossiers de données et fichiers de secrets sous l'ancien nom, lus sur place (décision #20)",
   },
   TOKEN_FILE: {
@@ -754,7 +742,8 @@ test("renommage-memoire/AC-301 : chaque occurrence de mem0, dans un contenu ou u
   assert.equal(commentaire.length, 1, `un commentaire « mem0 » sur la ligne de repli est signalé : ${commentaire}`);
   assert.match(commentaire[0]!, /^repli\.sh:2 : /);
   assert.equal(
-    scanMentions([{ path: "repli.sh", text: `${depart} ${depart.replace("MEMORY", "MEM0")} ${"Mem0"}\n` }], fabrique).length,
+    scanMentions([{ path: "repli.sh", text: `${depart} ${depart.replace("MEMORY", "MEM0")} ${"Mem0"}\n` }], fabrique)
+      .length,
     1,
     "chaque occurrence d'une ligne doit tomber dans un motif, pas seulement la ligne",
   );
@@ -940,10 +929,8 @@ test("renommage-memoire/AC-302 : chaque dossier et fichier renommé existe sous 
     "les 17 commandes : sept nouvelles, trois de phase, sept alias",
   );
   assert.deepEqual(session.libelles, ["memory"]);
-  for (const nom of OUTILS_ATTENDUS) assert.equal(
-    session.outils.get(nom)?.label,
-    `memory · ${nom.slice("memory_".length)}`,
-  );
+  for (const nom of OUTILS_ATTENDUS)
+    assert.equal(session.outils.get(nom)?.label, `memory · ${nom.slice("memory_".length)}`);
 
   // Les marqueurs du brief et son fichier de référence.
   assert.equal(brief.MARKER_OPEN, "<!-- memory:brief v7 -->");
@@ -1054,9 +1041,8 @@ function scanLectures(files: Fichier[]): string[] {
       for (const nom of lus) {
         const ancien = NOUVEAUX_V.get(nom);
         if (ancien === undefined) {
-          if (!NOMS_MEMORY_CONNUS.has(nom)) problemes.push(
-            `${file.path}:${i + 1} : ${nom} lu hors de la table des noms`,
-          );
+          if (!NOMS_MEMORY_CONNUS.has(nom))
+            problemes.push(`${file.path}:${i + 1} : ${nom} lu hors de la table des noms`);
           continue;
         }
         const replie = AIDES.test(ligne) || ligne.includes(ancien) || (lignes[i + 1] ?? "").includes(ancien);
@@ -1230,10 +1216,10 @@ test("renommage-memoire/AC-303 : l'ancien nom est lu quand le nouveau manque, le
   const jetonB = "jeton-memoire-nouveau-0123456789";
   for (const declare of ["MEM0_TOKEN_PERSO", "MEMORY_TOKEN_PERSO"]) {
     const repo = { name: "client", memory: { tokenEnv: declare } } as unknown as Parameters<typeof repoMemoryToken>[0];
-    assert.equal(repoMemoryToken(repo, { ["MEM0_TOKEN_PERSO"]: jetonA }), jetonA, `${declare} : l'ancien seul`);
+    assert.equal(repoMemoryToken(repo, { MEM0_TOKEN_PERSO: jetonA }), jetonA, `${declare} : l'ancien seul`);
     assert.equal(repoMemoryToken(repo, { MEMORY_TOKEN_PERSO: jetonB }), jetonB, `${declare} : le nouveau seul`);
     assert.equal(
-      repoMemoryToken(repo, { ["MEM0_TOKEN_PERSO"]: jetonA, MEMORY_TOKEN_PERSO: jetonB }),
+      repoMemoryToken(repo, { MEM0_TOKEN_PERSO: jetonA, MEMORY_TOKEN_PERSO: jetonB }),
       jetonB,
       `${declare} : les deux, distincts → MEMORY_TOKEN_PERSO`,
     );
@@ -1369,32 +1355,35 @@ test("renommage-memoire/AC-304 : le service juge X-Memory-Token, sinon X-Mem0-To
     "sans jeton, aucun des deux en-têtes",
   );
 
-  await t.test("memory-rs avec un jeton : l'un, l'autre, les deux (bon nouveau + mauvais ancien → 200, mauvais nouveau + bon ancien → 401)", async (st) => {
-    if (!binairePret(st)) return;
-    const faux = await demarrerFauxOpenAI();
-    const home = tmpdir("renommage-memoire-http-");
-    const service = await lancerService({ HOME: home, MEMORY_HTTP_TOKEN: "bon" }, faux);
-    try {
-      const statut = async (entetes: Record<string, string>): Promise<{ statut: number; corps: string }> => {
-        const reponse = await fetch(`${service.url}/memory/all`, { headers: entetes });
-        return { statut: reponse.status, corps: await reponse.text() };
-      };
-      assert.equal((await statut({ "X-Mem0-Token": "bon" })).statut, 200, "ancien en-tête seul");
-      assert.equal((await statut({ "X-Memory-Token": "bon" })).statut, 200, "nouvel en-tête seul");
-      assert.equal(
-        (await statut({ "X-Memory-Token": "bon", "X-Mem0-Token": "faux" })).statut,
-        200,
-        "les deux : seul le nouveau est jugé",
-      );
-      const refus = await statut({ "X-Memory-Token": "faux", "X-Mem0-Token": "bon" });
-      assert.equal(refus.statut, 401, "les deux, nouveau faux : refusé");
-      assert.match(refus.corps, /X-Memory-Token/);
-      assert.equal((await statut({})).statut, 401, "sans en-tête");
-    } finally {
-      await service.arreter();
-      await faux.fermer();
-    }
-  });
+  await t.test(
+    "memory-rs avec un jeton : l'un, l'autre, les deux (bon nouveau + mauvais ancien → 200, mauvais nouveau + bon ancien → 401)",
+    async (st) => {
+      if (!binairePret(st)) return;
+      const faux = await demarrerFauxOpenAI();
+      const home = tmpdir("renommage-memoire-http-");
+      const service = await lancerService({ HOME: home, MEMORY_HTTP_TOKEN: "bon" }, faux);
+      try {
+        const statut = async (entetes: Record<string, string>): Promise<{ statut: number; corps: string }> => {
+          const reponse = await fetch(`${service.url}/memory/all`, { headers: entetes });
+          return { statut: reponse.status, corps: await reponse.text() };
+        };
+        assert.equal((await statut({ "X-Mem0-Token": "bon" })).statut, 200, "ancien en-tête seul");
+        assert.equal((await statut({ "X-Memory-Token": "bon" })).statut, 200, "nouvel en-tête seul");
+        assert.equal(
+          (await statut({ "X-Memory-Token": "bon", "X-Mem0-Token": "faux" })).statut,
+          200,
+          "les deux : seul le nouveau est jugé",
+        );
+        const refus = await statut({ "X-Memory-Token": "faux", "X-Mem0-Token": "bon" });
+        assert.equal(refus.statut, 401, "les deux, nouveau faux : refusé");
+        assert.match(refus.corps, /X-Memory-Token/);
+        assert.equal((await statut({})).statut, 401, "sans en-tête");
+      } finally {
+        await service.arreter();
+        await faux.fermer();
+      }
+    },
+  );
 });
 
 // ── AC-305 : les réglages et les données d'une installation existante sont retrouvés sans être déplacés ──
@@ -1443,7 +1432,10 @@ exec ${JSON.stringify(process.execPath)} -e "$script"
 
 const HARNESS_SH = path.join(ROOT, "omp-harness", "deploy", "container", "harness.sh");
 
-function harnessSh(commande: string, env: Record<string, string>): { status: number | null; stdout: string; stderr: string } {
+function harnessSh(
+  commande: string,
+  env: Record<string, string>,
+): { status: number | null; stdout: string; stderr: string } {
   const r = spawnSync("bash", [HARNESS_SH, commande], { encoding: "utf8", env, timeout: 60_000 });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
@@ -1567,49 +1559,60 @@ test("renommage-memoire/AC-305 : les anciens réglages et la base d'avant sont l
   assert.equal(fs.readFileSync(path.join(avec.dir, ".omp", "memory.json"), "utf8"), avantNouveau);
   assert.equal(fs.readFileSync(path.join(avec.dir, ".omp", "mem0.json"), "utf8"), avantAncien);
 
-  await t.test("memory-rs : la base d'avant `~/.mem0/mem0-rs.db` est lue sur place, sans variable, et rien n'est créé sous `~/.memory/`", async (st) => {
-    if (!binairePret(st)) return;
-    const faux = await demarrerFauxOpenAI();
-    const maison = tmpdir("renommage-memoire-base-");
-    const ancienne = path.join(maison, ".mem0", "mem0-rs.db");
-    fs.mkdirSync(path.dirname(ancienne), { recursive: true });
-    const requete = async (service: ServiceRs, route: string, corps?: unknown): Promise<{ results?: Array<{ memory?: string }> }> => {
-      const reponse = await fetch(`${service.url}${route}`, {
-        method: corps === undefined ? "GET" : "POST",
-        headers: { "Content-Type": "application/json" },
-        ...(corps === undefined ? {} : { body: JSON.stringify(corps) }),
-      });
-      assert.equal(reponse.status, 200, `${route} : ${await reponse.clone().text()}`);
-      return (await reponse.json()) as { results?: Array<{ memory?: string }> };
-    };
-    try {
-      // Un premier démarrage sous l'ancienne variable crée l'ancienne base, et y range un souvenir.
-      const avant = await lancerService({ HOME: maison, [`${"MEM0"}_DB_PATH`]: ancienne }, faux);
-      await requete(avant, "/memory/add", { text: "souvenir d'avant le renommage", agent_id: "projet", infer: false });
-      assert.equal(await avant.arreter(), 0);
-      assert.ok(fs.existsSync(ancienne));
-      // Un second, sans variable : le même souvenir, aucune base sous ~/.memory/.
-      const apres = await lancerService({ HOME: maison }, faux);
+  await t.test(
+    "memory-rs : la base d'avant `~/.mem0/mem0-rs.db` est lue sur place, sans variable, et rien n'est créé sous `~/.memory/`",
+    async (st) => {
+      if (!binairePret(st)) return;
+      const faux = await demarrerFauxOpenAI();
+      const maison = tmpdir("renommage-memoire-base-");
+      const ancienne = path.join(maison, ".mem0", "mem0-rs.db");
+      fs.mkdirSync(path.dirname(ancienne), { recursive: true });
+      const requete = async (
+        service: ServiceRs,
+        route: string,
+        corps?: unknown,
+      ): Promise<{ results?: Array<{ memory?: string }> }> => {
+        const reponse = await fetch(`${service.url}${route}`, {
+          method: corps === undefined ? "GET" : "POST",
+          headers: { "Content-Type": "application/json" },
+          ...(corps === undefined ? {} : { body: JSON.stringify(corps) }),
+        });
+        assert.equal(reponse.status, 200, `${route} : ${await reponse.clone().text()}`);
+        return (await reponse.json()) as { results?: Array<{ memory?: string }> };
+      };
       try {
-        const tous = await requete(apres, "/memory/all?agent_id=projet");
-        assert.deepEqual(
-          (tous.results ?? []).map((ligne) => ligne.memory),
-          ["souvenir d'avant le renommage"],
+        // Un premier démarrage sous l'ancienne variable crée l'ancienne base, et y range un souvenir.
+        const avant = await lancerService({ HOME: maison, [`${"MEM0"}_DB_PATH`]: ancienne }, faux);
+        await requete(avant, "/memory/add", {
+          text: "souvenir d'avant le renommage",
+          agent_id: "projet",
+          infer: false,
+        });
+        assert.equal(await avant.arreter(), 0);
+        assert.ok(fs.existsSync(ancienne));
+        // Un second, sans variable : le même souvenir, aucune base sous ~/.memory/.
+        const apres = await lancerService({ HOME: maison }, faux);
+        try {
+          const tous = await requete(apres, "/memory/all?agent_id=projet");
+          assert.deepEqual(
+            (tous.results ?? []).map((ligne) => ligne.memory),
+            ["souvenir d'avant le renommage"],
+          );
+          assert.ok(apres.journal().includes(ancienne), "le service dit quelle base il lit");
+        } finally {
+          await apres.arreter();
+        }
+        assert.equal(
+          fs.existsSync(path.join(maison, ".memory")),
+          false,
+          "la nouvelle base n'est pas créée tant que l'ancienne existe",
         );
-        assert.ok(apres.journal().includes(ancienne), "le service dit quelle base il lit");
+        assert.ok(fs.existsSync(ancienne), "l'ancienne base n'est pas déplacée");
       } finally {
-        await apres.arreter();
+        await faux.fermer();
       }
-      assert.equal(
-        fs.existsSync(path.join(maison, ".memory")),
-        false,
-        "la nouvelle base n'est pas créée tant que l'ancienne existe",
-      );
-      assert.ok(fs.existsSync(ancienne), "l'ancienne base n'est pas déplacée");
-    } finally {
-      await faux.fermer();
-    }
-  });
+    },
+  );
 });
 
 // ── AC-306 : le brief ──────────────────────────────────────────────────────────────────────────────────
@@ -1688,7 +1691,10 @@ test("renommage-memoire/AC-306 : un ancien bloc publié est remplacé à sa plac
     sessionManager: { getSessionId: () => "s-brief" },
   } as never);
   verifierUnSeulBloc(lireChemin(projetEdite.agents), AGENTS_DEPART.replace("@BLOC@", brief.AGENTS_BLOCK));
-  assert.ok(notifications.some((n) => n.includes("[memory] brief mémoire posé")), notifications.join("\n"));
+  assert.ok(
+    notifications.some((n) => n.includes("[memory] brief mémoire posé")),
+    notifications.join("\n"),
+  );
   assert.equal(fs.readFileSync(projetEdite.ancienRef, "utf8"), ANCIEN_BRIEF);
 
   // L'autosetup coupé (comme les runners), sous le nouveau nom puis sous l'ancien : rien n'est lu ni écrit.
@@ -1706,7 +1712,11 @@ test("renommage-memoire/AC-306 : un ancien bloc publié est remplacé à sa plac
       ["--experimental-strip-types", "--no-warnings", scriptEnfant, projet.dir],
       {
         encoding: "utf8",
-        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir("renommage-memoire-enfant-home-"), [variable]: "0" },
+        env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          HOME: tmpdir("renommage-memoire-enfant-home-"),
+          [variable]: "0",
+        },
         timeout: 60_000,
       },
     );
@@ -1786,7 +1796,12 @@ async function explorer(session: Enregistrement, ctx: unknown, n: number): Promi
   let checkpoints = 0;
   for (let i = 0; i < n; i += 1) {
     const rendu = (await session.hooks.get("tool_result")!(
-      { toolName: "grep", input: { pattern: "renommage" }, content: [{ type: "text", text: "x" }], isError: false } as never,
+      {
+        toolName: "grep",
+        input: { pattern: "renommage" },
+        content: [{ type: "text", text: "x" }],
+        isError: false,
+      } as never,
       ctx as never,
     )) as { content?: Array<{ text?: string }> } | undefined;
     if (rendu?.content?.some((partie) => partie.text?.startsWith("[memory checkpoint]"))) checkpoints += 1;
@@ -1830,9 +1845,8 @@ test("renommage-memoire/AC-307 : mem0_add et memory_add, /mem0-status et /memory
   await session.commandes.get("mem0-status")!.handler("", ancienne.ctx as never);
   const courante = sessionMemoire("s-commandes");
   await session.commandes.get("memory-status")!.handler("", courante.ctx as never);
-  const sortie = (notifications: string[]): string[] => notifications.map(
-    (n) => n.replace(/\/[^ ·)]*renommage-memoire-session-\w+/g, "<repo>"),
-  );
+  const sortie = (notifications: string[]): string[] =>
+    notifications.map((n) => n.replace(/\/[^ ·)]*renommage-memoire-session-\w+/g, "<repo>"));
   assert.ok(ancienne.notifications.length >= 2, ancienne.notifications.join("\n"));
   assert.deepEqual(sortie(ancienne.notifications), sortie(courante.notifications), "même sortie");
   assert.match(courante.notifications.join("\n"), /^\[memory\] ok=true/m);
@@ -1896,9 +1910,8 @@ function verifierCatalogue(
   commandesDe: (source: string) => string[] | null,
 ): string[] {
   const ecarts: string[] = [];
-  if (catalogue.name !== "mem0-omp") ecarts.push(
-    `${fichier} : le catalogue s'appelle « ${catalogue.name} », pas « mem0-omp »`,
-  );
+  if (catalogue.name !== "mem0-omp")
+    ecarts.push(`${fichier} : le catalogue s'appelle « ${catalogue.name} », pas « mem0-omp »`);
   const entree = (nom: string): Entree | undefined => catalogue.plugins.find((p) => p.name === nom);
   for (const [ancien, nouveau] of COUPLES_DE_PLUGINS) {
     const a = entree(ancien);
@@ -1913,9 +1926,8 @@ function verifierCatalogue(
         ecarts.push(`${fichier} : la source de ${e.name} livre ${nomDuPlugin(e.source)}, pas ${nouveau}`);
       }
     }
-    if (a.source !== n.source) ecarts.push(
-      `${fichier} : ${ancien} (${a.source}) ne livre pas la source de ${nouveau} (${n.source})`,
-    );
+    if (a.source !== n.source)
+      ecarts.push(`${fichier} : ${ancien} (${a.source}) ne livre pas la source de ${nouveau} (${n.source})`);
     if (JSON.stringify(a.commands ?? null) !== JSON.stringify(n.commands ?? null)) {
       ecarts.push(`${fichier} : ${ancien} et ${nouveau} n'ont pas les mêmes commandes`);
     }
@@ -1929,17 +1941,16 @@ function verifierCatalogue(
 
 test("renommage-memoire/AC-308 : les catalogues gardent le nom mem0-omp et portent les quatre entrées ; la doc installe les nouvelles ; deux copies du plugin n'enregistrent qu'une fois chaque outil et chaque commande", async () => {
   const sourceExiste = (source: string): boolean => fs.existsSync(path.join(ROOT, source, "package.json"));
-  const nomDuPlugin = (source: string): string | null => JSON.parse(lire(`${source.replace(/^\.\//, "")}/package.json`)).name ?? null;
+  const nomDuPlugin = (source: string): string | null =>
+    JSON.parse(lire(`${source.replace(/^\.\//, "")}/package.json`)).name ?? null;
   const commandesDe = (source: string): string[] | null => {
     const dossier = path.join(ROOT, source);
     if (!fs.existsSync(dossier)) return null;
     return fs
       .readdirSync(dossier)
       .filter((f) => f.endsWith(".ts"))
-      .flatMap(
-        (f) => [...fs.readFileSync(path.join(dossier, f), "utf8").matchAll(/registerCommand\("([^"]+)"/g)].map(
-          (m) => m[1]!,
-        ),
+      .flatMap((f) =>
+        [...fs.readFileSync(path.join(dossier, f), "utf8").matchAll(/registerCommand\("([^"]+)"/g)].map((m) => m[1]!),
       );
   };
   const catalogues: Record<string, Catalogue> = {
@@ -1972,13 +1983,22 @@ test("renommage-memoire/AC-308 : les catalogues gardent le nom mem0-omp et porte
     patch(copie);
     return verifierCatalogue("c.json", copie, sourceExiste, nomDuPlugin, commandesDe).join("\n");
   };
-  assert.match(plante((c) => (c.name = "memory-omp")), /s'appelle « memory-omp »/);
+  assert.match(
+    plante((c) => (c.name = "memory-omp")),
+    /s'appelle « memory-omp »/,
+  );
   assert.match(
     plante((c) => (c.plugins = c.plugins.filter((p) => p.name !== "omp-mem0-req"))),
     /omp-mem0-req est absente/,
   );
-  assert.match(plante((c) => (c.plugins[2]!.version = "0.0.1")), /omp-mem0-memory 0\.0\.1 ≠ omp-memory 4\./);
-  assert.match(plante((c) => (c.plugins[3]!.source = "./absent")), /source \.\/absent de omp-mem0-req n'existe pas/);
+  assert.match(
+    plante((c) => (c.plugins[2]!.version = "0.0.1")),
+    /omp-mem0-memory 0\.0\.1 ≠ omp-memory 4\./,
+  );
+  assert.match(
+    plante((c) => (c.plugins[3]!.source = "./absent")),
+    /source \.\/absent de omp-mem0-req n'existe pas/,
+  );
 
   // La documentation installe les nouvelles entrées, pas les anciennes.
   for (const doc of ["README.md", "PUBLISHING.md"]) {
@@ -2004,17 +2024,19 @@ test("renommage-memoire/AC-308 : les catalogues gardent le nom mem0-omp et porte
   memoryPluginExtension(premiere.pi);
   (await copieDe("../../omp-memory/extension.ts"))(seconde.pi as never);
   memoryPluginExtension(rechargee.pi);
-  const unique = (noms: string[]): void => assert.equal(
-    new Set(noms).size,
-    noms.length,
-    `enregistrements en double : ${noms}`,
-  );
+  const unique = (noms: string[]): void =>
+    assert.equal(new Set(noms).size, noms.length, `enregistrements en double : ${noms}`);
   unique(premiere.enregistre.appelsOutil);
   unique(premiere.enregistre.appelsCommande);
   assert.equal(premiere.enregistre.appelsOutil.length, 10, "cinq outils et cinq alias");
   assert.equal(premiere.enregistre.appelsCommande.length, 17);
   assert.deepEqual(
-    [seconde.enregistre.appelsOutil, seconde.enregistre.appelsCommande, [...seconde.enregistre.hooks.keys()], seconde.enregistre.libelles],
+    [
+      seconde.enregistre.appelsOutil,
+      seconde.enregistre.appelsCommande,
+      [...seconde.enregistre.hooks.keys()],
+      seconde.enregistre.libelles,
+    ],
     [[], [], [], []],
     "la seconde copie ne fait rien : ni outil, ni commande, ni hook, ni libellé",
   );
@@ -2059,54 +2081,65 @@ test("renommage-memoire/AC-309 : /health porte memory et mem0, /metrics chaque f
   // Le journal du serveur et sa source : `memory`.
   assert.match(lire("omp-harness/operations/logger.ts"), /type LogSource = "harness" \| "memory" \| "vigie"/);
 
-  await t.test("memory-rs démarré : le corps de /health, les familles de /metrics et le journal du jour", async (st) => {
-    if (!binairePret(st)) return;
-    const faux = await demarrerFauxOpenAI();
-    const donnees = tmpdir("renommage-memoire-emission-");
-    const service = await lancerService(
-      { HOME: donnees, MEMORY_DB_PATH: path.join(donnees, "memory-rs.db"), MEMORY_HTTP_TOKEN: "bon" },
-      faux,
-    );
-    try {
-      const sante = (await (await fetch(`${service.url}/health`)).json()) as Record<string, unknown>;
-      assert.match(String(sante.memory), /^memory-rs \d/, "clé memory");
-      assert.equal(sante.mem0, sante.memory, "clé mem0 : même valeur");
-      assert.equal(sante.ok, true);
-      const metriques = await (await fetch(`${service.url}/metrics`, { headers: { "X-Memory-Token": "bon" } })).text();
-      const familles = (prefixe: string): string[] =>
-        [...metriques.matchAll(new RegExp(`^# TYPE ${prefixe}_(\\w+) `, "gm"))].map((m) => m[1]!).sort();
-      const courantes = familles("memory");
-      assert.ok(courantes.length >= 6, `familles memory_* : ${courantes}`);
-      assert.deepEqual(familles("mem0"), courantes, "chaque famille existe sous memory_* et mem0_*");
-      for (const nom of ["info", "uptime_seconds", "memories", "db_bytes", "http_requests_total"]) {
-        assert.ok(courantes.includes(nom), `famille ${nom}`);
-        assert.match(metriques, new RegExp(`^memory_${nom}(?:\\{| )`, "m"));
-        assert.match(metriques, new RegExp(`^mem0_${nom}(?:\\{| )`, "m"));
+  await t.test(
+    "memory-rs démarré : le corps de /health, les familles de /metrics et le journal du jour",
+    async (st) => {
+      if (!binairePret(st)) return;
+      const faux = await demarrerFauxOpenAI();
+      const donnees = tmpdir("renommage-memoire-emission-");
+      const service = await lancerService(
+        { HOME: donnees, MEMORY_DB_PATH: path.join(donnees, "memory-rs.db"), MEMORY_HTTP_TOKEN: "bon" },
+        faux,
+      );
+      try {
+        const sante = (await (await fetch(`${service.url}/health`)).json()) as Record<string, unknown>;
+        assert.match(String(sante.memory), /^memory-rs \d/, "clé memory");
+        assert.equal(sante.mem0, sante.memory, "clé mem0 : même valeur");
+        assert.equal(sante.ok, true);
+        const metriques = await (
+          await fetch(`${service.url}/metrics`, { headers: { "X-Memory-Token": "bon" } })
+        ).text();
+        const familles = (prefixe: string): string[] =>
+          [...metriques.matchAll(new RegExp(`^# TYPE ${prefixe}_(\\w+) `, "gm"))].map((m) => m[1]!).sort();
+        const courantes = familles("memory");
+        assert.ok(courantes.length >= 6, `familles memory_* : ${courantes}`);
+        assert.deepEqual(familles("mem0"), courantes, "chaque famille existe sous memory_* et mem0_*");
+        for (const nom of ["info", "uptime_seconds", "memories", "db_bytes", "http_requests_total"]) {
+          assert.ok(courantes.includes(nom), `famille ${nom}`);
+          assert.match(metriques, new RegExp(`^memory_${nom}(?:\\{| )`, "m"));
+          assert.match(metriques, new RegExp(`^mem0_${nom}(?:\\{| )`, "m"));
+        }
+        const jour = path.join(donnees, "logs");
+        const fichiers = fs.readdirSync(jour);
+        assert.ok(
+          fichiers.some((f) => /^memory-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)),
+          `journal du jour : ${fichiers}`,
+        );
+        assert.deepEqual(
+          fichiers.filter((f) => f.startsWith("mem0-")),
+          [],
+          "aucun journal sous l'ancien nom",
+        );
+        const lignes = fichiers
+          .filter((f) => f.endsWith(".jsonl"))
+          .flatMap((f) => fs.readFileSync(path.join(jour, f), "utf8").split("\n").filter(Boolean));
+        assert.ok(lignes.length > 0, "le journal n'est pas vide");
+        for (const ligne of lignes) assert.equal(JSON.parse(ligne).src, "memory", ligne);
+      } finally {
+        await service.arreter();
+        await faux.fermer();
       }
-      const jour = path.join(donnees, "logs");
-      const fichiers = fs.readdirSync(jour);
-      assert.ok(fichiers.some((f) => /^memory-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)), `journal du jour : ${fichiers}`);
-      assert.deepEqual(fichiers.filter((f) => f.startsWith("mem0-")), [], "aucun journal sous l'ancien nom");
-      const lignes = fichiers
-        .filter((f) => f.endsWith(".jsonl"))
-        .flatMap((f) => fs.readFileSync(path.join(jour, f), "utf8").split("\n").filter(Boolean));
-      assert.ok(lignes.length > 0, "le journal n'est pas vide");
-      for (const ligne of lignes) assert.equal(JSON.parse(ligne).src, "memory", ligne);
-    } finally {
-      await service.arreter();
-      await faux.fermer();
-    }
-  });
+    },
+  );
 });
 
 // ── AC-310 : les mises à niveau des installations existantes ────────────────────────────────────────────
-const BOX = path.join(ROOT, "omp-harness", "deploy", "container");
 const DEPLOY = path.join(ROOT, "omp-harness", "deploy");
 
 /** Le bloc d'un service d'un fichier compose, de sa ligne `  <nom>:` à la suivante de même niveau. */
 function blocService(compose: string, nom: string): string {
   const lignes = compose.split("\n");
-  const debut = lignes.findIndex((ligne) => ligne === `  ${nom}:`);
+  const debut = lignes.indexOf(`  ${nom}:`);
   assert.notEqual(debut, -1, `service ${nom} absent`);
   const suite = lignes.slice(debut + 1);
   const fin = suite.findIndex((ligne) => /^ {2}\S/.test(ligne) || /^\S/.test(ligne));
@@ -2120,18 +2153,14 @@ function verifierUnite(unite: string, sysusers: string, tmpfiles: string): strin
   if (!dossier) return ["tmpfiles.conf : /var/lib/omp-mem0 n'est pas déclaré"];
   const [, mode, proprietaire, groupe] = dossier;
   if (mode !== "0700") ecarts.push(`tmpfiles.conf : /var/lib/omp-mem0 est en ${mode}, pas 0700`);
-  if (!new RegExp(`^u ${proprietaire} `, "m").test(sysusers)) ecarts.push(
-    `sysusers.conf : ${proprietaire} n'est pas déclaré`,
-  );
-  const directive = (cle: string): string[] => [...unite.matchAll(new RegExp(`^${cle}=(.*)$`, "gm"))].map(
-    (m) => m[1]!.trim(),
-  );
-  if (directive("User")[0] !== proprietaire) ecarts.push(
-    `l'unité tourne sous ${directive("User")[0]}, pas sous ${proprietaire}`,
-  );
-  if (directive("Group")[0] !== groupe) ecarts.push(
-    `l'unité tourne sous le groupe ${directive("Group")[0]}, pas ${groupe}`,
-  );
+  if (!new RegExp(`^u ${proprietaire} `, "m").test(sysusers))
+    ecarts.push(`sysusers.conf : ${proprietaire} n'est pas déclaré`);
+  const directive = (cle: string): string[] =>
+    [...unite.matchAll(new RegExp(`^${cle}=(.*)$`, "gm"))].map((m) => m[1]!.trim());
+  if (directive("User")[0] !== proprietaire)
+    ecarts.push(`l'unité tourne sous ${directive("User")[0]}, pas sous ${proprietaire}`);
+  if (directive("Group")[0] !== groupe)
+    ecarts.push(`l'unité tourne sous le groupe ${directive("Group")[0]}, pas ${groupe}`);
   const ecriture = (directive("ReadWritePaths")[0] ?? "").split(/\s+/);
   if (!ecriture.includes("/var/lib/omp-mem0")) ecarts.push("ReadWritePaths ne contient pas /var/lib/omp-mem0");
   if (!ecriture.includes("-/var/lib/omp-memory")) ecarts.push("ReadWritePaths ne contient pas -/var/lib/omp-memory");
@@ -2168,7 +2197,7 @@ function installerDebian(
 }
 
 /** Des commandes de root doublées : elles notent leurs arguments et réussissent. */
-function doublures(dir: string, journal: string): string {
+function doublures(dir: string): string {
   const bin = path.join(dir, "bin");
   fs.mkdirSync(bin, { recursive: true });
   const ecrire = (nom: string, corps: string): void => {
@@ -2210,7 +2239,11 @@ exit 1`,
 }
 
 /** Un faux `/` d'une installation Debian : les dossiers que le script suppose, l'ancienne unité et ses secrets. */
-function fauxRoot(avant: { memoryEnv: boolean; ancienne: boolean; ancienEnv: boolean }): { faux: string; bin: string; journal: string } {
+function fauxRoot(avant: { memoryEnv: boolean; ancienne: boolean; ancienEnv: boolean }): {
+  faux: string;
+  bin: string;
+  journal: string;
+} {
   const faux = tmpdir("renommage-memoire-debian-");
   for (const dossier of [
     "etc/sysusers.d",
@@ -2231,10 +2264,8 @@ function fauxRoot(avant: { memoryEnv: boolean; ancienne: boolean; ancienEnv: boo
   fs.writeFileSync(journal, "");
   // Le dépôt cloné : des liens vers les dossiers réels (le script les copie sans les parcourir).
   fs.mkdirSync(path.join(faux, "depot", "memory-stack"), { recursive: true });
-  for (const dossier of ["omp-harness", "omp-memory"]) fs.symlinkSync(
-    path.join(ROOT, dossier),
-    path.join(faux, "depot", dossier),
-  );
+  for (const dossier of ["omp-harness", "omp-memory"])
+    fs.symlinkSync(path.join(ROOT, dossier), path.join(faux, "depot", dossier));
   // omp et memory-rs déjà posés : ni téléchargement, ni compilation.
   const version = /^OMP_VERSION=(\S+)$/m.exec(lire("omp-harness/deploy/install.sh"))![1];
   fs.writeFileSync(path.join(faux, "usr/local/bin/omp"), `#!/bin/sh\necho omp/${version}\n`, { mode: 0o755 });
@@ -2244,15 +2275,17 @@ function fauxRoot(avant: { memoryEnv: boolean; ancienne: boolean; ancienEnv: boo
   if (avant.ancienne) {
     fs.writeFileSync(path.join(faux, "etc/systemd/system/omp-harness-mem0.service"), "[Service]\nUser=omp-mem0\n");
   }
-  if (avant.ancienEnv) fs.writeFileSync(
-    path.join(faux, "etc/omp-harness/mem0.env"),
-    lire("test/support/renommage-memoire/secrets-ancien.env"),
-  );
-  if (avant.memoryEnv) fs.writeFileSync(
-    path.join(faux, "etc/omp-harness/memory.env"),
-    lire("test/support/renommage-memoire/secrets-nouveau.env"),
-  );
-  return { faux, bin: doublures(faux, journal), journal };
+  if (avant.ancienEnv)
+    fs.writeFileSync(
+      path.join(faux, "etc/omp-harness/mem0.env"),
+      lire("test/support/renommage-memoire/secrets-ancien.env"),
+    );
+  if (avant.memoryEnv)
+    fs.writeFileSync(
+      path.join(faux, "etc/omp-harness/memory.env"),
+      lire("test/support/renommage-memoire/secrets-nouveau.env"),
+    );
+  return { faux, bin: doublures(faux), journal };
 }
 
 test("renommage-memoire/AC-310 : chaque installation existante se met à niveau sur ses anciennes données, avec son jeton, sans rien créer sous le nouveau nom — Portainer, harness.sh, Debian, NixOS, pile manuelle, supervision", async (t) => {
@@ -2349,7 +2382,10 @@ test("renommage-memoire/AC-310 : chaque installation existante se met à niveau 
     ["compose.yaml", conteneur],
   ] as const) {
     const service = blocService(texte, "mem0");
-    const alias = /aliases: \[([^\]]+)\]/.exec(service)![1]!.split(",").map((a) => a.trim());
+    const alias = /aliases: \[([^\]]+)\]/
+      .exec(service)![1]!
+      .split(",")
+      .map((a) => a.trim());
     for (const url of ["http://mem0:8321", "http://memory:8321", gabarit.oracle.url]) {
       const hote = new URL(url).hostname;
       assert.ok(hote === "mem0" || alias.includes(hote), `${nomFichier} : ${hote} ne joint pas le service mémoire`);
@@ -2364,7 +2400,10 @@ test("renommage-memoire/AC-310 : chaque installation existante se met à niveau 
   // ── harness.sh : le choix du dossier de données et du fichier de secrets, refait à chaque `up`. ──
   const moteur = tmpdir("renommage-memoire-moteur-");
   fs.writeFileSync(path.join(moteur, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-  const monter = (dossiers: string[], secrets: Record<string, string>): { root: string; secrets: string; dir: string } => {
+  const monter = (
+    dossiers: string[],
+    secrets: Record<string, string>,
+  ): { root: string; secrets: string; dir: string } => {
     const dir = tmpdir("renommage-memoire-up-");
     const root = path.join(dir, "root");
     fs.mkdirSync(path.join(root, "state"), { recursive: true });
@@ -2527,14 +2566,21 @@ test("renommage-memoire/AC-310 : chaque installation existante se met à niveau 
   const sansConstruction = installerDebian(sansCargo.faux, { bin: sansCargo.bin, journal: sansCargo.journal });
   assert.equal(sansConstruction.status, 0, `${sansConstruction.stdout}\n${sansConstruction.stderr}`);
   const appelsSansCargo = fs.readFileSync(sansCargo.journal, "utf8");
-  assert.doesNotMatch(appelsSansCargo, /omp-harness-mem0\.service/, "sans memory-rs : l'ancienne unité n'est pas touchée");
+  assert.doesNotMatch(
+    appelsSansCargo,
+    /omp-harness-mem0\.service/,
+    "sans memory-rs : l'ancienne unité n'est pas touchée",
+  );
   assert.doesNotMatch(appelsSansCargo, /systemctl enable --now omp-harness-memory/, "sans memory-rs : rien à démarrer");
   assert.ok(
     fs.existsSync(path.join(sansCargo.faux, "etc/systemd/system/omp-harness-mem0.service")),
     "sans memory-rs : l'ancienne unité reste installée",
   );
   assert.ok(fs.existsSync(path.join(sansCargo.faux, "usr/local/bin/mem0-rs")), "l'ancien binaire reste");
-  assert.match(sansConstruction.stdout, /cargo build --release --locked --manifest-path memory-stack\/memory-rs\/Cargo\.toml/);
+  assert.match(
+    sansConstruction.stdout,
+    /cargo build --release --locked --manifest-path memory-stack\/memory-rs\/Cargo\.toml/,
+  );
   fs.writeFileSync(path.join(sansCargo.faux, "usr/local/bin/memory-rs"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   fs.writeFileSync(sansCargo.journal, "");
   const apresConstruction = installerDebian(sansCargo.faux, { bin: sansCargo.bin, journal: sansCargo.journal });
@@ -2548,7 +2594,9 @@ test("renommage-memoire/AC-310 : chaque installation existante se met à niveau 
   const vierge = fauxRoot({ memoryEnv: false, ancienne: false, ancienEnv: false });
   const neuveDebian = installerDebian(vierge.faux, { bin: vierge.bin, journal: vierge.journal });
   assert.equal(neuveDebian.status, 0, `${neuveDebian.stdout}\n${neuveDebian.stderr}`);
-  const jetonNeuf = /^MEMORY_HTTP_TOKEN=([0-9a-f]{64})$/m.exec(lireFichier(vierge.faux, "etc/omp-harness/memory.env"))?.[1];
+  const jetonNeuf = /^MEMORY_HTTP_TOKEN=([0-9a-f]{64})$/m.exec(
+    lireFichier(vierge.faux, "etc/omp-harness/memory.env"),
+  )?.[1];
   assert.ok(jetonNeuf, "memory.env porte le jeton");
   assert.match(lireFichier(vierge.faux, "etc/omp-harness/env"), new RegExp(`^MEMORY_HTTP_TOKEN=${jetonNeuf}$`, "m"));
   assert.match(
@@ -2634,38 +2682,41 @@ test("renommage-memoire/AC-310 : chaque installation existante se met à niveau 
   assert.match(prometheus, /- job_name: memory$/m);
   assert.match(prometheus, /targets: \["mem0:8321"\]/, "la cible est la clé du service");
 
-  await t.test("NixOS évalué : mem0.enable = false et memory.enable = true → l'unité de la mémoire est déclarée", (st) => {
-    const nix = spawnSync("nix-instantiate", ["--version"], { encoding: "utf8" });
-    if (nix.status !== 0) {
-      prerequisAbsent(st, "nix-instantiate", "module NixOS non évalué", null);
-      return;
-    }
-    const nixos = `{ configuration }: (import <nixpkgs/nixos> { inherit configuration; }).config`;
-    const base = `{ boot.loader.grub.enable = false; fileSystems."/" = { device = "/dev/null"; fsType = "ext4"; }; system.stateVersion = "24.11"; }`;
-    const sonde = spawnSync(
-      "nix-instantiate",
-      ["--eval", "--strict", "--json", "--expr", `(${nixos}) { configuration = ${base}; } ? systemd`],
-      { encoding: "utf8", timeout: 240_000 },
-    );
-    if (sonde.status !== 0) {
-      prerequisAbsent(st, "nixpkgs évaluable (<nixpkgs/nixos>)", "module NixOS non évalué", null);
-      return;
-    }
-    const configuration = `{ imports = [ ${path.join(DEPLOY, "nixos", "module.nix")} ]; ${base.slice(2, -2)}; services.omp-harness = { enable = true; mem0.enable = false; memory.enable = true; }; }`;
-    const evalue = spawnSync(
-      "nix-instantiate",
-      [
-        "--eval",
-        "--strict",
-        "--json",
-        "--expr",
-        `(${nixos}) { configuration = ${configuration}; }.systemd.services ? omp-harness-memory`,
-      ],
-      { encoding: "utf8", timeout: 240_000 },
-    );
-    assert.equal(evalue.status, 0, evalue.stderr);
-    assert.equal(JSON.parse(evalue.stdout), true, "la nouvelle option l'emporte : l'unité est déclarée");
-  });
+  await t.test(
+    "NixOS évalué : mem0.enable = false et memory.enable = true → l'unité de la mémoire est déclarée",
+    (st) => {
+      const nix = spawnSync("nix-instantiate", ["--version"], { encoding: "utf8" });
+      if (nix.status !== 0) {
+        prerequisAbsent(st, "nix-instantiate", "module NixOS non évalué", null);
+        return;
+      }
+      const nixos = `{ configuration }: (import <nixpkgs/nixos> { inherit configuration; }).config`;
+      const base = `{ boot.loader.grub.enable = false; fileSystems."/" = { device = "/dev/null"; fsType = "ext4"; }; system.stateVersion = "24.11"; }`;
+      const sonde = spawnSync(
+        "nix-instantiate",
+        ["--eval", "--strict", "--json", "--expr", `(${nixos}) { configuration = ${base}; } ? systemd`],
+        { encoding: "utf8", timeout: 240_000 },
+      );
+      if (sonde.status !== 0) {
+        prerequisAbsent(st, "nixpkgs évaluable (<nixpkgs/nixos>)", "module NixOS non évalué", null);
+        return;
+      }
+      const configuration = `{ imports = [ ${path.join(DEPLOY, "nixos", "module.nix")} ]; ${base.slice(2, -2)}; services.omp-harness = { enable = true; mem0.enable = false; memory.enable = true; }; }`;
+      const evalue = spawnSync(
+        "nix-instantiate",
+        [
+          "--eval",
+          "--strict",
+          "--json",
+          "--expr",
+          `(${nixos}) { configuration = ${configuration}; }.systemd.services ? omp-harness-memory`,
+        ],
+        { encoding: "utf8", timeout: 240_000 },
+      );
+      assert.equal(evalue.status, 0, evalue.stderr);
+      assert.equal(JSON.parse(evalue.stdout), true, "la nouvelle option l'emporte : l'unité est déclarée");
+    },
+  );
 
   // ── Pile manuelle : les fichiers compose, l'ancien compose de repli, doctor.sh. ──
   const piles = lire("memory-stack/docker-compose.yml");
@@ -2728,32 +2779,35 @@ test("renommage-memoire/AC-310 : chaque installation existante se met à niveau 
   fs.renameSync(path.join(faux, "mem0-stack", "mem0-rs-data"), path.join(faux, "memory-stack", "mem0-rs-data"));
   assert.match(doctor().sortie, /✓ rien à déplacer depuis mem0-stack\//);
 
-  await t.test("pile manuelle : `docker compose config` sans `.env` refuse, avec une `.env` d'avant monte ./mem0-rs-data et transmet le jeton", (st) => {
-    if (spawnSync("docker", ["compose", "version"], { encoding: "utf8" }).status !== 0) {
-      prerequisAbsent(st, "docker compose", "pile manuelle non rendue par le moteur", null);
-      return;
-    }
-    const dossier = tmpdir("renommage-memoire-compose-");
-    fs.mkdirSync(path.join(dossier, "memory-rs"));
-    fs.copyFileSync(path.join(ROOT, "memory-stack", "docker-compose.yml"), path.join(dossier, "docker-compose.yml"));
-    const rendre = (): { status: number | null; sortie: string } => {
-      const r = spawnSync("docker", ["compose", "config"], {
-        cwd: dossier,
-        encoding: "utf8",
-        timeout: 60_000,
-        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dossier },
-      });
-      return { status: r.status, sortie: `${r.stdout}${r.stderr}` };
-    };
-    const sans = rendre();
-    assert.notEqual(sans.status, 0, "sans .env : refus");
-    assert.ok(sans.sortie.includes("mv ../mem0-stack/.env"), sans.sortie);
-    fs.copyFileSync(path.join(FIXTURES, "pile-manuelle-ancien.env"), path.join(dossier, ".env"));
-    const avec = rendre();
-    assert.equal(avec.status, 0, avec.sortie);
-    assert.match(avec.sortie, /mem0-rs-data:\/data/, "le montage de l'ancien dossier de données");
-    assert.match(avec.sortie, /MEMORY_HTTP_TOKEN: jeton-ancien-T/, "le jeton de l'ancienne clé est transmis");
-  });
+  await t.test(
+    "pile manuelle : `docker compose config` sans `.env` refuse, avec une `.env` d'avant monte ./mem0-rs-data et transmet le jeton",
+    (st) => {
+      if (spawnSync("docker", ["compose", "version"], { encoding: "utf8" }).status !== 0) {
+        prerequisAbsent(st, "docker compose", "pile manuelle non rendue par le moteur", null);
+        return;
+      }
+      const dossier = tmpdir("renommage-memoire-compose-");
+      fs.mkdirSync(path.join(dossier, "memory-rs"));
+      fs.copyFileSync(path.join(ROOT, "memory-stack", "docker-compose.yml"), path.join(dossier, "docker-compose.yml"));
+      const rendre = (): { status: number | null; sortie: string } => {
+        const r = spawnSync("docker", ["compose", "config"], {
+          cwd: dossier,
+          encoding: "utf8",
+          timeout: 60_000,
+          env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dossier },
+        });
+        return { status: r.status, sortie: `${r.stdout}${r.stderr}` };
+      };
+      const sans = rendre();
+      assert.notEqual(sans.status, 0, "sans .env : refus");
+      assert.ok(sans.sortie.includes("mv ../mem0-stack/.env"), sans.sortie);
+      fs.copyFileSync(path.join(FIXTURES, "pile-manuelle-ancien.env"), path.join(dossier, ".env"));
+      const avec = rendre();
+      assert.equal(avec.status, 0, avec.sortie);
+      assert.match(avec.sortie, /mem0-rs-data:\/data/, "le montage de l'ancien dossier de données");
+      assert.match(avec.sortie, /MEMORY_HTTP_TOKEN: jeton-ancien-T/, "le jeton de l'ancienne clé est transmis");
+    },
+  );
 });
 
 // ── AC-311 : les runners reçoivent la mémoire sous ses nouveaux noms ─────────────────────────────────────
@@ -2767,9 +2821,9 @@ function importsExecutes(fichier: string): string[] {
     if (!/^\s*type\s/.test(m[1] ?? "")) specifiers.push(m[2] ?? "");
   }
   for (const m of source.matchAll(/\bimport\(\s*"(\.[^"]+)"\s*\)/g)) specifiers.push(m[1] ?? "");
-  return specifiers.map((specifier) => path.resolve(path.dirname(fichier), specifier)).filter(
-    (cible) => fs.existsSync(cible),
-  );
+  return specifiers
+    .map((specifier) => path.resolve(path.dirname(fichier), specifier))
+    .filter((cible) => fs.existsSync(cible));
 }
 
 /** Les fichiers atteints depuis `entree` par les seuls imports chargés à l'exécution, entrée comprise. */
@@ -2788,9 +2842,8 @@ function fermeture(entree: string): string[] {
 function horsFileset(cloture: string[], fileset: string[]): string[] {
   return cloture.filter(
     (relatif) =>
-      !relatif.startsWith("omp-harness/") && !fileset.some(
-        (dossier) => relatif === dossier || relatif.startsWith(`${dossier}/`),
-      ),
+      !relatif.startsWith("omp-harness/") &&
+      !fileset.some((dossier) => relatif === dossier || relatif.startsWith(`${dossier}/`)),
   );
 }
 
@@ -2808,10 +2861,11 @@ test("renommage-memoire/AC-311 : le runner reçoit les variables MEMORY_* et le 
     MEMORY_MODE: "runner",
     MEMORY_NO_GLOBAL: "1",
   });
-  assert.deepEqual(
-    Object.keys(runnerMemoryEnv("projet", false)),
-    ["MEMORY_PROJECT_ID", "MEMORY_AUTOSETUP", "MEMORY_NUDGE"],
-  );
+  assert.deepEqual(Object.keys(runnerMemoryEnv("projet", false)), [
+    "MEMORY_PROJECT_ID",
+    "MEMORY_AUTOSETUP",
+    "MEMORY_NUDGE",
+  ]);
 
   // Une configuration qui déclare l'ancien chemin charge le plugin de la pile, jamais l'ancien.
   const avec = (extensions: string[]) => testConfig("/srv/repo", (c) => (c.runner.extensions = extensions));
@@ -2826,16 +2880,20 @@ test("renommage-memoire/AC-311 : le runner reçoit les variables MEMORY_* et le 
     "/opt/omp-harness/omp-memory/extension.ts",
   );
   assert.deepEqual(runnerExtensions(avec([ANCIEN_CHEMIN])), [MEMORY_EXTENSION]);
-  assert.deepEqual(
-    runnerExtensions(avec([ANCIEN_CHEMIN, "/opt/autre/extension.ts"])),
-    [MEMORY_EXTENSION, "/opt/autre/extension.ts"],
-  );
+  assert.deepEqual(runnerExtensions(avec([ANCIEN_CHEMIN, "/opt/autre/extension.ts"])), [
+    MEMORY_EXTENSION,
+    "/opt/autre/extension.ts",
+  ]);
   assert.deepEqual(runnerExtensions(avec([ANCIEN_CHEMIN, MEMORY_EXTENSION])), [MEMORY_EXTENSION]);
   assert.deepEqual(runnerExtensions(avec([MEMORY_EXTENSION, ANCIEN_CHEMIN])), [MEMORY_EXTENSION]);
   assert.deepEqual(runnerExtensions(avec(["/opt/autre/extension.ts"])), [MEMORY_EXTENSION, "/opt/autre/extension.ts"]);
   const spec = { unit: "u", cwd: "/w", overlay: "/o", model: null, scope: "demo" };
   const extensionsDe = (args: string[]): string[] => args.flatMap((arg, i) => (args[i - 1] === "-e" ? [arg] : []));
-  for (const declarees of [[ANCIEN_CHEMIN], [ANCIEN_CHEMIN, "/opt/autre/extension.ts"], [MEMORY_EXTENSION, ANCIEN_CHEMIN]]) {
+  for (const declarees of [
+    [ANCIEN_CHEMIN],
+    [ANCIEN_CHEMIN, "/opt/autre/extension.ts"],
+    [MEMORY_EXTENSION, ANCIEN_CHEMIN],
+  ]) {
     const charges = extensionsDe(runnerArgv(avec(declarees), spec).args);
     assert.ok(charges.includes(MEMORY_EXTENSION), `${declarees} : le plugin de la pile est chargé`);
     assert.equal(
@@ -2847,7 +2905,10 @@ test("renommage-memoire/AC-311 : le runner reçoit les variables MEMORY_* et le 
   // `memory: false` retire le plugin mémoire sous ses deux noms.
   assert.deepEqual(
     extensionsDe(
-      runnerArgv(avec([ANCIEN_CHEMIN, "/opt/autre/extension.ts", "/opt/omp-harness/omp-memory/extension.ts"]), { ...spec, memory: false }).args,
+      runnerArgv(avec([ANCIEN_CHEMIN, "/opt/autre/extension.ts", "/opt/omp-harness/omp-memory/extension.ts"]), {
+        ...spec,
+        memory: false,
+      }).args,
     ),
     ["/opt/autre/extension.ts"],
   );
@@ -2960,11 +3021,14 @@ test("renommage-memoire/AC-311 : le runner reçoit les variables MEMORY_* et le 
   assert.ok(filesetLigne, "le fileset du code du service");
   const fileset = [...filesetLigne.matchAll(/\(repo \+ "\/([^"]+)"\)/g)].map((m) => m[1]!);
   assert.deepEqual(fileset, ["omp-harness", "omp-memory", "omp-chrome/src/lib"]);
-  const cloture = fermeture(path.join(ROOT, "omp-harness", "main.ts")).map(
-    (fichier) => posix(path.relative(ROOT, fichier)),
+  const cloture = fermeture(path.join(ROOT, "omp-harness", "main.ts")).map((fichier) =>
+    posix(path.relative(ROOT, fichier)),
   );
   const hors = cloture.filter((relatif) => !relatif.startsWith("omp-harness/"));
-  assert.ok(hors.some((relatif) => relatif.startsWith("omp-memory/")), "main.ts charge le plugin mémoire (scope.ts)");
+  assert.ok(
+    hors.some((relatif) => relatif.startsWith("omp-memory/")),
+    "main.ts charge le plugin mémoire (scope.ts)",
+  );
   assert.ok(
     hors.some((relatif) => relatif.startsWith("omp-chrome/src/lib/")),
     "main.ts charge omp-chrome/src/lib (browser/vps.ts)",
@@ -2975,9 +3039,10 @@ test("renommage-memoire/AC-311 : le runner reçoit les variables MEMORY_* et le 
     "chaque dossier hors de omp-harness/ atteint par main.ts est dans le fileset",
   );
   assert.deepEqual(
-    horsFileset(cloture, fileset.filter((dossier) => dossier !== "omp-chrome/src/lib")).filter(
-      (r) => r.startsWith("omp-chrome/"),
-    ),
+    horsFileset(
+      cloture,
+      fileset.filter((dossier) => dossier !== "omp-chrome/src/lib"),
+    ).filter((r) => r.startsWith("omp-chrome/")),
     hors.filter((relatif) => relatif.startsWith("omp-chrome/")),
     "un fileset sans omp-chrome/src/lib est signalé",
   );
@@ -2987,7 +3052,14 @@ test("renommage-memoire/AC-311 : le runner reçoit les variables MEMORY_* et le 
 // ── AC-312 : la release d'un plugin renommé part de sa version courante ────────────────────────────────
 type PlanDeRelease = {
   plan: {
-    releases: Array<{ kind: string; name: string; version: string; from: string | null; tag: string; previousTag: string | null }>;
+    releases: Array<{
+      kind: string;
+      name: string;
+      version: string;
+      from: string | null;
+      tag: string;
+      previousTag: string | null;
+    }>;
     alreadyPublished: unknown[];
   };
   plugins: Array<{ name: string; dir: string }>;
@@ -3045,7 +3117,12 @@ test("renommage-memoire/AC-312 : un plugin renommé avec son dossier garde ses t
   const copie = path.join(depot, "scripts", "release.ts");
   fs.writeFileSync(copie, `${lire("scripts/release.ts")}\nexport { planOn };\n`);
   const { planOn } = (await import(pathToFileURL(copie).href)) as {
-    planOn: (main: string, catalog: unknown, after: string, eventDate: string) => PlanDeRelease & { published: boolean };
+    planOn: (
+      main: string,
+      catalog: unknown,
+      after: string,
+      eventDate: string,
+    ) => PlanDeRelease & { published: boolean };
   };
   const catalogue = {
     name: "mem0-omp",
@@ -3116,12 +3193,14 @@ const NOMS_PAR_TYPE: Record<string, Array<[string, string]>> = {
     ["MEM0_HTTP_TOKENS_FILE", "MEMORY_HTTP_TOKENS_FILE"],
     ["MEM0_SEARCH_FUSION", "MEMORY_SEARCH_FUSION"],
     ["MEM0_RRF_K", "MEMORY_RRF_K"],
-    ...["INTERVAL_MINUTES", "QUIET_MINUTES", "PAIRS", "FORGET_DAYS"].map(
-      (nom): [string, string] => [`MEM0_DREAM_${nom}`, `MEMORY_DREAM_${nom}`],
-    ),
-    ...["INTERVAL_HOURS", "KEEP", "FILE", "REMOTE_CMD", "REMOTE_TIMEOUT_SECONDS"].map(
-      (nom): [string, string] => [`${"MEM0"}_BACKUP_${nom}`, `MEMORY_BACKUP_${nom}`],
-    ),
+    ...["INTERVAL_MINUTES", "QUIET_MINUTES", "PAIRS", "FORGET_DAYS"].map((nom): [string, string] => [
+      `MEM0_DREAM_${nom}`,
+      `MEMORY_DREAM_${nom}`,
+    ]),
+    ...["INTERVAL_HOURS", "KEEP", "FILE", "REMOTE_CMD", "REMOTE_TIMEOUT_SECONDS"].map((nom): [string, string] => [
+      `${"MEM0"}_BACKUP_${nom}`,
+      `MEMORY_BACKUP_${nom}`,
+    ]),
     ["MEM0_LOG_DIR", "MEMORY_LOG_DIR"],
     ["MEM0_LOG_RETENTION_DAYS", "MEMORY_LOG_RETENTION_DAYS"],
     ["mem0-AAAA-MM-JJ.jsonl", "memory-AAAA-MM-JJ.jsonl"],
@@ -3273,9 +3352,9 @@ test("renommage-memoire/AC-313 : la section de mise à niveau nomme chaque ancie
     "omp-mem0-req est désinstallé avant l'installation de omp-memory-req",
   );
   assert.ok(
-    plugins.replace(/\s+/g, " ").includes(
-      "N'installe **jamais** `omp-memory` à côté d'un `omp-mem0-memory` qui n'a pas été mis à jour",
-    ),
+    plugins
+      .replace(/\s+/g, " ")
+      .includes("N'installe **jamais** `omp-memory` à côté d'un `omp-mem0-memory` qui n'a pas été mis à jour"),
     "l'avertissement sur une ancienne copie pas à jour",
   );
   // « Mettre à jour » du README et de PUBLISHING.md renvoient à cette section.

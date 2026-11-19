@@ -179,11 +179,7 @@ test("harness-memory/AC-4 : memory-rs tourne sur le VPS sous son propre user, du
   );
   const install = fs.readFileSync(path.join(DEPLOY, "install.sh"), "utf8");
   assert.match(install, /chmod 0600 \/etc\/omp-harness\/memory\.env/, "le jeton memory n'est lisible que par root");
-  assert.match(
-    install,
-    /for part in omp-harness omp-memory; do/,
-    "le plugin mémoire est installé à côté du service",
-  );
+  assert.match(install, /for part in omp-harness omp-memory; do/, "le plugin mémoire est installé à côté du service");
   const config = loadConfig(path.join(DEPLOY, "config.example.json"));
   // Le plugin mémoire fait partie de la pile : à côté du harness, chargé sans être déclaré,
   // jamais doublé quand une configuration le déclare encore, en tête des autres extensions.

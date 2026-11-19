@@ -31,7 +31,8 @@ const DELAI_LOURD = 1_200_000;
 const CRATE = path.join(ROOT, "memory-stack", "memory-rs");
 const MANIFESTE = "memory-stack/memory-rs/Cargo.toml";
 const FIXTURE_RANG = path.join(ROOT, "scripts", "memory-http-contrat", "rang.json");
-const LIBELLE_RANG = "FAIL  rang/rang · memory-rs-noyau AC-13 · chaque requête rend les clés de la fixture dans l'ordre";
+const LIBELLE_RANG =
+  "FAIL  rang/rang · memory-rs-noyau AC-13 · chaque requête rend les clés de la fixture dans l'ordre";
 
 /**
  * Environnement d'un enfant : celui du processus, sans les marqueurs de
@@ -122,11 +123,7 @@ test("memory-rs-noyau/AC-12 : README cite la source d'entity_boost et la crate n
   const readme = fs.readFileSync(path.join(CRATE, "README.md"), "utf8");
   const entity = section(readme, "entity_boost");
   assert.ok(entity.includes("inactif"), entity);
-  for (const citation of [
-    "get_nlp_full()",
-    "ImportError",
-    "query_entities = extract_entities(query)",
-  ]) {
+  for (const citation of ["get_nlp_full()", "ImportError", "query_entities = extract_entities(query)"]) {
     assert.ok(entity.includes(citation), `citation ${citation} absente de « ## entity_boost »`);
   }
 

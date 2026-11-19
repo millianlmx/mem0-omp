@@ -391,6 +391,8 @@ struct HarnessModelTests {
         try FileManager.default.createDirectory(at: home.appendingPathComponent(".omp"), withIntermediateDirectories: true)
         try Data(#"{ "url": "http://ancien", "token": "x", "repos": { "/code/produit": "produit" } }"#.utf8)
             .write(to: home.appendingPathComponent(".omp/harness.json"))
+        // Un `memory.json` déjà posé : c'est lui qu'on met à jour ; sans lui, l'écriture irait dans le fichier d'avant (S-9).
+        try Data("{}".utf8).write(to: home.appendingPathComponent(".omp/memory.json"))
         let transport = ScriptedHarnessTransport()
         transport.respond { _ in ok(inboxJSON) }
         let model = HarnessModel(
@@ -443,6 +445,8 @@ struct HarnessModelTests {
     @Test("un code approbateur met le jeton approbateur au trousseau et n'écrit que l'ordinaire dans ~/.omp (comme l'app Mac)")
     func approverCodeStaysInKeychain() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("harness-approver-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".omp"), withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: home.appendingPathComponent(".omp/memory.json"))
         let transport = ScriptedHarnessTransport()
         transport.respond { _ in ok(inboxJSON) }
         let tokens = InMemoryTokenStore()

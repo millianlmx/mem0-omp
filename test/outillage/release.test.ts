@@ -1351,7 +1351,9 @@ test("notes de release : commandes d'installation, mise à jour, et rupture d'un
   assert.ok(major && minor);
   assert.ok(major.notes.includes("### Ce qui casse / quoi faire"), major.notes);
   assert.ok(
-    major.notes.includes("- feat(memory)!: le brief change de format — le brief v3 n'est plus lu, relance /memory-brief"),
+    major.notes.includes(
+      "- feat(memory)!: le brief change de format — le brief v3 n'est plus lu, relance /memory-brief",
+    ),
     major.notes,
   );
   assert.ok(
