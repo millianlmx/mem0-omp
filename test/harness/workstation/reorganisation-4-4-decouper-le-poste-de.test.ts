@@ -8,9 +8,9 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fakeWorld } from "../support/harness-fixtures.ts";
-import { ROOT } from "../support/repo.ts";
-import { Workstation } from "../../omp-harness/workstation/workstation.ts";
+import { fakeWorld } from "../../support/harness-fixtures.ts";
+import { ROOT } from "../../support/repo.ts";
+import { Workstation } from "../../../omp-harness/workstation/workstation.ts";
 
 const LABELS = {
   input: "formes et validation des entrées du poste",

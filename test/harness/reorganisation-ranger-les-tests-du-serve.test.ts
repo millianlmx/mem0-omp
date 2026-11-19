@@ -120,6 +120,7 @@ const PLACED: Record<string, string[]> = {
     "poste-securite",
     "poste-serveur",
     "poste-visibilite",
+    "reorganisation-4-4-decouper-le-poste-de",
   ],
 };
 
@@ -205,7 +206,7 @@ function placementGaps(files: readonly string[], dirs: ReadonlySet<string>): str
 /** Écarts de la carte des tests (DEVELOPPEMENT.md § « Tests et scripts ») et des sous-dossiers de test/harness/. */
 function mapGaps(markdown: string, subdirs: ReadonlySet<string>): string[] {
   const lines = markdown.split("\n");
-  const start = lines.findIndex((l) => l === "## Tests et scripts");
+  const start = lines.indexOf("## Tests et scripts");
   if (start === -1) return ["DEVELOPPEMENT.md : section « Tests et scripts » absente"];
   let end = lines.findIndex((l, i) => i > start && l.startsWith("## "));
   if (end === -1) end = lines.length;
@@ -289,7 +290,7 @@ function trackedSources(): Array<{ file: string; text: string }> {
 /** Les dossiers de la carte « Le serveur, dossier par dossier » de DEVELOPPEMENT.md. */
 function serverMapDirs(): Set<string> {
   const lines = read("DEVELOPPEMENT.md").split("\n");
-  const start = lines.findIndex((l) => l === "### Le serveur, dossier par dossier");
+  const start = lines.indexOf("### Le serveur, dossier par dossier");
   assert.notEqual(start, -1, "carte absente de DEVELOPPEMENT.md");
   let end = lines.findIndex((l, i) => i > start && /^#{2,3} /.test(l));
   if (end === -1) end = lines.length;
