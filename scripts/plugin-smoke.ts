@@ -350,7 +350,11 @@ for (const entry of entries) {
   console.log(`── ${entry.name}`);
   const currentName = renamedTo(entry.name);
   if (currentName !== undefined) {
-    const gaps = aliasGaps(entry, entries.find((other) => other.name === currentName), currentName);
+    const gaps = aliasGaps(
+      entry,
+      entries.find((other) => other.name === currentName),
+      currentName,
+    );
     gaps.length === 0
       ? ok(`ancien nom de ${currentName} : même source, même version, mêmes commandes (chargé sous ${currentName})`)
       : bad(`${entry.name}, ancien nom de ${currentName} : ${gaps.join(" ; ")}`);
