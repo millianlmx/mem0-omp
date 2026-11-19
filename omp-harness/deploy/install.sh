@@ -115,12 +115,17 @@ install -m 0755 "$HERE/omp-harness-client" /usr/local/bin/omp-harness-client
 echo "· tranches, service, zram, oomd"
 install -m 0644 "$HERE/omp-harness.slice" "$HERE/omp-harness-runners.slice" "$HERE/omp-harness-heavy.slice" \
   "$HERE/omp-harness.service" "$HERE/omp-harness-memory.service" /etc/systemd/system/
-# L'unité d'avant le renommage : arrêtée et retirée ; /var/lib/omp-mem0 et /etc/omp-harness/mem0.env
-# restent (l'unité d'aujourd'hui les lit).
+# L'unité d'avant le renommage : arrêtée et retirée une fois memory-rs installé ; /var/lib/omp-mem0 et
+# /etc/omp-harness/mem0.env restent (l'unité d'aujourd'hui les lit). Sans memory-rs (cargo absent, par exemple
+# celui de rustup hors du PATH de sudo), l'ancienne unité garde le service mémoire : on ne la retire pas.
 if [ -e /etc/systemd/system/omp-harness-mem0.service ]; then
-  echo "· unité omp-harness-mem0.service remplacée par omp-harness-memory.service"
-  systemctl disable --now omp-harness-mem0.service || echo "· omp-harness-mem0.service n'a pas pu être arrêtée : systemctl stop omp-harness-mem0.service"
-  rm -f /etc/systemd/system/omp-harness-mem0.service
+  if [ -x /usr/local/bin/memory-rs ]; then
+    echo "· unité omp-harness-mem0.service remplacée par omp-harness-memory.service"
+    systemctl disable --now omp-harness-mem0.service || echo "· omp-harness-mem0.service n'a pas pu être arrêtée : systemctl stop omp-harness-mem0.service"
+    rm -f /etc/systemd/system/omp-harness-mem0.service
+  else
+    echo "· memory-rs absent : omp-harness-mem0.service reste en service ; construis memory-rs (cargo build --release --locked --manifest-path memory-stack/memory-rs/Cargo.toml, puis install -m 0755 memory-stack/memory-rs/target/release/memory-rs /usr/local/bin/memory-rs) et relance install.sh"
+  fi
 fi
 if [ ! -e /etc/systemd/zram-generator.conf ]; then
   install -m 0644 "$HERE/zram-generator.conf" /etc/systemd/zram-generator.conf

@@ -2516,6 +2516,34 @@ test("renommage-memoire/AC-310 : chaque installation existante se met à niveau 
     );
     assert.doesNotMatch(appels, /^chown .*omp-mem/m, `${passage} : la propriété des données ne change pas`);
   }
+
+  // Sans cargo (celui de rustup est hors du PATH de sudo) et sans memory-rs, seul /usr/local/bin/mem0-rs étant posé :
+  // l'ancienne unité n'est ni arrêtée ni retirée, la nouvelle ne démarre pas, et la sortie nomme la commande de
+  // construction ; une fois memory-rs installé, la relance remplace l'unité.
+  const sansCargo = fauxRoot({ memoryEnv: false, ancienne: true, ancienEnv: true });
+  fs.rmSync(path.join(sansCargo.faux, "usr/local/bin/memory-rs"));
+  fs.rmSync(path.join(sansCargo.bin, "cargo"));
+  fs.writeFileSync(path.join(sansCargo.faux, "usr/local/bin/mem0-rs"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const sansConstruction = installerDebian(sansCargo.faux, { bin: sansCargo.bin, journal: sansCargo.journal });
+  assert.equal(sansConstruction.status, 0, `${sansConstruction.stdout}\n${sansConstruction.stderr}`);
+  const appelsSansCargo = fs.readFileSync(sansCargo.journal, "utf8");
+  assert.doesNotMatch(appelsSansCargo, /omp-harness-mem0\.service/, "sans memory-rs : l'ancienne unité n'est pas touchée");
+  assert.doesNotMatch(appelsSansCargo, /systemctl enable --now omp-harness-memory/, "sans memory-rs : rien à démarrer");
+  assert.ok(
+    fs.existsSync(path.join(sansCargo.faux, "etc/systemd/system/omp-harness-mem0.service")),
+    "sans memory-rs : l'ancienne unité reste installée",
+  );
+  assert.ok(fs.existsSync(path.join(sansCargo.faux, "usr/local/bin/mem0-rs")), "l'ancien binaire reste");
+  assert.match(sansConstruction.stdout, /cargo build --release --locked --manifest-path memory-stack\/memory-rs\/Cargo\.toml/);
+  fs.writeFileSync(path.join(sansCargo.faux, "usr/local/bin/memory-rs"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  fs.writeFileSync(sansCargo.journal, "");
+  const apresConstruction = installerDebian(sansCargo.faux, { bin: sansCargo.bin, journal: sansCargo.journal });
+  assert.equal(apresConstruction.status, 0, `${apresConstruction.stdout}\n${apresConstruction.stderr}`);
+  assert.match(
+    fs.readFileSync(sansCargo.journal, "utf8"),
+    /^systemctl disable --now omp-harness-mem0\.service$/m,
+    "memory-rs installé : l'ancienne unité est retirée à la relance",
+  );
   // Une installation neuve : memory.env est créé avec le jeton, repris par env et runner.env.
   const vierge = fauxRoot({ memoryEnv: false, ancienne: false, ancienEnv: false });
   const neuveDebian = installerDebian(vierge.faux, { bin: vierge.bin, journal: vierge.journal });
