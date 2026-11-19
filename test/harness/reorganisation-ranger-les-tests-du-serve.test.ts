@@ -63,13 +63,7 @@ const PLACED: Record<string, string[]> = {
   jobs: ["declencheur-entrant", "harness-audits", "harness-planification", "harness-reves"],
   memory: ["harness-memory", "harness-oracle"],
   notify: ["harness-notify", "os-telecommande", "push-alertes"],
-  operations: [
-    "etape-lente",
-    "harness-backups",
-    "harness-monitoring",
-    "harness-observabilite",
-    "harness-plafond-cout",
-  ],
+  operations: ["etape-lente", "harness-backups", "harness-monitoring", "harness-observabilite", "harness-plafond-cout"],
   reports: ["accueil-tableau-de-bord", "annulations-mesurees", "rapport-du-matin"],
   runners: [
     "harness-isolation-runners",
@@ -228,9 +222,7 @@ function mapGaps(markdown: string, subdirs: ReadonlySet<string>): string[] {
     if (!mentioned.has(dir)) gaps.push(`${HARNESS}/${dir}/ : sous-dossier sans phrase dans la carte des tests`);
   }
 
-  const rootLine = section
-    .map((l) => /^\|\s*`test\/harness\/`\s*\|\s*(.*?)\s*\|\s*$/.exec(l))
-    .find((m) => m !== null);
+  const rootLine = section.map((l) => /^\|\s*`test\/harness\/`\s*\|\s*(.*?)\s*\|\s*$/.exec(l)).find((m) => m !== null);
   const rootPhrase = rootLine?.[1] ?? "";
   if (rootPhrase === "" || rootPhrase === "-") {
     gaps.push(`${HARNESS}/ : ligne de la racine absente ou vide`);
@@ -261,9 +253,7 @@ function citationGaps(
       for (const m of line.matchAll(/(?<![\w.-])test\/harness\/((?:[\w-]+\/)?[\w*-]+\.test\.ts)/g)) {
         const cited = `${HARNESS}/${m[1]}`;
         if (data.includes(cited)) continue;
-        const alive = cited.includes("*")
-          ? testFiles.some((t) => globToRegExp(cited).test(t))
-          : exists(cited);
+        const alive = cited.includes("*") ? testFiles.some((t) => globToRegExp(cited).test(t)) : exists(cited);
         if (!alive) gaps.push(`${at} → ${cited} : chemin mort`);
       }
     });
@@ -417,10 +407,7 @@ test("reorganisation-ranger-les-tests-du-serve/AC-4 : la carte des tests de DEVE
 test("reorganisation-ranger-les-tests-du-serve/AC-8 : chaque clé test/ du plafond de types désigne un fichier existant", () => {
   const baseline = JSON.parse(read("scripts/types-ratchet-baseline.json")) as { files: Record<string, number> };
   const keys = Object.keys(baseline.files).filter((k) => k.startsWith("test/"));
-  assert.ok(
-    keys.some((k) => k.startsWith("test/harness/")),
-    "aucune clé test/harness/ : le scan serait aveugle",
-  );
+  assert.ok(keys.some((k) => k.startsWith("test/harness/")), "aucune clé test/harness/ : le scan serait aveugle");
   const dead = keys.filter((k) => !fs.existsSync(path.join(ROOT, k)));
   assert.deepEqual(dead, [], `clés mortes : ${dead.join(", ")}`);
 });
