@@ -13,9 +13,9 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, TransactionBehavio
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::bm25::{self, VecteurCreux};
+use crate::classement::bm25::{self, VecteurCreux};
 use crate::horodatage::{self, Instant};
-use crate::liens;
+use crate::stockage::liens;
 
 pub const SCHEMA_VERSION: &str = "4";
 /// Version dont une base est migrée à l'ouverture (tables du schéma v4 ajoutées,
@@ -920,8 +920,8 @@ pub struct Ecritures<'a> {
 /// ses révisions et ses messages verbatim, puis `COMMIT`. Une erreur n'écrit rien.
 pub fn importer<'a>(
     conn: &mut Connection,
-    calculer: impl FnOnce(&Connaissances) -> crate::import::Plan<'a>,
-) -> rusqlite::Result<crate::import::Plan<'a>> {
+    calculer: impl FnOnce(&Connaissances) -> crate::reprise::import::Plan<'a>,
+) -> rusqlite::Result<crate::reprise::import::Plan<'a>> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let plan = calculer(&connaissances(&tx)?);
     let ecritures = &plan.a_ecrire;
@@ -1255,10 +1255,10 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(entites, ["recall.ts"]);
-        let liens = crate::liens::liens_touchant(&conn, &["a"]).unwrap();
+        let liens = crate::stockage::liens::liens_touchant(&conn, &["a"]).unwrap();
         assert_eq!(liens.len(), 1);
         assert_eq!((liens[0].source.as_str(), liens[0].target.as_str(), liens[0].type_.as_str()), ("a", "b", "semantique"));
-        assert!(crate::liens::a_reindexer(&conn, None, 10).unwrap().is_empty());
+        assert!(crate::stockage::liens::a_reindexer(&conn, None, 10).unwrap().is_empty());
     }
 
     /// memoire-liee : la migration v3 → v4 d'une base de 1 500 souvenirs d'une même
@@ -1298,7 +1298,7 @@ mod tests {
         let conn = ouvrir(&base.0, 8).unwrap();
         let duree = debut.elapsed();
         assert!(duree < std::time::Duration::from_secs(15), "migration de {n} souvenirs : {duree:?}");
-        assert!(crate::liens::a_reindexer(&conn, None, 1).unwrap().is_empty());
+        assert!(crate::stockage::liens::a_reindexer(&conn, None, 1).unwrap().is_empty());
         let liens: i64 = conn.query_row("SELECT count(*) FROM liens WHERE type = 'semantique'", [], |r| r.get(0)).unwrap();
         assert!(liens > 0, "des voisins sémantiques sont posés");
         eprintln!("migration de {n} souvenirs : {duree:?}, {liens} liens sémantiques");
@@ -1313,10 +1313,10 @@ mod tests {
         ajouter_simple(&mut conn, "b", Some("p"), None, &[1.0, 0.05, 0.0]);
         // Hors portée : jamais voisin.
         ajouter_simple(&mut conn, "c", Some("q"), None, &[1.0, 0.0, 0.0]);
-        assert_eq!(crate::liens::liens_touchant(&conn, &["a"]).unwrap().len(), 1);
-        assert!(crate::liens::liens_touchant(&conn, &["c"]).unwrap().is_empty());
+        assert_eq!(crate::stockage::liens::liens_touchant(&conn, &["a"]).unwrap().len(), 1);
+        assert!(crate::stockage::liens::liens_touchant(&conn, &["c"]).unwrap().is_empty());
         assert!(supprimer(&mut conn, "b", &instant(9)).unwrap());
-        assert!(crate::liens::liens_touchant(&conn, &["a", "b"]).unwrap().is_empty());
+        assert!(crate::stockage::liens::liens_touchant(&conn, &["a", "b"]).unwrap().is_empty());
     }
 
     /// Ligne écrite comme l'import (BR-2) : `sparse` NULL, `metadata` donnée,

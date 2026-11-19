@@ -11,7 +11,7 @@
 //!              [--seuil <x>] [--repetitions <n>] [--json]
 //! ```
 //!
-//! - `--corpus` : défaut, le corpus intégré (`src/banc/corpus.json`).
+//! - `--corpus` : défaut, le corpus intégré (`src/classement/banc/corpus.json`).
 //! - `--embedder local` (défaut) : plongeur déterministe hors ligne
 //!   ([`plongeur`]) ; `openai` : l'API OpenAI-compatible des variables `OMLX_*`
 //!   et `EMBEDDING_DIMS`, comme le serveur (oMLX, bge-m3).
@@ -35,13 +35,13 @@ use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 
 use crate::config;
-use crate::db;
-use crate::embedder::Embedder;
+use crate::stockage::db;
+use crate::classement::embedder::Embedder;
 use crate::horodatage;
-use crate::liens;
-use crate::openai;
-use crate::recherche::{self, Reglage, Strategie};
-use crate::validation::SearchRequest;
+use crate::stockage::liens;
+use crate::modele::openai;
+use crate::classement::recherche::{self, Reglage, Strategie};
+use crate::api::validation::SearchRequest;
 
 /// Le corpus intégré au binaire.
 const CORPUS_INTEGRE: &str = include_str!("banc/corpus.json");
@@ -121,7 +121,7 @@ pub fn lire_arguments(args: impl IntoIterator<Item = OsString>) -> Result<Argume
     Ok(a)
 }
 
-/// Corpus étiqueté (`src/banc/corpus.json`).
+/// Corpus étiqueté (`src/classement/banc/corpus.json`).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Corpus {
@@ -368,7 +368,7 @@ async fn jouer(a: &Arguments) -> Result<Rapport, String> {
             id: &s.id,
             memory: &s.texte,
             hash: &hash,
-            user_id: crate::http::USER,
+            user_id: crate::api::http::USER,
             agent_id: Some(AGENT),
             run_id: None,
             role: Some("user"),
@@ -407,7 +407,7 @@ async fn jouer(a: &Arguments) -> Result<Rapport, String> {
                 fusion: None,
                 liens: false,
             };
-            let mut r = recherche::preparer(req, crate::http::USER, Some(AGENT.to_owned()), Reglage::default())
+            let mut r = recherche::preparer(req, crate::api::http::USER, Some(AGENT.to_owned()), Reglage::default())
                 .map_err(|e| format!("requête {} refusée : {e:?}", q.id))?;
             r.strategie = strategie;
             let mut rendus = Vec::new();

@@ -11,8 +11,8 @@ use common::{Dossier, FauxOpenAI, JETON_OMLX, Lancement, MODELE_CHAT, Reponse, R
 use md5::{Digest, Md5};
 use serde_json::{Value, json};
 
-const SYSTEME: &str = include_str!("../src/prompts/additive_extraction.txt");
-const CONSIGNES: &str = include_str!("../src/prompts/custom_instructions.txt");
+const SYSTEME: &str = include_str!("../src/modele/prompts/additive_extraction.txt");
+const CONSIGNES: &str = include_str!("../src/modele/prompts/custom_instructions.txt");
 
 /// Banc : serveur lancé, faux OpenAI et dossier jetable (le serveur est tué
 /// avant que son dossier soit supprimé).

@@ -5,35 +5,27 @@
 //! `mem0-rs import …` : import depuis mem0-http (module [`import`]).
 //! `mem0-rs banc …` : banc de mesure des fusions de la recherche (module [`banc`]).
 
-mod banc;
-mod bm25;
+mod api;
+mod classement;
 mod config;
-mod consolidation;
-mod db;
-mod embedder;
-mod entites;
-mod extraction;
-mod graphe;
+mod entretien;
+mod exploitation;
 mod horodatage;
-mod http;
-mod http_liens;
-mod import;
-mod jetons;
-mod journal;
-mod liens;
-mod metriques;
-mod openai;
-mod recherche;
-mod redaction;
-mod reve;
-mod sauvegarde;
-mod validation;
-mod verrou;
+mod modele;
+mod reprise;
+mod stockage;
 
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 
+use crate::api::http;
+use crate::classement::{banc, embedder};
 use crate::config::{Config, Ecoute};
+use crate::entretien::reve;
+use crate::exploitation::{journal, metriques, sauvegarde};
+use crate::modele::openai;
+use crate::reprise::import;
+use crate::stockage::{db, verrou};
 
 #[tokio::main]
 async fn main() -> ExitCode {

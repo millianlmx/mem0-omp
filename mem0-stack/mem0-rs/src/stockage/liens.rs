@@ -2,7 +2,7 @@
 //! voisins sémantiques stockés et liens typés entre souvenirs.
 //!
 //! - `entites` / `souvenir_entites` : les entités lexicales de chaque souvenir
-//!   ([`crate::entites`]), clé normalisée unique dans la base ;
+//!   ([`crate::stockage::entites`]), clé normalisée unique dans la base ;
 //! - `liens` : arêtes `(source, cible, type)`. `semantique` est calculé à
 //!   l'écriture (les [`VOISINS_MAX`] voisins de cosinus ≥ [`SEUIL_SEMANTIQUE`]
 //!   dans la même portée, paire rangée `source < cible`) ; les types de
@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::Serialize;
 
-use crate::entites;
+use crate::stockage::entites;
 
 /// Tables ajoutées par le schéma v4, créées à la création d'une base et par la
 /// migration d'une base v3 (`CREATE … IF NOT EXISTS` : rejouable).
@@ -96,10 +96,10 @@ pub const SCHEMA_V4: &str = "
 ";
 
 /// Cosinus à partir duquel deux souvenirs d'une même portée sont voisins (celui de
-/// `GET /memory/graph`, [`crate::graphe::GRAPH_THRESHOLD`]).
-pub const SEUIL_SEMANTIQUE: f64 = crate::graphe::GRAPH_THRESHOLD;
+/// `GET /memory/graph`, [`crate::stockage::graphe::GRAPH_THRESHOLD`]).
+pub const SEUIL_SEMANTIQUE: f64 = crate::stockage::graphe::GRAPH_THRESHOLD;
 /// Voisins sémantiques gardés par souvenir à son écriture.
-pub const VOISINS_MAX: usize = crate::graphe::GRAPH_TOP_K;
+pub const VOISINS_MAX: usize = crate::stockage::graphe::GRAPH_TOP_K;
 
 pub const SEMANTIQUE: &str = "semantique";
 pub const PREUVE: &str = "preuve";

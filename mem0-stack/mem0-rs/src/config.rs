@@ -4,10 +4,10 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::jetons::Jetons;
-use crate::recherche::{Fusion, RRF_K_PAR_DEFAUT, Reglage};
-use crate::reve;
-use crate::sauvegarde::{Distante, Politique};
+use crate::api::jetons::Jetons;
+use crate::classement::recherche::{Fusion, RRF_K_PAR_DEFAUT, Reglage};
+use crate::entretien::reve;
+use crate::exploitation::sauvegarde::{Distante, Politique};
 
 pub const USAGE: &str = "usage : mem0-rs [--host <adresse>] [--port <port>]
         mem0-rs import --history-db <chemin> [--qdrant-url <url>] [--collection <nom>] [--dry-run] [--json]
@@ -209,7 +209,7 @@ pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String>
         .then(|| Distante { commande: commande_distante, delai: Duration::from_secs(delai_distant) });
     let journal_dossier = match lire("MEM0_LOG_DIR") {
         Some(v) if !strip_python(&v).is_empty() => PathBuf::from(strip_python(&v)),
-        _ => crate::journal::dossier_par_defaut(&db_path),
+        _ => crate::exploitation::journal::dossier_par_defaut(&db_path),
     };
     let journal_retention_jours = entier_env(&lire, "MEM0_LOG_RETENTION_DAYS", "14", 1)?;
     let fusion_brute = env_ou(&lire, "MEM0_SEARCH_FUSION", "additive");
@@ -368,7 +368,7 @@ mod tests {
         assert_eq!(c.db_path, PathBuf::from("/h/.mem0/mem0-rs.db"));
         assert!(!c.jetons.exige());
         let c = lire_env(env(&[("HOME", "/h"), ("MEM0_HTTP_TOKEN", " t ")])).unwrap();
-        assert_eq!(c.jetons.identifier(Some(b" t ")), Some(crate::jetons::Acces::Total));
+        assert_eq!(c.jetons.identifier(Some(b" t ")), Some(crate::api::jetons::Acces::Total));
     }
 
     #[test]

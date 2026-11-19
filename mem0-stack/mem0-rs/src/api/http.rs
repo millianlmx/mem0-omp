@@ -18,19 +18,19 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use crate::config::{blanc_python, strip_python};
-use crate::db::{self, FaitInfere, MessageSession, Souvenir};
-use crate::embedder::Embedder;
-use crate::extraction::{self, Lecture};
-use crate::graphe::{self, Arete, GRAPH_THRESHOLD, GRAPH_TOP_K};
+use crate::stockage::db::{self, FaitInfere, MessageSession, Souvenir};
+use crate::classement::embedder::Embedder;
+use crate::modele::extraction::{self, Lecture};
+use crate::stockage::graphe::{self, Arete, GRAPH_THRESHOLD, GRAPH_TOP_K};
 use crate::horodatage;
-use crate::journal;
-use crate::http_liens;
-use crate::jetons::{Acces, Jetons};
-use crate::liens;
-use crate::openai::ClientChat;
-use crate::recherche::{self, Details, Refus};
-use crate::redaction::masquer;
-use crate::validation::{self, Rejet};
+use crate::exploitation::journal;
+use crate::api::http_liens;
+use crate::api::jetons::{Acces, Jetons};
+use crate::stockage::liens;
+use crate::modele::openai::ClientChat;
+use crate::classement::recherche::{self, Details, Refus};
+use crate::api::redaction::masquer;
+use crate::api::validation::{self, Rejet};
 
 /// Utilisateur fixe (repris de l'ancien mem0-http Python).
 pub const USER: &str = "moi";
@@ -52,17 +52,17 @@ pub struct Etat {
     /// Fusion de la recherche quand la requête n'en demande pas, et `k` de la RRF.
     pub recherche: recherche::Reglage,
     /// Réglage du rêve local, que `POST /memory/dream` applique aussi.
-    pub reve: crate::reve::Reglage,
+    pub reve: crate::entretien::reve::Reglage,
     /// Dernier cycle du rêve local, montré par `GET /health`.
-    pub suivi_reve: Arc<crate::reve::Suivi>,
+    pub suivi_reve: Arc<crate::entretien::reve::Suivi>,
     /// Le chemin de la base (sa taille dans `GET /health` et `GET /metrics`).
     pub db_path: PathBuf,
     /// L'instant du démarrage (`uptime_s`).
     pub demarrage: std::time::Instant,
     /// Les sauvegardes : dernier instantané réussi, dernière erreur.
-    pub suivi_sauvegarde: Arc<crate::sauvegarde::Suivi>,
+    pub suivi_sauvegarde: Arc<crate::exploitation::sauvegarde::Suivi>,
     /// Les requêtes HTTP vues depuis le démarrage (`GET /metrics`).
-    pub metriques: Arc<crate::metriques::Metriques>,
+    pub metriques: Arc<crate::exploitation::metriques::Metriques>,
 }
 
 pub(crate) type Partage = State<Arc<Etat>>;
@@ -289,7 +289,7 @@ async fn metriques(State(etat): Partage, entetes: HeaderMap) -> Response {
     let sauvegarde = etat.suivi_sauvegarde.etat();
     let souvenirs =
         avec_base(&etat, |conn| conn.query_row("SELECT count(*) FROM memories", [], |r| r.get::<_, i64>(0))).await.ok();
-    let instantane = crate::metriques::Instantane {
+    let instantane = crate::exploitation::metriques::Instantane {
         version: env!("CARGO_PKG_VERSION"),
         uptime_s: etat.demarrage.elapsed().as_secs(),
         souvenirs,
@@ -305,7 +305,7 @@ async fn metriques(State(etat): Partage, entetes: HeaderMap) -> Response {
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"))],
-        crate::metriques::exposition(&etat.metriques, &instantane),
+        crate::exploitation::metriques::exposition(&etat.metriques, &instantane),
     )
         .into_response()
 }
@@ -411,8 +411,8 @@ async fn ajouter_infere(
 ) -> Response {
     // Chat coupé : refusé avant tout appel, comme un chat en échec (500), en le nommant.
     if !etat.chat.actif() {
-        journal::erreur(&format!("extraction : {}", crate::openai::CHAT_COUPE));
-        return erreur_interne(&format!("add infer=true : {}", crate::openai::CHAT_COUPE));
+        journal::erreur(&format!("extraction : {}", crate::modele::openai::CHAT_COUPE));
+        return erreur_interne(&format!("add infer=true : {}", crate::modele::openai::CHAT_COUPE));
     }
     let scope = extraction::portee_session(USER, agent_id.as_deref(), run_id.as_deref());
     let derniers = {

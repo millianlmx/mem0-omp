@@ -8,7 +8,7 @@
 //   pour mot, avant toute autre passe (un secret masqué casserait la correspondance) ; de
 //   même, sur un serveur à plusieurs clients, les titres et les demandes des runs et des
 //   Demandes des AUTRES espaces que celui du dépôt visé (VigieStore.foreignSpaceTexts) ;
-// - les secrets : les familles de mem0-rs (mem0-stack/mem0-rs/src/redaction.rs, celles
+// - les secrets : les familles de mem0-rs (mem0-stack/mem0-rs/src/api/redaction.rs, celles
 //   du plugin mémoire), réécrites ici, plus ce qu'un dépôt public ne doit pas lire —
 //   jetons hexadécimaux longs, chaînes à forte entropie, e-mails, la requête d'une URL,
 //   les chemins personnels, les adresses du tailnet et les IP.

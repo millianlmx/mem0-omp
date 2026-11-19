@@ -20,11 +20,11 @@ use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-use crate::bm25::VecteurCreux;
+use crate::classement::bm25::VecteurCreux;
 use crate::config::{self, ArgumentsImport};
-use crate::db::{self, Connaissances, Ecritures, MessageImporte, RevisionImportee, SouvenirImporte};
+use crate::stockage::db::{self, Connaissances, Ecritures, MessageImporte, RevisionImportee, SouvenirImporte};
 use crate::horodatage::micros_depuis_iso;
-use crate::verrou;
+use crate::stockage::verrou;
 
 /// Taille d'une page de scroll Qdrant (S-2).
 const TAILLE_PAGE: u32 = 256;
@@ -1095,7 +1095,7 @@ mod tests {
         assert_eq!(agent_de_portee("agent_id=a%3Db%26c%25d%253D&user_id=moi").as_deref(), Some("a=b&c%d%3D"));
         assert_eq!(agent_de_portee("run_id=r&user_id=moi"), None);
         assert_eq!(agent_de_portee("user_id=moi"), None);
-        let portee = crate::extraction::portee_session("moi", Some("x=%&y"), Some("r"));
+        let portee = crate::modele::extraction::portee_session("moi", Some("x=%&y"), Some("r"));
         assert_eq!(agent_de_portee(&portee).as_deref(), Some("x=%&y"));
     }
 }

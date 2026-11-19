@@ -12,7 +12,7 @@ use std::time::Duration;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
-use crate::extraction;
+use crate::modele::extraction;
 
 /// Délais avant chaque nouvelle tentative.
 const NOUVELLES_TENTATIVES: [Duration; 2] = [Duration::from_millis(500), Duration::from_millis(1000)];

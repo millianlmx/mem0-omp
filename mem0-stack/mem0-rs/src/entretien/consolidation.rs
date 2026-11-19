@@ -24,10 +24,10 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::db::{self, NouveauSouvenir, Souvenir, Tags};
+use crate::stockage::db::{self, NouveauSouvenir, Souvenir, Tags};
 use crate::horodatage::Instant;
-use crate::liens::{self, Lien, LienVu, PREUVE};
-use crate::redaction::masquer;
+use crate::stockage::liens::{self, Lien, LienVu, PREUVE};
+use crate::api::redaction::masquer;
 
 /// Les questions des mental models d'une portée : (nom, question).
 pub const MODELES_DEFAUT: [(&str, &str); 5] = [

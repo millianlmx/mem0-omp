@@ -1,5 +1,5 @@
 {
-  "_": "Cas partagés du masquage des secrets : `redact` du plugin (omp-mem0-memory/write.ts) et `masquer` de mem0-rs (src/redaction.rs) rendent `attendu` pour chaque `entree`, fragments joints sans séparateur — un jeton n'est jamais écrit d'un seul tenant, la push protection de GitHub refuserait le push.",
+  "_": "Cas partagés du masquage des secrets : `redact` du plugin (omp-mem0-memory/write.ts) et `masquer` de mem0-rs (src/api/redaction.rs) rendent `attendu` pour chaque `entree`, fragments joints sans séparateur — un jeton n'est jamais écrit d'un seul tenant, la push protection de GitHub refuserait le push.",
   "cas": [
     {
       "nom": "sk- historique",

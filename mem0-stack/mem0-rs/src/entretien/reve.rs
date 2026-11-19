@@ -19,7 +19,7 @@
 //!
 //! Les phases 3 (observations) et 4 (mental models) demandent un modèle qui
 //! raisonne sur toute la portée : le harness les confie à une session omp
-//! ([`crate::consolidation`]).
+//! ([`crate::entretien::consolidation`]).
 //!
 //! Chat coupé (`OMLX_CHAT_BASE_URL=off`) : l'étape 2 est sautée, sans erreur.
 //! Le dernier cycle (heure de fin, erreurs) est montré par `GET /health` ([`Suivi`]).
@@ -33,11 +33,11 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::consolidation::journaliser;
-use crate::extraction::{extraire_json, lire_json_tolerant, retirer_blocs};
+use crate::entretien::consolidation::journaliser;
+use crate::modele::extraction::{extraire_json, lire_json_tolerant, retirer_blocs};
 use crate::horodatage::{self, Instant};
-use crate::liens::{self, Lien, PREUVE, SEMANTIQUE};
-use crate::openai::ClientChat;
+use crate::stockage::liens::{self, Lien, PREUVE, SEMANTIQUE};
+use crate::modele::openai::ClientChat;
 
 /// Cosinus à partir duquel deux faits d'une portée sont comparés par le LLM.
 pub const SEUIL_PAIRE: f64 = 0.85;
@@ -241,7 +241,7 @@ fn oublier(
         .query_map(params![portee, PREUVE], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     for id in &orphelines {
-        crate::db::supprimer_dans(&tx, id, instant)?;
+        crate::stockage::db::supprimer_dans(&tx, id, instant)?;
     }
     let mut oublis = 0;
     if reglage.oubli_jours > 0 {
@@ -249,7 +249,7 @@ fn oublier(
         let limite = instant.micros.saturating_sub(fenetre);
         // Les rappels ne se comptent que depuis la création (ou la migration v4)
         // de la base : avant une fenêtre entière, « jamais rappelé » ne dit rien.
-        if crate::db::rappels_depuis_us(&tx)? <= limite {
+        if crate::stockage::db::rappels_depuis_us(&tx)? <= limite {
             let candidats: Vec<(String, String)> = tx
                 .prepare(
                     "SELECT m.id, m.memory FROM memories m
@@ -422,7 +422,7 @@ pub async fn boucle(db: Arc<Mutex<Connection>>, chat: ClientChat, reglage: Regla
             match portees(&conn) {
                 Ok(p) => p.into_iter().filter(|p| due(&conn, p, reglage.calme, paires, maintenant).unwrap_or(false)).collect(),
                 Err(e) => {
-                    crate::journal::erreur(&format!("rêve : {e}"));
+                    crate::exploitation::journal::erreur(&format!("rêve : {e}"));
                     suivi.noter(&[e.to_string()]);
                     continue;
                 }
@@ -436,12 +436,12 @@ pub async fn boucle(db: Arc<Mutex<Connection>>, chat: ClientChat, reglage: Regla
             match rever_portee(&db, &chat, &reglage, &portee).await {
                 Ok(r) if !r.errors.is_empty() => {
                     let e = r.errors.join(" ; ");
-                    crate::journal::alerte(&format!("rêve de « {portee} » : {e}"));
+                    crate::exploitation::journal::alerte(&format!("rêve de « {portee} » : {e}"));
                     erreurs.push(erreur_de_portee(&portee, &e));
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    crate::journal::erreur(&format!("rêve de « {portee} » impossible : {e}"));
+                    crate::exploitation::journal::erreur(&format!("rêve de « {portee} » impossible : {e}"));
                     erreurs.push(erreur_de_portee(&portee, &e));
                 }
             }
@@ -545,7 +545,7 @@ pub fn decider(conn: &mut Connection, id: &str, accepter: bool, instant: &Instan
         params![id, if accepter { "acceptee" } else { "refusee" }, instant.iso],
     )?;
     let supprime = match (accepter, supprimer) {
-        (true, Some(cible)) => crate::db::supprimer_dans(&tx, &cible, instant)?,
+        (true, Some(cible)) => crate::stockage::db::supprimer_dans(&tx, &cible, instant)?,
         _ => false,
     };
     tx.commit()?;
@@ -578,10 +578,10 @@ mod tests {
     #[test]
     fn due_calme_changement_et_paires_restantes() {
         let dossier = std::env::temp_dir().join(format!("mem0-rs-reve-due-{}", uuid::Uuid::new_v4()));
-        let mut conn = crate::db::ouvrir(&dossier.join("b.db"), 2).unwrap();
+        let mut conn = crate::stockage::db::ouvrir(&dossier.join("b.db"), 2).unwrap();
         let i = horodatage::maintenant();
         let ajouter = |conn: &mut Connection, id: &str, v: &[f32]| {
-            let s = crate::db::NouveauSouvenir {
+            let s = crate::stockage::db::NouveauSouvenir {
                 id,
                 memory: id,
                 hash: id,
@@ -593,7 +593,7 @@ mod tests {
                 tags: None,
                 instant: &i,
             };
-            crate::db::ajouter(conn, &s, v).unwrap();
+            crate::stockage::db::ajouter(conn, &s, v).unwrap();
         };
         let calme = Duration::from_secs(600);
         assert!(!due(&conn, "p", calme, true, i.micros).unwrap(), "portée vide");

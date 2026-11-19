@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use crate::bm25::murmur3_x86_32;
+use crate::classement::bm25::murmur3_x86_32;
 
 const POIDS_MOT: f32 = 1.0;
 const POIDS_TRIGRAMME: f32 = 0.25;
