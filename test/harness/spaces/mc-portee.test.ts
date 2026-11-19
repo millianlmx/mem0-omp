@@ -13,7 +13,8 @@ import { loadConfig, repoDefaults } from "../../../omp-harness/config/config.ts"
 import type { HarnessConfig } from "../../../omp-harness/config/config.ts";
 import type { EventRow, RunPatch, RunRow, Space, Store, UsageRow } from "../../../omp-harness/db/db.ts";
 import { DigestSender } from "../../../omp-harness/reports/digest.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import { interpretClassification } from "../../../omp-harness/intake/intake.ts";
 import { clientCommand } from "../../../omp-harness/main.ts";
 import { MCP_TOOLS } from "../../../omp-harness/api/mcp.ts";

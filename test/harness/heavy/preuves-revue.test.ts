@@ -17,7 +17,8 @@ import { Store } from "../../../omp-harness/db/db.ts";
 import type { EventRow } from "../../../omp-harness/db/db.ts";
 import { OUTPUT_TAIL } from "../../../omp-harness/heavy/heavy.ts";
 import type { HeavyResult } from "../../../omp-harness/heavy/heavy.ts";
-import { apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import { notificationFor } from "../../../omp-harness/notify/notify.ts";
 import {
   MAX_PROOFS,

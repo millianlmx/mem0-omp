@@ -19,7 +19,8 @@ import type {
   WorkstationProfile,
   WorkstationRequest,
 } from "../../../omp-harness/db/db.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import type { IntakeView } from "../../../omp-harness/intake/intake.ts";
 import type { BrowserView, WorkstationStatus } from "../../../omp-harness/workstation/workstation-input.ts";
 import type { ProfileStats } from "../../../omp-harness/workstation/workstation-profile.ts";

@@ -7,7 +7,7 @@
 //
 // - Un battement dit tout ce qu'il sait ; un champ facultatif ABSENT garde la valeur connue, `null`
 //   l'efface. Le dépôt n'est jamais fourni : il est déduit du distant, sinon du dossier.
-// - Battre, lire, confier et retirer sont au propriétaire (http.ts `ownerOf` : le rapporteur porte
+// - Battre, lire, confier et retirer sont au propriétaire (route-table.ts `ownerOf` : le rapporteur porte
 //   son jeton) : le titre et l'intention disent ce qui se fait sur le poste. Un battement ne touche
 //   que les sessions de SON client. Ses événements partent SANS dépôt — `local_session` ne porte
 //   que `{id, state}`, jamais le titre ni le dépôt (le journal en déduirait un dépôt, et un client
