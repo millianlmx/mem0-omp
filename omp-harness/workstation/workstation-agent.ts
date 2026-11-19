@@ -85,18 +85,12 @@ import type { WorkstationJob } from "../runners/runner.ts";
 import { forceStop, hostToolsFor, runnerUnit } from "../runners/runner.ts";
 import { RunnerSession } from "../runners/runner-session.ts";
 import { workstationOwner } from "../sessions/session-feed.ts";
-import type { EffectiveAutonomy, ProfileStats, Workstation } from "./workstation.ts";
-import {
-  MAX_WAIT_SEC,
-  REQUEST_CANCELLED,
-  REQUEST_OUT_OF_SPACE,
-  clip,
-  parseActionInput,
-  parseDigest,
-  parseProfile,
-  posteDir,
-  uploadDir,
-} from "./workstation.ts";
+import type { EffectiveAutonomy } from "./workstation-input.ts";
+import type { ProfileStats } from "./workstation-profile.ts";
+import type { Workstation } from "./workstation.ts";
+import { MAX_WAIT_SEC, posteDir, uploadDir } from "./workstation.ts";
+import { REQUEST_CANCELLED } from "./workstation-errands.ts";
+import { REQUEST_OUT_OF_SPACE, clip, parseActionInput, parseDigest, parseProfile } from "./workstation-input.ts";
 import { untrusted } from "./workstation-guards.ts";
 
 /** La scope mémoire des jobs du poste hors espace ; celle d'un espace : `workstationScope`. */

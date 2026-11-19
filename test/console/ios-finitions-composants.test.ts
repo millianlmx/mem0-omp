@@ -135,7 +135,7 @@ test("ios-finitions-composants/AC-6 : toute durée de l'app iOS s'affiche en chi
 });
 
 /** Le sélecteur partagé Mac/iOS (cible ConsoleUI), compilé dans l'app iOS. */
-const PICKER = "LaunchViews.swift";
+const PICKER = "Runs/LaunchViews.swift";
 const REPO_PICKER = "Picker(PipelineServerText.repoLabel, selection: Binding(";
 
 /**

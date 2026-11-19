@@ -108,7 +108,7 @@ test("onglet-preuves/AC-96 : « Comprendre » (Mac et iOS) a le niveau « Preuve
       `${path.basename(file)} : « Comprendre »`,
     );
   // Les sections partagées n'écrivent aucun mot en dur : tout vient de ConsoleCore/Design/*Text.swift.
-  const sections = read(CONSOLE, "Sources", "ConsoleUI", "RunProofsViews.swift");
+  const sections = read(CONSOLE, "Sources", "ConsoleUI", "Runs", "RunProofsViews.swift");
   assert.doesNotMatch(sections, /\b(Text|Label|Button|DisclosureGroup|LabeledContent)\("/);
   const words = read(CONSOLE, "Sources", "ConsoleCore", "Design", "ProofsText.swift");
   const english = read(CONSOLE, "Sources", "ConsoleCore", "Resources", "en.lproj", "Localizable.strings");

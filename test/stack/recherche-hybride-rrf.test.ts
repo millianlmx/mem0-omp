@@ -288,7 +288,7 @@ test("recherche-hybride-rrf/AC-6 : le README de mem0-rs suit le code : variables
   }
 
   // Le champ `fusion` accepte exactement les valeurs que le README annonce.
-  const validation = fs.readFileSync(path.join(CRATE, "src", "validation.rs"), "utf8");
+  const validation = fs.readFileSync(path.join(CRATE, "src", "api", "validation.rs"), "utf8");
   const litteral = /LITERAL_FUSION_ATTENDU: &str = "([^"]+)";/.exec(validation)?.[1];
   assert.equal(litteral, "'additive', 'rrf' or 'graphe'");
   const recherche = section(readme, "Recherche hybride");

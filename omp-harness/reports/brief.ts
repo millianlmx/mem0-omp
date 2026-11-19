@@ -6,7 +6,7 @@
 import type { CancelCause, RepoFilter, RunRow, Store } from "../db/db.ts";
 import { failureOf, humanWaitOf } from "../runs/machine.ts";
 import type { HumanWait, HumanWaitView, RunFailure } from "../runs/machine.ts";
-import type { QueueBlocker, QueueFacts } from "../runs/orchestrator.ts";
+import type { QueueBlocker, QueueFacts } from "../runs/run-queue.ts";
 import { cleanTitle } from "../human/proposals.ts";
 import { humanTouched } from "./scoreboard.ts";
 import { untrusted } from "../workstation/workstation-guards.ts";

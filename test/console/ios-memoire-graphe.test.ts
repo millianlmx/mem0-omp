@@ -73,7 +73,7 @@ function sharedKernelFaults(root: string): string[] {
     if (!declares(core, name)) faults.push(`ConsoleCore ne déclare pas ${name}`);
   }
   if (declares(shell, "MemoryGraph")) faults.push("OMPConsole déclare encore MemoryGraph");
-  const reads = source(path.join(root, "omp-console", "Sources", "ConsoleClient", "MemoryReader.swift"));
+  const reads = source(path.join(root, "omp-console", "Sources", "ConsoleClient", "Memory", "MemoryReader.swift"));
   const head =
     "    public func graph(scope: String?) async throws -> RemoteMemoryGraphPayload {\n        guard let scope else";
   if (!reads.includes(head)) faults.push("le graphe ne lit pas la seule portée demandée");
@@ -87,7 +87,7 @@ function sharedKernelFaults(root: string): string[] {
 test("ios-memoire-graphe/AC-1 : le lecteur de la mémoire du serveur rend le graphe d'une portée par le noyau partagé", () => {
   assert.deepEqual(sharedKernelFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "Sources", "ConsoleClient", "MemoryReader.swift");
+  const target = path.join(copy, "omp-console", "Sources", "ConsoleClient", "Memory", "MemoryReader.swift");
   const text = fs
     .readFileSync(target, "utf8")
     .replace("let rows = try await all(scope: scope).rows", "let rows = try await all(scope: nil).rows");

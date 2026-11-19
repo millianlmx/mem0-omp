@@ -65,7 +65,11 @@ Les chemins sont relatifs à `omp-harness/`. Cette table vient de la réorganisa
 | `oauth.ts` | `config/oauth.ts` |  |
 | `observability.ts` | `operations/observability.ts` |  |
 | `oracle.ts` | `memory/oracle.ts` |  |
-| `orchestrator.ts` | `runs/orchestrator.ts` |  |
+| `orchestrator.ts` | `runs/orchestrator.ts` | assemblage, cycle de vie du service et conduite des runs |
+| `orchestrator.ts` | `runs/pause-desk.ts` | pause globale et par espace |
+| `orchestrator.ts` | `runs/run-creation.ts` | création des runs et des projets |
+| `orchestrator.ts` | `runs/run-queue.ts` | admission équitable et file d'attente |
+| `orchestrator.ts` | `runs/run-views.ts` | vues de lecture rendues à l'API |
 | `pairing.ts` | `api/pairing.ts` |  |
 | `pilot.ts` | `human/pilot.ts` |  |
 | `planner.ts` | `runs/planner.ts` |  |
@@ -103,4 +107,8 @@ Les chemins sont relatifs à `omp-harness/`. Cette table vient de la réorganisa
 | `verdict.ts` | `runs/verdict.ts` |  |
 | `workstation-agent.ts` | `workstation/workstation-agent.ts` |  |
 | `workstation-guards.ts` | `workstation/workstation-guards.ts` |  |
-| `workstation.ts` | `workstation/workstation.ts` |  |
+| `workstation.ts` | `workstation/workstation-errands.ts` | meetings, demandes et automatisations |
+| `workstation.ts` | `workstation/workstation-input.ts` | formes et validation des entrées du poste |
+| `workstation.ts` | `workstation/workstation-presence.ts` | navigateurs, présence et espaces |
+| `workstation.ts` | `workstation/workstation-profile.ts` | profil de travail |
+| `workstation.ts` | `workstation/workstation.ts` | file d'actions et garde d'envoi |

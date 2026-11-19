@@ -79,7 +79,7 @@ export function raisesAutonomy(from: RunAutonomy | null, to: RunAutonomy | null)
   return rank(to) > rank(from);
 }
 
-/** Les gestes de l'humain que le pilote emprunte (orchestrator.ts les branche sur `HumanLoop`). */
+/** Les gestes de l'humain que le pilote emprunte (orchestrator.ts les branche sur `HumanLoop` de gestures.ts). */
 export type PilotHooks = {
   validate: (runId: string, approve: boolean, reason: string, actor: Actor) => Promise<RunRow>;
   retry: (runId: string, actor: Actor, instructions: string) => Promise<RunRow>;

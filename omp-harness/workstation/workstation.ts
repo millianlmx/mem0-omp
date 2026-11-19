@@ -28,11 +28,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Client } from "../api/auth.ts";
-import { isRecord } from "../config/config.ts";
 import type { HarnessConfig } from "../config/config.ts";
 import type { Actor, HarnessContext } from "../runs/context.ts";
 import type {
-  ActionKind,
   ActionOrigin,
   ActionPatch,
   ActionState,
@@ -43,7 +41,6 @@ import type {
   RequestState,
   Segment,
   ShiftRow,
-  StoredObservation,
   WorkstationAction,
   WorkstationAutomation,
   WorkstationCapture,
@@ -51,137 +48,49 @@ import type {
   WorkstationProfileBody,
   WorkstationRequest,
 } from "../db/db.ts";
-import { ACTION_KINDS, REQUEST_STATES } from "../db/db.ts";
-import { parseCron } from "../jobs/cron.ts";
 import { HarnessError } from "../api/errors.ts";
-import { newId } from "../runs/ids.ts";
 import { redact, workstationOwner } from "../sessions/session-feed.ts";
 import type { SessionEntry } from "../sessions/session-feed.ts";
 import { TAB_KINDS, URL_KINDS, hostListed, hostOf, opaqueQueryParam, parseAgentTabs } from "./workstation-guards.ts";
-import { ACCOUNT_DOMAINS, ACCOUNT_STATES, VPS_BROWSER } from "../browser/vps-policy.ts";
+import { VPS_BROWSER } from "../browser/vps-policy.ts";
 import type { AccountDomain, AccountState, AccountView } from "../browser/vps-policy.ts";
+import {
+  NO_HELLO,
+  MAX_PREVIEW,
+  MAX_SUMMARY,
+  DAY_MS,
+  SETTINGS_KEY,
+  REQUEST_OUT_OF_SPACE,
+  clip,
+  clean,
+  isSelfOnly,
+  parseResult,
+  describeGesture,
+} from "./workstation-input.ts";
+import type {
+  EffectiveAutonomy,
+  WorkstationSettings,
+  BrowserHello,
+  BrowserView,
+  WorkstationStatus,
+  ActionInput,
+  Presence,
+} from "./workstation-input.ts";
+import { ProfileDesk } from "./workstation-profile.ts";
+import type { ProfileStats } from "./workstation-profile.ts";
+import { PresenceDesk } from "./workstation-presence.ts";
+import { ErrandDesk } from "./workstation-errands.ts";
 
-export type Autonomy = "auto" | "observe" | "propose" | "act";
-export type EffectiveAutonomy = "observe" | "propose" | "act";
-export const AUTONOMIES: readonly Autonomy[] = ["auto", "observe", "propose", "act"];
-
-/** Les réglages posés depuis les apps (table `settings`), qui priment sur la configuration. */
-export type WorkstationSettings = {
-  autonomy: Autonomy;
-  selfIdentities: string[];
-  paused: boolean;
-  thresholdHours: number;
-  /** L'arrêt d'urgence en cours (`POST /v1/workstation/stop`) : levé par la reprise de l'approbateur. */
-  stopped: { at: number; by: string } | null;
-  /** Le navigateur par défaut choisi ; `null` : le premier vu. */
-  defaultBrowser: string | null;
-  /** Le navigateur (extension) dont la session est copiée en continu dans le navigateur `vps` ; `null` : aucun. */
-  mirrorBrowser: string | null;
-  /** Les hôtes permis à la navigation (`workstation.allowedHosts` si l'approbateur n'a rien réglé). */
-  allowedHosts: string[];
-  /** La garde anti-exfiltration de l'agent (`workstation.exfiltrationGuard` si rien n'est réglé). */
-  exfiltrationGuard: boolean;
-  /** D'où vient chacun des deux : la configuration, ou le réglage de l'approbateur. */
-  navigationSource: { allowedHosts: "config" | "setting"; exfiltrationGuard: "config" | "setting" };
-};
-
-/** Ce qu'une extension dit d'elle à chaque appel (`X-OMP-Browser`, `X-OMP-Browser-Label`, `X-OMP-Extension`). */
-export type BrowserHello = { id: string | null; label: string | null; version: string | null };
-export const NO_HELLO: BrowserHello = { id: null, label: null, version: null };
-/** Le navigateur d'une extension sans `browserId` (version ancienne) quand aucun autre n'est connu. */
-export const LEGACY_BROWSER = "default";
-
-/** Un navigateur du poste, tel que le montrent le statut et le profil. */
-export type BrowserView = {
-  id: string;
-  label: string | null;
-  online: boolean;
-  lastSeenAt: number;
-  firstSeenAt: number;
-  extensionVersion: string | null;
-  isDefault: boolean;
-  /** L'espace (son id) auquel le navigateur est rattaché : tout ce qui en vient en hérite ; `null` : hors espace. */
-  space: string | null;
-  /** Les comptes du navigateur `vps` seulement : leur état, jamais un cookie ni un jeton. */
-  accounts?: AccountView[];
-  /** Le navigateur `vps` seulement : le dernier envoi du mirroir accepté depuis le démarrage, `null` sinon. */
-  mirroredAt?: number | null;
-};
-
-export type ProfileStats = {
-  observedSeconds: number;
-  since: number | null;
-  topSites: { host: string; seconds: number; share: number }[];
-  activeHours: number[];
-  sequences: { steps: string[]; count: number }[];
-};
-
-export type WorkstationStatus = {
-  online: boolean;
-  lastSeenAt: number | null;
-  extensionVersion: string | null;
-  observedSeconds: number;
-  thresholdHours: number;
-  autonomy: { setting: Autonomy; effective: EffectiveAutonomy };
-  paused: boolean;
-  selfIdentities: string[];
-  pending: number;
-  profileUpdatedAt: number | null;
-  lastShift: { at: number; outcome: string; actions: number } | null;
-  nextShiftAt: number | null;
-  /** L'arrêt d'urgence en cours, `null` sinon ; seule la reprise par l'approbateur (`paused: false`) le lève. */
-  stopped: { at: number; by: string } | null;
-  /** Les navigateurs connus (un par extension appairée), et celui qui reçoit ce qui n'en cible aucun. */
-  browsers: BrowserView[];
-  defaultBrowser: string | null;
-  /** La source du mirroir de session vers le navigateur `vps`, `null` : aucun mirroir. */
-  mirrorBrowser: string | null;
-  /** La navigation gardée en vigueur, et la source de chaque valeur (`config` ou `setting`). */
-  allowedHosts: string[];
-  exfiltrationGuard: boolean;
-  navigationSource: { allowedHosts: "config" | "setting"; exfiltrationGuard: "config" | "setting" };
-};
-
-/** Une action à déposer ; `browserId` : le navigateur qui l'exécute (absent : celui de la demande, sinon le défaut). */
-export type ActionInput = {
-  kind: ActionKind;
-  params: Record<string, unknown>;
-  rationale: string;
-  browserId?: string;
-};
-
-export type ResultInput =
-  | { outcome: "done"; result: WorkstationAction["result"]; image: string | null }
-  | { outcome: "failed"; error: string }
-  | {
-      outcome: "needs_approval";
-      approval: Pick<Approval, "summary" | "recipients" | "preview" | "fingerprint">;
-    };
-
-/** Le dernier contact de l'extension date de moins de 60 s : elle est en ligne. */
-export const ONLINE_MS = 60_000;
 /** L'attente maximale d'un long-poll (s). */
 export const MAX_WAIT_SEC = 30;
-export const MAX_OBSERVATIONS = 500;
-export const MAX_SEGMENTS = 200;
-export const MAX_LABEL = 120;
-const MAX_TITLE = 300;
-const MAX_PREVIEW = 2000;
-const MAX_SUMMARY = 500;
-const MAX_RATIONALE = 2000;
-const MAX_SEGMENT_TEXT = 4000;
-const MAX_RESULT_TEXT = 20_000;
-/** Les octets (JSON) de `result.data` gardés en base au plus. */
-const MAX_RESULT_DATA = 256 * 1024;
-const DAY_MS = 24 * 60 * 60 * 1000;
+
 const PURGE_EVERY_MS = 60 * 60 * 1000;
 /**
  * Un meeting `live` sans segment ni mise à jour depuis 30 min passe `ended` (son digest part) :
  * l'extension l'a perdu (onglet fermé, navigateur quitté) sans jamais appeler `…/end`.
  */
 export const ORPHAN_MEETING_MS = 30 * 60 * 1000;
-/** L'empreinte d'envoi : SHA-256 en hexadécimal (64 caractères). */
-const FINGERPRINT = /^[0-9a-f]{64}$/i;
+
 /** Les jobs du poste dont la session se lit (`GET /v1/workstation/session?job=`). */
 export const SESSION_JOBS = {
   profil: "poste-profil",
@@ -191,46 +100,6 @@ export const SESSION_JOBS = {
   savoir: "poste-savoir",
 } as const;
 export type SessionJob = keyof typeof SESSION_JOBS;
-/** Deux visites espacées de plus de 30 min appartiennent à deux enchaînements distincts. */
-const SEQUENCE_GAP_MS = 30 * 60 * 1000;
-const SEQUENCE_MIN_COUNT = 3;
-const SEQUENCE_MAX_STEPS = 4;
-const SEQUENCE_KEEP = 20;
-const TOP_SITES = 15;
-
-/** Les touches nommées que `key` presse (seules, ou avec des modificateurs) : la liste blanche de l'extension (lib/keys.ts). */
-export const NAMED_KEYS = [
-  "Enter",
-  "Escape",
-  "Tab",
-  "ArrowUp",
-  "ArrowDown",
-  "ArrowLeft",
-  "ArrowRight",
-  "Backspace",
-  "Delete",
-  "Home",
-  "End",
-  "PageUp",
-  "PageDown",
-  "Space",
-] as const;
-const MODIFIERS = ["Control", "Alt", "Shift", "Meta"] as const;
-
-/**
- * La combinaison d'une touche permise : une touche nommée, éventuellement précédée de
- * modificateurs (`Shift+Tab`, `Control+Enter`) ; une lettre ou un chiffre seulement avec
- * Control, Alt ou Meta (`Meta+k`) — taper du texte passe par `type`. `false` hors liste.
- */
-export function isKeyCombo(raw: unknown): boolean {
-  if (typeof raw !== "string" || raw.length > 60) return false;
-  const parts = raw.split("+");
-  const base = parts.pop() ?? "";
-  if (new Set(parts).size !== parts.length || parts.some((part) => !(MODIFIERS as readonly string[]).includes(part)))
-    return false;
-  if ((NAMED_KEYS as readonly string[]).includes(base)) return true;
-  return /^[a-z0-9]$/i.test(base) && parts.some((part) => part !== "Shift");
-}
 
 /**
  * Le répertoire de travail des jobs du poste : `_poste` hors espace, `_poste-<espace>` pour un espace —
@@ -246,12 +115,6 @@ export function uploadDir(config: Pick<HarnessConfig, "worktreesDir">, space: st
 }
 /** Un fichier joint par `upload` pèse au plus 10 Mio. */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
-/** Le nom d'un fichier du dossier d'envoi : ni séparateur, ni caractère de contrôle, ni nom caché. */
-export function isUploadName(name: unknown): name is string {
-  if (typeof name !== "string" || name.length === 0 || name.length > 200 || name.startsWith(".")) return false;
-  for (const char of name) if (char === "/" || char === "\\" || char.charCodeAt(0) < 0x20) return false;
-  return true;
-}
 
 /** Le type MIME d'un fichier du dossier d'envoi, d'après son extension. */
 const MIME_TYPES: Record<string, string> = {
@@ -279,40 +142,6 @@ const MIME_TYPES: Record<string, string> = {
   ods: "application/vnd.oasis.opendocument.spreadsheet",
 };
 
-const SETTINGS_KEY = "workstation";
-/** L'état des comptes du navigateur `vps` (table `settings`) : domaine → { state, at }. */
-const ACCOUNTS_KEY = "workstation.vps.accounts";
-/** Le temps observé CUMULÉ (il survit à la rétention des observations) et la première observation. */
-const OBSERVED_KEY = "workstation.observed";
-/** La portée (espace du navigateur `vps`, espace de la source du mirroir) sous laquelle la session du `vps` a été remplie. */
-const VPS_JAR_KEY = "workstation.vps.jar";
-
-/** Une consigne de demande : 4000 caractères au plus. */
-export const MAX_INSTRUCTION = 4000;
-const MAX_REPORT = 8000;
-const MAX_REQUEST_REASON = 300;
-const BROWSER_ID = /^[A-Za-z0-9_.-]{1,64}$/;
-const MAX_BROWSER_LABEL = 60;
-const MAX_ALLOWED_HOSTS = 200;
-/** Un hôte permis : un nom DNS (ou `*.domaine`), sans schéma, port ni chemin. */
-const HOST_NAME =
-  /^(\*\.)?(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
-export const REQUEST_CANCELLED = "demande annulée";
-/** Une demande, une action ou une automatisation visent un espace qui n'a aucun navigateur rattaché. */
-export const NO_SPACE_BROWSER =
-  "cet espace n'a pas de navigateur : rattachez-en un (PUT /v1/workstation/browsers/{id} {space})";
-/** Une demande dont le navigateur a quitté l'espace depuis qu'elle a été posée : elle ne s'exécute pas ailleurs. */
-export const REQUEST_OUT_OF_SPACE =
-  "le navigateur de la demande n'est plus dans son espace : elle ne s'exécute pas ailleurs";
-/** Une action déposée dans un espace que son navigateur a quitté depuis (réattribué, espace retiré). */
-export const ACTION_OUT_OF_SPACE =
-  "le navigateur de l'action n'est plus dans l'espace où elle a été déposée : elle ne s'exécute pas ailleurs";
-/** Une automatisation dont le navigateur est aujourd'hui hors de l'espace où elle a été créée. */
-export const AUTOMATION_OUT_OF_SPACE =
-  "le navigateur de l'automatisation n'est plus dans l'espace où elle a été créée : elle ne se lance pas ailleurs";
-/** Un meeting ouvert dans un espace que son navigateur a quitté depuis : rien ne s'y ajoute. */
-export const MEETING_OUT_OF_SPACE =
-  "le navigateur n'est plus dans l'espace où ce meeting a été ouvert : rien ne s'y ajoute";
 /** Le refus d'un geste d'approbateur (approuver, refuser, régler le poste) à tout autre client. */
 export const APPROVER_ONLY =
   "seul l'appareil approbateur (OMP Console appairée avec le code de `harness.sh approver`) peut approuver, refuser ou régler le poste";
@@ -339,772 +168,7 @@ const LEASE_LOST = "l'extension n'a pas rendu le résultat";
 const APPROVAL_EXPIRED = "approbation non donnée à temps : vaut refus";
 const QUEUE_EXPIRED = "l'action n'est pas partie à temps";
 
-function bad(message: string): never {
-  throw new HarnessError(400, message);
-}
-
-/** Un texte borné à `max` caractères (terminé par `…` s'il est coupé). */
-export function clip(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
-}
-
-/** Un texte reçu : secrets masqués (le `redact()` du direct des sessions), puis borné. */
-function clean(text: string, max: number): string {
-  return clip(redact(text).trim(), max);
-}
-
-/**
- * La présentation d'une extension, lue dans ses en-têtes : `X-OMP-Browser` (identifiant
- * stable, absent pour une extension ancienne), `X-OMP-Browser-Label` (encodé
- * `encodeURIComponent`), `X-OMP-Extension` (sa version).
- */
-export function parseBrowserHello(rawId: unknown, rawLabel: unknown, rawVersion: unknown): BrowserHello {
-  let id: string | null = null;
-  if (typeof rawId === "string" && rawId.trim() !== "") {
-    if (!BROWSER_ID.test(rawId.trim())) bad("X-OMP-Browser : identifiant de 1 à 64 caractères [A-Za-z0-9_.-] attendu");
-    if (rawId.trim() === VPS_BROWSER) bad("X-OMP-Browser : « vps » est réservé au navigateur du serveur");
-    id = rawId.trim();
-  }
-  let label: string | null = null;
-  if (typeof rawLabel === "string" && rawLabel.trim() !== "") {
-    let decoded = rawLabel;
-    try {
-      decoded = decodeURIComponent(rawLabel);
-    } catch {
-      bad("X-OMP-Browser-Label : libellé encodé (encodeURIComponent) attendu");
-    }
-    label = clean(decoded, MAX_BROWSER_LABEL) || null;
-  }
-  const version = typeof rawVersion === "string" && rawVersion.trim() !== "" ? rawVersion.trim().slice(0, 64) : null;
-  return { id, label, version };
-}
-
-/** Un navigateur désigné dans un corps : absent ou `null` → `null` (le défaut). */
-function browserRef(value: unknown, where: string): string | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "string" || !BROWSER_ID.test(value)) bad(`${where} : identifiant de navigateur attendu`);
-  return value;
-}
-
-/** La consigne d'une demande, des automatisations comprises : 4000 caractères au plus. */
-export function automationInstruction(automation: { title: string; steps: readonly string[] }): string {
-  const lines = [
-    `Automatisation « ${automation.title} » : suis ces étapes dans l'ordre.`,
-    ...automation.steps.map((step, index) => `${index + 1}. ${step}`),
-  ];
-  return clip(lines.join("\n"), MAX_INSTRUCTION);
-}
-
-/**
- * Une planification d'automatisation : absente ou `null` → aucune ; sinon une expression cron
- * lue comme celles des planifications (cron.ts), puisque le planificateur la déclenchera.
- */
-function parseSchedule(value: unknown): string | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "string") bad("schedule : expression cron à 5 champs attendue, ou null");
-  try {
-    return parseCron(value).source;
-  } catch (err) {
-    return bad(`schedule : ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-/** Les états d'une liste de demandes (`?state=a,b`) ; un état inconnu est refusé. */
-export function parseRequestStates(raw: string | null): RequestState[] {
-  const states = (raw ?? "").split(",").filter((state) => state !== "");
-  if (states.some((state) => !(REQUEST_STATES as readonly string[]).includes(state)))
-    bad(`state : ${REQUEST_STATES.join(" | ")}`);
-  return states as RequestState[];
-}
-
-/** La sorte d'une raison d'attente : le texte avant son premier « : ». */
-function reasonKind(reason: string | null): string | null {
-  return reason === null ? null : (reason.split(" : ")[0] ?? reason);
-}
-
-/** Les chaînes d'une valeur JSON passées par `redact()`, à toute profondeur. */
-function redactDeep(value: unknown): unknown {
-  if (typeof value === "string") return redact(value);
-  if (Array.isArray(value)) return value.map(redactDeep);
-  if (isRecord(value)) return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, redactDeep(entry)]));
-  return value;
-}
-
-/** Une URL observée réduite à l'origine et au chemin : ni query ni fragment. */
-export function stripUrl(raw: unknown, where: string): string {
-  if (typeof raw !== "string") bad(`${where} : URL attendue`);
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    bad(`${where} : URL illisible`);
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") bad(`${where} : URL http(s) attendue`);
-  return `${url.origin}${url.pathname}`;
-}
-
-/** Un segment de chemin qui désigne un objet (numéro, UUID, empreinte, jeton) plutôt qu'une page. */
-function isIdSegment(segment: string): boolean {
-  if (/^\d+$/.test(segment)) return true;
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(segment)) return true;
-  if (/^[0-9a-f]{8,}$/i.test(segment) && /\d/.test(segment)) return true;
-  return segment.length >= 16 && /^[\w-]+$/.test(segment) && /\d/.test(segment) && /[a-z]/i.test(segment);
-}
-
-/** Le chemin normalisé d'une page : les identifiants deviennent `:id`, sans `/` final. */
-export function normalizePath(pathname: string): string {
-  const joined = pathname
-    .split("/")
-    .map((segment) => (isIdSegment(segment) ? ":id" : segment))
-    .join("/");
-  const trimmed = joined.length > 1 ? joined.replace(/\/+$/, "") : joined;
-  return trimmed === "" ? "/" : trimmed;
-}
-
-/** L'étape d'un enchaînement : l'hôte et le chemin normalisé (`github.com/org/repo/issues/:id`). */
-export function pageKey(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    return `${parsed.host}${normalizePath(parsed.pathname)}`;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * L'autonomie appliquée : `auto` reste en `observe` tant que l'observation n'a pas atteint
- * `thresholdHours`, puis passe `act` ; les autres réglages s'appliquent tels quels.
- */
-export function effectiveAutonomy(
-  setting: Autonomy,
-  observedSeconds: number,
-  thresholdHours: number,
-): EffectiveAutonomy {
-  if (setting !== "auto") return setting;
-  return observedSeconds >= thresholdHours * 3600 ? "act" : "observe";
-}
-
-/** Une adresse ou un pseudo comparé sans casse ni espaces. */
-function identity(value: string): string {
-  return value.toLowerCase().replace(/\s+/g, "");
-}
-
-/**
- * Le message ne va qu'à l'utilisateur lui-même : des destinataires CONNUS (liste non vide),
- * chacun parmi `selfIdentities`. Un destinataire inconnu ou absent exige l'approbation.
- */
-export function isSelfOnly(recipients: readonly string[], selfIdentities: readonly string[]): boolean {
-  const selves = new Set(selfIdentities.map(identity).filter((entry) => entry !== ""));
-  const targets = recipients.map(identity);
-  return targets.length > 0 && targets.every((target) => target !== "" && selves.has(target));
-}
-
-// -- validation des corps -------------------------------------------------------
-
-function parseObservation(raw: unknown, where: string): Observation {
-  if (!isRecord(raw)) bad(`${where} : objet attendu`);
-  if (raw.kind !== "visit" && raw.kind !== "interaction") bad(`${where}.kind : visit | interaction`);
-  if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || raw.at <= 0)
-    bad(`${where}.at : horodatage en millisecondes attendu`);
-  if (typeof raw.title !== "string") bad(`${where}.title : chaîne attendue`);
-  const base = { at: Math.round(raw.at), url: stripUrl(raw.url, `${where}.url`), title: clean(raw.title, MAX_TITLE) };
-  if (raw.kind === "visit") {
-    if (typeof raw.durationMs !== "number" || !Number.isFinite(raw.durationMs) || raw.durationMs < 0)
-      bad(`${where}.durationMs : durée en millisecondes ≥ 0 attendue`);
-    // Une visite plus longue qu'un jour est une horloge dérangée : bornée, jamais comptée au-delà.
-    return { kind: "visit", ...base, durationMs: Math.min(Math.round(raw.durationMs), DAY_MS) };
-  }
-  const action = raw.action;
-  if (action !== "click" && action !== "input" && action !== "submit" && action !== "key")
-    bad(`${where}.action : click | input | submit | key`);
-  const target = raw.target;
-  if (!isRecord(target) || typeof target.role !== "string" || typeof target.label !== "string")
-    bad(`${where}.target : { role, label } attendu`);
-  return {
-    kind: "interaction",
-    ...base,
-    action,
-    target: { role: clean(target.role, 60), label: clean(target.label, MAX_LABEL) },
-  };
-}
-
-/** Un lot d'observations : `tz` (getTimezoneOffset, minutes) et au plus 500 événements. */
-export function parseObservations(body: Record<string, unknown>): { tz: number; events: Observation[] } {
-  const tz = body.tz;
-  if (typeof tz !== "number" || !Number.isInteger(tz) || tz < -840 || tz > 840)
-    bad("tz : décalage horaire en minutes attendu (getTimezoneOffset)");
-  if (!Array.isArray(body.events)) bad("events : liste d'observations attendue");
-  if (body.events.length > MAX_OBSERVATIONS) bad(`events : ${MAX_OBSERVATIONS} observations au plus par lot`);
-  return { tz, events: body.events.map((raw, index) => parseObservation(raw, `events[${index}]`)) };
-}
-
-function tabId(params: Record<string, unknown>): void {
-  if (!Number.isInteger(params.tabId) || (params.tabId as number) < 0) bad("params.tabId : entier ≥ 0 attendu");
-}
-
-function webUrl(value: unknown): void {
-  if (typeof value !== "string" || value.length > 4000) bad("params.url : URL http(s) attendue");
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    bad("params.url : URL illisible");
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") bad("params.url : URL http(s) attendue");
-}
-
-function ref(value: unknown, required: boolean): void {
-  if (value === undefined && !required) return;
-  if (typeof value !== "string" || value.trim() === "" || value.length > 200)
-    bad("params.ref : la référence d'un élément du dernier snapshot attendue");
-}
-
-/** Une chaîne facultative, non vide, de `max` caractères au plus. */
-function optionalText(params: Record<string, unknown>, name: string, max: number): void {
-  const value = params[name];
-  if (value === undefined || value === null) return;
-  if (typeof value !== "string" || value.trim() === "" || value.length > max)
-    bad(`params.${name} : chaîne non vide de ${max} caractères au plus attendue`);
-}
-
-/** Les paramètres permis de chaque sorte d'action (tout autre est refusé). */
-const PARAMS: Record<ActionKind, readonly string[]> = {
-  tabs: [],
-  open: ["url"],
-  navigate: ["tabId", "url"],
-  snapshot: ["tabId"],
-  click: ["tabId", "ref"],
-  type: ["tabId", "ref", "text", "submit"],
-  key: ["tabId", "ref", "key"],
-  scroll: ["tabId", "dy"],
-  screenshot: ["tabId"],
-  wait: ["ms"],
-  close: ["tabId"],
-  select: ["tabId", "ref", "option"],
-  hover: ["tabId", "ref"],
-  back: ["tabId"],
-  forward: ["tabId"],
-  reload: ["tabId"],
-  wait_for: ["tabId", "text", "role", "name", "timeoutMs"],
-  upload: ["tabId", "ref", "file"],
-  download: ["tabId", "ref", "url"],
-  decision: ["summary"],
-};
-
-function checkParams(kind: ActionKind, params: Record<string, unknown>): void {
-  const unknown = Object.keys(params).find((key) => !PARAMS[kind].includes(key));
-  if (unknown !== undefined) bad(`params.${unknown} : paramètre inconnu pour ${kind}`);
-  if (PARAMS[kind].includes("tabId")) tabId(params);
-  switch (kind) {
-    case "open":
-    case "navigate":
-      webUrl(params.url);
-      return;
-    case "click":
-    case "hover":
-      ref(params.ref, true);
-      return;
-    case "select":
-      ref(params.ref, true);
-      if (typeof params.option !== "string" || params.option === "" || params.option.length > 500)
-        bad("params.option : la valeur ou le libellé d'une option (500 caractères au plus) attendu");
-      return;
-    case "type":
-      ref(params.ref, true);
-      if (typeof params.text !== "string" || params.text.length > MAX_RESULT_TEXT)
-        bad("params.text : le texte à saisir attendu");
-      if (params.submit !== undefined && typeof params.submit !== "boolean") bad("params.submit : booléen attendu");
-      return;
-    case "key":
-      ref(params.ref, false);
-      if (!isKeyCombo(params.key))
-        bad(
-          `params.key : ${NAMED_KEYS.join(" | ")}, éventuellement précédée de ${MODIFIERS.join("+ | ")}+ ; une lettre ou un chiffre seulement avec Control, Alt ou Meta`,
-        );
-      return;
-    case "wait_for": {
-      optionalText(params, "text", 200);
-      optionalText(params, "role", 40);
-      optionalText(params, "name", 200);
-      if (typeof params.role === "string" && !/^[a-z]+$/.test(params.role))
-        bad("params.role : un rôle ARIA (button, link…)");
-      if (params.text == null && params.role == null) bad("params.text ou params.role : ce qu'il faut attendre");
-      if (params.name != null && params.role == null) bad("params.name : seulement avec params.role");
-      const timeoutMs = params.timeoutMs;
-      if (
-        timeoutMs !== undefined &&
-        (!Number.isInteger(timeoutMs) || (timeoutMs as number) < 0 || (timeoutMs as number) > 10_000)
-      )
-        bad("params.timeoutMs : entier de 0 à 10000 attendu");
-      return;
-    }
-    case "upload":
-      ref(params.ref, true);
-      if (!isUploadName(params.file))
-        bad("params.file : le nom d'un fichier du dossier d'envoi du poste, sans chemin (ni /, ni \\, ni nom caché)");
-      return;
-    case "download":
-      ref(params.ref, false);
-      if (params.url !== undefined) webUrl(params.url);
-      if ((params.ref === undefined) === (params.url === undefined))
-        bad("params.ref ou params.url : l'un des deux, jamais les deux");
-      return;
-    case "scroll":
-      if (typeof params.dy !== "number" || !Number.isFinite(params.dy) || Math.abs(params.dy) > 100_000)
-        bad("params.dy : déplacement vertical en pixels attendu");
-      return;
-    case "wait":
-      if (!Number.isInteger(params.ms) || (params.ms as number) < 0 || (params.ms as number) > 10_000)
-        bad("params.ms : entier de 0 à 10000 attendu");
-      return;
-    case "decision":
-      if (params.summary !== undefined && (typeof params.summary !== "string" || params.summary.trim() === ""))
-        bad("params.summary : chaîne non vide attendue");
-      return;
-    default:
-      return;
-  }
-}
-
-/** Le corps d'une action déposée : `kind` connu, `params` valides, `rationale` non vide. */
-export function parseActionInput(body: Record<string, unknown>): ActionInput {
-  const kind = body.kind;
-  if (typeof kind !== "string" || !(ACTION_KINDS as readonly string[]).includes(kind))
-    bad(`kind : ${ACTION_KINDS.join(" | ")}`);
-  const params = body.params === undefined ? {} : body.params;
-  if (!isRecord(params)) bad("params : objet attendu");
-  checkParams(kind as ActionKind, params);
-  if (typeof body.rationale !== "string" || body.rationale.trim() === "")
-    bad("rationale : obligatoire et non vide — c'est la décision journalisée");
-  const summary = typeof params.summary === "string" ? { summary: clean(params.summary, MAX_SUMMARY) } : {};
-  const browserId = browserRef(body.browserId, "browserId");
-  return {
-    kind: kind as ActionKind,
-    params: kind === "decision" ? summary : params,
-    rationale: clean(body.rationale, MAX_RATIONALE),
-    ...(browserId === null ? {} : { browserId }),
-  };
-}
-
-/** Le résultat rendu par l'extension. L'image (JPEG base64) n'est jamais écrite en base. */
-export function parseResult(body: Record<string, unknown>): ResultInput {
-  const outcome = body.outcome;
-  if (outcome === "failed") {
-    if (body.error !== undefined && typeof body.error !== "string") bad("error : chaîne attendue");
-    const error = typeof body.error === "string" ? clean(body.error, MAX_RATIONALE) : "";
-    return { outcome, error: error === "" ? "échec sans détail" : error };
-  }
-  if (outcome === "needs_approval") {
-    const approval = body.approval;
-    if (!isRecord(approval)) bad("approval : { summary, recipients, preview } attendu");
-    if (typeof approval.summary !== "string" || approval.summary.trim() === "")
-      bad("approval.summary : ce que le geste enverrait, non vide");
-    if (!Array.isArray(approval.recipients) || approval.recipients.some((entry) => typeof entry !== "string"))
-      bad("approval.recipients : liste de chaînes attendue ([] si inconnus)");
-    if (approval.preview !== undefined && typeof approval.preview !== "string")
-      bad("approval.preview : chaîne attendue");
-    if (
-      approval.fingerprint !== undefined &&
-      approval.fingerprint !== null &&
-      (typeof approval.fingerprint !== "string" || !FINGERPRINT.test(approval.fingerprint))
-    )
-      bad("approval.fingerprint : SHA-256 en hexadécimal (64 caractères) attendu");
-    return {
-      outcome,
-      approval: {
-        summary: clean(approval.summary, MAX_SUMMARY),
-        // Gardés tels que reçus (secrets masqués, bornes du contrat, sans rognage) : l'extension
-        // n'exécute un geste approuvé que si le brouillon qu'elle recalcule est identique.
-        recipients: (approval.recipients as string[])
-          .filter((entry) => entry.trim() !== "")
-          .slice(0, 50)
-          .map((entry) => clip(redact(entry), 200)),
-        preview: clip(redact(typeof approval.preview === "string" ? approval.preview : ""), MAX_PREVIEW),
-        // Telle que reçue : l'extension n'exécute un envoi approuvé que si l'empreinte recalculée est identique.
-        fingerprint: typeof approval.fingerprint === "string" ? approval.fingerprint : null,
-      },
-    };
-  }
-  if (outcome !== "done") bad("outcome : done | failed | needs_approval");
-  let result: WorkstationAction["result"] = null;
-  if (body.result !== undefined && body.result !== null) {
-    if (!isRecord(body.result)) bad("result : { text?, data? } attendu");
-    const { text, data } = body.result;
-    if (text !== undefined && typeof text !== "string") bad("result.text : chaîne attendue");
-    const kept: { text?: string; data?: unknown } = {};
-    if (typeof text === "string") kept.text = clip(redact(text), MAX_RESULT_TEXT);
-    if (data !== undefined) {
-      const redacted = redactDeep(data);
-      if (JSON.stringify(redacted).length > MAX_RESULT_DATA) bad(`result.data : ${MAX_RESULT_DATA} octets au plus`);
-      kept.data = redacted;
-    }
-    result = kept;
-  }
-  let image: string | null = null;
-  if (body.image !== undefined && body.image !== null) {
-    if (typeof body.image !== "string") bad("image : JPEG en base64 attendu");
-    image = body.image.replace(/^data:image\/[a-z]+;base64,/i, "").replace(/\s+/g, "");
-    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(image)) bad("image : JPEG en base64 attendu");
-  }
-  return { outcome, result, image };
-}
-
-/**
- * Ce que l'humain approuve en mode proposer : le geste lui-même, lisible (la raison reste dans
- * `rationale`). Une telle approbation n'a pas d'empreinte : elle n'autorise aucun envoi.
- */
-export function describeGesture(kind: ActionKind, params: Record<string, unknown>): string {
-  const tab = `l'onglet ${String(params.tabId)}`;
-  switch (kind) {
-    case "tabs":
-      return "Lister les onglets";
-    case "open":
-      return `Ouvrir ${String(params.url)}`;
-    case "navigate":
-      return `Aller à ${String(params.url)} dans ${tab}`;
-    case "snapshot":
-      return `Lire ${tab}`;
-    case "click":
-      return `Cliquer sur ${String(params.ref)} dans ${tab}`;
-    case "type": {
-      const typed = String(params.text);
-      const shown = typed.length > 80 ? `${typed.slice(0, 80)}…` : typed;
-      return `Saisir « ${shown} » dans ${String(params.ref)} (${tab})${params.submit === true ? " puis valider" : ""}`;
-    }
-    case "key":
-      return `Appuyer sur ${String(params.key)}${typeof params.ref === "string" ? ` sur ${params.ref}` : ""} dans ${tab}`;
-    case "scroll":
-      return `Faire défiler ${tab} de ${String(params.dy)} px`;
-    case "screenshot":
-      return `Capturer ${tab}`;
-    case "wait":
-      return `Attendre ${String(params.ms)} ms`;
-    case "close":
-      return `Fermer ${tab}`;
-    case "select":
-      return `Choisir « ${String(params.option)} » dans ${String(params.ref)} (${tab})`;
-    case "hover":
-      return `Survoler ${String(params.ref)} dans ${tab}`;
-    case "back":
-      return `Revenir à la page précédente dans ${tab}`;
-    case "forward":
-      return `Aller à la page suivante dans ${tab}`;
-    case "reload":
-      return `Recharger ${tab}`;
-    case "wait_for": {
-      const what =
-        typeof params.text === "string"
-          ? `« ${params.text} »`
-          : `${String(params.role)}${typeof params.name === "string" ? ` « ${params.name} »` : ""}`;
-      return `Attendre ${what} dans ${tab}`;
-    }
-    case "upload":
-      return `Joindre le fichier « ${String(params.file)} » à ${String(params.ref)} (${tab})`;
-    case "download":
-      return `Télécharger ${typeof params.url === "string" ? params.url : String(params.ref)} depuis ${tab}`;
-    case "decision":
-      return "Journaliser une décision";
-  }
-}
-
-/** Les segments transcrits d'un lot (au plus 200) ; un segment vide (un silence) est écarté. */
-export function parseSegments(body: Record<string, unknown>): Segment[] {
-  if (!Array.isArray(body.segments)) bad("segments : liste attendue");
-  if (body.segments.length > MAX_SEGMENTS) bad(`segments : ${MAX_SEGMENTS} au plus par lot`);
-  return body.segments.flatMap((raw, index) => {
-    const where = `segments[${index}]`;
-    if (!isRecord(raw)) bad(`${where} : objet attendu`);
-    if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || raw.at <= 0)
-      bad(`${where}.at : horodatage en millisecondes attendu`);
-    if (raw.speaker !== "moi" && raw.speaker !== "autres") bad(`${where}.speaker : moi | autres`);
-    if (typeof raw.text !== "string") bad(`${where}.text : chaîne attendue`);
-    const text = clean(raw.text, MAX_SEGMENT_TEXT);
-    return text === "" ? [] : [{ at: Math.round(raw.at), speaker: raw.speaker, text }];
-  });
-}
-
-/**
- * Les hôtes permis réglés par l'approbateur : `null` revient à la configuration ; sinon au
- * plus 200 noms DNS (`*.domaine` permis), en minuscules, sans schéma, port ni chemin, dédoublonnés.
- */
-function parseAllowedHosts(value: unknown): string[] | null {
-  if (value === null) return null;
-  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string"))
-    bad("allowedHosts : liste d'hôtes attendue, ou null (retour à la configuration)");
-  if (value.length > MAX_ALLOWED_HOSTS) bad(`allowedHosts : ${MAX_ALLOWED_HOSTS} hôtes au plus`);
-  const hosts = (value as string[]).map((entry) => entry.trim().toLowerCase().replace(/\.$/, ""));
-  const wrong = hosts.find((host) => !HOST_NAME.test(host));
-  if (wrong !== undefined) bad(`allowedHosts : « ${wrong} » n'est pas un nom d'hôte (sans schéma, port ni chemin)`);
-  return [...new Set(hosts)];
-}
-
-type SettingsPatch = Partial<
-  Omit<WorkstationSettings, "thresholdHours" | "allowedHosts" | "exfiltrationGuard" | "navigationSource">
-> & { thresholdHours?: number | null; allowedHosts?: string[] | null; exfiltrationGuard?: boolean | null };
-
-function parseSettings(body: Record<string, unknown>): SettingsPatch {
-  const patch: SettingsPatch = {};
-  if (body.autonomy !== undefined) {
-    if (!(AUTONOMIES as readonly unknown[]).includes(body.autonomy)) bad(`autonomy : ${AUTONOMIES.join(" | ")}`);
-    patch.autonomy = body.autonomy as Autonomy;
-  }
-  if (body.selfIdentities !== undefined) {
-    if (!Array.isArray(body.selfIdentities) || body.selfIdentities.some((entry) => typeof entry !== "string"))
-      bad("selfIdentities : liste de chaînes attendue");
-    patch.selfIdentities = [
-      ...new Set((body.selfIdentities as string[]).map((entry) => entry.trim().slice(0, 200)).filter(Boolean)),
-    ].slice(0, 50);
-  }
-  if (body.paused !== undefined) {
-    if (typeof body.paused !== "boolean") bad("paused : booléen attendu");
-    patch.paused = body.paused;
-  }
-  if (body.defaultBrowser !== undefined) patch.defaultBrowser = browserRef(body.defaultBrowser, "defaultBrowser");
-  if (body.mirrorBrowser !== undefined) {
-    patch.mirrorBrowser = browserRef(body.mirrorBrowser, "mirrorBrowser");
-    if (patch.mirrorBrowser === VPS_BROWSER) bad("mirrorBrowser : le navigateur vps ne peut pas se copier lui-même");
-  }
-  if (body.allowedHosts !== undefined) patch.allowedHosts = parseAllowedHosts(body.allowedHosts);
-  if (body.exfiltrationGuard !== undefined) {
-    if (body.exfiltrationGuard !== null && typeof body.exfiltrationGuard !== "boolean")
-      bad("exfiltrationGuard : booléen attendu, ou null (retour à la configuration)");
-    patch.exfiltrationGuard = body.exfiltrationGuard;
-  }
-  if (body.thresholdHours !== undefined) {
-    const value = body.thresholdHours;
-    if (value !== null && !(typeof value === "number" && value > 0 && value <= 100_000))
-      bad("thresholdHours : heures > 0, ou null (retour à la configuration)");
-    patch.thresholdHours = value;
-  }
-  return patch;
-}
-
-function strings(value: unknown, max: number): value is string[] {
-  return Array.isArray(value) && value.length <= max && value.every((entry) => typeof entry === "string");
-}
-
-function nullableString(value: unknown): value is string | null {
-  return value === null || typeof value === "string";
-}
-
-/** Valide les arguments de `workstation_profile_write` : le profil complet, sans version ni date. */
-export function parseProfile(
-  args: Record<string, unknown>,
-): { ok: true; profile: WorkstationProfileBody } | { ok: false; error: string } {
-  if (typeof args.summary !== "string" || args.summary.trim() === "")
-    return { ok: false, error: "summary : le portrait en quelques phrases, non vide" };
-  if (typeof args.schedule !== "string") return { ok: false, error: "schedule : chaîne attendue" };
-  for (const key of ["habits", "preferences"] as const)
-    if (!strings(args[key], 50)) return { ok: false, error: `${key} : liste de chaînes (50 au plus)` };
-  const tools = args.tools;
-  if (
-    !Array.isArray(tools) ||
-    tools.length > 50 ||
-    !tools.every((tool) => isRecord(tool) && typeof tool.name === "string" && typeof tool.usage === "string")
-  )
-    return { ok: false, error: "tools : liste de { name, usage }" };
-  const tasks = args.repetitiveTasks;
-  if (
-    !Array.isArray(tasks) ||
-    tasks.length > 50 ||
-    !tasks.every(
-      (task) =>
-        isRecord(task) &&
-        typeof task.title === "string" &&
-        typeof task.frequency === "string" &&
-        strings(task.steps, 30) &&
-        typeof task.automatable === "boolean",
-    )
-  )
-    return { ok: false, error: "repetitiveTasks : liste de { title, frequency, steps, automatable }" };
-  const needs = args.clientNeeds;
-  if (
-    !Array.isArray(needs) ||
-    needs.length > 100 ||
-    !needs.every(
-      (need) =>
-        isRecord(need) &&
-        typeof need.need === "string" &&
-        nullableString(need.who) &&
-        nullableString(need.meetingId) &&
-        (need.at === null || (typeof need.at === "number" && Number.isFinite(need.at))),
-    )
-  )
-    return { ok: false, error: "clientNeeds : liste de { need, who, meetingId, at } (null quand inconnu)" };
-  return {
-    ok: true,
-    profile: {
-      summary: clean(args.summary, 4000),
-      habits: (args.habits as string[]).map((entry) => clean(entry, 1000)),
-      tools: (tools as { name: string; usage: string }[]).map((tool) => ({
-        name: clean(tool.name, 200),
-        usage: clean(tool.usage, 1000),
-      })),
-      schedule: clean(args.schedule, 2000),
-      repetitiveTasks: (tasks as WorkstationProfileBody["repetitiveTasks"]).map((task) => ({
-        title: clean(task.title, 200),
-        frequency: clean(task.frequency, 200),
-        steps: task.steps.map((step) => clean(step, 300)),
-        automatable: task.automatable,
-      })),
-      clientNeeds: (needs as WorkstationProfileBody["clientNeeds"]).map((need) => ({
-        need: clean(need.need, 1000),
-        who: need.who === null ? null : clean(need.who, 200),
-        meetingId: need.meetingId,
-        at: need.at === null ? null : Math.round(need.at),
-      })),
-      preferences: (args.preferences as string[]).map((entry) => clean(entry, 1000)),
-    },
-  };
-}
-
-/** Valide les arguments de `workstation_meeting_digest` : le résumé et les besoins exprimés. */
-export function parseDigest(
-  args: Record<string, unknown>,
-): { ok: true; summary: string; needs: MeetingNeed[] } | { ok: false; error: string } {
-  if (typeof args.summary !== "string" || args.summary.trim() === "")
-    return { ok: false, error: "summary : le résumé du meeting, non vide" };
-  const needs = args.needs;
-  if (
-    !Array.isArray(needs) ||
-    needs.length > 50 ||
-    !needs.every(
-      (need) =>
-        isRecord(need) &&
-        typeof need.need === "string" &&
-        need.need.trim() !== "" &&
-        nullableString(need.who) &&
-        nullableString(need.due) &&
-        typeof need.quote === "string",
-    )
-  )
-    return { ok: false, error: "needs : liste de { need, who, due, quote } (who et due null quand inconnus)" };
-  return {
-    ok: true,
-    summary: clean(args.summary, 4000),
-    needs: (needs as MeetingNeed[]).map((need) => ({
-      need: clean(need.need, 1000),
-      who: need.who === null ? null : clean(need.who, 200),
-      due: need.due === null ? null : clean(need.due, 200),
-      quote: clean(need.quote, 1000),
-    })),
-  };
-}
-
-// -- statistiques du profil ---------------------------------------------------------
-
-/**
- * Les enchaînements récurrents : les visites, en pages normalisées (doublons consécutifs
- * fusionnés), coupées en sessions par 30 min de silence ; chaque suite de 2 à 4 pages
- * vue au moins 3 fois est retenue, sauf si une suite plus longue qui la contient revient
- * aussi souvent (elle ne dirait rien de plus). Tri : fréquence, longueur, ordre lexical.
- */
-function recurringSequences(
-  visits: readonly Extract<StoredObservation, { kind: "visit" }>[],
-): ProfileStats["sequences"] {
-  const sessions: string[][] = [];
-  let current: string[] = [];
-  let lastEnd = Number.NEGATIVE_INFINITY;
-  for (const visit of visits) {
-    const key = pageKey(visit.url);
-    if (key === null) continue;
-    if (visit.at - lastEnd > SEQUENCE_GAP_MS && current.length > 0) {
-      sessions.push(current);
-      current = [];
-    }
-    if (current.at(-1) !== key) current.push(key);
-    lastEnd = Math.max(lastEnd, visit.at + visit.durationMs);
-  }
-  if (current.length > 0) sessions.push(current);
-  const counts = new Map<string, number>();
-  for (const steps of sessions)
-    for (let length = 2; length <= SEQUENCE_MAX_STEPS; length++)
-      for (let start = 0; start + length <= steps.length; start++) {
-        const key = steps.slice(start, start + length).join("\n");
-        counts.set(key, (counts.get(key) ?? 0) + 1);
-      }
-  const frequent = [...counts].filter(([, count]) => count >= SEQUENCE_MIN_COUNT);
-  const kept = frequent.filter(
-    ([key, count]) =>
-      !frequent.some(([other, n]) => other !== key && n === count && `\n${other}\n`.includes(`\n${key}\n`)),
-  );
-  return kept
-    .map(([key, count]) => ({ steps: key.split("\n"), count }))
-    .sort(
-      (a, b) =>
-        b.count - a.count || b.steps.length - a.steps.length || a.steps.join(" ").localeCompare(b.steps.join(" ")),
-    )
-    .slice(0, SEQUENCE_KEEP);
-}
-
-/**
- * Les statistiques déterministes du profil, sur les observations gardées : les sites par
- * temps de visite (part du total), les secondes actives par heure LOCALE (chaque visite
- * décalée de son `tz`, répartie sur les heures qu'elle couvre), les enchaînements
- * récurrents. `observed` est le cumul qui survit à la rétention.
- */
-export function profileStats(
-  observations: readonly StoredObservation[],
-  observed: { ms: number; since: number | null },
-): ProfileStats {
-  const visits = observations.filter(
-    (entry): entry is Extract<StoredObservation, { kind: "visit" }> => entry.kind === "visit",
-  );
-  const bySite = new Map<string, number>();
-  const hours = Array.from({ length: 24 }, () => 0);
-  let total = 0;
-  for (const visit of visits) {
-    let host: string;
-    try {
-      host = new URL(visit.url).host;
-    } catch {
-      continue;
-    }
-    bySite.set(host, (bySite.get(host) ?? 0) + visit.durationMs);
-    total += visit.durationMs;
-    // getTimezoneOffset : minutes à AJOUTER à l'heure locale pour obtenir UTC.
-    let start = visit.at - visit.tz * 60_000;
-    let left = visit.durationMs;
-    while (left > 0) {
-      const hourEnd = (Math.floor(start / 3_600_000) + 1) * 3_600_000;
-      const chunk = Math.min(left, hourEnd - start);
-      const hour = new Date(start).getUTCHours();
-      hours[hour] = (hours[hour] ?? 0) + chunk;
-      start += chunk;
-      left -= chunk;
-    }
-  }
-  return {
-    observedSeconds: Math.floor(observed.ms / 1000),
-    since: observed.since,
-    topSites: [...bySite]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .slice(0, TOP_SITES)
-      .map(([host, ms]) => ({
-        host,
-        seconds: Math.round(ms / 1000),
-        share: total > 0 ? Math.round((ms / total) * 1000) / 1000 : 0,
-      })),
-    activeHours: hours.map((ms) => Math.round(ms / 1000)),
-    sequences: recurringSequences(visits),
-  };
-}
-
-// -- le poste -------------------------------------------------------------------------
-
 type Waiter = () => void;
-
-/** La présence d'un navigateur, en mémoire : dernier contact, long-polls en cours, onglets de l'agent. */
-type Presence = {
-  lastSeenAt: number;
-  /** Les long-polls en cours : il est en ligne tant qu'il attend. */
-  polls: number;
-  /**
-   * Les onglets de la fenêtre de l'agent, tels que l'extension les a rapportés en dernier ;
-   * `null` tant qu'elle n'a rien dit : tout onglet est alors un onglet de l'utilisateur.
-   */
-  agentTabs: Set<number> | null;
-};
 
 export class Workstation {
   readonly #ctx: HarnessContext;
@@ -1123,8 +187,31 @@ export class Workstation {
   /** Le dernier envoi du mirroir de Chrome accepté par le navigateur `vps` (mémoire du process). */
   #mirroredAt: number | null = null;
 
+  /** Les navigateurs, la présence et les espaces : la présence, les écouteurs d'arrêt et le mirroir restent ici. */
+  readonly #browserDesk: PresenceDesk;
+  /** Le profil de travail : ce que l'agent a observé, et la synthèse qu'il en tire. */
+  readonly #profileDesk: ProfileDesk;
+  /** Les meetings, les demandes et les automatisations. */
+  readonly #errandDesk: ErrandDesk;
+
   constructor(ctx: HarnessContext) {
     this.#ctx = ctx;
+    this.#browserDesk = new PresenceDesk(ctx, this, {
+      presence: this.#presence,
+      halted: this.#halted,
+      mirroredAt: () => this.#mirroredAt,
+      setMirroredAt: (at) => {
+        this.#mirroredAt = at;
+      },
+      transition: (seq, expected, patch) => this.#transition(seq, expected, patch),
+      wakeQueue: () => this.#wakeQueue(),
+    });
+    this.#profileDesk = new ProfileDesk(ctx, this);
+    this.#errandDesk = new ErrandDesk(ctx, this, {
+      known: (browserId) => this.#browserDesk.known(browserId),
+      spaceRef: (value) => this.#browserDesk.spaceRef(value),
+      transition: (seq, expected, patch) => this.#transition(seq, expected, patch),
+    });
   }
 
   get enabled(): boolean {
@@ -1134,69 +221,12 @@ export class Workstation {
   // -- réglages, présence, statut ---------------------------------------------------
 
   settings(): WorkstationSettings {
-    const stored = this.#ctx.store.getSetting<Record<string, unknown>>(SETTINGS_KEY) ?? {};
-    return {
-      autonomy: (AUTONOMIES as readonly unknown[]).includes(stored.autonomy) ? (stored.autonomy as Autonomy) : "auto",
-      selfIdentities: Array.isArray(stored.selfIdentities)
-        ? stored.selfIdentities.filter((entry): entry is string => typeof entry === "string")
-        : [],
-      paused: stored.paused === true,
-      thresholdHours:
-        typeof stored.thresholdHours === "number" && stored.thresholdHours > 0
-          ? stored.thresholdHours
-          : this.#ctx.config.workstation.thresholdHours,
-      stopped:
-        isRecord(stored.stopped) && typeof stored.stopped.at === "number" && typeof stored.stopped.by === "string"
-          ? { at: stored.stopped.at, by: stored.stopped.by }
-          : null,
-      defaultBrowser: typeof stored.defaultBrowser === "string" ? stored.defaultBrowser : null,
-      mirrorBrowser: typeof stored.mirrorBrowser === "string" ? stored.mirrorBrowser : null,
-      allowedHosts: Array.isArray(stored.allowedHosts)
-        ? stored.allowedHosts.filter((entry): entry is string => typeof entry === "string")
-        : [...this.#ctx.config.workstation.allowedHosts],
-      exfiltrationGuard:
-        typeof stored.exfiltrationGuard === "boolean"
-          ? stored.exfiltrationGuard
-          : this.#ctx.config.workstation.exfiltrationGuard,
-      navigationSource: {
-        allowedHosts: Array.isArray(stored.allowedHosts) ? "setting" : "config",
-        exfiltrationGuard: typeof stored.exfiltrationGuard === "boolean" ? "setting" : "config",
-      },
-    };
+    return this.#browserDesk.settings();
   }
 
   /** Les réglages posés depuis une app (seuls les champs donnés changent ; `thresholdHours: null` revient à la configuration). */
   updateSettings(body: Record<string, unknown>, actor: Actor): WorkstationStatus {
-    const patch = parseSettings(body);
-    const { store } = this.#ctx;
-    if (typeof patch.defaultBrowser === "string") this.#known(patch.defaultBrowser);
-    if (typeof patch.mirrorBrowser === "string") {
-      this.#known(patch.mirrorBrowser);
-      // Le mirroir copie une session entière : jamais d'un espace vers le navigateur d'un autre.
-      if (
-        store.getWorkstationBrowser(VPS_BROWSER) &&
-        this.spaceOfBrowser(patch.mirrorBrowser) !== this.spaceOfBrowser(VPS_BROWSER)
-      )
-        throw new HarnessError(
-          409,
-          "mirrorBrowser : ce navigateur et le navigateur vps ne sont pas dans le même espace — la session d'un client ne se copie pas chez un autre",
-        );
-    }
-    store.transaction(() => {
-      const stored = { ...(store.getSetting<Record<string, unknown>>(SETTINGS_KEY) ?? {}), ...patch };
-      if (stored.thresholdHours === null) delete stored.thresholdHours;
-      if (stored.defaultBrowser === null) delete stored.defaultBrowser;
-      if (stored.mirrorBrowser === null) delete stored.mirrorBrowser;
-      if (stored.allowedHosts === null) delete stored.allowedHosts;
-      if (stored.exfiltrationGuard === null) delete stored.exfiltrationGuard;
-      // La reprise par l'approbateur lève l'arrêt d'urgence.
-      if (patch.paused === false) delete stored.stopped;
-      store.setSetting(SETTINGS_KEY, stored, actor.by);
-      this.#ctx.event("workstation_settings", null, actor.by ? { by: actor.by } : {}, null);
-    });
-    // Une pause levée ou un autre navigateur par défaut : ce qui attendait en file peut partir.
-    if (patch.paused === false || patch.defaultBrowser !== undefined) this.#wakeQueue();
-    return this.status();
+    return this.#browserDesk.updateSettings(body, actor);
   }
 
   /**
@@ -1205,23 +235,11 @@ export class Workstation {
    * espace — le total moins ce que les espaces ont compté (ceux retirés depuis compris).
    */
   observed(space?: string | null): { ms: number; since: number | null } {
-    const { store } = this.#ctx;
-    const read = (key: string): { ms: number; since: number | null } => {
-      const stored = store.getSetting<{ ms?: unknown; since?: unknown }>(key);
-      return {
-        ms: typeof stored?.ms === "number" ? stored.ms : 0,
-        since: typeof stored?.since === "number" ? stored.since : null,
-      };
-    };
-    if (typeof space === "string") return read(`${OBSERVED_KEY}:${space}`);
-    const total = read(OBSERVED_KEY);
-    if (space === undefined) return total;
-    const inSpaces = store.workstationObservedInSpaces(`${OBSERVED_KEY}:`);
-    return { ms: Math.max(0, total.ms - inSpaces), since: total.since };
+    return this.#browserDesk.observed(space);
   }
 
   effective(settings: WorkstationSettings = this.settings()): EffectiveAutonomy {
-    return effectiveAutonomy(settings.autonomy, Math.floor(this.observed().ms / 1000), settings.thresholdHours);
+    return this.#browserDesk.effective(settings);
   }
 
   // -- navigateurs ------------------------------------------------------------------
@@ -1231,29 +249,17 @@ export class Workstation {
    * `null` tant qu'aucune extension ne s'est présentée.
    */
   defaultBrowserId(): string | null {
-    const { store } = this.#ctx;
-    const chosen = this.settings().defaultBrowser;
-    if (chosen !== null && store.getWorkstationBrowser(chosen)) return chosen;
-    // Le navigateur du serveur n'est le défaut que si l'approbateur l'a choisi : une extension ancienne (sans identifiant) ne doit jamais tomber sur lui.
-    return store.listWorkstationBrowsers().find((browser) => browser.id !== VPS_BROWSER)?.id ?? null;
-  }
-
-  /** Un navigateur désigné doit être connu (une extension s'est présentée avec cet identifiant). */
-  #known(browserId: string): string {
-    if (!this.#ctx.store.getWorkstationBrowser(browserId))
-      throw new HarnessError(404, `navigateur inconnu : ${browserId}`);
-    return browserId;
+    return this.#browserDesk.defaultBrowserId();
   }
 
   /** L'espace (son id) d'un navigateur AUJOURD'HUI : ce qu'il écrit désormais le garde ; `null` hors espace, ou sans navigateur. */
   spaceOfBrowser(browserId: string | null): string | null {
-    return browserId === null ? null : (this.#ctx.store.getWorkstationBrowser(browserId)?.spaceId ?? null);
+    return this.#browserDesk.spaceOfBrowser(browserId);
   }
 
   /** Le navigateur d'un espace où agir : un des siens en ligne, sinon le premier vu ; `null` s'il n'en a aucun. */
   browserOfSpace(space: string, now = Date.now()): string | null {
-    const browsers = this.#ctx.store.workstationBrowsersOf(space);
-    return (browsers.find((browser) => this.online(now, browser.id)) ?? browsers[0])?.id ?? null;
+    return this.#browserDesk.browserOfSpace(space, now);
   }
 
   /**
@@ -1262,14 +268,7 @@ export class Workstation {
    * navigateur par défaut, jamais celui d'un autre espace.
    */
   browserIn(space: string, browserId: string | null): string {
-    if (browserId !== null) {
-      if (this.spaceOfBrowser(this.#known(browserId)) !== space)
-        throw new HarnessError(409, `le navigateur ${browserId} n'appartient pas à cet espace`);
-      return browserId;
-    }
-    const own = this.browserOfSpace(space);
-    if (own === null) throw new HarnessError(409, NO_SPACE_BROWSER);
-    return own;
+    return this.#browserDesk.browserIn(space, browserId);
   }
 
   /**
@@ -1278,21 +277,7 @@ export class Workstation {
    * client on agit, on n'agit dans le navigateur d'aucun.
    */
   outsideSpaces(browserId: string | null): void {
-    const space = this.spaceOfBrowser(browserId ?? this.defaultBrowserId());
-    if (space === null) return;
-    const name = this.#ctx.store.getSpace(space)?.name ?? space;
-    throw new HarnessError(
-      409,
-      `${browserId === null ? "le navigateur par défaut" : `le navigateur ${browserId}`} appartient à l'espace « ${name} » : désignez cet espace (\`?space=\`) pour y agir — sans espace, on n'agit que dans un navigateur hors espace`,
-    );
-  }
-
-  /** Un espace désigné dans un corps (`space`) : absent ou `null` → hors espace ; sinon un espace connu (404). */
-  #spaceRef(value: unknown): string | null {
-    if (value === undefined || value === null) return null;
-    if (typeof value !== "string" || value.trim() === "") bad("space : identifiant d'espace attendu, ou null");
-    if (!this.#ctx.store.getSpace(value)) throw new HarnessError(404, `espace inconnu : ${value}`);
-    return value;
+    this.#browserDesk.outsideSpaces(browserId);
   }
 
   /**
@@ -1306,48 +291,7 @@ export class Workstation {
    * purgée (`vpsPurgeDue`). 404 si le navigateur ou l'espace est inconnu.
    */
   assignBrowser(browserId: string, space: unknown, actor: Actor): BrowserView {
-    this.#known(browserId);
-    if (space === undefined) bad("space : identifiant d'espace attendu, ou null (hors espace)");
-    const target = this.#spaceRef(space);
-    const { store } = this.#ctx;
-    store.transaction(() => {
-      const browser = store.setWorkstationBrowserSpace(browserId, target);
-      this.#ctx.event(
-        "workstation_browser",
-        null,
-        { id: browserId, label: browser?.label ?? null, space: target },
-        null,
-      );
-    });
-    this.#ctx.log(
-      `poste : navigateur ${browserId} ${target === null ? "détaché de tout espace" : `rattaché à l'espace ${target}`} par ${actor.by ?? "un client"}`,
-    );
-    this.#closeStrayActions();
-    // Le navigateur `vps` en attente d'une action relit sa portée tout de suite : sa purge passe d'abord.
-    this.#wakeQueue();
-    return this.browsers().find((browser) => browser.id === browserId) as BrowserView;
-  }
-
-  /** Le motif d'une action dont le navigateur n'est plus dans l'espace où elle a été déposée ; `null` s'il y est. */
-  #strayError(action: WorkstationAction, space = this.spaceOfBrowser(action.browserId)): string | null {
-    if ((action.space ?? null) === space) return null;
-    return action.requestId === null ? ACTION_OUT_OF_SPACE : REQUEST_OUT_OF_SPACE;
-  }
-
-  /**
-   * Clôt (`failed`, le motif dit) toute action pas encore partie — en file ou en attente d'approbation —
-   * dont le navigateur n'est plus dans l'espace où elle a été déposée : navigateur réattribué, espace
-   * retiré. Sans espace, il n'y a rien à clore. Rend leur nombre.
-   */
-  #closeStrayActions(): number {
-    const pending: readonly ActionState[] = ["queued", "awaiting_approval"];
-    let closed = 0;
-    for (const action of this.#ctx.store.listWorkstationActions({ states: pending, limit: 10_000 })) {
-      const error = this.#strayError(action);
-      if (error !== null && this.#transition(action.seq, pending, { state: "failed", approved: false, error }))
-        closed++;
-    }
-    return closed;
+    return this.#browserDesk.assignBrowser(browserId, space, actor);
   }
 
   /**
@@ -1356,17 +300,7 @@ export class Workstation {
    * Sinon `null` : la copie est suspendue, la session d'un client ne passe pas chez un autre.
    */
   mirrorSource(): string | null {
-    const source = this.settings().mirrorBrowser;
-    return source !== null && this.spaceOfBrowser(source) === this.spaceOfBrowser(VPS_BROWSER) ? source : null;
-  }
-
-  /** La portée sous laquelle la session du navigateur `vps` (cookies miroités, connexions) a été remplie. */
-  #vpsJar(): { vps: string | null; source: string | null } {
-    const stored = this.#ctx.store.getSetting<{ vps?: unknown; source?: unknown }>(VPS_JAR_KEY);
-    return {
-      vps: typeof stored?.vps === "string" ? stored.vps : null,
-      source: typeof stored?.source === "string" ? stored.source : null,
-    };
+    return this.#browserDesk.mirrorSource();
   }
 
   /**
@@ -1377,30 +311,12 @@ export class Workstation {
    * par `vpsPurged`. Sans espace, jamais.
    */
   vpsPurgeDue(): boolean {
-    const jar = this.#vpsJar();
-    const source = this.settings().mirrorBrowser;
-    return (
-      jar.vps !== this.spaceOfBrowser(VPS_BROWSER) || (source !== null && jar.source !== this.spaceOfBrowser(source))
-    );
+    return this.#browserDesk.vpsPurgeDue();
   }
 
   /** La session du navigateur `vps` vient d'être purgée : elle repart vide dans la portée d'aujourd'hui, ses comptes déconnectés. */
   vpsPurged(): void {
-    const { store } = this.#ctx;
-    const source = this.settings().mirrorBrowser;
-    store.transaction(() => {
-      store.setSetting(
-        VPS_JAR_KEY,
-        {
-          vps: this.spaceOfBrowser(VPS_BROWSER),
-          source: source === null ? this.#vpsJar().source : this.spaceOfBrowser(source),
-        },
-        null,
-      );
-      for (const domain of ACCOUNT_DOMAINS) this.setVpsAccount(domain, "disconnected");
-    });
-    this.#mirroredAt = null;
-    this.#ctx.log("poste : session du navigateur vps purgée — sa portée (son espace ou celui de sa source) a changé");
+    this.#browserDesk.vpsPurged();
   }
 
   /**
@@ -1409,95 +325,46 @@ export class Workstation {
    * d'un navigateur lit celles de SON espace.
    */
   identitiesIn(space: string | null): string[] {
-    if (space === null) return this.settings().selfIdentities;
-    return this.#ctx.store.getSpace(space)?.identities ?? [];
-  }
-
-  /** Le navigateur d'un appel : le sien, sinon (extension ancienne) le navigateur par défaut. */
-  #browserOf(hello: BrowserHello): string {
-    return hello.id ?? this.defaultBrowserId() ?? LEGACY_BROWSER;
+    return this.#browserDesk.identitiesIn(space);
   }
 
   /** Un contact d'une extension (long-poll, observation, résultat, transcript) : rend son navigateur. */
   touch(hello: BrowserHello = NO_HELLO): string {
-    const id = this.#browserOf(hello);
-    const now = Date.now();
-    const presence = this.#presence.get(id);
-    if (presence) presence.lastSeenAt = now;
-    else this.#presence.set(id, { lastSeenAt: now, polls: 0, agentTabs: null });
-    const { store } = this.#ctx;
-    const before = store.getWorkstationBrowser(id);
-    store.transaction(() => {
-      store.touchWorkstationBrowser({ id, label: hello.label, version: hello.version, at: now });
-      if (!before || (hello.label !== null && hello.label !== before.label))
-        this.#ctx.event("workstation_browser", null, { id, label: hello.label ?? before?.label ?? null }, null);
-    });
-    return id;
-  }
-
-  #isOnline(presence: Presence | undefined, now: number): boolean {
-    return presence !== undefined && (presence.polls > 0 || now - presence.lastSeenAt < ONLINE_MS);
+    return this.#browserDesk.touch(hello);
   }
 
   /** Le navigateur `browserId` est en ligne ; sans navigateur désigné : l'un d'eux au moins. */
   online(now = Date.now(), browserId: string | null = null): boolean {
-    if (browserId !== null) return this.#isOnline(this.#presence.get(browserId), now);
-    for (const presence of this.#presence.values()) if (this.#isOnline(presence, now)) return true;
-    return false;
+    return this.#browserDesk.online(now, browserId);
   }
 
   /** Le navigateur n'est plus joignable : hors ligne tout de suite (sans attendre `ONLINE_MS`). Il reste connu. */
   forget(browserId: string): void {
-    this.#presence.delete(browserId);
+    this.#browserDesk.forget(browserId);
   }
 
   onHalt(listener: (seqs: number[] | null) => void): void {
-    this.#halted.add(listener);
+    this.#browserDesk.onHalt(listener);
   }
 
   /** L'état de chaque compte du navigateur `vps` : non connecté tant que rien ne dit le contraire. */
   vpsAccounts(): AccountView[] {
-    const stored = this.#ctx.store.getSetting<Record<string, { state?: unknown; at?: unknown }>>(ACCOUNTS_KEY) ?? {};
-    return ACCOUNT_DOMAINS.map((domain) => {
-      const entry = stored[domain];
-      const state = (ACCOUNT_STATES as readonly unknown[]).includes(entry?.state)
-        ? (entry?.state as AccountState)
-        : "disconnected";
-      return { domain, state, changedAt: typeof entry?.at === "number" ? entry.at : null };
-    });
+    return this.#browserDesk.vpsAccounts();
   }
 
   /** Pose l'état d'un compte ; un changement émet `workstation_account` (la notification ne part que pour `expired`). */
   setVpsAccount(domain: AccountDomain, state: AccountState): boolean {
-    const { store } = this.#ctx;
-    return store.transaction(() => {
-      if (this.vpsAccounts().find((account) => account.domain === domain)?.state === state) return false;
-      const stored = store.getSetting<Record<string, unknown>>(ACCOUNTS_KEY) ?? {};
-      store.setSetting(ACCOUNTS_KEY, { ...stored, [domain]: { state, at: Date.now() } }, null);
-      this.#ctx.event("workstation_account", null, { domain, state }, null);
-      return true;
-    });
+    return this.#browserDesk.setVpsAccount(domain, state);
   }
 
   /** Un envoi du mirroir de Chrome vient d'être posé dans le navigateur `vps` (ni cookie ni compte retenu). */
   markMirrored(at = Date.now()): void {
-    this.#mirroredAt = at;
+    this.#browserDesk.markMirrored(at);
   }
 
   /** Les navigateurs connus, du premier vu au dernier. */
   browsers(now = Date.now()): BrowserView[] {
-    const fallback = this.defaultBrowserId();
-    return this.#ctx.store.listWorkstationBrowsers().map((row) => ({
-      id: row.id,
-      label: row.label,
-      online: this.online(now, row.id),
-      lastSeenAt: row.lastSeenAt,
-      firstSeenAt: row.firstSeenAt,
-      extensionVersion: row.version,
-      isDefault: row.id === fallback,
-      space: row.spaceId,
-      ...(row.id === VPS_BROWSER ? { accounts: this.vpsAccounts(), mirroredAt: this.#mirroredAt } : {}),
-    }));
+    return this.#browserDesk.browsers(now);
   }
 
   /** Le prochain service de l'agent 24/24 : après le repos qui suit le dernier, si l'autonomie le permet. */
@@ -1507,8 +374,7 @@ export class Workstation {
     last: ShiftRow | null,
     now: number,
   ): number | null {
-    if (!this.enabled || settings.paused || effective === "observe") return null;
-    return last ? last.at + this.#ctx.config.workstation.shiftEveryMin * 60_000 : now;
+    return this.#browserDesk.nextShiftAt(settings, effective, last, now);
   }
 
   /**
@@ -1517,83 +383,14 @@ export class Workstation {
    * l'autonomie, la pause, les services et la navigation gardée restent ceux du poste.
    */
   status(now = Date.now(), space?: string): WorkstationStatus {
-    const { store } = this.#ctx;
-    const settings = this.settings();
-    const effective = effectiveAutonomy(
-      settings.autonomy,
-      Math.floor(this.observed().ms / 1000),
-      settings.thresholdHours,
-    );
-    const observedSeconds = Math.floor(this.observed(space).ms / 1000);
-    const last = store.lastWorkstationShift();
-    const browsers = this.browsers(now).filter((browser) => space === undefined || browser.space === space);
-    const latest = browsers
-      .filter((browser) => browser.id !== VPS_BROWSER)
-      .reduce<BrowserView | null>(
-        (best, browser) => (best === null || browser.lastSeenAt > best.lastSeenAt ? browser : best),
-        null,
-      );
-    const seen = [...this.#presence]
-      .filter(([id]) => space === undefined || browsers.some((browser) => browser.id === id))
-      .reduce<number | null>(
-        (max, [, presence]) => (max === null || presence.lastSeenAt > max ? presence.lastSeenAt : max),
-        null,
-      );
-    return {
-      online: space === undefined ? this.online(now) : browsers.some((browser) => browser.online),
-      lastSeenAt: seen,
-      extensionVersion: latest?.extensionVersion ?? null,
-      observedSeconds,
-      thresholdHours: settings.thresholdHours,
-      autonomy: { setting: settings.autonomy, effective },
-      paused: settings.paused,
-      selfIdentities: space === undefined ? settings.selfIdentities : (store.getSpace(space)?.identities ?? []),
-      pending: store.countWorkstationActions("awaiting_approval", space),
-      profileUpdatedAt: store.latestWorkstationProfile(space ?? null)?.updatedAt ?? null,
-      lastShift: last ? { at: last.at, outcome: last.outcome, actions: last.actions } : null,
-      nextShiftAt: this.nextShiftAt(settings, effective, last, now),
-      stopped: settings.stopped,
-      browsers,
-      defaultBrowser: browsers.find((browser) => browser.isDefault)?.id ?? null,
-      mirrorBrowser: settings.mirrorBrowser,
-      allowedHosts: settings.allowedHosts,
-      exfiltrationGuard: settings.exfiltrationGuard,
-      navigationSource: settings.navigationSource,
-    };
+    return this.#browserDesk.status(now, space);
   }
 
   // -- observation ------------------------------------------------------------------
 
   /** Un lot d'observations d'un navigateur ; refusé (409) en pause. Rend le nombre écrit. */
   recordObservations(body: Record<string, unknown>, hello: BrowserHello = NO_HELLO): number {
-    if (this.settings().paused) throw new HarnessError(409, "le poste est en pause");
-    const { tz, events } = parseObservations(body);
-    const browserId = this.touch(hello);
-    const { store } = this.#ctx;
-    return store.transaction(() => {
-      const stored = store.addWorkstationObservations(tz, events, browserId);
-      const visited = events.reduce((sum, event) => sum + (event.kind === "visit" ? event.durationMs : 0), 0);
-      const first = events.reduce<number | null>(
-        (min, event) => (min === null || event.at < min ? event.at : min),
-        null,
-      );
-      // Le cumul du poste, et — pour un navigateur d'un espace — celui de l'espace, compté à part : le
-      // profil de l'espace et celui du reste du poste y lisent chacun leur temps.
-      const space = this.spaceOfBrowser(browserId);
-      for (const [key, observed] of [
-        [OBSERVED_KEY, this.observed()] as const,
-        ...(space === null ? [] : [[`${OBSERVED_KEY}:${space}`, this.observed(space)] as const]),
-      ])
-        store.setSetting(
-          key,
-          {
-            ms: observed.ms + visited,
-            since: observed.since === null ? first : Math.min(observed.since, first ?? observed.since),
-          },
-          null,
-        );
-      return stored;
-    });
+    return this.#profileDesk.recordObservations(body, hello);
   }
 
   /** Les observations récentes ; `space` : celles écrites dans cet espace seulement. */
@@ -1602,12 +399,12 @@ export class Workstation {
     limit?: number;
     space?: string;
   }): (Observation & { id: number; browserId: string | null })[] {
-    return this.#ctx.store.listWorkstationObservations(filter).map(({ tz: _tz, ...observation }) => observation);
+    return this.#profileDesk.listObservations(filter);
   }
 
   /** Les statistiques du profil d'une portée : un espace (ses navigateurs), ou `null` — les navigateurs hors espace. */
   stats(space: string | null = null): ProfileStats {
-    return profileStats(this.#ctx.store.allWorkstationObservations(space), this.observed(space));
+    return this.#profileDesk.stats(space);
   }
 
   // -- la file des actions --------------------------------------------------------------
@@ -1679,7 +476,9 @@ export class Workstation {
     const settings = this.settings();
     const request = requestId === null ? null : store.getWorkstationRequest(requestId);
     const browserId =
-      input.browserId !== undefined ? this.#known(input.browserId) : (request?.browserId ?? this.defaultBrowserId());
+      input.browserId !== undefined
+        ? this.#browserDesk.known(input.browserId)
+        : (request?.browserId ?? this.defaultBrowserId());
     // L'action d'une demande ne part que dans un navigateur de l'espace de la demande (hors espace : un navigateur hors espace).
     const space = this.spaceOfBrowser(browserId);
     if (request && (request.space ?? null) !== space) throw new HarnessError(409, REQUEST_OUT_OF_SPACE);
@@ -1870,7 +669,7 @@ export class Workstation {
       const oldest = this.#ctx.store.oldestQueuedWorkstationAction(browserId, isDefault);
       if (!oldest) return null;
       // Déposée dans un autre espace que celui du navigateur aujourd'hui : close, jamais louée.
-      const stray = this.#strayError(oldest, space);
+      const stray = this.#browserDesk.strayError(oldest, space);
       if (stray !== null) {
         this.#transition(oldest.seq, ["queued"], { state: "failed", approved: false, error: stray });
         continue;
@@ -1970,7 +769,7 @@ export class Workstation {
     } else {
       // Personne n'attend plus l'issue (demande close), ou le navigateur a quitté l'espace de l'action
       // pendant qu'elle tournait : close, jamais approuvable.
-      const closed = this.#closedRequestError(action) ?? this.#strayError(action);
+      const closed = this.#errandDesk.closedRequestError(action) ?? this.#browserDesk.strayError(action);
       updated =
         closed === null
           ? this.#retain(seq, input.approval, action.space ?? null)
@@ -2139,11 +938,11 @@ export class Workstation {
     for (const action of store.staleWorkstationActions(["queued"], stale))
       this.#transition(action.seq, ["queued"], { state: "expired", approved: false, error: QUEUE_EXPIRED });
     // Un navigateur sorti de l'espace de ses actions sans passer par `assignBrowser` (espace retiré) : closes aussi.
-    this.#closeStrayActions();
+    this.#browserDesk.closeStrayActions();
     for (const meeting of store.orphanWorkstationMeetings(now - ORPHAN_MEETING_MS))
       store.transaction(() => {
         const ended = store.updateWorkstationMeetingIf(meeting.id, ["live"], { state: "ended", endedAt: now });
-        if (ended) this.#meetingEvent(ended);
+        if (ended) this.#errandDesk.meetingEvent(ended);
       });
     if (now - this.#purgedAt >= PURGE_EVERY_MS) {
       this.#purgedAt = now;
@@ -2199,150 +998,44 @@ export class Workstation {
 
   // -- meetings -------------------------------------------------------------------
 
-  #meetingEvent(meeting: Meeting): void {
-    this.#ctx.event("workstation_meeting", null, { id: meeting.id, state: meeting.state }, null);
-  }
-
   getMeeting(id: string): Meeting {
-    const meeting = this.#ctx.store.getWorkstationMeeting(id);
-    if (!meeting) throw new HarnessError(404, `meeting inconnu : ${id}`);
-    return meeting;
+    return this.#errandDesk.getMeeting(id);
   }
 
   createMeeting(body: Record<string, unknown>, hello: BrowserHello = NO_HELLO): Meeting {
-    if (this.settings().paused) throw new HarnessError(409, "le poste est en pause");
-    if (typeof body.title !== "string") bad("title : chaîne attendue");
-    const url = stripUrl(body.url, "url");
-    if (typeof body.startedAt !== "number" || !Number.isFinite(body.startedAt) || body.startedAt <= 0)
-      bad("startedAt : horodatage en millisecondes attendu");
-    const browserId = this.touch(hello);
-    const { store } = this.#ctx;
-    return store.transaction(() => {
-      const meeting = store.createWorkstationMeeting({
-        id: newId("m"),
-        title: clean(body.title as string, MAX_TITLE),
-        url,
-        startedAt: Math.round(body.startedAt as number),
-        browserId,
-      });
-      this.#meetingEvent(meeting);
-      return meeting;
-    });
+    return this.#errandDesk.createMeeting(body, hello);
   }
 
   /** Un lot de segments transcrits d'un meeting en cours ; refusé en pause. */
   addSegments(id: string, body: Record<string, unknown>, hello: BrowserHello = NO_HELLO): number {
-    const meeting = this.getMeeting(id);
-    if (this.settings().paused) throw new HarnessError(409, "le poste est en pause");
-    if (meeting.state !== "live") throw new HarnessError(409, `le meeting n'est plus en cours (état ${meeting.state})`);
-    const segments = parseSegments(body);
-    // Ouvert dans un espace que le navigateur a quitté depuis : ce qu'il entend ailleurs ne s'y ajoute pas.
-    if (this.spaceOfBrowser(this.touch(hello)) !== (meeting.space ?? null))
-      throw new HarnessError(409, MEETING_OUT_OF_SPACE);
-    return this.#ctx.store.addWorkstationSegments(id, segments);
+    return this.#errandDesk.addSegments(id, body, hello);
   }
 
   /** La fin d'un meeting : son digest part au prochain tour de l'agent. */
   endMeeting(id: string, hello: BrowserHello = NO_HELLO): Meeting {
-    const meeting = this.getMeeting(id);
-    const { store } = this.#ctx;
-    const ended = store.transaction(() => {
-      const next = store.updateWorkstationMeetingIf(id, ["live"], { state: "ended", endedAt: Date.now() });
-      if (next) this.#meetingEvent(next);
-      return next;
-    });
-    if (!ended) throw new HarnessError(409, `le meeting n'est plus en cours (état ${meeting.state})`);
-    this.touch(hello);
-    return ended;
+    return this.#errandDesk.endMeeting(id, hello);
   }
 
   /** Les meetings ; `space` : ceux ouverts dans cet espace seulement. */
   listMeetings(limit: number, space?: string): Meeting[] {
-    return this.#ctx.store.listWorkstationMeetings(space === undefined ? { limit } : { limit, space });
+    return this.#errandDesk.listMeetings(limit, space);
   }
 
   /** Un meeting et son transcript ; avec `space` (`?space=`), celui d'un autre espace — ou d'aucun — est inconnu (404). */
   meetingView(id: string, space?: string): { meeting: Meeting; transcript: Segment[] } {
-    const meeting = this.getMeeting(id);
-    if (space !== undefined && meeting.space !== space) throw new HarnessError(404, `meeting inconnu : ${id}`);
-    return { meeting, transcript: this.#ctx.store.listWorkstationSegments(id) };
+    return this.#errandDesk.meetingView(id, space);
   }
 
   /** L'issue du digest d'un meeting terminé : `digested` avec résumé et besoins, ou `failed`. */
   finishDigest(id: string, outcome: { summary: string; needs: MeetingNeed[] } | { reason: string }): Meeting | null {
-    const { store } = this.#ctx;
-    return store.transaction(() => {
-      const next =
-        "summary" in outcome
-          ? store.updateWorkstationMeetingIf(id, ["ended"], {
-              state: "digested",
-              summary: outcome.summary,
-              needs: outcome.needs,
-            })
-          : store.updateWorkstationMeetingIf(id, ["ended"], { state: "failed", summary: null });
-      if (next) this.#meetingEvent(next);
-      return next;
-    });
+    return this.#errandDesk.finishDigest(id, outcome);
   }
 
   // -- demandes et automatisations ---------------------------------------------------------
 
-  #requestEvent(request: WorkstationRequest): void {
-    this.#ctx.event(
-      "workstation_request",
-      null,
-      {
-        id: request.id,
-        state: request.state,
-        reason: request.reason,
-        ...(request.space === undefined ? {} : { space: request.space }),
-      },
-      null,
-    );
-  }
-
-  /** L'erreur d'une action dont la demande est close (annulée ou échouée) ; `null` sinon. */
-  #closedRequestError(action: WorkstationAction): string | null {
-    if (action.requestId === null) return null;
-    const request = this.#ctx.store.getWorkstationRequest(action.requestId);
-    if (request?.state === "cancelled") return REQUEST_CANCELLED;
-    if (request?.state === "failed") return request.reason ?? "demande échouée";
-    return null;
-  }
-
-  /** Les actions d'une demande close qui ne sont pas parties (en file, à approuver) passent `failed`. */
-  #closeRequestActions(id: string, error: string): void {
-    for (const action of this.#ctx.store.listWorkstationActions({
-      requestId: id,
-      states: ["queued", "awaiting_approval"],
-      limit: 10_000,
-    }))
-      this.#transition(action.seq, ["queued", "awaiting_approval"], { state: "failed", error });
-  }
-
   /** Une demande ; avec `space` (`?space=`), celle d'un autre espace — ou d'aucun — est inconnue (404). */
   getRequest(id: string, space?: string): WorkstationRequest {
-    const request = this.#ctx.store.getWorkstationRequest(id);
-    if (!request || (space !== undefined && request.space !== space))
-      throw new HarnessError(404, `demande inconnue : ${id}`);
-    return request;
-  }
-
-  /**
-   * Une demande en file. Son espace est celui qu'on lui donne, sinon celui du navigateur où elle
-   * partira (le sien, sinon le navigateur par défaut) : `null` hors espace.
-   */
-  #enqueue(
-    input: { instruction: string; automationId: string | null; browserId: string | null; space?: string },
-    actor: Actor,
-  ): WorkstationRequest {
-    const { store } = this.#ctx;
-    const space = input.space ?? this.spaceOfBrowser(input.browserId ?? this.defaultBrowserId());
-    return store.transaction(() => {
-      const request = store.createWorkstationRequest({ id: newId("q"), by: actor.by, ...input, space });
-      this.#requestEvent(request);
-      return request;
-    });
+    return this.#errandDesk.getRequest(id, space);
   }
 
   /**
@@ -2355,33 +1048,17 @@ export class Workstation {
    * est d'un autre espace.
    */
   createRequest(body: Record<string, unknown>, actor: Actor): WorkstationRequest {
-    if (this.settings().paused) throw new HarnessError(409, "le poste est en pause");
-    const raw = body.instruction;
-    if (typeof raw !== "string") bad("instruction : chaîne attendue");
-    const trimmed = raw.trim();
-    if (trimmed === "") bad("instruction : consigne non vide attendue");
-    if (trimmed.length > MAX_INSTRUCTION) bad(`instruction : ${MAX_INSTRUCTION} caractères au plus`);
-    const given = browserRef(body.browserId, "browserId");
-    if (given !== null) this.#known(given);
-    const space = this.#spaceRef(body.space);
-    const instruction = clean(trimmed, MAX_INSTRUCTION);
-    return space === null
-      ? this.#enqueue({ instruction, automationId: null, browserId: given }, actor)
-      : this.#enqueue({ instruction, automationId: null, browserId: this.browserIn(space, given), space }, actor);
+    return this.#errandDesk.createRequest(body, actor);
   }
 
   /** Les demandes ; `space` : celles de cet espace seulement. */
   listRequests(filter: { states?: readonly RequestState[]; limit?: number; space?: string }): WorkstationRequest[] {
-    return this.#ctx.store.listWorkstationRequests(filter);
+    return this.#errandDesk.listRequests(filter);
   }
 
   /** Une demande et toutes ses actions (celles qu'a déposées son job, et elles seules), les plus anciennes d'abord. */
   requestView(id: string, space?: string): { request: WorkstationRequest; actions: WorkstationAction[] } {
-    const request = this.getRequest(id, space);
-    return {
-      request,
-      actions: this.#ctx.store.listWorkstationActions({ requestId: id, order: "asc", limit: 10_000 }),
-    };
+    return this.#errandDesk.requestView(id, space);
   }
 
   /**
@@ -2389,35 +1066,12 @@ export class Workstation {
    * parties passent `failed`, son job est arrêté au tour suivant (`WorkstationAgent`).
    */
   cancelRequest(id: string, actor: Actor): WorkstationRequest {
-    this.getRequest(id);
-    const { store } = this.#ctx;
-    const cancelled = store.transaction(() => {
-      const next = store.updateWorkstationRequestIf(id, ["queued", "running"], {
-        state: "cancelled",
-        reason: "annulée par l'humain",
-        endedAt: Date.now(),
-      });
-      if (next) this.#requestEvent(next);
-      return next;
-    });
-    if (!cancelled) throw new HarnessError(409, `la demande est déjà ${this.getRequest(id).state}`);
-    this.#closeRequestActions(id, REQUEST_CANCELLED);
-    this.#ctx.log(`poste : demande ${id} annulée par ${actor.by ?? "un client"}`);
-    return cancelled;
+    return this.#errandDesk.cancelRequest(id, actor);
   }
 
   /** Le départ d'une demande en file ; `null` si elle n'y est plus (annulée entre-temps). */
   startRequest(id: string): WorkstationRequest | null {
-    const { store } = this.#ctx;
-    return store.transaction(() => {
-      const next = store.updateWorkstationRequestIf(id, ["queued"], {
-        state: "running",
-        reason: null,
-        startedAt: Date.now(),
-      });
-      if (next) this.#requestEvent(next);
-      return next;
-    });
+    return this.#errandDesk.startRequest(id);
   }
 
   /**
@@ -2425,19 +1079,7 @@ export class Workstation {
    * dite, ses actions closes. `null` si elle n'était plus en file.
    */
   rejectRequest(id: string, reason: string): WorkstationRequest | null {
-    const { store } = this.#ctx;
-    const failure = clip(reason, MAX_REQUEST_REASON);
-    const rejected = store.transaction(() => {
-      const next = store.updateWorkstationRequestIf(id, ["queued"], {
-        state: "failed",
-        reason: failure,
-        endedAt: Date.now(),
-      });
-      if (next) this.#requestEvent(next);
-      return next;
-    });
-    if (rejected) this.#closeRequestActions(id, failure);
-    return rejected;
+    return this.#errandDesk.rejectRequest(id, reason);
   }
 
   /**
@@ -2446,13 +1088,7 @@ export class Workstation {
    * réécrivent rien.
    */
   waitRequest(id: string, reason: string): void {
-    const { store } = this.#ctx;
-    const request = store.getWorkstationRequest(id);
-    if (request?.state !== "queued" || reasonKind(request.reason) === reasonKind(reason)) return;
-    store.transaction(() => {
-      const next = store.updateWorkstationRequestIf(id, ["queued"], { reason: clip(reason, MAX_REQUEST_REASON) });
-      if (next) this.#requestEvent(next);
-    });
+    this.#errandDesk.waitRequest(id, reason);
   }
 
   /**
@@ -2460,32 +1096,16 @@ export class Workstation {
    * (ses actions pas encore parties passent `failed`). `null` si elle n'était plus en cours.
    */
   finishRequest(id: string, outcome: { report: string } | { reason: string }): WorkstationRequest | null {
-    const { store } = this.#ctx;
-    const failure = "reason" in outcome ? clip(outcome.reason, MAX_REQUEST_REASON) : null;
-    const finished = store.transaction(() => {
-      const next = store.updateWorkstationRequestIf(
-        id,
-        ["running"],
-        "report" in outcome
-          ? { state: "done", report: clean(outcome.report, MAX_REPORT), endedAt: Date.now() }
-          : { state: "failed", reason: failure, endedAt: Date.now() },
-      );
-      if (next) this.#requestEvent(next);
-      return next;
-    });
-    if (finished && failure !== null) this.#closeRequestActions(id, failure);
-    return finished;
+    return this.#errandDesk.finishRequest(id, outcome);
   }
 
   getAutomation(id: string): WorkstationAutomation {
-    const automation = this.#ctx.store.getWorkstationAutomation(id);
-    if (!automation) throw new HarnessError(404, `automatisation inconnue : ${id}`);
-    return automation;
+    return this.#errandDesk.getAutomation(id);
   }
 
   /** Les automatisations ; `space` : celles créées dans cet espace seulement. */
   listAutomations(space?: string): WorkstationAutomation[] {
-    return this.#ctx.store.listWorkstationAutomations(space);
+    return this.#errandDesk.listAutomations(space);
   }
 
   /**
@@ -2501,40 +1121,7 @@ export class Workstation {
     body: Record<string, unknown>,
     actor: Actor,
   ): { automation: WorkstationAutomation; created: boolean } {
-    const { version, task } = body;
-    if (typeof version !== "number" || !Number.isInteger(version) || version < 1) bad("version : entier attendu");
-    if (typeof task !== "number" || !Number.isInteger(task) || task < 0) bad("task : entier attendu");
-    const given = browserRef(body.browserId, "browserId");
-    const schedule = parseSchedule(body.schedule);
-    const space = this.#spaceRef(body.space);
-    const { store } = this.#ctx;
-    const profile = store.workstationProfile(version, space);
-    if (!profile) throw new HarnessError(404, `profil inconnu : ${version}`);
-    const source = profile.repetitiveTasks[task];
-    if (!source) throw new HarnessError(404, `tâche inconnue : ${task}`);
-    if (!source.automatable) throw new HarnessError(409, "cette tâche n'est pas automatisable");
-    if (given !== null) this.#known(given);
-    if (space === null) this.outsideSpaces(given);
-    const browserId = space === null ? given : this.browserIn(space, given);
-    return store.transaction(() => {
-      const existing = store
-        .findWorkstationAutomations(source.title, source.steps)
-        .find((automation) => (automation.space ?? null) === space);
-      if (existing) return { automation: existing, created: false };
-      const automation = store.createWorkstationAutomation({
-        id: newId("au"),
-        by: actor.by,
-        title: source.title,
-        frequency: source.frequency,
-        steps: source.steps,
-        profileVersion: version,
-        browserId,
-        ...(space === null ? {} : { space }),
-        schedule,
-      });
-      this.#ctx.event("workstation_automation", null, { id: automation.id }, null);
-      return { automation, created: true };
-    });
+    return this.#errandDesk.createAutomation(body, actor);
   }
 
   /**
@@ -2545,33 +1132,12 @@ export class Workstation {
    * elle a été créée ; l'appelant relance le tour de l'agent.
    */
   runAutomation(automationId: string, actor: Actor): WorkstationRequest {
-    const automation = this.getAutomation(automationId);
-    if (this.settings().paused) throw new HarnessError(409, "le poste est en pause");
-    // Réattribué (ou son espace retiré), son navigateur ne rejoue pas ailleurs des étapes apprises chez un client.
-    const space = automation.space ?? null;
-    if (this.spaceOfBrowser(automation.browserId ?? this.defaultBrowserId()) !== space)
-      throw new HarnessError(409, AUTOMATION_OUT_OF_SPACE);
-    return this.#enqueue(
-      {
-        instruction: automationInstruction(automation),
-        automationId,
-        browserId: automation.browserId,
-        ...(space === null ? {} : { space }),
-      },
-      actor,
-    );
+    return this.#errandDesk.runAutomation(automationId, actor);
   }
 
   /** Supprime une automatisation ; les demandes déjà lancées gardent leur consigne. */
   deleteAutomation(id: string): string {
-    const { store } = this.#ctx;
-    const removed = store.transaction(() => {
-      const gone = store.deleteWorkstationAutomation(id);
-      if (gone) this.#ctx.event("workstation_automation", null, { id, removed: true }, null);
-      return gone;
-    });
-    if (!removed) throw new HarnessError(404, `automatisation inconnue : ${id}`);
-    return id;
+    return this.#errandDesk.deleteAutomation(id);
   }
 
   // -- profil et services --------------------------------------------------------------
@@ -2585,39 +1151,20 @@ export class Workstation {
     stats: ProfileStats;
     browsers: BrowserView[];
   } {
-    return {
-      profile: this.profileOf(space),
-      stats: this.stats(space),
-      browsers: this.browsers().filter((browser) => space === null || browser.space === space),
-    };
+    return this.#profileDesk.profileView(space);
   }
 
   /** Le dernier profil d'une portée (un espace, ou `null` : hors espace) : celui que reçoit un job qui y agit. */
   profileOf(space: string | null): WorkstationProfile | null {
-    return this.#ctx.store.latestWorkstationProfile(space);
+    return this.#profileDesk.profileOf(space);
   }
 
   /** Une nouvelle version du profil de la portée `space` (`null` : le profil hors espace). */
   writeProfile(profile: WorkstationProfileBody, space: string | null = null): WorkstationProfile {
-    const { store } = this.#ctx;
-    return store.transaction(() => {
-      const written = store.addWorkstationProfile(profile, space);
-      this.#ctx.event(
-        "workstation_profile",
-        null,
-        { version: written.version, ...(space === null ? {} : { space }) },
-        null,
-      );
-      return written;
-    });
+    return this.#profileDesk.writeProfile(profile, space);
   }
 
   recordShift(input: { startedAt: number; outcome: string; actions: number }): ShiftRow {
-    const { store } = this.#ctx;
-    return store.transaction(() => {
-      const shift = store.addWorkstationShift({ ...input, endedAt: Date.now() });
-      this.#ctx.event("workstation_shift", null, { outcome: shift.outcome, actions: shift.actions }, null);
-      return shift;
-    });
+    return this.#profileDesk.recordShift(input);
   }
 }

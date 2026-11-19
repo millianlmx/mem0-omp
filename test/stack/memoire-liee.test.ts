@@ -129,7 +129,7 @@ function section(markdown: string, titre: string): string {
 
 test("memoire-liee/AC-3 : le README de mem0-rs documente chaque route ajoutée, la pile chaque réglage du rêve", () => {
   const readme = fs.readFileSync(path.join(CRATE, "README.md"), "utf8");
-  const http = fs.readFileSync(path.join(CRATE, "src", "http.rs"), "utf8");
+  const http = fs.readFileSync(path.join(CRATE, "src", "api", "http.rs"), "utf8");
   // Chaque route propre à mem0-rs déclarée par le routeur a sa ligne dans l'une des deux sections.
   const routes = [
     ...http.matchAll(/"(\/memory\/(?:link|unlink|links|entities|models|dream[a-z/]*|\{memory_id\}\/links))"/g),

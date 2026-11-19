@@ -19,12 +19,8 @@ import { pathToFileURL } from "node:url";
 import { ClientRegistry } from "../../omp-harness/api/auth.ts";
 import type { WorkstationAction as ServerAction } from "../../omp-harness/db/db.ts";
 import { createHandler } from "../../omp-harness/api/http.ts";
-import {
-  MAX_UPLOAD_BYTES,
-  describeGesture,
-  parseActionInput,
-  uploadDir,
-} from "../../omp-harness/workstation/workstation.ts";
+import { MAX_UPLOAD_BYTES, uploadDir } from "../../omp-harness/workstation/workstation.ts";
+import { describeGesture, parseActionInput } from "../../omp-harness/workstation/workstation-input.ts";
 import type { ActionOutcome, WorkstationAction } from "../../omp-chrome/src/lib/actions.ts";
 import { validateAction } from "../../omp-chrome/src/lib/actions.ts";
 import { cdpKeyEvents, domKeyInit, parseKeyCombo } from "../../omp-chrome/src/lib/keys.ts";

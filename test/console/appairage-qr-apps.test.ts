@@ -1,7 +1,7 @@
 // Feature appairage-qr-apps : les apps Mac et iOS appairent un iPhone par QR code. Le Mac crée un ticket à
 // usage unique (`POST /v1/pair/tickets`) et l'affiche en QR code `ompconsole://pair?u=<adresse>&t=<ticket>` ;
 // l'iPhone l'ouvre, CONFIRME en nommant le serveur, puis l'échange SANS jeton (`POST /v1/pair/redeem`) contre
-// le jeton d'un client nommé. Le serveur est gardé par test/harness/appairage-qr.test.ts ; ce fichier garde le
+// le jeton d'un client nommé. Le serveur est gardé par test/harness/api/appairage-qr.test.ts ; ce fichier garde le
 // client Swift : ses champs sont ceux du JSON réel, ses routes sont servies, l'échange est public, et aucun lien
 // ne relie l'appareil sans que l'humain ait vu l'adresse.
 //
@@ -20,10 +20,10 @@ import { ROOT, tmpdir } from "../support/repo.ts";
 
 const read = (...parts: string[]) => fs.readFileSync(path.join(ROOT, ...parts), "utf8");
 
-const LINK = "omp-console/Sources/ConsoleClient/HarnessPairLink.swift";
+const LINK = "omp-console/Sources/ConsoleClient/Pairing/HarnessPairLink.swift";
 const MODEL = "omp-console/Sources/ConsoleClient/HarnessModel.swift";
-const VIEWS = "omp-console/Sources/ConsoleUI/PairDeviceViews.swift";
-const QR = "omp-console/Sources/ConsoleUI/PairQRCode.swift";
+const VIEWS = "omp-console/Sources/ConsoleUI/Pairing/PairDeviceViews.swift";
+const QR = "omp-console/Sources/ConsoleUI/Pairing/PairQRCode.swift";
 const IOS_ROOT = "omp-console/ios/OMPConsoleIOS/RootView.swift";
 const MAC_ROOT = "omp-console/Sources/OMPConsole/ConsoleRootView.swift";
 const MAC_SHEET = "omp-console/Sources/OMPConsole/Server/ServerSheet.swift";
@@ -143,7 +143,7 @@ function routeFaults(files: Map<string, string>, redeemPath: string, features: r
   const feature = /static let pairingFeature = "([^"]+)"/.exec(link)?.[1];
   if (!feature || !features.includes(feature))
     faults.push(`${LINK} : la capacité ${feature ?? "absente"} n'est pas annoncée par le serveur`);
-  const transport = files.get("omp-console/Sources/ConsoleClient/HarnessTransport.swift") ?? "";
+  const transport = files.get("omp-console/Sources/ConsoleClient/Connection/HarnessTransport.swift") ?? "";
   if (!/if call\.authenticated \{ request\.setValue\("Bearer/.test(transport))
     faults.push("HarnessTransport.swift : l'en-tête Bearer n'est plus conditionné par call.authenticated");
   return faults;
@@ -158,7 +158,7 @@ test("appairage-qr-apps/AC-2 : la création est servie en admin, l'échange est 
     VIEWS,
     IOS_ROOT,
     MAC_SHEET,
-    "omp-console/Sources/ConsoleClient/HarnessTransport.swift",
+    "omp-console/Sources/ConsoleClient/Connection/HarnessTransport.swift",
   );
   assert.deepEqual(routeFaults(files, redeemPath, API_FEATURES), []);
 
@@ -212,7 +212,9 @@ test("appairage-qr-apps/AC-3 : le lien est ompconsole://pair?u=<adresse>&t=<tick
     "le serveur documente un autre lien",
   );
   assert.equal(
-    /static let scheme = "([^"]+)"/.exec(read("omp-console/Sources/ConsoleClient/HarnessWidget.swift"))?.[1],
+    /static let scheme = "([^"]+)"/.exec(
+      read("omp-console/Sources/ConsoleClient/Notifications/HarnessWidget.swift"),
+    )?.[1],
     "ompconsole",
   );
 

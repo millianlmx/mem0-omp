@@ -31,7 +31,7 @@ export function writeFileAtomic(file: string, content: string): void {
 // sens de « pas une garantie ».
 //
 // Le serveur mem0-rs applique les MÊMES motifs, dans le même ordre, à chaque
-// écriture (mem0-stack/mem0-rs/src/redaction.rs) : il couvre les clients qui
+// écriture (mem0-stack/mem0-rs/src/api/redaction.rs) : il couvre les clients qui
 // écrivent sans passer par ce plugin. Un motif ajouté ici s'ajoute là-bas, et
 // les cas partagés de mem0-stack/mem0-rs/tests/redaction-cas.json jugent les deux.
 // ---------------------------------------------------------------------------

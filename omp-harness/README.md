@@ -3146,7 +3146,7 @@ Système › Statistiques et santé, la
 consommation, la comparaison des modèles, les tests instables et la santé du serveur ;
 l'iPhone suit une feature sur l'écran verrouillé (Live Activity, poussée par APNs
 quand `apns` est configuré). Le client est partagé
-(`omp-console/Sources/ConsoleClient/Harness*.swift`) : voir `omp-console/README.md`
+(`omp-console/Sources/ConsoleClient/**/Harness*.swift`) : voir `omp-console/README.md`
 § « Serveur de pipelines ».
 
 ### Les Live Activities app fermée (APNs)

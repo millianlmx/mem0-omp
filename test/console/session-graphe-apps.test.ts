@@ -98,7 +98,7 @@ function inOrder(text: string, needles: string[], label: string): void {
 }
 
 test("session-graphe-apps/AC-1 : dans « Comprendre » (Mac et iOS), une escalade à carte se lit headline + stake + une ligne par option, puis le schéma natif aux options cliquables, puis la carte d'exploration (repliée sur iPhone), puis les Détails repliés ; sans carte, l'affichage d'avant", async () => {
-  const feed = read(CONSOLE, "Sources", "ConsoleUI", "InboxFeed.swift");
+  const feed = read(CONSOLE, "Sources", "ConsoleUI", "Inbox", "InboxFeed.swift");
   const batch = swiftBody(feed, "struct EscalationBatchCard: View");
   inOrder(
     batch,
@@ -116,7 +116,7 @@ test("session-graphe-apps/AC-1 : dans « Comprendre » (Mac et iOS), une escalad
     "EscalationBatchCard",
   );
   // La carte de ce que la feature attend se pose en tête de « Comprendre », partagé par les deux plateformes.
-  assert.match(read(CONSOLE, "Sources", "ConsoleUI", "RunPendingCard.swift"), /EscalationBatchCard\(/);
+  assert.match(read(CONSOLE, "Sources", "ConsoleUI", "Inbox", "RunPendingCard.swift"), /EscalationBatchCard\(/);
   assert.match(read(CONSOLE, "Sources", "ConsoleUI", "OS", "OSUnderstandView.swift"), /RunPendingCard\(server: server/);
   for (const host of [
     read(CONSOLE, "Sources", "OMPConsole", "OS", "OSRootView.swift"),
@@ -124,7 +124,7 @@ test("session-graphe-apps/AC-1 : dans « Comprendre » (Mac et iOS), une escalad
   ])
     assert.match(host, /OSUnderstandView\(/);
 
-  const cards = read(CONSOLE, "Sources", "ConsoleUI", "DecisionCardViews.swift");
+  const cards = read(CONSOLE, "Sources", "ConsoleUI", "Inbox", "DecisionCardViews.swift");
   const summary = swiftBody(cards, "public struct DecisionCardSummary: View");
   inOrder(summary, ["Text(card.headline)", "SessionGraphText.stake(card.stake)", "DecisionOptionLine("], "synthèse");
   const line = swiftBody(cards, "struct DecisionOptionLine: View");
@@ -145,11 +145,11 @@ test("session-graphe-apps/AC-1 : dans « Comprendre » (Mac et iOS), une escalad
   );
   assert.match(cards, /struct SchemaFork: Shape \{/);
   assert.match(schema, /Button \{ choose\(node\.label\) \}/);
-  for (const source of [cards, read(CONSOLE, "Sources", "ConsoleUI", "SessionGraphViews.swift")])
+  for (const source of [cards, read(CONSOLE, "Sources", "ConsoleUI", "Runs", "SessionGraphViews.swift")])
     assert.doesNotMatch(source, /WKWebView|WebView|mermaid/i, "ni WebView ni Mermaid");
   // La carte d'exploration : repliée sur iPhone (largeur compacte), ouverte ailleurs ; les preuves de l'escalade surlignées.
   const exploration = swiftBody(
-    read(CONSOLE, "Sources", "ConsoleUI", "SessionGraphViews.swift"),
+    read(CONSOLE, "Sources", "ConsoleUI", "Runs", "SessionGraphViews.swift"),
     "public struct CardExplorationView: View",
   );
   assert.match(exploration, /#if os\(iOS\)\s+sizeClass == \.compact\s+#else\s+false/);
@@ -175,7 +175,7 @@ test("session-graphe-apps/AC-1 : dans « Comprendre » (Mac et iOS), une escalad
 });
 
 test("session-graphe-apps/AC-2 : specs à valider et arbitrages — le briefing (ce que fait la feature, puis les cartes des points ambigus) s'affiche en tête de la carte, avant le document complet", async () => {
-  const feed = read(CONSOLE, "Sources", "ConsoleUI", "InboxFeed.swift");
+  const feed = read(CONSOLE, "Sources", "ConsoleUI", "Inbox", "InboxFeed.swift");
   inOrder(
     swiftBody(feed, "struct SpecsCard: View"),
     [
@@ -197,7 +197,7 @@ test("session-graphe-apps/AC-2 : specs à valider et arbitrages — le briefing 
     "VerdictCard",
   );
   const briefing = swiftBody(
-    read(CONSOLE, "Sources", "ConsoleUI", "DecisionCardViews.swift"),
+    read(CONSOLE, "Sources", "ConsoleUI", "Inbox", "DecisionCardViews.swift"),
     "public struct BriefingView: View",
   );
   inOrder(
@@ -250,13 +250,13 @@ test("session-graphe-apps/AC-3 : le niveau « Récit » de « Comprendre » (Mac
   // Le modèle relit le graphe sur l'événement éphémère `graph` du flux de la feature.
   const model = read(CONSOLE, "Sources", "ConsoleClient", "HarnessModel.swift");
   assert.match(model, /else if let version = event\.graphVersion \{[^}]*graphVersions\[runId\] = version/);
-  const views = read(CONSOLE, "Sources", "ConsoleUI", "SessionGraphViews.swift");
+  const views = read(CONSOLE, "Sources", "ConsoleUI", "Runs", "SessionGraphViews.swift");
   assert.match(views, /struct GraphFlowLayout: Layout \{/);
   assert.match(views, /DisclosureGroup\(isExpanded: Binding\(/, "les dossiers se déplient");
   assert.match(views, /let highlighted = focus\.isEmpty \? graph\.allHighlighted : focus/);
   assert.match(views, /node\.isAmbiguity \? tint\.opacity/, "ambiguïtés et décisions teintées");
   // Les vues partagées n'écrivent aucun mot en dur : tout vient de SessionGraphText, traduit en anglais.
-  for (const file of ["SessionGraphViews.swift", "DecisionCardViews.swift"])
+  for (const file of ["Runs/SessionGraphViews.swift", "Inbox/DecisionCardViews.swift"])
     assert.doesNotMatch(read(CONSOLE, "Sources", "ConsoleUI", file), /\b(Text|Label|Button|DisclosureGroup)\("/);
   const words = read(CONSOLE, "Sources", "ConsoleCore", "Design", "SessionGraphText.swift");
   const english = read(CONSOLE, "Sources", "ConsoleCore", "Resources", "en.lproj", "Localizable.strings");
@@ -381,7 +381,7 @@ test("session-graphe-apps/AC-4 : le popup montre chaque question en attente — 
 
 test("session-graphe-apps/AC-5 : chaque champ que le client Swift décode de la carte, du briefing et du graphe existe dans le JSON RÉEL du serveur, et la route du graphe appelée par le client est servie", async () => {
   const wire = read(CONSOLE, "Sources", "ConsoleClient", "HarnessWire.swift");
-  const graphWire = read(CONSOLE, "Sources", "ConsoleClient", "HarnessSessionGraph.swift");
+  const graphWire = read(CONSOLE, "Sources", "ConsoleClient", "Runs", "HarnessSessionGraph.swift");
   const demo = await serveDemo();
   try {
     const inbox = await demo.get("/v1/inbox");

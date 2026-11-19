@@ -23,7 +23,7 @@ import type { RunRow } from "../db/db.ts";
 import { HarnessError } from "../api/errors.ts";
 import { type Forge, type Issue, type IssueDetail, openForge } from "./forge.ts";
 import type { RunState } from "../runs/machine.ts";
-import type { NewRunInput } from "../runs/orchestrator.ts";
+import type { NewRunInput } from "../runs/run-creation.ts";
 import { runnerUnitOf } from "../vigie/attribution.ts";
 
 /** Une issue et son run lié, s'il y en a un. */

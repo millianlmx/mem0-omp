@@ -32,7 +32,7 @@ import { HarnessError } from "../api/errors.ts";
 import { type Forge, openForge } from "../forge/forge.ts";
 import { remoteEnv } from "../forge/git.ts";
 import { afterExternalMerge, afterMergeFailed, afterMergeStopped, afterMerged } from "./machine.ts";
-import type { NewRunInput } from "./orchestrator.ts";
+import type { NewRunInput } from "./run-creation.ts";
 import { ciFailureReport, ciState } from "../heavy/ci-judge.ts";
 
 export type MergerHooks = {

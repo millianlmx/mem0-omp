@@ -118,7 +118,7 @@ final class LegacyDouble: @unchecked Sendable {
 let importSucceeded = #"{"agents":[{"agent_id":"a1","importes":2,"deja_presents":0,"rejetes":[],"revisions":1,"messages":0},{"agent_id":"a2","importes":1,"deja_presents":0,"rejetes":[],"revisions":0,"messages":0}],"totaux":{"importes":3,"deja_presents":0,"rejetes":0,"revisions":1,"messages":0}}"# + "\n"
 
 /// Le rapport réel d'un import avec rejets (test Rust `rapport_json` de
-/// mem0-stack/mem0-rs/src/import.rs) : deux rejets chez deux agents.
+/// mem0-stack/mem0-rs/src/reprise/import.rs) : deux rejets chez deux agents.
 let importWithRejects = #"{"agents":[{"agent_id":"B","importes":1,"deja_presents":0,"rejetes":[],"revisions":0,"messages":0},"#
     + #"{"agent_id":"b","importes":1,"deja_presents":0,"rejetes":[{"element":"message","id":"m2","raison":"champ_invalide","detail":"content"}],"revisions":1,"messages":1},"#
     + #"{"agent_id":"é","importes":0,"deja_presents":0,"rejetes":[{"element":"souvenir","id":"4","raison":"texte_absent","detail":"payload sans texte"}],"revisions":0,"messages":0},"#
