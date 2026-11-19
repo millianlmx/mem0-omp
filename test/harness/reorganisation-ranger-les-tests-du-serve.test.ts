@@ -407,7 +407,10 @@ test("reorganisation-ranger-les-tests-du-serve/AC-4 : la carte des tests de DEVE
 test("reorganisation-ranger-les-tests-du-serve/AC-8 : chaque clé test/ du plafond de types désigne un fichier existant", () => {
   const baseline = JSON.parse(read("scripts/types-ratchet-baseline.json")) as { files: Record<string, number> };
   const keys = Object.keys(baseline.files).filter((k) => k.startsWith("test/"));
-  assert.ok(keys.some((k) => k.startsWith("test/harness/")), "aucune clé test/harness/ : le scan serait aveugle");
+  assert.ok(
+    keys.some((k) => k.startsWith("test/harness/")),
+    "aucune clé test/harness/ : le scan serait aveugle",
+  );
   const dead = keys.filter((k) => !fs.existsSync(path.join(ROOT, k)));
   assert.deepEqual(dead, [], `clés mortes : ${dead.join(", ")}`);
 });
