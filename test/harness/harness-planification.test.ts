@@ -633,8 +633,11 @@ test("harness-planification/AC-9 : MCP — schedules_list, schedule_create (oper
 
 test("harness-planification/AC-10 : le tour de l'orchestrateur déclenche la planification due ; le faux runner conduit son run jusqu'au merge, qui ne bloque plus le lancement suivant", async () => {
   const world = fakeWorld({ req: [OK.req], specs: [OK.specs], impl: [OK.impl], review: [OK.review] });
+  // Échéance horaire posée sur la minute écoulée : due au démarrage, la suivante dans une heure,
+  // pour qu'aucun tour ne relance la planification avant `runNow` (Europe/Paris : minute = minute UTC).
+  const minute = new Date(Date.now() - MINUTE).getUTCMinutes();
   const schedule = world.orchestrator.schedules.create(
-    runSchedule("* * * * *", {
+    runSchedule(`${minute} * * * *`, {
       target: { kind: "run", repo: "demo", title: "Export CSV", request: "Exporter les données en CSV" },
     }),
     { by: "mac" },
