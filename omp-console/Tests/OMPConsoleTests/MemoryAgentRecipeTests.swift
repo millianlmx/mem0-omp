@@ -208,7 +208,7 @@ func recetteAgentRacineViergeServLesNeufRoutes() async throws {
     }
     // Les routes qui appellent oMLX : la route existe et le jeton passe (oMLX peut
     // être injoignable, d'où un statut quelconque hors 401/404/405). Un DELETE
-    // d'id inconnu rend, par parité avec memory 2.2.1, un 500 en texte brut : seul
+    // d'id inconnu rend, par parité avec la bibliothèque d'origine 2.2.1, un 500 en texte brut : seul
     // son statut compte ici.
     for (method, path, body) in [
         ("POST", "/memory/add", ["text": "recette agent", "agent_id": "recette", "infer": false] as [String: Any]),

@@ -47,7 +47,7 @@ export const MERGED_MAX_CHARS = 1_400;
 // ---------------------------------------------------------------------------
 // Déduplication à l'écriture
 //
-// Deux niveaux, volontairement : le score vectoriel de memory dit "ça parle du
+// Deux niveaux, volontairement : le score vectoriel du service mémoire dit "ça parle du
 // même sujet", la couverture lexicale dit "et ça n'apporte rien de plus". Le
 // score seul fusionnerait deux décisions voisines mais distinctes ; la
 // couverture seule raterait toute reformulation.

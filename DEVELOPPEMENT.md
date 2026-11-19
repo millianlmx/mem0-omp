@@ -7,18 +7,18 @@ avant une PR sont dans [CONTRIBUTING.md](CONTRIBUTING.md), la publication dans
 ## Le dépôt
 
 ```
-memory-omp/                              racine = marketplace OMP
+mem0-omp/                              racine = marketplace OMP
 ├── .omp-plugin/marketplace.json       catalogue (repli : .claude-plugin/)
 ├── docker-compose.yml                 le serveur en une pile, pour Portainer (omp-harness/README.md § « Avec Portainer »)
-├── omp-memory/                   le plugin mémoire (un module par responsabilité, install.sh)
-├── omp-memory-req/                      le plugin des pipelines : client du serveur (/req, /project, /audit, /pipelines, /harness-follow ; outils harness_* du modèle)
+├── omp-memory/                        le plugin mémoire (un module par responsabilité, install.sh)
+├── omp-memory-req/                    le plugin des pipelines : client du serveur (/req, /project, /audit, /pipelines, /harness-follow ; outils harness_* du modèle)
 ├── omp-harness/                       le serveur de pipelines du VPS
 │   └── deploy/                        conteneurs (harness.sh, compose), install.sh et systemd, module NixOS
 ├── omp-console/                       l'app macOS (SwiftUI), le noyau partagé et l'app iOS
 │   └── ios/                           le projet Xcode de l'app iOS
 ├── omp-chrome/                        l'extension Chrome du poste de travail (MV3 : observation, actions de l'agent, transcription locale)
-├── memory-stack/                        la pile conteneur du service mémoire
-│   └── memory-rs/                       le serveur mémoire (Rust + SQLite)
+├── memory-stack/                      la pile conteneur du service mémoire
+│   └── memory-rs/                     le serveur mémoire (Rust + SQLite)
 ├── test/                              la suite node --test
 ├── scripts/check.sh                   la validation avant publication
 ├── scripts/test-files.sh              liste les fichiers de test : tous, macOS, du diff, d'une liste, outillage
@@ -41,7 +41,7 @@ memory-omp/                              racine = marketplace OMP
 ├── scripts/app-icon.sh                dessine l'icône de l'app
 ├── scripts/run-console.sh             recompile et relance l'app Mac
 ├── scripts/recette/                   recettes manuelles, jamais lancées par la CI
-├── scripts/memory-http-contrat.sh       contrat HTTP boîte noire du service mémoire
+├── scripts/memory-http-contrat.sh     contrat HTTP boîte noire du service mémoire
 ├── scripts/release.ts                 commit de release sur main, tags et releases au merge
 ├── scripts/release-assets.sh          construit l'app Mac et l'IPA jointes à chaque release
 ├── scripts/no-manual-bump.sh          refuse un bump de version manuel
@@ -129,7 +129,7 @@ une feature (son slug), et un id `<slug>/AC-<n>` ne vit que dans un test
 
 | Dossier | Ce qu'il éprouve |
 |---|---|
-| `test/memoire/` | le plugin `omp-memory` (rappel, brief, outils memory) |
+| `test/memoire/` | le plugin `omp-memory` (rappel, brief, outils mémoire) |
 | `test/req/` | le plugin `omp-memory-req`, client du harness |
 | `test/harness/` | le serveur de pipelines `omp-harness/`, un sous-dossier par dossier du serveur ; à la racine, les seuls tests transverses : point d'entrée `cli.ts`, déploiement (installation, conteneur, Portainer, NixOS, déploiement continu), structure du serveur et rangement de ses tests |
 | `test/harness/api/` | l'API des clients : HTTP, SSE, MCP, appairage, idempotence, sécurité de l'API, premier chargement |
@@ -230,12 +230,12 @@ faux serveur compatible OpenAI sert les embeddings, ou l'oMLX donné par `--omlx
 `/v1/health` à 200 avec le commit du clone, un client appairé (`--add-client`) dont
 le jeton ouvre l'API (401 sans), un run de /req au merge sur un dépôt jetable avec le
 faux runner des tests (`test/support/fake-omp-rpc.ts`), et un souvenir écrit puis
-retrouvé dans memory. Le faux runner ne pesant rien, la recette abaisse l'admission
+retrouvé dans la mémoire. Le faux runner ne pesant rien, la recette abaisse l'admission
 mémoire du service (`admission.reserveMiB` 256, runner et heavy 64 Mio) : avec la
 réserve de 2 Gio d'un serveur, une VM de poste de 4 Go refuse toute admission et le
 run reste en file (`admission_refused` dans sa timeline). Une ligne `✓`/`✗` par
-vérification ; au premier écart, l'état des conteneurs, les journaux du harness, de
-memory et du faux runner, `GET /v1/status` et la timeline du run, puis la sortie 1.
+vérification ; au premier écart, l'état des conteneurs, les journaux du harness, du
+service mémoire et du faux runner, `GET /v1/status` et la timeline du run, puis la sortie 1.
 Tout vert : 0. La pile est retirée à la fin, sauf avec `--keep`. La première fois,
 la construction de memory-rs prend plusieurs minutes (`OMP_SMOKE_TIMEOUT`, 300 s par
 étape d'attente). Ni `check.sh` ni la CI ne la lancent.
@@ -376,7 +376,7 @@ transpiler les extensions : `scripts/plugin-smoke.ts` charge
 **réellement** chaque plugin du catalogue dans un OMP (SDK épinglé sous Bun),
 vérifie les commandes enregistrées, invoque `/memory-status` puis l'outil
 `memory_search` d'un côté, `/req` de l'autre, et exige le résultat observé — le
-service memory étant remplacé par un stub local, donc sans conteneur ni credential.
+service mémoire étant remplacé par un stub local, donc sans conteneur ni credential.
 Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux statuts
 ainsi que `release-simulation` : le merge est bloqué.
 
@@ -419,6 +419,14 @@ nom en `ios-*`, ou mention de `swift`, `swiftc`, `xcodebuild`, `xcrun`, `swift-a
 `ios-build.sh`), réduits à ceux que le diff concerne ; un ensemble vide laisse la
 section verte. Un nouveau commit sur une PR annule le run `check` en cours de cette PR ;
 un run nocturne ou manuel n'est jamais annulé.
+
+**Version de transition du renommage de la mémoire.** Le commit squashé de la feature qui
+a renommé la mémoire (dossiers `memory-stack/`, `omp-memory/` et `omp-memory-req/`,
+variables `MEMORY_*`, outils `memory_*`) s'intitule `feat(memory)` : `feat` fait publier
+à la release une version mineure de chaque composant touché, la **version de transition**.
+Pendant elle, les composants lisent encore les anciens noms ; ces replis sont retirés à la
+version qui suit, par une autre feature. Ce que les installations existantes renomment, et
+quand : `README.md` § « Passer aux noms memory (mise à niveau) ».
 
 **Caches de la CI.** Les jobs qui installent ou compilent restaurent un cache
 `actions/cache@v6` avant `check.sh` : `check` et `macos-tests` le cache npm
@@ -642,7 +650,7 @@ podman machine stop
 Le contrat joue aussi une phase **`rang`**, sur une instance neuve (l'IDF du BM25
 ne voit que ce corpus) : la fixture commitée `scripts/memory-http-contrat/rang.json`
 porte un petit corpus, des requêtes et, capturés sur l'ancien mem0-http Python
-(memory 2.2.1), l'ordre des ids rendus par chaque recherche (`attendu`) et les
+(bibliothèque d'origine 2.2.1, cf. `THIRD_PARTY_NOTICES.md`), l'ordre des ids rendus par chaque recherche (`attendu`) et les
 arêtes du graphe. Toute divergence d'ordre, un `semantic_score` qui n'est pas le
 cosinus brut du faux embedder, un souvenir lexical rendu malgré `threshold` ou
 une arête différente fait échouer le run : c'est la preuve de parité de memory-rs.

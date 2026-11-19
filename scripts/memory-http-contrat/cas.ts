@@ -221,7 +221,9 @@ const tableau = (element: Forme): Forme => ({ type: "tableau", element });
 
 export const SANTE: Forme = objet({
   ok: C(true),
+  // Les deux clés pendant la version de transition : `mem0` est lue par les composants pas encore à jour.
   memory: S,
+  mem0: S,
   user: C("moi"),
   dream: objet({
     enabled: B,
@@ -881,11 +883,11 @@ const SUPPRESSION_OUVERT: Groupe = {
   ],
 };
 
-// Groupe infer (memory-rs-extraction-llm S-7) : chemin additif de memory 2.2.1, joué
+// Groupe infer (memory-rs-extraction-llm S-7) : chemin additif de la bibliothèque d'origine 2.2.1, joué
 // contre le Python et contre memory-rs ; la requête chat reçue par le faux OpenAI
 // est comparée à l'invite attendue, seules les dates normalisées.
 
-/** `ADDITIVE_EXTRACTION_PROMPT` de memory 2.2.1 (SP/mem0/configs/prompts.py:468-944). */
+/** `ADDITIVE_EXTRACTION_PROMPT` de la bibliothèque d'origine 2.2.1 (THIRD_PARTY_NOTICES.md). */
 const SYSTEME_EXTRACTION = {
   sha256: "ad19187a37813ef77ee156e714c0650e6ec749e0264bdc07d499bc9b24115155",
   octets: 33831,
@@ -915,7 +917,7 @@ const EMBEDDINGS = "POST /v1/embeddings (faux OpenAI)";
 type AttenduChat = { texte: string; derniers: readonly string[]; existants: readonly string[] };
 
 /**
- * Écarts entre une requête chat reçue et celle de memory 2.2.1 (S-7, conditions 1
+ * Écarts entre une requête chat reçue et celle de la bibliothèque d'origine 2.2.1 (S-7, conditions 1
  * à 7) : en-tête, 6 clés exactes, paramètres, messages system + user, empreinte
  * du prompt système et invite user exacte, dates normalisées en `<date>`.
  */
@@ -1625,7 +1627,7 @@ const COUVERTURE: Groupe = {
 // requêtes et l'ordre capturé sur le Python. Phase à part, instance neuve : l'IDF
 // du BM25 ne voit que ce corpus.
 
-/** Seuil appliqué par le serveur quand `threshold` vaut null (memory 2.2.1). */
+/** Seuil appliqué par le serveur quand `threshold` vaut null (bibliothèque d'origine 2.2.1). */
 const SEUIL_DEFAUT = 0.1;
 
 const RANG: Groupe = {

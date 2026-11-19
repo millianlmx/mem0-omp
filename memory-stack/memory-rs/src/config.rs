@@ -559,8 +559,8 @@ mod tests {
 
     #[test]
     fn lire_renomme_nouveau_puis_ancien() {
-        let n = "MEMORY_X";
-        let a = "MEM0_X";
+        let n = "MEMORY_RRF_K";
+        let a = "MEM0_RRF_K";
         assert_eq!(lire_renomme(&env(&[(a, "vieux")]), n, a).as_deref(), Some("vieux"));
         assert_eq!(lire_renomme(&env(&[(n, "neuf")]), n, a).as_deref(), Some("neuf"));
         assert_eq!(lire_renomme(&env(&[(n, "neuf"), (a, "vieux")]), n, a).as_deref(), Some("neuf"));

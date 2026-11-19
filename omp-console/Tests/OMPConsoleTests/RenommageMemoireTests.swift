@@ -111,14 +111,14 @@ private let legacyBinaryLine = "/Applications/OMP Console.app/Contents/Resources
 @Test("renommage-memoire/AC-303 : RenamedEnvironment.value — ancien seul → ancien ; nouveau seul → nouveau ; les deux → nouveau ; nouveau vide + ancien → ancien ; vides ou absents → nil")
 func renamedEnvironmentValue() {
     let read = { (environment: [String: String]) in
-        RenamedEnvironment.value(environment, "MEMORY_X", legacy: "MEM0_X")
+        RenamedEnvironment.value(environment, "MEMORY_RRF_K", legacy: "MEM0_RRF_K")
     }
-    #expect(read(["MEM0_X": "ancien"]) == "ancien")
-    #expect(read(["MEMORY_X": "nouveau"]) == "nouveau")
-    #expect(read(["MEMORY_X": "nouveau", "MEM0_X": "ancien"]) == "nouveau")
-    #expect(read(["MEMORY_X": "", "MEM0_X": "ancien"]) == "ancien")
-    #expect(read(["MEMORY_X": "", "MEM0_X": ""]) == nil)
-    #expect(read(["MEM0_X": ""]) == nil)
+    #expect(read(["MEM0_RRF_K": "ancien"]) == "ancien")
+    #expect(read(["MEMORY_RRF_K": "nouveau"]) == "nouveau")
+    #expect(read(["MEMORY_RRF_K": "nouveau", "MEM0_RRF_K": "ancien"]) == "nouveau")
+    #expect(read(["MEMORY_RRF_K": "", "MEM0_RRF_K": "ancien"]) == "ancien")
+    #expect(read(["MEMORY_RRF_K": "", "MEM0_RRF_K": ""]) == nil)
+    #expect(read(["MEM0_RRF_K": ""]) == nil)
     #expect(read([:]) == nil)
 }
 

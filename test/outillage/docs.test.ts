@@ -8,11 +8,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { ROOT } from "../support/repo.ts";
 
-// URL de CE dépôt (hôte GitHub, un handle, puis memory-omp), pas toute adresse GitHub : les
+// URL de CE dépôt (hôte GitHub, un handle, puis mem0-omp), pas toute adresse GitHub : les
 // tests de la console citent des URL de PR fictives qui n'ont aucun handle à
 // remplacer. Assemblé, jamais littéral : ce fichier de test ne doit pas être
 // lui-même une occurrence, sinon l'ensemble calculé s'inclurait lui-même.
-const URL_MARK = new RegExp(`${["github", "com/"].join("\\.")}[^/\\s]+/memory-omp`);
+const URL_MARK = new RegExp(`${["github", "com/"].join("\\.")}[^/\\s]+/mem0-omp`);
 
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -27,6 +27,9 @@ type PluginEntry = {
 type Catalog = { metadata?: { version?: string }; plugins: PluginEntry[] };
 
 const catalog = (rel = ".omp-plugin/marketplace.json"): Catalog => JSON.parse(read(rel)) as Catalog;
+
+/** Une entrée qui porte son propre plugin : son dossier source a le nom de l'entrée (les autres sont des alias). */
+const isOwnEntry = (entry: PluginEntry): boolean => path.basename(String(entry.source)) === entry.name;
 
 /**
  * Violations de la règle de vocabulaire du sommaire : « sommaire exhaustif »
@@ -138,9 +141,9 @@ test("docs/AC-19 : les commandes d'installation du README portent le slug réel 
   }
   assert.equal(slugs.size, 1, `les catalogues doivent nommer un seul dépôt : ${[...slugs].join(", ")}`);
   const [slug] = [...slugs];
-  assert.match(slug, /\/memory-omp$/, "le slug canonique désigne ce dépôt");
+  assert.match(slug, /\/mem0-omp$/, "le slug canonique désigne ce dépôt");
 
-  const occurrences = [...readme.matchAll(/\b[A-Za-z0-9_.-]+\/memory-omp\b/g)].map((m) => m[0]);
+  const occurrences = [...readme.matchAll(/\b[A-Za-z0-9_.-]+\/mem0-omp\b/g)].map((m) => m[0]);
   assert.ok(occurrences.length >= 3, "le README cite le dépôt pour cloner, ajouter et installer");
   for (const occurrence of occurrences) {
     assert.equal(occurrence, slug, `le README cite « ${occurrence} » au lieu de « ${slug} »`);
@@ -153,7 +156,9 @@ test("docs/AC-20 : chaque plugin du catalogue est installé et cité dans l'arbo
   const entries = catalog().plugins;
   assert.ok(entries.length >= 2, "le catalogue publie les deux plugins du dépôt");
 
-  for (const entry of entries) {
+  // Les anciennes entrées (alias de transition, même dossier source qu'un plugin renommé) ne sont pas présentées à une
+  // installation neuve : seuls les plugins dont le dossier source porte le nom de l'entrée sont exigés.
+  for (const entry of entries.filter(isOwnEntry)) {
     assert.ok(
       readme.includes(`install ${entry.name}@mem0-omp`),
       `README : « install ${entry.name}@mem0-omp » absent de la section Installation`,
@@ -198,7 +203,7 @@ test("docs/AC-21 : PUBLISHING.md cite exactement les fichiers porteurs d'URL et 
   );
 
   // (3) Les deux plugins du catalogue sont installables d'après le document.
-  for (const entry of entries) {
+  for (const entry of entries.filter(isOwnEntry)) {
     assert.ok(
       doc.includes(`install ${entry.name}@mem0-omp`),
       `PUBLISHING.md : « install ${entry.name}@mem0-omp » absent`,

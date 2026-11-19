@@ -241,7 +241,7 @@ class Lanceur {
     let reponse: Response;
     try {
       reponse = await fetch(`${url}/memory/all`, {
-        headers: jeton === null ? {} : { "X-Memory-Token": jeton },
+        headers: jeton === null ? {} : { "X-Memory-Token": jeton, "X-Mem0-Token": jeton },
         signal: AbortSignal.timeout(DELAI_REQUETE_MS),
       });
     } catch (e) {
@@ -354,7 +354,11 @@ class Lanceur {
     const attendu = requete.statut ?? 200;
     const entetes: Record<string, string> = {};
     if (requete.corps !== undefined) entetes["content-type"] = "application/json";
-    if (jeton !== null) entetes["X-Memory-Token"] = jeton;
+    if (jeton !== null) {
+      // Les deux en-têtes, même valeur : un service pas encore à jour n'entend que l'ancien.
+      entetes["X-Memory-Token"] = jeton;
+      entetes["X-Mem0-Token"] = jeton;
+    }
     let reponse: Response;
     try {
       reponse = await fetch(`${url}${requete.chemin ?? requete.gabarit}`, {

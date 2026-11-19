@@ -76,7 +76,7 @@ Le compose transmet aussi depuis `.env` le classement de `POST /memory/search` :
 
 | Variable | Défaut | Effet |
 |---|---|---|
-| `MEMORY_SEARCH_FUSION` | `additive` | `additive` (classement de memory 2.2.1), `rrf` (Reciprocal Rank Fusion) ou `graphe` (RRF plus le graphe de liens de la mémoire) |
+| `MEMORY_SEARCH_FUSION` | `additive` | `additive` (le classement de l'ancien service Python, cf. `THIRD_PARTY_NOTICES.md`), `rrf` (Reciprocal Rank Fusion) ou `graphe` (RRF plus le graphe de liens de la mémoire) |
 | `MEMORY_RRF_K` | `60` | constante `k` de la RRF |
 
 Le choix, ses raisons et le banc de mesure qui les compare (`memory-rs banc`) sont

@@ -444,7 +444,7 @@ cmd_up() {
   install -d -m 0700 "$ROOT" "$SECRETS"
   install -d "$ROOT/state" "$ROOT/state/logs" "$ROOT/repos" "$ROOT/worktrees" "$ROOT/home/.ssh" "$ROOT/runner-home" \
     "$ROOT/ollama" "$ROOT/cache/cargo" "$ROOT/vigie"
-  # Le dossier de données de la mémoire : créé seulement si ni memory ni mem0 n'existe.
+  # Le dossier de données de la mémoire : créé seulement si ni le nouveau ni l'ancien dossier n'existe.
   [ -e "$(memory_data_dir)" ] || install -d "$ROOT/memory"
   chmod 0700 "$ROOT/home/.ssh"
 

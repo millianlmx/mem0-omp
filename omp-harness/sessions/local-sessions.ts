@@ -277,7 +277,7 @@ export class LocalSessionDesk {
 
   /**
    * Le dépôt DÉCLARÉ que la session travaille : celui que nomme son distant (`…/mem0-omp.git` →
-   * `memory-omp`, comme `harness.sh add` nomme un dépôt), sinon le dernier segment de son dossier.
+   * `mem0-omp`, comme `harness.sh add` nomme un dépôt), sinon le dernier segment de son dossier.
    */
   #repoOf(remote: string | null, cwd: string): string | null {
     const names = [remote === null ? "" : repoName(remote), lastSegment(cwd)];

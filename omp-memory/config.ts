@@ -63,7 +63,7 @@ export const RECALL_GLOBAL_LIMIT = 2; // + préférences transverses
 
 export const RECALL_MIN_PROMPT = 12; // en dessous ("ok", "continue"), on ne cherche pas
 
-// Plancher de PERTINENCE. Sémantique, vérifiée dans le source de memory 2.0.20
+// Plancher de PERTINENCE. Sémantique, vérifiée dans le source de la bibliothèque Python d'origine 2.0.20 (THIRD_PARTY_NOTICES.md)
 // (`score_and_rank`) : c'est le COSINUS BRUT (`score_details.semantic_score`) qui est
 // filtré, jamais le `score` renvoyé — celui-ci est le score COMBINÉ (sémantique + bm25
 // + boost entités) et BM25 le sature. Mesuré : sur « recette de tarte aux pommes », le

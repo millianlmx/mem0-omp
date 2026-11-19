@@ -200,7 +200,9 @@ Puis sur le Mac, dans un de tes dépôts :
 - **Des souvenirs déjà sur le Mac ?** Copie-les sur le serveur avant d'y écrire :
   [omp-harness/README.md](omp-harness/README.md) § « La mémoire du projet ».
 - **Mettre à jour.** Le serveur : `git pull` puis `harness.sh up`, sans rien
-  perdre. Les plugins : [PUBLISHING.md](PUBLISHING.md) § « Mettre à jour ».
+  perdre. Les plugins : [PUBLISHING.md](PUBLISHING.md) § « Mettre à jour ». Une
+  installation d'avant le renommage de la mémoire : § « Passer aux noms memory
+  (mise à niveau) » plus bas.
 
 ## Au quotidien
 
@@ -392,6 +394,257 @@ La configuration du serveur (dépôts, modèles, plafonds) :
 [omp-harness/README.md](omp-harness/README.md) § « Configuration ».
 
 </details>
+
+## Passer aux noms memory (mise à niveau)
+
+La mémoire ne s'appelle plus mem0 : le produit, les dossiers, les plugins, le
+service, les variables, les outils et les commandes disent désormais « memory ».
+Cette version est la **version de transition** : elle lit encore tous les anciens
+noms, sans rien déplacer ni supprimer. **Rien à faire pendant la transition** :
+chaque installation se met à jour par sa commande habituelle, et garde ses
+souvenirs, son jeton et son port. Quand l'ancien et le nouveau nom existent
+ensemble, le nouveau l'emporte.
+
+Les replis disparaissent à la **version qui suit** la version de transition (la
+première version publiée de chaque composant qui contient ce renommage, commit
+`feat(memory)`). Pour ne pas dépendre d'eux, renomme ce qui suit à ton rythme, un
+type d'installation à la fois, le service arrêté quand tu déplaces des données.
+Les variables d'outillage des contributeurs suivent la même règle : `MEM0_<X>` →
+`MEMORY_<X>`.
+
+### Plugins et catalogue
+
+| Avant | Maintenant |
+|---|---|
+| plugins `omp-mem0-memory`, `omp-mem0-req` | `omp-memory`, `omp-memory-req` |
+| outils `mem0_search`, `mem0_add`, `mem0_update`, `mem0_link`, `mem0_forget` | `memory_search`, `memory_add`, `memory_update`, `memory_link`, `memory_forget` |
+| commandes `/mem0-status`, `/mem0-init`, `/mem0-brief`, `/mem0-dedupe`, `/mem0-purge-procedures`, `/mem0-save`, `/mem0-dream` | `/memory-status`, `/memory-init`, `/memory-brief`, `/memory-dedupe`, `/memory-purge-procedures`, `/memory-save`, `/memory-dream` |
+| en-tête `X-Mem0-Token` | `X-Memory-Token` (les clients à jour envoient les deux) |
+| `~/.omp/mem0.json` | `~/.omp/memory.json` |
+| `MEM0_HTTP_URL`, `MEM0_HTTP_TOKEN`, `MEM0_PROJECT_ID`, `MEM0_MODE`, `MEM0_AUTOSETUP`, `MEM0_NUDGE`, `MEM0_NO_GLOBAL`, `MEM0_QUIET`, `MEM0_CHECK_DEPTH` | `MEMORY_HTTP_URL`, `MEMORY_HTTP_TOKEN`, `MEMORY_PROJECT_ID`, `MEMORY_MODE`, `MEMORY_AUTOSETUP`, `MEMORY_NUDGE`, `MEMORY_NO_GLOBAL`, `MEMORY_QUIET`, `MEMORY_CHECK_DEPTH` |
+| `MEM0_TOKEN_<NOM>`, ce que nomme `memory.tokenEnv` d'un dépôt | `MEMORY_TOKEN_<NOM>` |
+| `.omp/mem0-brief.md` d'un dépôt | `.omp/memory-brief.md` |
+| bloc `<!-- mem0:brief vN -->` … `<!-- /mem0:brief -->` de `AGENTS.md` | `<!-- memory:brief vN -->` … `<!-- /memory:brief -->` |
+
+Les anciens noms d'outils et de commandes restent des alias de même effet pendant
+la transition ; le brief et la documentation ne citent que les nouveaux.
+
+**Passer des anciens plugins aux nouveaux.** Pendant la transition, le catalogue
+garde son nom `mem0-omp` (OMP refuse de mettre à jour un catalogue dont le nom a
+changé) et porte les quatre entrées. La mise à jour par les commandes habituelles
+marche : `omp plugin marketplace update mem0-omp`, puis
+`omp plugin upgrade omp-mem0-memory@mem0-omp` et
+`omp plugin upgrade omp-mem0-req@mem0-omp` (ajoute `--scope project` pour un
+plugin installé sur un seul projet). Elle livre le même code que les nouvelles
+entrées, sous les anciens noms de plugins. Pour passer aux nouveaux noms de
+plugins, dans cet ordre, **d'abord désinstalle les anciens, ensuite installe les
+nouveaux** :
+
+```bash
+omp plugin marketplace update mem0-omp
+omp plugin uninstall omp-mem0-memory@mem0-omp
+omp plugin uninstall omp-mem0-req@mem0-omp
+omp plugin install omp-memory@mem0-omp
+omp plugin install omp-memory-req@mem0-omp
+```
+
+Puis relance `omp`. N'installe **jamais** `omp-memory` à côté d'un
+`omp-mem0-memory` qui n'a pas été mis à jour : les outils, le rappel et le
+checkpoint seraient en double.
+
+**Le brief des dépôts.** L'ancien `.omp/mem0-brief.md` peut être supprimé : plus
+rien ne le lit. Un ancien bloc `mem0:brief` de `AGENTS.md` qui n'a pas été édité est
+remplacé par le plugin à jour, au démarrage d'une session locale. Un bloc édité à la
+main, ou celui d'un dépôt qui ne voit que des sessions sans autosetup (les runners),
+se remplace par `/memory-brief --update` ; sinon il cite, au retrait des replis, des
+outils `mem0_*` qui n'existeront plus. Attention : un `--update` lancé avec un plugin
+pas encore à jour réécrit l'ancien bloc. Mets le plugin à jour d'abord.
+
+**Le fichier de réglages.** `~/.omp/mem0.json` ne se renomme en `memory.json` qu'une
+fois à jour **tous** ses écrivains de la machine : l'appairage (`omp-memory-req`),
+l'app Mac et `harness.sh`. Les écrivains à jour écrivent là où les lecteurs lisent
+(`memory.json` s'il existe, sinon `mem0.json`) et ne créent jamais `memory.json` ;
+un écrivain pas à jour réécrirait `mem0.json`, que le nouveau fichier masquerait.
+
+**À la version qui retire les replis.** Le catalogue devient `memory-omp` : retire-le
+puis rajoute-le, puis réinstalle les plugins sous leurs nouveaux noms.
+
+```bash
+omp plugin uninstall omp-memory@mem0-omp
+omp plugin uninstall omp-memory-req@mem0-omp
+omp plugin marketplace remove mem0-omp
+omp plugin marketplace add millianlmx/mem0-omp
+omp plugin install omp-memory@memory-omp
+omp plugin install omp-memory-req@memory-omp
+```
+
+Les entrées `omp-mem0-memory` et `omp-mem0-req` disparaissent du catalogue avec les
+replis.
+
+### Pile manuelle
+
+| Avant | Maintenant |
+|---|---|
+| dossier `mem0-stack/`, sa crate `mem0-stack/mem0-rs/` | `memory-stack/`, `memory-stack/memory-rs/` |
+| `mem0-rs-data` (`MEM0_RS_DATA_DIR`) | `memory-rs-data` (`MEMORY_RS_DATA_DIR`) |
+| `MEM0_RS_PORT`, `MEM0_RS_CONTAINER` | `MEMORY_RS_PORT`, `MEMORY_RS_CONTAINER` |
+| image `mem0-rs:local`, binaire `mem0-rs` | `memory-rs:local`, `memory-rs` |
+| base `~/.mem0/mem0-rs.db` (`MEM0_DB_PATH`) | `~/.memory/memory-rs.db` (`MEMORY_DB_PATH`) |
+| `MEM0_HTTP_TOKEN`, `MEM0_HTTP_TOKENS`, `MEM0_HTTP_TOKENS_FILE`, `MEM0_PORT` | `MEMORY_HTTP_TOKEN`, `MEMORY_HTTP_TOKENS`, `MEMORY_HTTP_TOKENS_FILE`, `MEMORY_PORT` |
+| `MEM0_SEARCH_FUSION`, `MEM0_RRF_K`, `MEM0_DREAM_INTERVAL_MINUTES`, `MEM0_DREAM_QUIET_MINUTES`, `MEM0_DREAM_PAIRS`, `MEM0_DREAM_FORGET_DAYS` | `MEMORY_SEARCH_FUSION`, `MEMORY_RRF_K`, `MEMORY_DREAM_INTERVAL_MINUTES`, `MEMORY_DREAM_QUIET_MINUTES`, `MEMORY_DREAM_PAIRS`, `MEMORY_DREAM_FORGET_DAYS` |
+| `MEM0_BACKUP_INTERVAL_HOURS`, `MEM0_BACKUP_KEEP`, `MEM0_BACKUP_FILE`, `MEM0_BACKUP_REMOTE_CMD`, `MEM0_BACKUP_REMOTE_TIMEOUT_SECONDS` | `MEMORY_BACKUP_INTERVAL_HOURS`, `MEMORY_BACKUP_KEEP`, `MEMORY_BACKUP_FILE`, `MEMORY_BACKUP_REMOTE_CMD`, `MEMORY_BACKUP_REMOTE_TIMEOUT_SECONDS` |
+| `MEM0_LOG_DIR`, `MEM0_LOG_RETENTION_DAYS`, journal `mem0-AAAA-MM-JJ.jsonl` (`src: "mem0"`) | `MEMORY_LOG_DIR`, `MEMORY_LOG_RETENTION_DAYS`, `memory-AAAA-MM-JJ.jsonl` (`src: "memory"`) |
+| clé `mem0` de `GET /health`, métriques `mem0_*` | clé `memory`, métriques `memory_*` (les deux sont émises pendant la transition) |
+| `MEM0_RS_*` (outillage : binaire, cible, migration) | `MEMORY_RS_*` |
+
+`git pull` renomme `mem0-stack/` en `memory-stack/`, mais laisse dans `mem0-stack/`
+ton `.env` et ton dossier `mem0-rs-data/` (git ne les suit pas). Pendant la
+transition, la commande habituelle lancée dans `mem0-stack/` (`podman compose up -d
+--build`, ou `docker compose`) démarre toujours le service sur ce `.env` et cette
+base, par un compose de repli qui reste dans `mem0-stack/`. Dans `memory-stack/`,
+`compose up` refuse de démarrer tant que `../mem0-stack/.env` ou
+`../mem0-stack/mem0-rs-data/` existe sans son équivalent, et nomme la commande qui
+les déplace ; `./doctor.sh` signale les mêmes restes. Pour passer au nouveau
+dossier, le service arrêté, depuis `memory-stack/` :
+
+```bash
+mv ../mem0-stack/.env ../mem0-stack/mem0-rs-data .
+```
+
+Le service redémarre sur les mêmes souvenirs et le même jeton. Pour renommer aussi
+le dossier de données, change ensemble `MEM0_RS_DATA_DIR=./mem0-rs-data` en
+`MEMORY_RS_DATA_DIR=./memory-rs-data` dans `.env` et `mem0-rs-data` en `memory-rs-data`
+sur le disque (`mv mem0-rs-data memory-rs-data`), puis renomme les autres variables
+`MEM0_*` de ton `.env`. Si la base porte encore le nom `mem0-rs.db`, renomme-la
+aussi, avec ses fichiers voisins (`mem0-rs.db-wal`, `mem0-rs.db-shm`,
+`mem0-rs.db.lock`), en `memory-rs.db…`. Le compose de repli de `mem0-stack/`
+disparaît avec les replis : après la version qui les retire, seule `memory-stack/`
+démarre le service.
+
+### harness.sh
+
+| Avant | Maintenant |
+|---|---|
+| `${OMP_HARNESS_ROOT}/mem0` | `${OMP_HARNESS_ROOT}/memory` |
+| `$SECRETS/mem0.env` et `$SECRETS/mem0/` | `$SECRETS/memory.env` et `$SECRETS/memory/` |
+| `OMP_HARNESS_MEM0_PORT`, `OMP_HARNESS_MEM0_ENV`, `OMP_HARNESS_TAILNET_MEM0_PORT`, `OMP_HARNESS_REBUILD_MEM0` | `OMP_HARNESS_MEMORY_PORT`, `OMP_HARNESS_MEMORY_ENV`, `OMP_HARNESS_TAILNET_MEMORY_PORT`, `OMP_HARNESS_REBUILD_MEMORY` |
+| `MEM0_URL`, `MEM0_HTTP_TOKEN`, `MEM0_HTTP_URL` (vigie et runners), `CORPO_MEM0_TOKEN` | `MEMORY_URL`, `MEMORY_HTTP_TOKEN`, `MEMORY_HTTP_URL`, `CORPO_MEMORY_TOKEN` |
+| service compose `mem0` (`http://mem0:8321`) | service `memory` (`http://memory:8321`) |
+| `monitoring/mem0.token` | `monitoring/memory.token` |
+| `~/.omp/mem0.json` (écrit par `harness.sh connect` et `disconnect`) | `~/.omp/memory.json` |
+
+Le service compose garde sa clé `mem0` pendant la transition, avec l'alias réseau
+`memory` : une configuration qui vise encore `http://mem0:8321` joint toujours le
+service. Le profil de supervision lit toujours le jeton dans `monitoring/mem0.token`,
+le fichier que tu as créé ; seul son `job_name` est devenu `memory`. Pour passer aux
+nouveaux noms à la main, le serveur arrêté, renomme `mem0` en `memory` sous `ROOT`
+(`${OMP_HARNESS_ROOT}`, `/var/lib/omp-harness` par défaut) et sous `SECRETS`
+(`${OMP_HARNESS_SECRETS}`), le lien compris si `memory` y est un lien vers `mem0` :
+
+```bash
+cd "$OMP_HARNESS_ROOT" && { [ ! -L memory ] || rm memory; } && mv mem0 memory
+cd "$OMP_HARNESS_SECRETS" && { [ ! -L memory ] || rm memory; } && mv mem0 memory
+mv "$OMP_HARNESS_SECRETS/mem0.env" "$OMP_HARNESS_SECRETS/memory.env"   # si ce fichier existe
+```
+
+Renomme ensuite les variables `MEM0_*` des fichiers sous `ROOT` et `SECRETS`
+(`compose.env`, `published.env`, `memory.env`). À la version qui retire les replis :
+clé de service `mem0` → `memory`, et `monitoring/mem0.token` →
+`monitoring/memory.token` (renomme le fichier, et le chemin lu par
+`prometheus.yml`).
+
+### Portainer
+
+| Avant | Maintenant |
+|---|---|
+| `${OMP_HARNESS_ROOT}/mem0`, `${OMP_HARNESS_SECRETS}/mem0` | `${OMP_HARNESS_ROOT}/memory`, `${OMP_HARNESS_SECRETS}/memory` |
+| `mem0.env` dans les secrets | `memory.env` |
+| variables `OMP_HARNESS_MEM0_PORT`, `OMP_HARNESS_TAILNET_MEM0_PORT`, `MEM0_BACKUP_REMOTE_CMD` de la stack | `OMP_HARNESS_MEMORY_PORT`, `OMP_HARNESS_TAILNET_MEMORY_PORT`, `MEMORY_BACKUP_REMOTE_CMD` |
+| service compose `mem0`, `oracle.url` = `http://mem0:8321`, `MEM0_HTTP_URL` | service `memory`, `http://memory:8321`, `MEMORY_HTTP_URL` |
+| `monitoring/mem0.token` | `monitoring/memory.token` |
+
+La stack se met à jour comme avant (redéploie depuis le dépôt). Pendant la
+transition, le dossier `memory` créé au démarrage est un lien vers l'ancien
+`mem0`, qui garde données et secrets là où ils sont, et la clé de service `mem0`
+garde l'alias réseau `memory`. Pour renommer à la main, la stack arrêtée : même
+geste que pour `harness.sh`, sous `ROOT` (`${OMP_HARNESS_ROOT}`) et sous `SECRETS`
+(`${OMP_HARNESS_SECRETS}`), en supprimant d'abord le lien `memory` avant de
+renommer `mem0` en `memory`, puis `memory/mem0.env` en `memory/memory.env`. Dans le
+`config.json` persistant, remplace `http://mem0:8321` par `http://memory:8321`
+une fois la clé de service renommée. Le jeton de supervision garde le nom
+`monitoring/mem0.token` pendant la transition, puis devient `memory.token`.
+
+### Debian
+
+| Avant | Maintenant |
+|---|---|
+| unité `omp-harness-mem0.service` | `omp-harness-memory.service` |
+| `/etc/omp-harness/mem0.env`, `deploy/mem0.env.example` | `/etc/omp-harness/memory.env`, `deploy/memory.env.example` |
+| `/var/lib/omp-mem0`, base `mem0-rs.db` | `/var/lib/omp-memory`, `memory-rs.db` |
+| utilisateur et groupe système `omp-mem0` | `omp-memory` |
+| `MEM0_DB_PATH`, `MEM0_HTTP_TOKEN`, `OMP_HARNESS_REBUILD_MEM0` | `MEMORY_DB_PATH`, `MEMORY_HTTP_TOKEN`, `OMP_HARNESS_REBUILD_MEMORY` |
+| `monitoring/mem0.token` | `monitoring/memory.token` |
+
+`install.sh` arrête et désactive l'ancienne unité, installe la nouvelle sur les
+mêmes données et les mêmes secrets, sans en changer la propriété : le service garde
+pendant la transition l'utilisateur `omp-mem0` et le dossier `/var/lib/omp-mem0`
+(0700). Ne les renomme pas avant : la version de transition tourne encore sous
+`omp-mem0`. Au retrait des replis, pour passer au nouveau nom à la main, le
+service arrêté et juste avant d'y mettre à jour :
+
+```bash
+sudo systemctl stop omp-harness-memory.service
+sudo usermod -l omp-memory omp-mem0 && sudo groupmod -n omp-memory omp-mem0
+sudo mv /var/lib/omp-mem0 /var/lib/omp-memory
+sudo usermod -d /var/lib/omp-memory omp-memory
+sudo chown -R omp-memory:omp-memory /var/lib/omp-memory
+sudo mv /etc/omp-harness/mem0.env /etc/omp-harness/memory.env
+```
+
+Renomme aussi `mem0-rs.db` en `memory-rs.db` (et ses fichiers voisins) dans
+`/var/lib/omp-memory`, et fais pointer `MEMORY_DB_PATH` de `memory.env` sur
+`/var/lib/omp-memory/memory-rs.db`. Lance ensuite `install.sh` de la version qui
+retire les replis, qui redémarre le service.
+
+### NixOS
+
+| Avant | Maintenant |
+|---|---|
+| `services.omp-harness.mem0.enable`, `services.omp-harness.mem0.environment` | `services.omp-harness.memory.enable`, `services.omp-harness.memory.environment` |
+| `services.omp-harness.tailscale.mem0HttpsPort` | `services.omp-harness.tailscale.memoryHttpsPort` |
+| utilisateur et groupe système `omp-mem0`, `/var/lib/omp-mem0` | `omp-memory`, `/var/lib/omp-memory` |
+| `/etc/omp-harness/mem0.env` | `/etc/omp-harness/memory.env` |
+| `MEM0_DB_PATH` (`/var/lib/omp-mem0/mem0-rs.db`) | `MEMORY_DB_PATH` (`/var/lib/omp-memory/memory-rs.db`) |
+| unité `omp-harness-mem0.service` | `omp-harness-memory.service` |
+| `monitoring/mem0.token` | `monitoring/memory.token` |
+
+Les anciennes options sont acceptées pendant la transition, avec un avertissement
+qui nomme leur remplaçante ; si les deux sont posées, la nouvelle l'emporte. Le
+module garde l'utilisateur `omp-mem0` et le dossier `/var/lib/omp-mem0` : ne les
+renomme pas avant la version qui retire les replis. À celle-ci, renomme tes options
+dans ta configuration et, le service arrêté, déplace les données comme sur Debian
+(`mv /var/lib/omp-mem0 /var/lib/omp-memory`, `chown -R omp-memory:omp-memory`,
+`mv /etc/omp-harness/mem0.env /etc/omp-harness/memory.env`, `mem0-rs.db` →
+`memory-rs.db`) avant de reconstruire (`nixos-rebuild switch`) ; le module pose alors
+lui-même l'utilisateur `omp-memory` et `MEMORY_DB_PATH`.
+
+### App Mac
+
+| Avant | Maintenant |
+|---|---|
+| agent launchd `com.omp.console.mem0-rs` (et sa variante `.<12 hex>`), son plist | `com.omp.console.memory-rs` |
+| dossier `~/Library/Application Support/com.omp.console/mem0-rs/` (`mem0-rs.db`, `mem0-rs.log`) | `…/memory-rs/` (`memory-rs.db`, `memory-rs.log`) |
+| clé `MEM0_HTTP_TOKEN` de `stack/env`, `MEM0_HTTP_URL`, `MEM0_PROJECT_ID` | `MEMORY_HTTP_TOKEN`, `MEMORY_HTTP_URL`, `MEMORY_PROJECT_ID` |
+| `OMP_CONSOLE_MEM0_PORT`, `OMP_CONSOLE_MEM0_RS_SHA256` | `OMP_CONSOLE_MEMORY_PORT`, `OMP_CONSOLE_MEMORY_RS_SHA256` |
+| `MEM0_CONSOLE_HOOK_ALL_WORKTREES` (hook de `scripts/run-console.sh`) | `MEMORY_CONSOLE_HOOK_ALL_WORKTREES` |
+| texte « Service mem0 » de l'app | « Service mémoire » |
+| `~/.omp/mem0.json` (écrit par l'appairage) | `~/.omp/memory.json` |
+
+Rien à faire : au démarrage, l'app décharge l'ancien agent, retire son plist, et
+garde le dossier `mem0-rs/` s'il existe, avec sa base, sans jamais créer un
+`memory-rs/` vide à côté. Pour renommer à la main, au retrait des replis : quitte
+l'app, puis renomme le dossier `mem0-rs/` en `memory-rs/` et ses fichiers
+`mem0-rs.db…` et `mem0-rs.log` en `memory-rs.db…` et `memory-rs.log`.
 
 ## Dépannage
 

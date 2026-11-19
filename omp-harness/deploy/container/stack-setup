@@ -26,8 +26,8 @@ setting_renamed() {
   [ -n "$value" ] || value="$(setting "$2" "$3")"
   printf '%s\n' "$value"
 }
-# Le dossier `memory` sous $1 : déjà là (dossier ou lien) → rien ; sinon `mem0` d'avant le renommage
-# → lien relatif memory -> mem0 (données et secrets restent où ils sont) ; sinon créé.
+# Le dossier `memory` sous $1 : déjà là (dossier ou lien) → rien ; sinon l'ancien dossier d'avant le renommage
+# → lien relatif `memory` vers lui (données et secrets restent où ils sont) ; sinon créé.
 link_memory_dir() {
   if [ -e "$1/memory" ] || [ -L "$1/memory" ]; then return 0
   elif [ -e "$1/mem0" ] || [ -L "$1/mem0" ]; then ln -s mem0 "$1/memory"

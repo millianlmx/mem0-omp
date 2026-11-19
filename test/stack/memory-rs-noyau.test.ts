@@ -2,7 +2,7 @@
 // boîte noire ne peuvent constater de l'intérieur.
 //
 // - AC-12 : la documentation de la crate tranche entity_boost en citant la source
-//   de memory 2.2.1, et ses dépendances directes ne comptent aucune bibliothèque NLP ;
+//   de la bibliothèque d'origine 2.2.1, et ses dépendances directes ne comptent aucune bibliothèque NLP ;
 // - AC-13 : une fixture de rang divergente fait échouer le contrat contre memory-rs ;
 // - AC-16 / AC-17 : la section `rust` de scripts/check.sh rougit sur un
 //   avertissement clippy ou un `cargo test` en échec, saute sans cargo en local et
@@ -123,9 +123,9 @@ test("memory-rs-noyau/AC-12 : README cite la source d'entity_boost et la crate n
   const entity = section(readme, "entity_boost");
   assert.ok(entity.includes("inactif"), entity);
   for (const citation of [
-    "mem0/utils/entity_extraction.py:751",
-    "mem0/utils/spacy_models.py:44",
-    "mem0/memory/main.py:3336",
+    "get_nlp_full()",
+    "ImportError",
+    "query_entities = extract_entities(query)",
   ]) {
     assert.ok(entity.includes(citation), `citation ${citation} absente de « ## entity_boost »`);
   }

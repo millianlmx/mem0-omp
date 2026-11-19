@@ -6,20 +6,20 @@ commande d'ajout côté utilisateur.
 ## Structure
 
 ```
-memory-omp/                              ← racine du dépôt = marketplace
+mem0-omp/                              ← racine du dépôt = marketplace
 ├── .omp-plugin/marketplace.json       ← catalogue, chemin lu par OMP
 ├── .claude-plugin/marketplace.json    ← copie, repli compatible Claude Code
 ├── CHANGELOG.md                       ← journal des versions, écrit par le job de release
-├── omp-memory/                   ← le plugin mémoire
+├── omp-memory/                        ← le plugin mémoire
 │   ├── package.json                   ← déclare omp.extensions
 │   ├── extension.ts
 │   └── install.sh                     ← chemin manuel, hors marketplace
-├── omp-memory-req/                      ← le plugin pipeline (/req → /specs → /impl → /review)
+├── omp-memory-req/                    ← le plugin pipeline (/req → /specs → /impl → /review)
 │   ├── package.json                   ← déclare omp.extensions
 │   └── extension.ts
 ├── omp-console/                       ← la coque macOS, hors publication marketplace
-├── memory-stack/                        ← le service memory, à lancer séparément
-│   └── memory-rs/                       ← le serveur Rust memory-rs (crate)
+├── memory-stack/                      ← le service mémoire, à lancer séparément
+│   └── memory-rs/                     ← le serveur Rust memory-rs (crate)
 ├── test/                              ← suite de tests, hors publication
 ├── scripts/check.sh                   ← validation avant publication
 ├── scripts/release.ts                 ← commit de release poussé sur main, tags et releases au merge
@@ -116,7 +116,7 @@ cd mem0-omp
 chmod +x scripts/check.sh omp-memory/install.sh   # perdu par un unzip
 git init -b main
 git add .
-git commit -m "feat: mémoire memory par projet pour oh-my-pi"
+git commit -m "feat: mémoire par projet pour oh-my-pi"
 
 gh repo create mem0-omp --public --source=. --push
 # ou, sans gh :
@@ -163,7 +163,7 @@ conclure que le plugin est cassé.
 
 ## Le stack n'est pas installé par le plugin
 
-Le marketplace ne déploie que du code d'extension. Le service memory reste à
+Le marketplace ne déploie que du code d'extension. Le service mémoire reste à
 lancer à la main, une fois :
 
 ```bash
@@ -184,6 +184,16 @@ verra `/memory-status` en rouge et n'aura aucune idée de pourquoi.
 
 Le catalogue est du contenu de dépôt : rien n'est à republier ailleurs, et surtout
 rien à pousser à la main.
+
+**Une installation d'avant le renommage de la mémoire** (plugins `omp-mem0-memory` et
+`omp-mem0-req`) se met à jour par les mêmes commandes sous les anciens noms :
+`omp plugin marketplace update mem0-omp`, puis
+`omp plugin upgrade omp-mem0-memory@mem0-omp` et
+`omp plugin upgrade omp-mem0-req@mem0-omp`. Le catalogue garde le nom `mem0-omp`
+pendant la transition. Le passage aux nouveaux noms de plugins (désinstaller les
+anciens, installer `omp-memory` et `omp-memory-req`), et ce que les autres types
+d'installation renomment, sont dans [README.md](README.md) § « Passer aux noms memory
+(mise à niveau) ». Les procédures ci-dessous nomment les nouveaux plugins.
 
 **Ne monte plus les versions à la main.** Les quatre fichiers porteurs de version
 — `omp-memory/package.json`, `omp-memory-req/package.json`,

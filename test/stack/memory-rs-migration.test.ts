@@ -1,6 +1,6 @@
 // Preuve de memory-rs-migration sans Python : `memory-rs import` lit une source semée
 // par le test (Qdrant 1.19.0 native lancée par `scripts/memory-http-contrat.sh
-// --start-qdrant`, history.db écrit par `node:sqlite` au schéma de memory 2.2.1), puis
+// --start-qdrant`, history.db écrit par `node:sqlite` au schéma de la bibliothèque d'origine 2.2.1), puis
 // memory-rs démarré sur la base importée doit reproduire la graine.
 //
 // - Phase A : collection mixte (points nommés `""` + `bm25`, points en liste nue),
@@ -429,7 +429,7 @@ async function ajouter(
 }
 
 // ---------------------------------------------------------------------------
-// Graine : Qdrant et history.db au format de memory 2.2.1
+// Graine : Qdrant et history.db au format de la bibliothèque d'origine 2.2.1
 // ---------------------------------------------------------------------------
 
 /** n-ième date isoformat UTC de Python (microsecondes, `+00:00`), strictement croissante. */
@@ -464,7 +464,7 @@ type Semis = {
   nu?: boolean;
 };
 
-/** Payload de memory 2.2.1 pour un add infer=false (README de memory-rs, tests/common/mod.rs). */
+/** Payload de la bibliothèque d'origine 2.2.1 pour un add infer=false (README de memory-rs, tests/common/mod.rs). */
 function payloadMemory(s: Semis): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     data: s.data,
@@ -528,7 +528,7 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at    DATETIME
 );`;
 
-/** history.db de memory 2.2.1, journal DELETE (aucun fichier -wal à côté). */
+/** history.db de la bibliothèque d'origine 2.2.1, journal DELETE (aucun fichier -wal à côté). */
 async function ecrireHistoryDb(chemin: string, lignes: LigneHistorique[]): Promise<void> {
   // Chargé à l'appel (voir idsHistorique) : pas d'ExperimentalWarning quand le test est sauté.
   const { DatabaseSync } = await import("node:sqlite");
