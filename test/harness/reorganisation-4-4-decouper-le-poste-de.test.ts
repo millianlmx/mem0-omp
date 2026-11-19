@@ -186,7 +186,7 @@ const BASE_CAPS: Record<string, number> = {
 const SERVER = path.join(ROOT, "omp-harness");
 
 const KINDS = "(?:function\\*?|const|let|var|class|abstract\\s+class|type|interface|enum)";
-const TOP_LEVEL = new RegExp("^(?:export\\s+)?(?:declare\\s+)?(?:async\\s+)?" + KINDS + "\\s+([A-Za-z_$][\\w$]*)");
+const TOP_LEVEL = new RegExp(`^(?:export\\s+)?(?:declare\\s+)?(?:async\\s+)?${KINDS}\\s+([A-Za-z_$][\\w$]*)`);
 const MEMBER = /^ {2}(?:static\s+)?(?:async\s+)?(?:get\s+|set\s+)?(#?[A-Za-z_$][\w$]*)\s*(?:<[^>\n]*>)?\(/;
 const NOT_MEMBERS = new Set(["if", "for", "switch", "while", "return", "catch"]);
 const REEXPORT = /^export\s+(?:type\s+)?(?:\*(?:\s+as\s+\w+)?|\{[^}]*\})\s*from\s*"([^"]+)"/gm;
