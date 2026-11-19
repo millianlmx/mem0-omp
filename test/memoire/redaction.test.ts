@@ -183,7 +183,7 @@ test("redaction/AC-9 : clés Stripe, PAT GitLab, jetons Hugging Face et npm, cl�
 type CasPartage = { nom: string; entree: string[]; attendu: string };
 
 test("redaction/AC-10 : les cas partagés avec mem0-rs rendent la même sortie que le masquage serveur", () => {
-  // Le même fichier est jugé par `cargo test` (mem0-stack/mem0-rs/src/redaction.rs) :
+  // Le même fichier est jugé par `cargo test` (mem0-stack/mem0-rs/src/api/redaction.rs) :
   // deux implémentations, une seule liste de cas, donc des motifs tenus en phase.
   const fichier = path.join(ROOT, "mem0-stack", "mem0-rs", "tests", "redaction-cas.json");
   const { cas } = JSON.parse(fs.readFileSync(fichier, "utf8")) as { cas: CasPartage[] };

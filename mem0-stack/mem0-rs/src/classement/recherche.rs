@@ -5,12 +5,12 @@
 //! Deux fusions des classements sémantique et BM25 : l'additive de mem0 (défaut,
 //! parité de `scripts/mem0-http-contrat/rang.json`) et la Reciprocal Rank Fusion
 //! ([`classer_rrf`]), choisie par `MEM0_SEARCH_FUSION` ou par le champ `fusion`
-//! d'une requête. Le banc de mesure ([`crate::banc`]) éprouve aussi les deux
+//! d'une requête. Le banc de mesure ([`crate::classement::banc`]) éprouve aussi les deux
 //! classements seuls ([`Strategie::Semantique`], [`Strategie::Bm25`]).
 //!
 //! La fusion `graphe` (memoire-liee) ajoute un troisième classement à la RRF :
 //! les souvenirs atteints depuis les meilleurs candidats par le graphe de la
-//! mémoire ([`crate::liens`]) — entités partagées, voisins sémantiques, liens
+//! mémoire ([`crate::stockage::liens`]) — entités partagées, voisins sémantiques, liens
 //! typés —, que ni l'embedding ni le BM25 ne trouvent ([`bras_graphe`]).
 
 use std::collections::{HashMap, HashSet};
@@ -19,12 +19,12 @@ use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::bm25::{self, VecteurCreux};
+use crate::classement::bm25::{self, VecteurCreux};
 use crate::config::{blanc_python, strip_python};
-use crate::db::{self, Souvenir};
-use crate::entites;
-use crate::liens::{self, SEMANTIQUE};
-use crate::validation::SearchRequest;
+use crate::stockage::db::{self, Souvenir};
+use crate::stockage::entites;
+use crate::stockage::liens::{self, SEMANTIQUE};
+use crate::api::validation::SearchRequest;
 
 /// `threshold=None` de mem0 (main.py:3331-3332).
 const SEUIL_PAR_DEFAUT: f64 = 0.1;

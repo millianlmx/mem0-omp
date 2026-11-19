@@ -7,7 +7,7 @@
 
 use serde_json::{Map, Number, Value, json};
 
-use crate::recherche::Fusion;
+use crate::classement::recherche::Fusion;
 
 /// Rejet d'un corps.
 #[derive(Debug, Clone, PartialEq)]

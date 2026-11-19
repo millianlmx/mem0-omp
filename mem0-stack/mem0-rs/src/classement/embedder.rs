@@ -2,11 +2,11 @@
 //!
 //! Imite mem0 2.2.1 sur openai-python 3.24.0 : `\n` remplacé par une espace,
 //! `{"input":[texte…],"model":…,"encoding_format":"float"}` sans `dimensions`.
-//! Délais et nouvelles tentatives : [`crate::openai::poster`].
+//! Délais et nouvelles tentatives : [`crate::modele::openai::poster`].
 
 use serde_json::{Value, json};
 
-use crate::openai;
+use crate::modele::openai;
 
 /// Nombre maximal de textes par requête de [`Embedder::plonger_lot`] (`embed_batch`).
 const TEXTES_PAR_LOT: usize = 100;

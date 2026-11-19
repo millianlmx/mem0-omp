@@ -167,7 +167,7 @@ client correct :
   masquent les secrets du texte AVANT l'embedding, l'invite d'extraction et
   l'écriture — le `hash` est celui du texte masqué. Les familles et leur ordre sont
   ceux de `redact` du plugin (`omp-mem0-memory/write.ts`), jeton `[REDACTED]` :
-  `src/redaction.rs`, jugé avec le plugin sur les cas partagés de
+  `src/api/redaction.rs`, jugé avec le plugin sur les cas partagés de
   `tests/redaction-cas.json`. Le plugin masquait déjà ce qu'il envoie ; le serveur
   couvre les clients qui écrivent sans lui (oracle du harness, apps OMP Console).
   `mem0-rs import` recopie la source verbatim, sans masquage.
@@ -382,7 +382,7 @@ fusion), puis imprime deux tableaux Markdown, ou un objet JSON d'une ligne avec
   sont du bruit, seule une régression du chemin commun se verrait.
 - **`--seuil`** : `threshold` des recherches, 0 par défaut (on mesure le classement,
   pas le plancher).
-- **Corpus** : `src/banc/corpus.json`, intégré au binaire (`--corpus <fichier>` pour
+- **Corpus** : `src/classement/banc/corpus.json`, intégré au binaire (`--corpus <fichier>` pour
   un autre, au même format). 166 souvenirs de développement en français et en
   anglais, 6 liens typés posés comme par un agent (`liens`, facultatif), 60 requêtes
   en quatre catégories — `lexicale` (identifiant, nom de fichier, code d'erreur :
@@ -391,7 +391,7 @@ fusion), puis imprime deux tableaux Markdown, ou un objet JSON d'une ligne avec
   évoque, par un lien ou une entité, sans lui ressembler) — chacune avec ses
   souvenirs pertinents gradués (2 : répond, 1 : utile).
 - **Embedder** : `--embedder local` (défaut) est un plongeur déterministe, hors
-  ligne (`src/banc/plongeur.rs`) : mots normalisés, trigrammes de caractères et
+  ligne (`src/classement/banc/plongeur.rs`) : mots normalisés, trigrammes de caractères et
   concepts d'un petit lexique bilingue de développement, hachés puis normalisés en
   L2. Il porte un peu de signal sémantique mais n'est pas un modèle de langue : ni
   ordre des mots, ni paraphrase hors de son lexique, et ce lexique a été écrit avec
@@ -457,9 +457,9 @@ par le rêve).
 
 Schéma v4 (memoire-liee). Chaque écriture indexe le souvenir, dans sa transaction :
 
-- **Entités** (`src/entites.rs`) : extraction déterministe, sans modèle ni
+- **Entités** (`src/stockage/entites.rs`) : extraction déterministe, sans modèle ni
   bibliothèque NLP, de ce qu'un souvenir de développement nomme sans ambiguïté —
-  fichiers (clé : le nom de base, `src/recherche.rs` et `recherche.rs` partagent
+  fichiers (clé : le nom de base, `src/classement/recherche.rs` et `recherche.rs` partagent
   `recherche.rs`), routes (`/memory/search`), identifiants de code (snake_case,
   camelCase, PascalCase à majuscule interne, kebab-case avec chiffre ou trois parts,
   texte entre accents graves), constantes et codes d'erreur (`MEM0_DB_PATH`,
@@ -500,7 +500,7 @@ requêtes, quand une portée est calme. Il n'efface et ne réécrit **jamais** u
 écrit par un agent : il ajoute des objets dérivés (liens, observations, mental
 models, propositions), et toute suppression passe par une décision humaine.
 
-**Rêve local** (`src/reve.rs`), dans mem0-rs, sur son propre LLM (`OMLX_LLM_MODEL` via `OMLX_CHAT_BASE_URL`) :
+**Rêve local** (`src/entretien/reve.rs`), dans mem0-rs, sur son propre LLM (`OMLX_LLM_MODEL` via `OMLX_CHAT_BASE_URL`) :
 toutes les `MEM0_DREAM_INTERVAL_MINUTES`, chaque portée qui a changé depuis son
 dernier rêve et qu'aucune écriture n'a touchée depuis `MEM0_DREAM_QUIET_MINUTES` :
 
@@ -609,6 +609,6 @@ de fastembed : c'est un raciniseur Snowball retenu pour la parité BM25 (décisi
 
 ## Mots vides
 
-`src/stopwords_english.txt` est une copie verbatim de `english.txt` du dépôt Hugging
+`src/classement/stopwords_english.txt` est une copie verbatim de `english.txt` du dépôt Hugging
 Face [`Qdrant/bm25`](https://huggingface.co/Qdrant/bm25), révision
 `22b8d2af71a76161e18dd432d2cee0eefa66e412` (179 mots), la liste qu'utilise fastembed.

@@ -17,15 +17,15 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::consolidation::{self, Consolidation};
+use crate::entretien::consolidation::{self, Consolidation};
 use crate::horodatage;
-use crate::http::{
+use crate::api::http::{
     Partage, USER, avec_base, controle_jeton, controle_portee, controle_souvenirs, interne, json, portee,
 };
-use crate::jetons::Acces;
-use crate::liens::{self, Lien, TYPES_AGENT};
-use crate::redaction::masquer;
-use crate::reve::{self, Decision};
+use crate::api::jetons::Acces;
+use crate::stockage::liens::{self, Lien, TYPES_AGENT};
+use crate::api::redaction::masquer;
+use crate::entretien::reve::{self, Decision};
 
 /// Corps JSON → `T`, ou 422 `{"detail": …}`.
 fn corps<T: DeserializeOwned>(octets: &Bytes) -> Result<T, Box<Response>> {
@@ -50,7 +50,7 @@ fn parametre<'a>(parametres: &'a [(String, String)], nom: &str) -> Option<&'a st
 /// Le jeton de la requête (401), puis `brut` contrôlé comme une portée (500), puis
 /// cette portée ouverte par le jeton (403 ; absente : toutes les portées).
 #[expect(clippy::result_large_err, reason = "la réponse d'erreur part telle quelle, une fois par requête")]
-fn portee_ouverte(etat: &crate::http::Etat, entetes: &HeaderMap, brut: Option<String>) -> Result<Option<String>, Response> {
+fn portee_ouverte(etat: &crate::api::http::Etat, entetes: &HeaderMap, brut: Option<String>) -> Result<Option<String>, Response> {
     let acces = controle_jeton(etat, entetes)?;
     let agent_id = portee(brut).map_err(|()| interne())?;
     controle_portee(&acces, agent_id.as_deref()).map_or(Ok(agent_id), Err)
@@ -98,7 +98,7 @@ pub async fn lier(State(etat): Partage, entetes: HeaderMap, octets: Bytes) -> Re
     };
     let ecrit = avec_base(&etat, move |conn| {
         for id in [&lien.source, &lien.target] {
-            if !crate::db::existe(conn, id)? {
+            if !crate::stockage::db::existe(conn, id)? {
                 return Ok(Err(id.clone()));
             }
         }
@@ -166,7 +166,7 @@ pub async fn liens_souvenir(State(etat): Partage, Path(id): Path<String>, entete
         return r;
     }
     let lu = avec_base(&etat, move |conn| {
-        if !crate::db::existe(conn, &id)? {
+        if !crate::stockage::db::existe(conn, &id)? {
             return Ok(None);
         }
         let vus = liens::liens_vus(conn, &[&id])?.remove(&id).unwrap_or_default();
@@ -276,7 +276,7 @@ pub async fn rever(State(etat): Partage, entetes: HeaderMap, octets: Bytes) -> R
                 rapports.push(r);
             }
             Err(e) => {
-                crate::journal::erreur(&format!("rêve de « {p} » impossible : {e}"));
+                crate::exploitation::journal::erreur(&format!("rêve de « {p} » impossible : {e}"));
                 erreurs.push(reve::erreur_de_portee(&p, &e));
                 etat.suivi_reve.noter(&erreurs);
                 return interne();
@@ -384,7 +384,7 @@ pub async fn consolider(State(etat): Partage, entetes: HeaderMap, octets: Bytes)
         match etat.embedder.plonger_lot(&textes).await {
             Ok(v) => v,
             Err(e) => {
-                crate::journal::erreur(&format!("consolidation : {e}"));
+                crate::exploitation::journal::erreur(&format!("consolidation : {e}"));
                 return interne();
             }
         }

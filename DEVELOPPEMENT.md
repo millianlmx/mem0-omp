@@ -107,6 +107,20 @@ Le client et les écrans que partagent l'app Mac et l'app iOS sont rangés par d
 | `ConsoleUI/Runs/` | Une feature à l'écran : lancement, menus et gestes, consigne et budget, preuves, carte de la session. |
 | `ConsoleUI/Workstation/` | L'écran Poste : état, envois à approuver, tour de contrôle du poste, page Atlassian. |
 
+### Le service mémoire, dossier par dossier
+
+La racine de `src/` du crate du service mémoire ne garde que son point d'entrée `main.rs` (le serveur et les sous-commandes `import` et `banc`) et deux transverses lus par presque tous les domaines : `config.rs` (ligne de commande et variables d'environnement) et `horodatage.rs` (le format d'instant commun). Chaque autre module est rangé, sous son nom de base, dans le dossier de son domaine, avec les fichiers de données qu'il intègre au binaire.
+
+| Dossier | Responsabilité |
+| --- | --- |
+| `api/` | La surface HTTP : routes du contrat et routes des liens, du rêve et de la consolidation, décodage et validation des corps, jetons et portées, masquage des secrets avant écriture. |
+| `classement/` | La recherche hybride : plongements denses et creux (BM25), fusion des classements, et le banc qui mesure ces fusions sur un corpus étiqueté. |
+| `entretien/` | L'entretien de la mémoire hors des requêtes : rêve local et dossiers de consolidation. |
+| `exploitation/` | L'exploitation du service : journal structuré, métriques Prometheus, instantanés de la base. |
+| `modele/` | Le modèle de langage : appels OpenAI-compatibles (délais, nouvelles tentatives) et extraction additive des faits, avec ses invites. |
+| `reprise/` | La reprise d'une mémoire de l'ancien service Python : collection Qdrant et historique lus, base écrite en une transaction. |
+| `stockage/` | La base SQLite unique : souvenirs, vecteurs, termes et historique, graphe des liens et ses entités, voisins de proximité, verrou d'exclusivité. |
+
 ## Tests et scripts
 
 La suite node vit dans `test/`, rangée par **ce qu'elle éprouve** ; un fichier =

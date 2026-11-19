@@ -426,7 +426,7 @@ mod tests {
     /// Les cas partagés avec le plugin : même entrée, même sortie que `redact`.
     #[test]
     fn redaction_cas_partages_avec_le_plugin() {
-        let cas: Value = serde_json::from_str(include_str!("../tests/redaction-cas.json")).unwrap();
+        let cas: Value = serde_json::from_str(include_str!("../../tests/redaction-cas.json")).unwrap();
         let cas = cas["cas"].as_array().unwrap();
         assert!(cas.len() >= 40, "cas partagés : {}", cas.len());
         for c in cas {
@@ -437,7 +437,7 @@ mod tests {
 
     #[test]
     fn idempotent_et_jeton_stable() {
-        let cas: Value = serde_json::from_str(include_str!("../tests/redaction-cas.json")).unwrap();
+        let cas: Value = serde_json::from_str(include_str!("../../tests/redaction-cas.json")).unwrap();
         let tout: String = cas["cas"]
             .as_array()
             .unwrap()
