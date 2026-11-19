@@ -537,7 +537,7 @@ dialogue de Siri), jamais en silence.
 - **Notification d'une question unique recommandée** (catégorie `omp.answer`) :
   « Prendre la recommandation », « Répondre… » (saisie, bouton « Répondre ») et
   « Ouvrir ». La toucher ouvre le fil de sa feature. Les libellés sont ceux de
-  `NotificationText` ; le routage vit dans `ConsoleClient/HarnessNotifications.swift`.
+  `NotificationText` ; le routage vit dans `ConsoleClient/Notifications/HarnessNotifications.swift`.
   `[test: answerNotificationOffersItsGestures]`
 - **Live Activity démarrée seule** : le jeton push-to-start part au serveur dès le
   lancement ; une activité démarrée par le serveur est adoptée ; à défaut, l'app au

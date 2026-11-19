@@ -297,7 +297,7 @@ const UNTRANSLATED: readonly Untranslated[] = [
     reason: "format numérique (%.2f), le séparateur suit la locale",
   },
   {
-    file: "omp-console/Sources/ConsoleClient/HarnessFailureText.swift",
+    file: "omp-console/Sources/ConsoleClient/Connection/HarnessFailureText.swift",
     name: "stepKinds",
     reason: "codes d'étape du serveur",
   },

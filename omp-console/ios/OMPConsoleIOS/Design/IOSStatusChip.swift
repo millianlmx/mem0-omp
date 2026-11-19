@@ -1,9 +1,9 @@
 // La pastille d'état de la coque iOS (S-1, BR-2) : un point teinté et le MOT de
 // l'état, sur une capsule teintée à 15 %.
 //
-// Équivalent iOS de `omp-console/Sources/OMPConsole/Design/StatusBadge.swift`
+// Équivalent iOS de `omp-console/Sources/ConsoleUI/ConsoleShell.swift`
 // (même forme, même règle : le mot porte le sens, la couleur ne fait que le
-// doubler). Le mapping des tons est IDENTIQUE à celui de macOS (`StatusBadge`),
+// doubler). Le mapping des tons est IDENTIQUE à celui de macOS (`ConsoleStatusChip`),
 // déclaré ici en extension locale : le noyau `ConsoleCore` n'importe pas SwiftUI
 // (garde « Noyau partagé » de `scripts/check.sh`).
 

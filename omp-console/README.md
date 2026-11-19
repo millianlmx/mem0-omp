@@ -302,17 +302,17 @@ elle-même.
 - **Appairer un iPhone par QR code.** Sans coller de code : sur le Mac relié à un
   serveur qui annonce la capacité `pairing-ticket` (`GET /v1/health`), avec un jeton
   `admin` qui voit tous les dépôts, la feuille « Serveur » offre « Appairer un
-  iPhone… » (`PairDeviceSheet`, `ConsoleUI/PairDeviceViews.swift`). Elle nomme
+  iPhone… » (`PairDeviceSheet`, `ConsoleUI/Pairing/PairDeviceViews.swift`). Elle nomme
   l'appareil (« iPhone » par défaut), crée un **ticket à usage unique**
   (`POST /v1/pair/tickets`, 10 minutes, gardé en mémoire par le serveur) et l'affiche
-  en QR code (`ConsoleUI/PairQRCode.swift`, CoreImage, correction M, noir sur blanc
+  en QR code (`ConsoleUI/Pairing/PairQRCode.swift`, CoreImage, correction M, noir sur blanc
   dans les deux modes) avec le temps restant ; « Refaire un code » en crée un autre.
   L'interrupteur « Cet iPhone approuve les envois du poste » n'existe que si l'app
   Mac a elle-même le jeton approbateur (le droit se délègue d'un approbateur à un
   autre). La mémoire du projet est jointe au ticket quand ce Mac en lit une sur un
   serveur (`~/.omp/mem0.json`, `Server/PairMemory.swift`), jamais l'agent local.
   Le QR code porte `ompconsole://pair?u=<adresse du serveur>&t=<ticket>`
-  (`HarnessPairLink`, `ConsoleClient/HarnessPairLink.swift`) : l'appareil photo de
+  (`HarnessPairLink`, `ConsoleClient/Pairing/HarnessPairLink.swift`) : l'appareil photo de
   l'iPhone l'ouvre dans l'app, qui demande « Appairer cet appareil avec <adresse> ? »
   (rien n'est échangé avant ce « Appairer » : un lien ne relie jamais l'appareil à un
   serveur que l'humain n'a pas vu), puis échange le ticket SANS jeton
@@ -467,7 +467,7 @@ elle-même.
   échouée). Côté Apple, l'App ID n'a besoin que de la capacité Push
   Notifications, déjà requise par les Live Activities (`aps-environment` de
   `ios/OMPConsoleIOS.entitlements`) ; côté serveur, de la clé `.p8` de `apns`. Le
-  routage (catégorie → geste) vit dans `ConsoleClient/HarnessNotifications.swift`, le
+  routage (catégorie → geste) vit dans `ConsoleClient/Notifications/HarnessNotifications.swift`, le
   pont vers le système dans `HarnessNotificationCenter.swift`.
 - **Widget d'écran d'accueil (iPhone, iPad).** « Boîte du serveur », en petit, moyen
   ou grand format : ce qui attend votre décision, le nombre de features en cours et
@@ -1621,22 +1621,33 @@ omp-console/
 │   ├── MenuBar/                   l'ordre des séparateurs du menu principal
 │   └── Design/                    surfaces, Markdown, coloration du code, diagnostic copiable, fenêtre principale
 ├── Sources/ConsoleClient/         la cible partagée macOS/iOS des clients distants
-│   ├── HarnessModel.swift         le client du serveur de pipelines du VPS
-│   ├── HarnessPairing.swift       le code d'appairage `omp1:…` et `~/.omp/harness.json`
-│   ├── HarnessPairLink.swift      l'appairage par QR code : le lien `ompconsole://pair`, le ticket, son échange sans jeton
-│   ├── MemoryReader.swift         la lecture directe de la mémoire du serveur (iOS)
-│   ├── MemoryAccess.swift         l'adresse, le jeton et le projet lu de cette mémoire
-│   ├── HarnessWire.swift          le contrat JSON du serveur de pipelines
-│   ├── HarnessTransport.swift     le transport https et le lecteur SSE du serveur
-│   ├── HarnessSession.swift       le direct de la session d'une feature ou d'un audit (entrées, pages, événements)
-│   ├── HarnessMonitoring.swift    le contrat du monitoring (coût, alertes, frise, fichiers, tests, santé, modèles)
-│   ├── HarnessLiveActivity.swift  l'état d'une Live Activity, la forme exacte que pousse le serveur, et le choix de celle qui démarre seule
-│   ├── WorkstationWire.swift      le contrat JSON du poste de travail (`/v1/workstation*`)
-│   ├── WorkstationModel.swift     le client du poste de travail, porté par `HarnessModel` (même transport, même flux)
-│   ├── HarnessNotifications.swift les notifications : charge du serveur, catégories, routage d'une action vers un geste
-│   ├── HarnessNotificationCenter.swift  le pont vers UserNotifications (permission, actions, notifications locales du Mac)
-│   └── HarnessDrafts.swift        les brouillons de lancement et de geste
+│   ├── HarnessModel.swift         le client du serveur de pipelines du VPS, que chaque domaine étend
+│   ├── HarnessWire.swift          le contrat JSON du serveur de pipelines (runs, boîte, décisions)
+│   ├── Autonomy/                  l'autonomie : paliers, consignes permanentes, curseur, pause globale
+│   ├── Connection/                le transport https et SSE, la porte des appels, les échecs, préférences et trousseau
+│   ├── Control/                   la tour de contrôle : vigie, planifications, administration, fournisseurs, services
+│   ├── Intake/                    la Demande : une phrase classée par le serveur, puis un plan à confirmer
+│   ├── Memory/                    la lecture et la correction directes de la mémoire du serveur (iOS)
+│   ├── Notifications/             les notifications et leur pont système, la Live Activity, le widget
+│   ├── OS/                        l'OS agentique : décisions, pouls, espaces, fils, tableau de bord, brief, propositions
+│   ├── Pairing/                   l'appairage : code `omp1:…`, `~/.omp/harness.json`, lien QR et échange du ticket
+│   ├── Palette/                   la palette de commandes et sa recherche globale
+│   ├── Runs/                      une feature : lancement, brouillons, historique, direct et graphe, monitoring, preuves
+│   ├── Spaces/                    les espaces clients, leur frontière et la portée courante
+│   └── Workstation/               le poste de travail, le navigateur du serveur, Atlassian
 ├── Sources/ConsoleUI/             les écrans partagés macOS/iOS (OS agentique, hub Système, Poste, Dépôts, palette)
+│   ├── ConsoleShell.swift         le socle des écrans partagés (environnement, pastille d'état)
+│   ├── Autonomy/                  la preuve d'une validation prise seule, la page Système › Autonomie
+│   ├── Control/                   vigie, planifications, administration, dépôts et leurs réglages, services
+│   ├── Inbox/                     les cartes de la boîte, la question située, la carte en place d'une feature
+│   ├── Intake/                    la feuille de la Demande et « Modifier le plan »
+│   ├── Memory/                    la feuille « Modifier le souvenir »
+│   ├── Notifications/             l'ouverture de l'app à l'endroit qu'une notification désigne
+│   ├── OS/                        accueil, radar, fils, décisions, Comprendre, Savoir, hub Système, espaces
+│   ├── Pairing/                   la feuille « Appairer un iPhone », sa confirmation et le QR code
+│   ├── Palette/                   la palette de commandes (⌘K, ⌘F) et les feuilles qu'elle ouvre
+│   ├── Runs/                      lancement, menus et gestes, consigne et budget, preuves, carte de la session
+│   └── Workstation/               l'écran Poste, ses envois à approuver, sa tour de contrôle, la page Atlassian
 ├── Sources/ConsoleCore/           la cible partagée macOS/iOS, sans dépendance
 │   ├── Design/                    sections, vocabulaire, mots du serveur de pipelines, du monitoring et du poste de travail
 │   ├── Memory/                    la lecture des réponses de la mémoire et le noyau du graphe

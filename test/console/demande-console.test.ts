@@ -30,8 +30,8 @@ function object(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-const MODEL = () => read("Sources", "ConsoleClient", "HarnessIntake.swift");
-const VIEWS = () => code(read("Sources", "ConsoleUI", "IntakeViews.swift"));
+const MODEL = () => read("Sources", "ConsoleClient", "Intake", "HarnessIntake.swift");
+const VIEWS = () => code(read("Sources", "ConsoleUI", "Intake", "IntakeViews.swift"));
 
 test("demande-console/AC-16 : chaque route et chaque champ /v1/intake* décodés par le client Swift existent dans le routeur et le JSON réel du serveur", async () => {
   const model = MODEL();
@@ -142,7 +142,7 @@ test("demande-console/AC-16 : chaque route et chaque champ /v1/intake* décodés
 });
 
 test("demande-console/AC-17 : « Demande » ouvre la palette ⌘K saisie vide, sur Mac et iOS, un composeur permanent dans la liste des fils, une feuille titrée au champ multiligne sans dictée propre", () => {
-  const palette = code(read("Sources", "ConsoleClient", "HarnessPalette.swift"));
+  const palette = code(read("Sources", "ConsoleClient", "Palette", "HarnessPalette.swift"));
   const search = palette.indexOf("if !search {");
   assert.ok(search > 0);
   const first = palette.indexOf("candidates.", search);
@@ -151,7 +151,7 @@ test("demande-console/AC-17 : « Demande » ouvre la palette ⌘K saisie vide, s
     true,
     "la Demande n'est pas la première candidate",
   );
-  const actions = code(read("Sources", "ConsoleUI", "CommandPalette.swift"));
+  const actions = code(read("Sources", "ConsoleUI", "Palette", "CommandPalette.swift"));
   assert.match(actions, /case \.intake:\s*\n\s*drafts\.openIntake\(\)/);
   assert.match(actions, /\.sheet\(isPresented: \$drafts\.intakeSheetShown\)/);
   // Les deux apps posent la palette (donc la feuille) à leur racine.
@@ -181,7 +181,7 @@ test("demande-console/AC-18 : les demandes ouvertes sont des décisions de l'OS 
   const model = MODEL();
   assert.match(model, /openStates = \["classifying", "clarifying", "planned", "answered", "failed"\]/);
   assert.match(
-    code(read("Sources", "ConsoleClient", "OSDecisions.swift")),
+    code(read("Sources", "ConsoleClient", "OS", "OSDecisions.swift")),
     /items \+= intakes\.filter \{ \$0\.isPlanned \|\| \$0\.isClarifying \}\.map\(OSDecision\.intake\)/,
   );
   const decision = code(read("Sources", "ConsoleUI", "OS", "OSDecisionCard.swift"));

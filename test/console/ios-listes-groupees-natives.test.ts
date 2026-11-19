@@ -38,10 +38,10 @@ const LIST_SCREENS = ["IOSSystemScreens.swift", "IOSMemoryScreen.swift"];
  *  les services, la tour de contrôle (vigie, planifications, issues, administration) et
  *  l'autonomie. */
 const LIST_CONTENTS = [
-  "WorkstationSections.swift",
-  "ServicesViews.swift",
-  "ControlTowerSections.swift",
-  "AutonomyViews.swift",
+  "Workstation/WorkstationSections.swift",
+  "Control/ServicesViews.swift",
+  "Control/ControlTowerSections.swift",
+  "Autonomy/AutonomyViews.swift",
 ];
 
 /** AC-2 / AC-10 : le contenu d'une liste n'apporte ni filet, ni défilement, ni carte, ni panneau. */
@@ -99,10 +99,10 @@ function listScreenFaults(name: string, source: string): string[] {
 const GROUPED_SHEETS = [
   "IOSMemoryDetailView.swift",
   "IOSServerSheet.swift",
-  "RunViews.swift",
-  "WorkstationSections.swift",
-  "LaunchViews.swift",
-  "MemoryEditSheet.swift",
+  "Runs/RunViews.swift",
+  "Workstation/WorkstationSections.swift",
+  "Runs/LaunchViews.swift",
+  "Memory/MemoryEditSheet.swift",
 ];
 
 /**
@@ -135,11 +135,11 @@ const TITLES: Record<string, number> = {
   "IOSMemoryScreen.swift": 1,
   "IOSMemoryDetailView.swift": 1,
   "IOSServerSheet.swift": 1,
-  "RunViews.swift": 2,
+  "Runs/RunViews.swift": 2,
   // Une page poussée du Poste (`WorkstationPageView`) et la feuille de refus d'un envoi.
-  "WorkstationSections.swift": 2,
-  "LaunchViews.swift": 1,
-  "MemoryEditSheet.swift": 1,
+  "Workstation/WorkstationSections.swift": 2,
+  "Runs/LaunchViews.swift": 1,
+  "Memory/MemoryEditSheet.swift": 1,
 };
 
 /** Le cadre des pages du Système. */
@@ -282,7 +282,7 @@ test("ios-listes-groupees-natives/AC-2 : les pages du Système et la Mémoire (L
 
   // Une rangée du Poste (partagée) redevenue carte ⇒ rouge.
   const system = "IOSSystemScreens.swift";
-  const row = "WorkstationSections.swift";
+  const row = "Workstation/WorkstationSections.swift";
   const card = plant(appSource(row), (s) =>
     s.replace(/\bSection \{/, 'Section {\n            Text(verbatim: "").iosCard()'),
   );
@@ -292,7 +292,7 @@ test("ios-listes-groupees-natives/AC-2 : les pages du Système et la Mémoire (L
   );
 
   // Un filet remis entre deux rangées de l'autonomie, côté iOS ⇒ rouge.
-  const autonomy = "AutonomyViews.swift";
+  const autonomy = "Autonomy/AutonomyViews.swift";
   const divider = plant(appSource(autonomy), (s) => s.replace(/\bSection \{/, "Section {\n            Divider()"));
   assert.ok(
     listContentFaults(autonomy, divider).some((f) => f.includes("Divider()")),
@@ -379,7 +379,7 @@ test("ios-listes-groupees-natives/AC-4 : en AX-XL, les rangées des écrans en l
   }
 
   // Faute plantée : une hauteur fixe sur une rangée du Poste (partagée) ⇒ rouge.
-  const workstation = "WorkstationSections.swift";
+  const workstation = "Workstation/WorkstationSections.swift";
   const fixed = plant(appSource(workstation), (s) =>
     s.replace(/\bSection \{/, 'Section {\n            Text(verbatim: "").frame(height: 44)'),
   );
@@ -430,7 +430,7 @@ test("ios-listes-groupees-natives/AC-3 : les feuilles de la Mémoire et du serve
   );
 
   // Faute plantée : le style groupé retiré d'une feuille du serveur ⇒ rouge.
-  const harness = "RunViews.swift";
+  const harness = "Runs/RunViews.swift";
   const ungrouped = plant(appSource(harness), (s) => s.replace(".formStyle(.grouped)\n", ""));
   assert.ok(
     sheetFaults(harness, ungrouped).some((f) => f.includes(".formStyle(.grouped)")),
