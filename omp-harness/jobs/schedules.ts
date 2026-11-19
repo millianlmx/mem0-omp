@@ -37,7 +37,7 @@ import { newId } from "../runs/ids.ts";
 import { budgetUsd, integer, requireRepo, text } from "../api/input.ts";
 import type { LabeledOutcome } from "../forge/issues.ts";
 import { TERMINAL_STATES } from "../runs/machine.ts";
-import type { NewRunInput } from "../runs/orchestrator.ts";
+import type { NewRunInput } from "../runs/run-creation.ts";
 import { untrusted } from "../workstation/workstation-guards.ts";
 import type { SpaceHold } from "../spaces/spaces.ts";
 import { APPROVER_ONLY } from "../workstation/workstation.ts";

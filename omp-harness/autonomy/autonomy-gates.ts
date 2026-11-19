@@ -42,7 +42,7 @@ export const DELIVER_DIFF_FACTOR = 4;
 /** Le nom du curseur d'un run dans l'auteur d'une validation prise seule : `autonomie:<dépôt>#curseur`. */
 const CURSOR = "curseur";
 
-/** Les gestes de l'humain que l'autonomie emprunte (orchestrator.ts les branche sur `HumanLoop`). */
+/** Les gestes de l'humain que l'autonomie emprunte (orchestrator.ts les branche sur `HumanLoop` de gestures.ts). */
 export type AutonomyHooks = {
   validate: (
     runId: string,

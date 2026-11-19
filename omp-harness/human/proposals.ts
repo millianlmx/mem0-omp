@@ -46,7 +46,7 @@ import type { AuthorLink, FailedCi, FailedLog, Issue, OpenChange } from "../forg
 import type { IssueDesk } from "../forge/issues.ts";
 import { failureOf, isTerminal } from "../runs/machine.ts";
 import type { FailCause, RunState, StepKind } from "../runs/machine.ts";
-import type { NewRunInput } from "../runs/orchestrator.ts";
+import type { NewRunInput } from "../runs/run-creation.ts";
 import type { ConfigAdmin } from "../config/repos.ts";
 import { runnerTraceOf, runnerUnitOf } from "../vigie/attribution.ts";
 import type { VigieDesk } from "../vigie/desk.ts";

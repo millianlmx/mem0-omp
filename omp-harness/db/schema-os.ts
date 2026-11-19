@@ -114,6 +114,6 @@ export const MIGRATIONS_OS: readonly string[] = [
    ALTER TABLE workstation_actions ADD COLUMN space_id TEXT;
    ALTER TABLE workstation_automations ADD COLUMN space_id TEXT;`,
   // La voie d'un run (`full`, `direct`, `express`), décidée à sa création : la voie express raccourcit sa revue
-  // et ses corrections (orchestrator.ts `#laneOf`). NULL : un run créé avant cette colonne (voie complète).
+  // et ses corrections (run-creation.ts `#laneOf`). NULL : un run créé avant cette colonne (voie complète).
   `ALTER TABLE runs ADD COLUMN lane TEXT;`,
 ];
