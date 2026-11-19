@@ -42,7 +42,7 @@ test("deploiement-continu/AC-1 : build-commit nomme le commit construit — l'ar
   const src = tmpdir("deploiement-continu-src-");
   git(["init", "-q", "-b", "main"], src);
   fs.mkdirSync(path.join(src, "omp-harness", "deploy", "nixos"), { recursive: true });
-  fs.mkdirSync(path.join(src, "omp-mem0-memory"));
+  fs.mkdirSync(path.join(src, "omp-memory"));
   fs.mkdirSync(path.join(src, "omp-console"));
   fs.writeFileSync(
     path.join(src, "omp-harness", "package.json"),
@@ -51,7 +51,7 @@ test("deploiement-continu/AC-1 : build-commit nomme le commit construit — l'ar
   fs.writeFileSync(path.join(src, "omp-harness", "run.sh"), "#!/bin/sh\n", { mode: 0o755 });
   fs.writeFileSync(path.join(src, "omp-harness", ".gitignore"), "*.log\n");
   fs.writeFileSync(path.join(src, "omp-harness", "deploy", "nixos", "module.nix"), "{ }\n");
-  fs.writeFileSync(path.join(src, "omp-mem0-memory", "index.ts"), "export {};\n");
+  fs.writeFileSync(path.join(src, "omp-memory", "index.ts"), "export {};\n");
   fs.writeFileSync(path.join(src, "omp-console", "App.swift"), "// app\n");
   const tagged = commitAll(src, "feat(harness): une release");
   git(["tag", "-a", "omp-harness-v1.2.3", "-m", "omp-harness 1.2.3"], src);
@@ -62,7 +62,7 @@ test("deploiement-continu/AC-1 : build-commit nomme le commit construit — l'ar
   // Le contexte de build tel que Portainer le laisse : l'arbre, sans .git, réduit par .dockerignore.
   const ctx = tmpdir("deploiement-continu-ctx-");
   fs.cpSync(path.join(src, "omp-harness"), path.join(ctx, "omp-harness"), { recursive: true });
-  fs.cpSync(path.join(src, "omp-mem0-memory"), path.join(ctx, "omp-mem0-memory"), { recursive: true });
+  fs.cpSync(path.join(src, "omp-memory"), path.join(ctx, "omp-memory"), { recursive: true });
   fs.rmSync(path.join(ctx, "omp-harness", "deploy", "nixos"), { recursive: true });
 
   assert.deepEqual(buildCommit(ctx, { OMP_HARNESS_SOURCE_REPO: repo }).out, tagged, "le tag, prouvé par les arbres");
@@ -74,7 +74,7 @@ test("deploiement-continu/AC-1 : build-commit nomme le commit construit — l'ar
   assert.equal(buildCommit(ctx).out, "", "sans argument, sans .git ni dépôt source : inconnu");
 
   // Un fichier de plus que le tag (des commits non publiés sur main) : jamais le commit du tag.
-  fs.appendFileSync(path.join(ctx, "omp-mem0-memory", "index.ts"), "// pas encore publié\n");
+  fs.appendFileSync(path.join(ctx, "omp-memory", "index.ts"), "// pas encore publié\n");
   const unpublished = buildCommit(ctx, { OMP_HARNESS_SOURCE_REPO: repo });
   assert.deepEqual([unpublished.status, unpublished.out], [0, ""]);
   assert.match(unpublished.err, /n'est pas l'arbre de omp-harness-v1\.2\.3/);
@@ -111,7 +111,7 @@ function stackRemote() {
   git(["checkout", "-q", "main"], src);
   const remote = path.join(tmpdir("deploiement-continu-pile-remote-"), "origin.git");
   git(["clone", "-q", "--bare", src, remote], src);
-  const clone = path.join(tmpdir("deploiement-continu-clone-"), "mem0-omp");
+  const clone = path.join(tmpdir("deploiement-continu-clone-"), "memory-omp");
   git(["clone", "-q", remote, clone], src);
   return { src, remote, clone, release };
 }

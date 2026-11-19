@@ -1,6 +1,6 @@
 // Les sessions omp locales : ce que le développeur fait dans son terminal, rendu visible du serveur.
 //
-// Le rapporteur (plugin `omp-mem0-req`, local-session.ts) envoie un battement à chaque changement
+// Le rapporteur (plugin `omp-memory-req`, local-session.ts) envoie un battement à chaque changement
 // d'état de sa session et à chaque intention d'outil. Le serveur garde la dernière image de chaque
 // session, vieillit à la lecture celles qui se taisent (un terminal fermé sans prévenir), et peut
 // confier le travail d'une session à un run (`handoff`).

@@ -20,7 +20,7 @@ import {
   parseAgentTabs,
   untrusted,
 } from "../../../omp-harness/workstation/workstation-guards.ts";
-import { UNTRUSTED_END as PLUGIN_UNTRUSTED_END, renderActOutcome } from "../../../omp-mem0-req/workstation.ts";
+import { UNTRUSTED_END as PLUGIN_UNTRUSTED_END, renderActOutcome } from "../../../omp-memory-req/workstation.ts";
 import { fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import { tmpdir } from "../../support/repo.ts";

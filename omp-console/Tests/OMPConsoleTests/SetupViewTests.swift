@@ -318,7 +318,7 @@ func failureSplitsSummaryFromDetail() {
     ] {
         let summary = SetupText.failureSummary(failure)
         #expect(summary.hasPrefix(SetupText.failureConsequence(failure)))
-        for token in ["Podman", "podman", "bootstrap", "6333", "8321", "4711", "mem0-", "lsof"] {
+        for token in ["Podman", "podman", "bootstrap", "6333", "8321", "4711", "memory-", "lsof"] {
             #expect(!summary.contains(token))
         }
     }
@@ -581,11 +581,11 @@ func portConflictNamesProgramAndOffersRetry() {
 func agentFailuresReadableWithGesture() {
     let retry = SetupText.failureRetryGesture
     let table: [(MemoryAgentError, String)] = [
-        (.binaryMissing(path: "/Applications/OMP Console.app/Contents/Resources/mem0-rs"),
+        (.binaryMissing(path: "/Applications/OMP Console.app/Contents/Resources/memory-rs"),
          "Le service mémoire manque dans l’app\u{00A0}: les souvenirs sont indisponibles. Réinstallez OMP Console."),
         (.launchctlFailed(command: "bootstrap", detail: "Input/output error"),
          "Le service mémoire n’a pas pu être lancé\u{00A0}: les souvenirs sont indisponibles. \(retry)"),
-        (.plistWriteFailed(path: "/Users/x/Library/LaunchAgents/com.omp.console.mem0.plist", detail: "permission refusée"),
+        (.plistWriteFailed(path: "/Users/x/Library/LaunchAgents/com.omp.console.memory.plist", detail: "permission refusée"),
          "Le service mémoire n’a pas pu être lancé\u{00A0}: les souvenirs sont indisponibles. \(retry)"),
         (.healthTimeout(seconds: 30, log: "panic: qdrant"),
          "Le service mémoire n’a pas répondu\u{00A0}: les souvenirs sont indisponibles. \(retry)"),
@@ -606,8 +606,8 @@ func agentFailuresReadableWithGesture() {
             == SetupFooter(leading: [], trailing: [.retry, .close], prominent: .retry, disabled: []))
     }
 
-    #expect(SetupText.failureDiagnostic(.agent(.healthTimeout(seconds: 30, log: "ligne 1\nligne 2")), logPath: "/tmp/mem0-rs.log")
-        == "Le service mémoire n’a pas répondu dans le délai imparti (30 s).\nJournal\u{00A0}: /tmp/mem0-rs.log\nligne 1\nligne 2")
+    #expect(SetupText.failureDiagnostic(.agent(.healthTimeout(seconds: 30, log: "ligne 1\nligne 2")), logPath: "/tmp/memory-rs.log")
+        == "Le service mémoire n’a pas répondu dans le délai imparti (30 s).\nJournal\u{00A0}: /tmp/memory-rs.log\nligne 1\nligne 2")
 }
 
 private func reject(_ element: String, _ id: String, _ raison: String, _ detail: String) -> ImportReject {

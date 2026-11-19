@@ -1,5 +1,5 @@
 // L'accès git de la Mémoire : une seule lecture, la racine du dépôt PRINCIPAL d'un projet,
-// qui fixe la portée mem0 (`MemoryScope`). `GitCLI` exécute toujours
+// qui fixe la portée de la mémoire (`MemoryScope`). `GitCLI` exécute toujours
 // `git -C <répertoire> -c core.pager=cat rev-parse --git-common-dir`, jamais par un shell,
 // par l'exécuteur partagé `ProcessRunner`, dans un environnement limité.
 

@@ -546,7 +546,7 @@ test("moli-qa/AC-34 : hors /review qa_* est refusé ; la QA d'un run ne joint ni
   const serverA = await shop(3000, "A-page", {
     "/vers-b": { status: 302, headers: { location: "http://127.0.0.1:3001/" } },
     "/vers-harness": { status: 302, headers: { location: "http://harness:8790/" } },
-    "/vers-mem0": { status: 302, headers: { location: "http://mem0:8321/" } },
+    "/vers-memory": { status: 302, headers: { location: "http://memory:8321/" } },
     "/vers-poste": { status: 302, headers: { location: "http://moli-poste:9222/" } },
   });
   const serverB = await shop(3001, "B-secret");
@@ -584,7 +584,7 @@ test("moli-qa/AC-34 : hors /review qa_* est refusé ; la QA d'un run ne joint ni
       assert.doesNotMatch(refused.text, /B-secret/);
     }
     // Une redirection de la page de A vers B, la pile ou le poste : refusée, rien de la cible n'est rendu.
-    for (const route of ["/vers-b", "/vers-harness", "/vers-mem0", "/vers-poste"]) {
+    for (const route of ["/vers-b", "/vers-harness", "/vers-memory", "/vers-poste"]) {
       const went = await qaA.tool("qa_open", { path: route });
       assert.equal(went.isError, true, `${route} : ${went.text}`);
       assert.doesNotMatch(went.text, /B-secret|A-page/, route);

@@ -24,7 +24,7 @@ export type CheckLine = { status: CheckStatus; label: string; detail: string; fi
 export type CheckDeps = {
   exec: Exec;
   git: Git;
-  /** `GET /health` de l'oracle : `true` si mem0-rs répond `ok`. */
+  /** `GET /health` de l'oracle : `true` si memory-rs répond `ok`. */
   oracleHealth: () => Promise<boolean>;
   env?: Record<string, string | undefined>;
   /** Les modèles que sert un fournisseur compatible OpenAI (`GET <base>/models`), `null` s'il ne répond pas. */
@@ -167,7 +167,7 @@ function checkRepoAccounts(repo: RepoConfig, env: Record<string, string | undefi
             status: "fail",
             label: label("jeton mémoire"),
             detail: `${memory} est absente de l'environnement du service : aucun runner ne partira`,
-            fix: `Crée un jeton mem0-rs limité à la scope du dépôt (MEM0_HTTP_TOKENS) et pose-le dans ${memory} (environnement du service).`,
+            fix: `Crée un jeton memory-rs limité à la scope du dépôt (MEMORY_HTTP_TOKENS) et pose-le dans ${memory} (environnement du service).`,
           },
     );
   const host = repo.gitlab?.host ? ` --hostname ${repo.gitlab.host.replace(/^https?:\/\//, "")}` : "";
@@ -238,7 +238,7 @@ async function checkOmp(config: HarnessConfig, exec: Exec): Promise<CheckLine> {
   };
 }
 
-/** Le plugin mémoire, partie de la pile : sans lui, les runners n'ont pas `mem0_add`. */
+/** Le plugin mémoire, partie de la pile : sans lui, les runners n'ont pas `memory_add`. */
 async function checkMemoryPlugin(config: HarnessConfig, exec: Exec): Promise<CheckLine> {
   const file = memoryExtension(config);
   // En conteneur, les runners le lisent dans leur image : c'est là qu'on le cherche.
@@ -251,10 +251,10 @@ async function checkMemoryPlugin(config: HarnessConfig, exec: Exec): Promise<Che
   return {
     status: "fail",
     label: "plugin mémoire",
-    detail: `${file} introuvable${contained ? ` dans ${config.container.runnerImage}` : ""} : les agents n'auraient pas \`mem0_add\``,
+    detail: `${file} introuvable${contained ? ` dans ${config.container.runnerImage}` : ""} : les agents n'auraient pas \`memory_add\``,
     fix: contained
       ? "Reconstruis les images : `bash omp-harness/deploy/container/harness.sh up`."
-      : "Installe `omp-mem0-memory` à côté de `omp-harness` (Debian : relance `sudo bash omp-harness/deploy/install.sh`).",
+      : "Installe `omp-memory` à côté de `omp-harness` (Debian : relance `sudo bash omp-harness/deploy/install.sh`).",
   };
 }
 
@@ -352,8 +352,8 @@ async function checkOracle(config: HarnessConfig, health: () => Promise<boolean>
     detail: `${config.oracle.url}/health ne répond pas ok`,
     fix:
       config.runner.isolation === "container"
-        ? "`harness.sh logs` ; OMLX_BASE_URL dans ~/.omp-harness-secrets/mem0.env doit joindre le serveur d'embeddings."
-        : "`systemctl status omp-harness-mem0` ; OMLX_BASE_URL dans /etc/omp-harness/mem0.env doit joindre le homelab.",
+        ? "`harness.sh logs` ; OMLX_BASE_URL dans ~/.omp-harness-secrets/memory.env doit joindre le serveur d'embeddings."
+        : "`systemctl status omp-harness-memory` ; OMLX_BASE_URL dans /etc/omp-harness/memory.env doit joindre le homelab.",
   };
 }
 

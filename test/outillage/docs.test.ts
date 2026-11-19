@@ -28,6 +28,9 @@ type Catalog = { metadata?: { version?: string }; plugins: PluginEntry[] };
 
 const catalog = (rel = ".omp-plugin/marketplace.json"): Catalog => JSON.parse(read(rel)) as Catalog;
 
+/** Une entrée qui porte son propre plugin : son dossier source a le nom de l'entrée (les autres sont des alias). */
+const isOwnEntry = (entry: PluginEntry): boolean => path.basename(String(entry.source)) === entry.name;
+
 /**
  * Violations de la règle de vocabulaire du sommaire : « sommaire exhaustif »
  * interdit, et toute mention d'« exhaustif » conditionnée au seuil de troncature.
@@ -54,7 +57,7 @@ function summaryWording(text: string, minimumMentions = 0): string[] {
 }
 
 // Les motifs de .gitignore qui sont des chemins littéraux (sans joker) sont
-// exclus du parcours : `node_modules/`, `mem0-stack/qdrant_storage/`, et
+// exclus du parcours : `node_modules/`, `memory-stack/qdrant_storage/`, et
 // `.omp/pipeline/` — le contrat du pipeline est un artefact transitoire, pas un
 // fichier du dépôt.
 const ignoredPaths = fs
@@ -153,7 +156,9 @@ test("docs/AC-20 : chaque plugin du catalogue est installé et cité dans l'arbo
   const entries = catalog().plugins;
   assert.ok(entries.length >= 2, "le catalogue publie les deux plugins du dépôt");
 
-  for (const entry of entries) {
+  // Les anciennes entrées (alias de transition, même dossier source qu'un plugin renommé) ne sont pas présentées à une
+  // installation neuve : seuls les plugins dont le dossier source porte le nom de l'entrée sont exigés.
+  for (const entry of entries.filter(isOwnEntry)) {
     assert.ok(
       readme.includes(`install ${entry.name}@mem0-omp`),
       `README : « install ${entry.name}@mem0-omp » absent de la section Installation`,
@@ -163,7 +168,7 @@ test("docs/AC-20 : chaque plugin du catalogue est installé et cité dans l'arbo
 
   // Forme figée de l'arborescence : le service avec son sous-dossier, les tests
   // et le script de validation.
-  for (const expected of ["mem0-stack/", "mem0-rs/", "test/", "scripts/check.sh"]) {
+  for (const expected of ["memory-stack/", "memory-rs/", "test/", "scripts/check.sh"]) {
     assert.ok(tree.includes(expected), `DEVELOPPEMENT.md : ${expected} absent de l'arborescence`);
   }
 });
@@ -198,7 +203,7 @@ test("docs/AC-21 : PUBLISHING.md cite exactement les fichiers porteurs d'URL et 
   );
 
   // (3) Les deux plugins du catalogue sont installables d'après le document.
-  for (const entry of entries) {
+  for (const entry of entries.filter(isOwnEntry)) {
     assert.ok(
       doc.includes(`install ${entry.name}@mem0-omp`),
       `PUBLISHING.md : « install ${entry.name}@mem0-omp » absent`,
@@ -293,8 +298,8 @@ test("documentation-derivee/AC-4 : les descriptions des catalogues ne sur-promet
 // réel n'est modifié (copie JSON profonde).
 test("documentation-derivee/AC-6 : le contrôle de vocabulaire échoue sur une copie fautive", () => {
   const copy = JSON.parse(JSON.stringify(catalog())) as Catalog;
-  const entry = copy.plugins.find((plugin) => plugin.name === "omp-mem0-memory");
-  assert.ok(entry !== undefined, "omp-mem0-memory absent du catalogue");
+  const entry = copy.plugins.find((plugin) => plugin.name === "omp-memory");
+  assert.ok(entry !== undefined, "omp-memory absent du catalogue");
 
   const fautive = `sommaire exhaustif ${entry.description ?? ""}`;
   assert.ok(summaryWording(fautive, 0).length > 0, "« sommaire exhaustif » doit échouer");

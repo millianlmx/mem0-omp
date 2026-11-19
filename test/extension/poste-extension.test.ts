@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
-import { decodePairing as pluginDecodePairing } from "../../omp-mem0-req/harness.ts";
+import { decodePairing as pluginDecodePairing } from "../../omp-memory-req/harness.ts";
 import { MAX_TYPE_TEXT, MAX_WAIT_MS, validateAction } from "../../omp-chrome/src/lib/actions.ts";
 import {
   type PageDocument,
@@ -58,19 +58,19 @@ import { ROOT, tmpdir } from "../support/repo.ts";
 
 const encode = (lines: string[]) => `omp1:${Buffer.from(lines.join("\n")).toString("base64url")}`;
 
-test("poste-extension/AC-1 : le code omp1: se décode exactement comme le plugin omp-mem0-req (valide, invalide, bourrage)", () => {
-  const valid = encode(["https://harness.tail.ts.net/", "jeton-123", "https://mem0.tail.ts.net//", "jeton-mem0"]);
+test("poste-extension/AC-1 : le code omp1: se décode exactement comme le plugin omp-memory-req (valide, invalide, bourrage)", () => {
+  const valid = encode(["https://harness.tail.ts.net/", "jeton-123", "https://memory.tail.ts.net//", "jeton-memory"]);
   assert.deepEqual(decodePairing(valid), {
     url: "https://harness.tail.ts.net",
     token: "jeton-123",
-    mem0Url: "https://mem0.tail.ts.net",
-    mem0Token: "jeton-mem0",
+    memoryUrl: "https://memory.tail.ts.net",
+    memoryToken: "jeton-memory",
   });
   assert.deepEqual(decodePairing(`  ${encode(["http://10.0.0.2:8787", "t"])}\n`), {
     url: "http://10.0.0.2:8787",
     token: "t",
-    mem0Url: "",
-    mem0Token: "",
+    memoryUrl: "",
+    memoryToken: "",
   });
 
   const body = Buffer.from("https://h.example\njeton-é\n\n").toString("base64url");
@@ -109,13 +109,13 @@ test("poste-extension/AC-1 : le code omp1: se décode exactement comme le plugin
   assert.deepEqual(decodePairing(`omp1:${body}==`), {
     url: "https://h.example",
     token: "jeton-é",
-    mem0Url: "",
-    mem0Token: "",
+    memoryUrl: "",
+    memoryToken: "",
   });
 });
 
 test("poste-extension/AC-18 : un code approbateur (5e ligne non vide) est refusé avec un message, comme le plugin ; une 5e ligne vide ne change rien", () => {
-  const ordinary = ["https://harness.tail.ts.net", "jeton-ordinaire", "https://mem0.tail.ts.net", "jeton-mem0"];
+  const ordinary = ["https://harness.tail.ts.net", "jeton-ordinaire", "https://memory.tail.ts.net", "jeton-memory"];
   // Le format de `harness.sh approver` : printf termine par un saut de ligne.
   const approver = encode([...ordinary, "a".repeat(64), ""]);
   const refused = decodePairing(approver);
@@ -133,8 +133,8 @@ test("poste-extension/AC-18 : un code approbateur (5e ligne non vide) est refus�
   assert.deepEqual(decodePairing(trailing), {
     url: "https://harness.tail.ts.net",
     token: "jeton-ordinaire",
-    mem0Url: "https://mem0.tail.ts.net",
-    mem0Token: "jeton-mem0",
+    memoryUrl: "https://memory.tail.ts.net",
+    memoryToken: "jeton-memory",
   });
   assert.deepEqual(decodePairing(trailing), pluginDecodePairing(trailing));
 

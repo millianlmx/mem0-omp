@@ -8,7 +8,7 @@ export const LOCAL_SESSION_STATES = ["working", "idle", "ended"] as const;
 /** `working` : l'agent tourne ; `idle` : il attend l'humain (ou se tait) ; `ended` : la session est fermée. */
 export type LocalSessionState = (typeof LOCAL_SESSION_STATES)[number];
 
-/** Une session omp ouverte sur le poste du développeur, telle que son rapporteur (plugin `omp-mem0-req`) la signale. */
+/** Une session omp ouverte sur le poste du développeur, telle que son rapporteur (plugin `omp-memory-req`) la signale. */
 export type LocalSession = {
   id: string;
   /** Le client dont le jeton a porté le dernier battement. */

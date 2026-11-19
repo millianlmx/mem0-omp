@@ -227,10 +227,10 @@ fi`,
   writeDouble(
     bin,
     "cargo",
-    `target="\${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}"
+    `target="\${CARGO_TARGET_DIR:-memory-stack/memory-rs/target}"
 mkdir -p "$target/release"
-printf '#!/usr/bin/env bash\\nexit 0\\n' > "$target/release/mem0-rs"
-chmod +x "$target/release/mem0-rs"`,
+printf '#!/usr/bin/env bash\\nexit 0\\n' > "$target/release/memory-rs"
+chmod +x "$target/release/memory-rs"`,
   );
   writeDouble(bin, "lipo", "printf 'arm64\\n'");
   writeDouble(

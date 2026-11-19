@@ -405,7 +405,7 @@ const IMAGES: Image[] = [
     entry: "omp-harness/main.ts",
     reads: [
       "omp-harness/api/http-io.ts → omp-harness/package.json",
-      "omp-harness/runners/runner.ts → omp-mem0-memory/extension.ts",
+      "omp-harness/runners/runner.ts → omp-memory/extension.ts",
     ],
     notRead: [],
   },
@@ -413,7 +413,7 @@ const IMAGES: Image[] = [
     dockerfile: "Dockerfile.vigie",
     entry: "omp-harness/vigie/main.ts",
     reads: ["omp-harness/vigie/main.ts → omp-harness/package.json"],
-    notRead: ["omp-harness/runners/runner.ts → omp-mem0-memory/extension.ts"],
+    notRead: ["omp-harness/runners/runner.ts → omp-memory/extension.ts"],
   },
 ];
 

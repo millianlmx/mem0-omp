@@ -10,6 +10,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT, childEnv, copyRepo, tmpdir } from "../support/repo.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 const WORKFLOW = fs.readFileSync(path.join(ROOT, ".github", "workflows", "check.yml"), "utf8");
 const HOST_VERSION = /^ {2}OMP_HOST_VERSION: "([^"]+)"$/m.exec(WORKFLOW)?.[1];
@@ -23,8 +24,8 @@ const HOST_DIR = `omp-host-${HOST_VERSION}-types-node-${TYPES_NODE}`;
 function bareEnv(cache: string): NodeJS.ProcessEnv {
   const home = tmpdir("omp-host-home-");
   const env = childEnv({ HOME: home, XDG_CACHE_HOME: cache, BUN_INSTALL: path.join(home, ".bun") });
-  delete env.MEM0_OMP_HOST_TYPES;
-  delete env.MEM0_OMP_HOST_MODULES;
+  delete env.MEMORY_OMP_HOST_TYPES;
+  delete env.MEMORY_OMP_HOST_MODULES;
   // npm root -g sous un préfixe vide : aucun @oh-my-pi global.
   env.npm_config_prefix = path.join(home, "npm-global");
   return env;
@@ -32,7 +33,11 @@ function bareEnv(cache: string): NodeJS.ProcessEnv {
 
 /** Le node_modules d'un vrai hôte de cette machine (CI ou cache préparé), ou null. */
 function realHost(): string | null {
-  for (const candidate of [process.env.MEM0_OMP_HOST_TYPES, process.env.MEM0_OMP_HOST_MODULES]) {
+  const candidates = [
+    renamedEnv(process.env, "MEMORY_OMP_HOST_TYPES", "MEM0_OMP_HOST_TYPES"),
+    renamedEnv(process.env, "MEMORY_OMP_HOST_MODULES", "MEM0_OMP_HOST_MODULES"),
+  ];
+  for (const candidate of candidates) {
     if (candidate && fs.existsSync(path.join(candidate, "@oh-my-pi", "pi-coding-agent", "src", "index.ts"))) {
       return candidate;
     }
@@ -44,7 +49,7 @@ function realHost(): string | null {
 /** Un cache où l'hôte épinglé est « préparé » : marque posée, node_modules relié à `modules`. */
 function preparedCache(modules: string): string {
   const cache = tmpdir("omp-host-cache-");
-  const dir = path.join(cache, "mem0-omp", HOST_DIR);
+  const dir = path.join(cache, "memory-omp", HOST_DIR);
   fs.mkdirSync(dir, { recursive: true });
   fs.symlinkSync(modules, path.join(dir, "node_modules"), "dir");
   fs.writeFileSync(path.join(dir, ".prepare-ok"), "");
@@ -69,7 +74,7 @@ test("omp-host-epingle/AC-1 : `npm run setup` prépare l'hôte, dont les version
   const cache = preparedCache(fake);
   const found = hostPath(bareEnv(cache));
   assert.equal(found.status, 0, found.stderr);
-  assert.equal(found.stdout.trim(), path.join(cache, "mem0-omp", HOST_DIR, "node_modules"));
+  assert.equal(found.stdout.trim(), path.join(cache, "memory-omp", HOST_DIR, "node_modules"));
 
   const copy = copyRepo("omp-host-version-");
   const workflow = path.join(copy, ".github", "workflows", "check.yml");
@@ -87,7 +92,7 @@ test("omp-host-epingle/AC-2 : une installation interrompue (sans marque) n'est j
   fs.mkdirSync(path.join(fake, "@oh-my-pi", "pi-coding-agent", "src"), { recursive: true });
   fs.writeFileSync(path.join(fake, "@oh-my-pi", "pi-coding-agent", "src", "index.ts"), "");
   const cache = preparedCache(fake);
-  fs.rmSync(path.join(cache, "mem0-omp", HOST_DIR, ".prepare-ok"));
+  fs.rmSync(path.join(cache, "memory-omp", HOST_DIR, ".prepare-ok"));
   const result = hostPath(bareEnv(cache));
   assert.equal(result.status, 1);
   assert.equal(result.stdout, "");

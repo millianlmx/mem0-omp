@@ -4,7 +4,7 @@
 // Transport figé (mesuré le 2026-10-06) :
 // `/usr/sbin/lsof -nP -iTCP:<port> -sTCP:LISTEN -F pcn` (binaire ABSOLU, convention
 // du dépôt) puis `/bin/ps -p <pid> -o command=` pour rattacher le processus au
-// binaire mem0-rs embarqué. Aucun enregistrement ⇒ personne n'écoute (le code de
+// binaire memory-rs embarqué. Aucun enregistrement ⇒ personne n'écoute (le code de
 // sortie 1 de lsof n'est pas une erreur).
 //
 // Classification FIGÉE :
@@ -23,7 +23,7 @@ import Foundation
 /// Qui tient un port, tel que la sonde le prouve (S-3).
 enum MemoryPortOwnership: Equatable, Sendable {
     case free
-    /// Le mem0-rs embarqué dans l'app : ligne de commande = son chemin.
+    /// Le memory-rs embarqué dans l'app : ligne de commande = son chemin.
     case ours(process: String, pid: Int32)
     case foreign(process: String, pid: Int32)
     /// `lsof` indisponible ou sortie illisible.
@@ -109,7 +109,7 @@ enum StackOwnership {
     }
 
     /// La ligne de commande lance-t-elle `executable` ? Égalité stricte, ou chemin
-    /// suivi d'une espace (arguments) : un autre mem0-rs, même homonyme, n'est
+    /// suivi d'une espace (arguments) : un autre memory-rs, même homonyme, n'est
     /// jamais « le nôtre ».
     static func isCommandLine(_ commandLine: String, of executable: URL) -> Bool {
         let path = executable.path

@@ -1,4 +1,4 @@
-// Tests du masquage des secrets (omp-mem0-memory/write.ts) — B-1, AC-1 à AC-10.
+// Tests du masquage des secrets (omp-memory/write.ts) — B-1, AC-1 à AC-10.
 //
 // Ce fichier existe parce que B-1 exige « chaque famille prouvée par un test » :
 // le masquage est un garde-fou destructif, où un sous-masquage est le bug et un
@@ -17,7 +17,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { redact } from "../../omp-mem0-memory/write.ts";
+import { redact } from "../../omp-memory/write.ts";
 import { ROOT } from "../support/repo.ts";
 
 // Fixtures partagées, réutilisées par le test d'idempotence.
@@ -182,10 +182,10 @@ test("redaction/AC-9 : clés Stripe, PAT GitLab, jetons Hugging Face et npm, cl�
 
 type CasPartage = { nom: string; entree: string[]; attendu: string };
 
-test("redaction/AC-10 : les cas partagés avec mem0-rs rendent la même sortie que le masquage serveur", () => {
-  // Le même fichier est jugé par `cargo test` (mem0-stack/mem0-rs/src/api/redaction.rs) :
+test("redaction/AC-10 : les cas partagés avec memory-rs rendent la même sortie que le masquage serveur", () => {
+  // Le même fichier est jugé par `cargo test` (memory-stack/memory-rs/src/api/redaction.rs) :
   // deux implémentations, une seule liste de cas, donc des motifs tenus en phase.
-  const fichier = path.join(ROOT, "mem0-stack", "mem0-rs", "tests", "redaction-cas.json");
+  const fichier = path.join(ROOT, "memory-stack", "memory-rs", "tests", "redaction-cas.json");
   const { cas } = JSON.parse(fs.readFileSync(fichier, "utf8")) as { cas: CasPartage[] };
   assert.ok(cas.length >= 40, `cas partagés : ${cas.length}`);
   for (const c of cas) assert.equal(redact(c.entree.join("")), c.attendu, `cas « ${c.nom} »`);

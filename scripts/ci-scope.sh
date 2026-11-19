@@ -21,8 +21,8 @@
 # section) :
 #   app-swift : omp-console/ (sources, tests, Package.swift), scripts/
 #               (swift-app.sh et ce qu'il appelle : check.sh, ci-verdict.sh,
-#               app-intents/, tests-instables-connus.json), mem0-stack/ (le
-#               mem0-rs embarqué dans le bundle), .github/workflows/check.yml
+#               app-intents/, tests-instables-connus.json), memory-stack/ (le
+#               memory-rs embarqué dans le bundle), .github/workflows/check.yml
 #               (le job lui-même) ;
 #   app-ios   : omp-console/ (ConsoleCore, ConsoleClient et ios/), scripts/
 #               (ios-build.sh, check.sh, app-intents/), .github/workflows/check.yml.
@@ -50,7 +50,7 @@ if [ -z "$base" ] || [ -z "$section" ]; then
 fi
 
 case "$section" in
-  app-swift) prefixes="omp-console/ scripts/ mem0-stack/ .github/workflows/check.yml" ;;
+  app-swift) prefixes="omp-console/ scripts/ memory-stack/ .github/workflows/check.yml" ;;
   app-ios) prefixes="omp-console/ scripts/ .github/workflows/check.yml" ;;
 esac
 

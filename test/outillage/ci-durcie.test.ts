@@ -1,7 +1,7 @@
 // Critères de la feature ci-durcie : les workflows de `.github/workflows/`
 // n'accordent au GITHUB_TOKEN que la lecture, chaque job a un plafond de durée,
 // chaque action est épinglée par le sha de son commit, et `.github/dependabot.yml`
-// tient ces épingles, la crate mem0-rs et les images de conteneur à jour — sans
+// tient ces épingles, la crate memory-rs et les images de conteneur à jour — sans
 // npm, dont les outils sont installés à une version exacte par les scripts.
 //
 // Lecture structurelle : les jobs sont les clés à deux espaces sous `jobs:`, les
@@ -148,7 +148,7 @@ function dossiersSuivis(motif: RegExp): string[] {
   return [...new Set(dossiers)].sort();
 }
 
-test("ci-durcie/AC-4 : dependabot couvre les actions, la crate mem0-rs, chaque Dockerfile et chaque compose — hebdomadaire, groupé, borné, sans npm ni type qui publie", () => {
+test("ci-durcie/AC-4 : dependabot couvre les actions, la crate memory-rs, chaque Dockerfile et chaque compose — hebdomadaire, groupé, borné, sans npm ni type qui publie", () => {
   const entrees = dependabot();
   const par = new Map(entrees.map((e) => [e.ecosysteme, e]));
   assert.deepEqual([...par.keys()].sort(), ["cargo", "docker", "docker-compose", "github-actions"]);

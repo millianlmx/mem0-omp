@@ -112,7 +112,7 @@
       "models": { "heavy": ["omlx/qwen3-coder-30b"] },
       "git": { "name": "Prénom Nom", "email": "prenom.nom@client.example" },
       "gh": { "configDir": "/var/lib/omp-harness/gh/client-corpo" },
-      "memory": { "tokenEnv": "MEM0_TOKEN_CLIENT_CORPO" }
+      "memory": { "tokenEnv": "MEMORY_TOKEN_CLIENT_CORPO" }
     },
     {
       "name": "client-gitlab",

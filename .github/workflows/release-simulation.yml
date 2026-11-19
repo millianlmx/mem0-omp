@@ -46,7 +46,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # L'ENVIRONNEMENT DU JOB DE RELEASE, pas celui de `check.yml` : ni Bun, ni
-          # hôte OMP, ni `MEM0_OMP_REQUIRE_SMOKE`. Le verdict doit être celui de la
+          # hôte OMP, ni `MEMORY_OMP_REQUIRE_SMOKE`. Le verdict doit être celui de la
           # release, jamais celui d'un gate plus strict.
           node-version: "22"
       # Empreinte des toolchains de l'image : elle entre dans la clé du cache cargo,
@@ -59,12 +59,12 @@ jobs:
             echo "rust=$( (rustc -vV 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
             echo "swift=$( (swift --version 2>&1 || echo absent; xcode-select -p 2>&1 || echo absent) | shasum -a 256 | cut -c1-16)"
           } >> "$GITHUB_OUTPUT"
-      # Registre cargo et cible STABLE de mem0-rs : la copie jetable du script vit
+      # Registre cargo et cible STABLE de memory-rs : la copie jetable du script vit
       # sous un chemin mktemp qui change à chaque run, donc sa cible par défaut ne
       # serait jamais restaurée. Ni ~/.cargo/bin (proxies rustup de l'image) ni
       # registry/src (régénéré) ; pas de restore-keys. Le cache n'est sauvegardé
       # que par un job vert.
-      - name: Cache cargo (mem0-rs)
+      - name: Cache cargo (memory-rs)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -72,9 +72,9 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ${{ runner.temp }}/cargo-target
-          key: cargo-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('mem0-stack/mem0-rs/Cargo.lock', 'mem0-stack/mem0-rs/Cargo.toml') }}
+          key: cargo-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('memory-stack/memory-rs/Cargo.lock', 'memory-stack/memory-rs/Cargo.toml') }}
       # Le linter épinglé est préparé à la racine du clone : la section `lint` du
-      # check.sh de la copie le trouve par MEM0_OMP_LINT_DIR, que le script exporte.
+      # check.sh de la copie le trouve par MEMORY_OMP_LINT_DIR, que le script exporte.
       - name: Préparer le linter épinglé (Biome)
         run: bash scripts/lint.sh --prepare
       - name: Installer le TypeScript épinglé du type-check

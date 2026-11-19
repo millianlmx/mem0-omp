@@ -8,7 +8,7 @@
 //     et ce qu'on prouve ici c'est que cette copie est jugée par le VRAI gate —
 //     pas qu'on rejoue toute la suite depuis un test qui rejoue la suite ;
 //  2. les scénarios sont construits UNE fois, avant le premier test, et seulement
-//     au premier niveau (`MEM0_CHECK_DEPTH === 0`) : lancés depuis la copie d'un
+//     au premier niveau (`MEMORY_CHECK_DEPTH === 0`) : lancés depuis la copie d'un
 //     autre test, ils se rappelleraient eux-mêmes ;
 //  3. ils se construisent EN MÊME TEMPS : chacun vit dans ses propres dossiers
 //     jetables, donc leurs `check.sh` se chevauchent au lieu de s'additionner.
@@ -22,18 +22,27 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { SERVICES, bumpVersion, insertChangelog, maxVersion, utcDate, versionTag } from "../../scripts/release.ts";
+import {
+  RENAMED_PLUGINS,
+  SERVICES,
+  bumpVersion,
+  insertChangelog,
+  maxVersion,
+  utcDate,
+  versionTag,
+} from "../../scripts/release.ts";
 import { GIT_ENV } from "../support/git.ts";
 import { outilEpingleAbsent } from "../support/prerequis.ts";
 import { LINT_TOOL_ENV, ROOT, childEnv, linkPinnedTypescript, tmpdir } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
 import { ACTIONS, usesParMajeure } from "../support/workflows.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
 const WORKFLOW = ".github/workflows/release-simulation.yml";
 const SCRIPT = "scripts/release-simulation.sh";
 /** Profondeur d'imbrication : 0 = `node --test test/outillage/release-simulation.test.ts`. */
-const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
+const DEPTH = Number(renamedEnv(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
 
 type Catalog = {
   name: string;
@@ -47,9 +56,11 @@ function readJson<T>(dir: string, rel: string): T {
 }
 
 const CATALOG = readJson<Catalog>(ROOT, CATALOGS[0]);
-/** Les plugins LOCAUX du catalogue, dans son ordre : c'est l'ordre du moteur. */
+/** Les plugins LOCAUX du catalogue, dans son ordre, hors anciens noms (alias) : c'est l'ordre du moteur. */
+const estAncienNom = (name: string): boolean => Object.values(RENAMED_PLUGINS).some((renamed) => renamed.name === name);
 const PLUGINS = CATALOG.plugins
   .filter((entry) => typeof entry.source === "string" && String(entry.source).startsWith("./"))
+  .filter((entry) => !estAncienNom(entry.name))
   .map((entry) => ({ name: entry.name, dir: String(entry.source).slice(2) }));
 
 const MEMORY = PLUGINS[0] as { name: string; dir: string };
@@ -114,7 +125,7 @@ const KEPT_TESTS: Record<string, true> = { "test/outillage/docs.test.ts": true }
  * scratchs Swift et Rust) n'entre donc jamais dans la copie : il n'est pas dans
  * la PR, et la suite imbriquée le prendrait pour une faute de l'arbre — une copie
  * par `fs.cpSync` y faisait rougir context-optimization-architecture/AC-20 et
- * mem0-stack-bascule-rust/AC-4, donc AC-1, AC-2 et AC-4 ici.
+ * memory-stack-bascule-rust/AC-4, donc AC-1, AC-2 et AC-4 ici.
  */
 function copyRepo(dir: string): void {
   // La configuration git du poste, pas GIT_ENV : ses exclusions globales font
@@ -247,13 +258,13 @@ function makeRepo(kind: string, steps: Step[], prepare?: (dir: string) => void):
 const CHECK_ENV = {
   // La copie relance `check.sh`, donc la suite : on le lui dit, pour qu'un
   // fichier de test gaté sur la profondeur ne se rejoue pas là-bas.
-  MEM0_CHECK_DEPTH: String(DEPTH + 1),
+  MEMORY_CHECK_DEPTH: String(DEPTH + 1),
   // Et la section « App Swift » y compilerait pour de vrai sans rien prouver de
   // la release simulée — la section « App iOS » de même.
-  MEM0_OMP_SKIP_SWIFT_APP: "1",
-  MEM0_OMP_SKIP_IOS: "1",
-  // La section Rust (cargo, contrat contre mem0-rs) n'a rien à faire ici.
-  MEM0_OMP_SKIP_RUST: "1",
+  MEMORY_OMP_SKIP_SWIFT_APP: "1",
+  MEMORY_OMP_SKIP_IOS: "1",
+  // La section Rust (cargo, contrat contre memory-rs) n'a rien à faire ici.
+  MEMORY_OMP_SKIP_RUST: "1",
   // Le Biome épinglé de la racine : une copie n'emporte pas `.lint/`.
   ...LINT_TOOL_ENV,
 };
@@ -369,7 +380,7 @@ function releaseStep(): Step {
       const pkg = readJson<Record<string, unknown>>(dir, `${MEMORY.dir}/package.json`);
       const catalog = readJson<Catalog>(dir, CATALOGS[0]);
       for (const entry of catalog.plugins) {
-        if (entry.name === MEMORY.name) entry.version = target;
+        if (entry.name === MEMORY.name || entry.name === RENAMED_PLUGINS[MEMORY.name]?.name) entry.version = target;
       }
       catalog.metadata = {
         ...(catalog.metadata ?? {}),
@@ -401,7 +412,7 @@ function prepareNonSemver(dir: string): void {
   const reqVersion = versionIn(dir, `${REQ.dir}/package.json`);
   const aligned = readJson<Catalog>(dir, CATALOGS[0]);
   for (const entry of aligned.plugins) {
-    if (entry.name === MEMORY.name) entry.version = "1.2";
+    if (entry.name === MEMORY.name || entry.name === RENAMED_PLUGINS[MEMORY.name]?.name) entry.version = "1.2";
   }
   aligned.metadata = { ...(aligned.metadata ?? {}), version: reqVersion };
   const serialized = `${JSON.stringify(aligned, null, 2)}\n`;
@@ -472,7 +483,7 @@ async function buildScenarios(): Promise<ScenarioSet> {
 }
 
 // Construits une seule fois, avant le premier test : chaque test ne réclame que
-// le sien, et les copies imbriquées (`MEM0_CHECK_DEPTH` ≠ 0) n'en construisent
+// le sien, et les copies imbriquées (`MEMORY_CHECK_DEPTH` ≠ 0) n'en construisent
 // aucun — sinon elles se rappelleraient elles-mêmes. Un hook `before` de la
 // racine, jamais un `await` de premier niveau : un test déclaré au-dessus
 // tournerait pendant l'attente, et à sa fin le hook `after` de
@@ -734,5 +745,5 @@ test("release-simulation/AC-6 : le statut du job est celui que PUBLISHING.md dé
   assert.match(yaml, new RegExp(`^ {8}run: bash ${SCRIPT}$`, "m"));
   // L'environnement est celui du job de release : ni secret, ni gate plus strict.
   assert.doesNotMatch(yaml, /secrets\./);
-  assert.doesNotMatch(yaml, /GH_TOKEN|RELEASE_TOKEN|MEM0_OMP_REQUIRE_SMOKE|MEM0_OMP_HOST_/);
+  assert.doesNotMatch(yaml, /GH_TOKEN|RELEASE_TOKEN|MEMORY_OMP_REQUIRE_SMOKE|MEMORY_OMP_HOST_/);
 });

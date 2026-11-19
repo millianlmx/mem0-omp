@@ -12,7 +12,7 @@ import Testing
 @Suite("ios-redaction-vouvoiement — rédaction des textes visibles")
 struct IOSRedactionTests {
     /// Les mots qu'aucun message d'erreur ne montre : services, commandes, branches.
-    private static let forbidden = ["mem0", "qdrant", "podman", "ollama", "omlx", "redéploie", "redéployez", "feat/", "branche", "harness.sh"]
+    private static let forbidden = ["memory", "qdrant", "podman", "ollama", "omlx", "redéploie", "redéployez", "feat/", "branche", "harness.sh"]
 
     /// Les fautes d'un message à la manière d'Apple : deux lignes non vides, la
     /// seconde ouverte par un impératif au vouvoiement, aucun mot interdit.

@@ -1,6 +1,6 @@
 // La carte « Services » des statistiques, écrite une fois pour le Mac et l'iPhone/iPad :
 // chaque service du serveur — sonde de santé (`GET /v1/health` : base, ordonnancement,
-// disque), mémoire du projet et écritures perdues, service mem0 et sauvegardes
+// disque), mémoire du projet et écritures perdues, service mémoire et sauvegardes
 // (`GET /v1/status`), extension Chrome du poste — avec son niveau et ses chiffres. La
 // carte relit les services à son apparition puis chaque minute.
 

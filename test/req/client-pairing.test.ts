@@ -1,7 +1,7 @@
 // Feature client-pairing : `harness.sh pair` donne un code `omp1:…` qui porte le
 // harness, son jeton, la mémoire partagée et son jeton. `/pair <code>` dans omp le
 // vérifie auprès du serveur puis l'écrit là où le lisent le plugin, le plugin mémoire
-// et l'app (`~/.omp/harness.json`, `~/.omp/mem0.json`) : une saisie relie tout.
+// et l'app (`~/.omp/harness.json`, `~/.omp/memory.json`) : une saisie relie tout.
 // `harness.sh approver` donne le code des apps (une 5e ligne : le jeton approbateur),
 // que `/pair` refuse : ce jeton n'entre jamais dans `~/.omp`.
 import test from "node:test";
@@ -12,8 +12,8 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import reqExtension from "../../omp-mem0-req/extension.ts";
-import { APPROVER_CODE_REFUSAL, decodePairing, encodePairing, writePairing } from "../../omp-mem0-req/harness.ts";
+import reqExtension from "../../omp-memory-req/extension.ts";
+import { APPROVER_CODE_REFUSAL, decodePairing, encodePairing, writePairing } from "../../omp-memory-req/harness.ts";
 import { fakeSchema } from "../support/fake-zod.ts";
 import { tmpdir } from "../support/repo.ts";
 
@@ -22,16 +22,16 @@ const TOKEN = "t".repeat(64);
 const SAMPLE = {
   url: "https://vps.tailnet.ts.net",
   token: TOKEN,
-  mem0Url: "https://vps.tailnet.ts.net:8443",
-  mem0Token: "m".repeat(64),
+  memoryUrl: "https://vps.tailnet.ts.net:8443",
+  memoryToken: "m".repeat(64),
 };
 
 test("client-pairing/AC-1 : un code se décode à l'identique ; un texte qui n'en est pas un est refusé", () => {
   assert.deepEqual(decodePairing(` ${encodePairing(SAMPLE)}\n`), SAMPLE);
-  assert.deepEqual(decodePairing(encodePairing({ ...SAMPLE, mem0Url: "", mem0Token: "" })), {
+  assert.deepEqual(decodePairing(encodePairing({ ...SAMPLE, memoryUrl: "", memoryToken: "" })), {
     ...SAMPLE,
-    mem0Url: "",
-    mem0Token: "",
+    memoryUrl: "",
+    memoryToken: "",
   });
   for (const bad of [
     "",
@@ -39,7 +39,7 @@ test("client-pairing/AC-1 : un code se décode à l'identique ; un texte qui n'e
     `omp2:${encodePairing(SAMPLE).slice(5)}`,
     encodePairing({ ...SAMPLE, url: "vps:8790" }),
     encodePairing({ ...SAMPLE, token: "" }),
-    encodePairing({ ...SAMPLE, mem0Url: "ftp://vps" }),
+    encodePairing({ ...SAMPLE, memoryUrl: "ftp://vps" }),
   ])
     assert.equal(decodePairing(bad), null, bad);
 });
@@ -49,8 +49,11 @@ test("client-pairing/AC-2 : le code qu'affiche `harness.sh pair` est celui que l
   const secrets = tmpdir("client-pairing-secrets-");
   fs.mkdirSync(path.join(root, "state"));
   fs.writeFileSync(path.join(root, "state", "token"), `${SAMPLE.token}\n`);
-  fs.writeFileSync(path.join(root, "published.env"), `URL=${SAMPLE.url}\nMEM0_URL=${SAMPLE.mem0Url}\n`);
-  fs.writeFileSync(path.join(secrets, "mem0.env"), `MEM0_HTTP_TOKEN=${SAMPLE.mem0Token}\nOMLX_EMBED_MODEL=bge-m3\n`);
+  fs.writeFileSync(path.join(root, "published.env"), `URL=${SAMPLE.url}\nMEMORY_URL=${SAMPLE.memoryUrl}\n`);
+  fs.writeFileSync(
+    path.join(secrets, "memory.env"),
+    `MEMORY_HTTP_TOKEN=${SAMPLE.memoryToken}\nOMLX_EMBED_MODEL=bge-m3\n`,
+  );
   const run = spawnSync("bash", [SCRIPT, "pair"], {
     encoding: "utf8",
     env: { ...process.env, OMP_HARNESS_ENGINE: "sh", OMP_HARNESS_ROOT: root, OMP_HARNESS_SECRETS: secrets },
@@ -99,6 +102,9 @@ test("client-pairing/AC-3 : /pair vérifie le jeton auprès du serveur, puis éc
       path.join(home, ".omp", "harness.json"),
       JSON.stringify({ url: "http://ancien", token: "x", repos: { "/code/produit": "produit" } }),
     );
+    // Le réglage partagé existe déjà sous son nom actuel : l'appairage l'écrit là (sans lui, il écrit l'ancien
+    // nom pendant la transition, éprouvé par renommage-memoire/AC-305).
+    fs.writeFileSync(path.join(home, ".omp", "memory.json"), '{"url":"http://ancien-memoire","token":"x"}\n');
     const { run, notes } = pairCommand();
 
     await run("pas un code");
@@ -111,11 +117,11 @@ test("client-pairing/AC-3 : /pair vérifie le jeton auprès du serveur, puis éc
     assert.match(notes[2] ?? "", /^info: \[pair\] relié à http:\/\/127\.0\.0\.1:\d+ \(0 feature/);
     const harness = JSON.parse(fs.readFileSync(path.join(home, ".omp", "harness.json"), "utf8"));
     assert.deepEqual(harness, { url, token: TOKEN, repos: { "/code/produit": "produit" } });
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, ".omp", "mem0.json"), "utf8")), {
-      url: SAMPLE.mem0Url,
-      token: SAMPLE.mem0Token,
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, ".omp", "memory.json"), "utf8")), {
+      url: SAMPLE.memoryUrl,
+      token: SAMPLE.memoryToken,
     });
-    for (const file of ["harness.json", "mem0.json"])
+    for (const file of ["harness.json", "memory.json"])
       assert.equal(fs.statSync(path.join(home, ".omp", file)).mode & 0o777, 0o600);
   } finally {
     process.env.HOME = previousHome;
@@ -127,22 +133,25 @@ test("client-pairing/AC-3 : /pair vérifie le jeton auprès du serveur, puis éc
 test("client-pairing/AC-4 : un code sans mémoire ne touche pas au réglage mémoire existant", () => {
   const home = tmpdir("client-pairing-nomem-");
   fs.mkdirSync(path.join(home, ".omp"));
-  fs.writeFileSync(path.join(home, ".omp", "mem0.json"), '{"url":"http://127.0.0.1:8321"}\n');
-  assert.deepEqual(writePairing({ ...SAMPLE, mem0Url: "", mem0Token: "" }, home), [
+  fs.writeFileSync(path.join(home, ".omp", "memory.json"), '{"url":"http://127.0.0.1:8321"}\n');
+  assert.deepEqual(writePairing({ ...SAMPLE, memoryUrl: "", memoryToken: "" }, home), [
     path.join(home, ".omp", "harness.json"),
   ]);
-  assert.equal(fs.readFileSync(path.join(home, ".omp", "mem0.json"), "utf8"), '{"url":"http://127.0.0.1:8321"}\n');
+  assert.equal(fs.readFileSync(path.join(home, ".omp", "memory.json"), "utf8"), '{"url":"http://127.0.0.1:8321"}\n');
 });
 
 /** Un code `omp1:` à 5 lignes, comme celui de `harness.sh approver`. */
 const approverCode = (lines: string[]) => `omp1:${Buffer.from(`${lines.join("\n")}\n`).toString("base64url")}`;
 
 test("client-pairing/AC-5 : /pair refuse un code approbateur (5 lignes) sans rien écrire ; un code à 4 lignes se décode comme avant", async () => {
-  const code = approverCode([SAMPLE.url, SAMPLE.token, SAMPLE.mem0Url, SAMPLE.mem0Token, "p".repeat(64)]);
+  const code = approverCode([SAMPLE.url, SAMPLE.token, SAMPLE.memoryUrl, SAMPLE.memoryToken, "p".repeat(64)]);
   assert.deepEqual(decodePairing(code), { refusal: APPROVER_CODE_REFUSAL });
   assert.equal(APPROVER_CODE_REFUSAL, "code des apps : utilisez `harness.sh pair`");
   // La 5e ligne vide (la fin du printf de `harness.sh pair`) : un code ordinaire.
-  assert.deepEqual(decodePairing(approverCode([SAMPLE.url, SAMPLE.token, SAMPLE.mem0Url, SAMPLE.mem0Token])), SAMPLE);
+  assert.deepEqual(
+    decodePairing(approverCode([SAMPLE.url, SAMPLE.token, SAMPLE.memoryUrl, SAMPLE.memoryToken])),
+    SAMPLE,
+  );
   assert.deepEqual(decodePairing(encodePairing(SAMPLE)), SAMPLE);
   const home = tmpdir("client-pairing-approbateur-");
   const previousHome = process.env.HOME;
@@ -166,8 +175,8 @@ test("client-pairing/AC-6 : `harness.sh approver` imprime le code d'appairage pl
   const bin = tmpdir("client-pairing-approver-bin-");
   fs.mkdirSync(path.join(root, "state"));
   fs.writeFileSync(path.join(root, "state", "token"), `${SAMPLE.token}\n`);
-  fs.writeFileSync(path.join(root, "published.env"), `URL=${SAMPLE.url}\nMEM0_URL=${SAMPLE.mem0Url}\n`);
-  fs.writeFileSync(path.join(secrets, "mem0.env"), `MEM0_HTTP_TOKEN=${SAMPLE.mem0Token}\n`);
+  fs.writeFileSync(path.join(root, "published.env"), `URL=${SAMPLE.url}\nMEMORY_URL=${SAMPLE.memoryUrl}\n`);
+  fs.writeFileSync(path.join(secrets, "memory.env"), `MEMORY_HTTP_TOKEN=${SAMPLE.memoryToken}\n`);
   fs.writeFileSync(path.join(root, "config.json"), JSON.stringify({ dataDir: path.join(root, "data"), repos: [] }));
   // Le moteur doublé : `compose … run … harness node … main.ts <args>` lance le main.ts du dépôt ici.
   const main = path.join(import.meta.dirname, "..", "..", "omp-harness", "main.ts");

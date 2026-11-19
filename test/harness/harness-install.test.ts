@@ -33,7 +33,7 @@ test("harness-install/AC-1 : install.sh pose omp à la version de l'app Mac, vé
   assert.match(install, /install -m 0755 "\$HERE\/omp-harness-check" \/usr\/local\/bin\/omp-harness-check/);
   const check = read("omp-harness-check");
   assert.match(check, /sudo -u omp-harness -H/);
-  assert.match(check, /\. \/etc\/omp-harness\/env/, "le jeton de mem0 du service, pour sonder l'oracle");
+  assert.match(check, /\. \/etc\/omp-harness\/env/, "le jeton de memory du service, pour sonder l'oracle");
   assert.ok(
     check.includes(`${directive(read("omp-harness.service"), "ExecStart")} --check`),
     "la même ligne que le service, plus --check",

@@ -53,7 +53,7 @@ extension SetupText {
     /// Le détail BRUT d'un échec de préparation (S-5) : commande, détail, port,
     /// propriétaire et geste shell. Seul « Copier le diagnostic » l'emporte.
     /// `logPath` est le journal de l'agent, nommé par un délai de santé dépassé.
-    static func failureDiagnostic(_ failure: SetupFailure, logPath: String = AppPaths.standard().mem0Log.path) -> String {
+    static func failureDiagnostic(_ failure: SetupFailure, logPath: String = AppPaths.standard().memoryLog.path) -> String {
         switch failure {
         case .components(.unsupportedMac):
             return L10n.text("Ce Mac n’est pas pris en charge (arm64 requis).")
@@ -72,13 +72,13 @@ extension SetupText {
         case .migration(.historyCopyFailed(let detail)):
             return "podman cp omp-console-mem0-http:/home/mem0/.mem0/history.db a échoué : \(detail)"
         case .migration(.importFailed(let code, let detail)):
-            return "mem0-rs import a échoué (code \(code)) : \(detail)"
+            return "memory-rs import a échoué (code \(code)) : \(detail)"
         case .migration(.stopFailed(let detail)):
             return "podman stop omp-console-mem0-http omp-console-qdrant a échoué : \(detail)"
         case .migration(.stateWriteFailed(let path, let detail)):
             return "État de bascule non inscriptible (\(path)) : \(detail)"
         case .agent(.binaryMissing(let path)):
-            return "mem0-rs absent ou non exécutable : \(path)"
+            return "memory-rs absent ou non exécutable : \(path)"
         case .agent(.launchctlFailed(let command, let detail)):
             return "launchctl \(command) a échoué : \(detail)"
         case .agent(.plistWriteFailed(let path, let detail)):

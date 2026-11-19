@@ -10,16 +10,16 @@ mem0-omp/                              ← racine du dépôt = marketplace
 ├── .omp-plugin/marketplace.json       ← catalogue, chemin lu par OMP
 ├── .claude-plugin/marketplace.json    ← copie, repli compatible Claude Code
 ├── CHANGELOG.md                       ← journal des versions, écrit par le job de release
-├── omp-mem0-memory/                   ← le plugin mémoire
+├── omp-memory/                        ← le plugin mémoire
 │   ├── package.json                   ← déclare omp.extensions
 │   ├── extension.ts
 │   └── install.sh                     ← chemin manuel, hors marketplace
-├── omp-mem0-req/                      ← le plugin pipeline (/req → /specs → /impl → /review)
+├── omp-memory-req/                    ← le plugin pipeline (/req → /specs → /impl → /review)
 │   ├── package.json                   ← déclare omp.extensions
 │   └── extension.ts
 ├── omp-console/                       ← la coque macOS, hors publication marketplace
-├── mem0-stack/                        ← le service mem0, à lancer séparément
-│   └── mem0-rs/                       ← le serveur Rust mem0-rs (crate)
+├── memory-stack/                      ← le service mémoire, à lancer séparément
+│   └── memory-rs/                     ← le serveur Rust memory-rs (crate)
 ├── test/                              ← suite de tests, hors publication
 ├── scripts/check.sh                   ← validation avant publication
 ├── scripts/release.ts                 ← commit de release poussé sur main, tags et releases au merge
@@ -38,9 +38,9 @@ retombe sur `.claude-plugin/marketplace.json` s'il est absent. Publier les deux
 rend le dépôt installable depuis OMP *et* depuis Claude Code. `scripts/check.sh`
 vérifie qu'ils n'ont pas divergé, parce que rien d'autre ne le fera.
 
-**`omp-mem0-memory/package.json`** — sans la clé `omp.extensions`, le plugin
+**`omp-memory/package.json`** — sans la clé `omp.extensions`, le plugin
 s'installe sans erreur et l'extension n'est **jamais chargée**. Pas de message,
-pas de commande `/mem0-*`, rien. C'est le mode de défaillance numéro un d'un
+pas de commande `/memory-*`, rien. C'est le mode de défaillance numéro un d'un
 plugin marketplace.
 
 ```json
@@ -64,7 +64,7 @@ grep -rlE 'github\.com/[^/[:space:]]+/mem0-omp' . --exclude-dir=.git --exclude-d
 
 Cette commande liste exactement sept fichiers — `README.md`, `omp-harness/README.md`,
 `.omp-plugin/marketplace.json`, `.claude-plugin/marketplace.json`,
-`omp-mem0-memory/package.json`, `docker-compose.yml` (le dépôt dont le build
+`omp-memory/package.json`, `docker-compose.yml` (le dépôt dont le build
 vérifie les tags du harness) et ce `PUBLISHING.md` — et c'est elle qui fait
 autorité : après une édition, relance-la plutôt que de te fier à cette liste.
 Pour un fork, le texte à substituer est le handle : `<ton-handle>`.
@@ -77,24 +77,24 @@ de chaque entrée d'extension sur disque, **transpilation des deux `extension.ts
 tableau `commands` de chaque entrée de catalogue avec les `registerCommand()`
 réellement appelés, **cohérence des versions** (voir « Mettre à jour »),
 type-check des deux plugins et des tests contre les types de l'hôte, la crate
-mem0-rs et son **contrat boîte noire** des 9 routes, et la suite de tests.
+memory-rs et son **contrat boîte noire** des 9 routes, et la suite de tests.
 
-Les tests de `mem0-rs import` lisent une Qdrant **native** comme source. Le
+Les tests de `memory-rs import` lisent une Qdrant **native** comme source. Le
 binaire vit hors du dépôt et se prépare une fois :
 
 ```bash
-bash scripts/mem0-http-contrat.sh --prepare
+bash scripts/memory-http-contrat.sh --prepare
 ```
 
 Sans lui, ces tests annoncent le saut plutôt qu'un ✓ trompeur ; la CI le prépare
 avant `check.sh`.
 
-La section Rust (`── Rust mem0-rs`) compile et teste la crate `mem0-stack/mem0-rs`
+La section Rust (`── Rust memory-rs`) compile et teste la crate `memory-stack/memory-rs`
 avec la toolchain stable : sur un poste, installer rustup (https://rustup.rs) puis
 `rustup component add clippy`. Sans cargo ou sans clippy, la section annonce le
-saut sans ✓. La CI installe clippy et pose `MEM0_OMP_REQUIRE_RUST=1` : cargo ou
+saut sans ✓. La CI installe clippy et pose `MEMORY_OMP_REQUIRE_RUST=1` : cargo ou
 clippy absent, un avertissement clippy, un `cargo test` rouge ou le contrat boîte
-noire en échec contre mem0-rs y font échouer le job.
+noire en échec contre memory-rs y font échouer le job.
 
 Le contrôle d'import mérite une explication : `import type { ExtensionAPI }` est
 effacé à la compilation, donc l'extension n'a aucune dépendance à résoudre au
@@ -113,10 +113,10 @@ plus jamais un push direct à la main.
 
 ```bash
 cd mem0-omp
-chmod +x scripts/check.sh omp-mem0-memory/install.sh   # perdu par un unzip
+chmod +x scripts/check.sh omp-memory/install.sh   # perdu par un unzip
 git init -b main
 git add .
-git commit -m "feat: mémoire mem0 par projet pour oh-my-pi"
+git commit -m "feat: mémoire par projet pour oh-my-pi"
 
 gh repo create mem0-omp --public --source=. --push
 # ou, sans gh :
@@ -132,8 +132,8 @@ Côté utilisateur, dans une session OMP :
 
 ```
 /marketplace add <ton-handle>/mem0-omp
-/marketplace install omp-mem0-memory@mem0-omp
-/marketplace install omp-mem0-req@mem0-omp
+/marketplace install omp-memory@mem0-omp
+/marketplace install omp-memory-req@mem0-omp
 ```
 
 C'est bien `/marketplace`, pas `/plugin` : `/plugins` (au pluriel) existe aussi
@@ -142,8 +142,8 @@ ligne de commande :
 
 ```bash
 omp plugin marketplace add <ton-handle>/mem0-omp
-omp plugin install omp-mem0-memory@mem0-omp
-omp plugin install omp-mem0-req@mem0-omp
+omp plugin install omp-memory@mem0-omp
+omp plugin install omp-memory-req@mem0-omp
 omp plugin list          # vérifier
 omp plugin doctor        # diagnostiquer
 ```
@@ -157,36 +157,46 @@ l'installation est utilisateur, donc valable partout.
 
 **Redémarre la session après l'installation.** `/reload-plugins` rafraîchit les
 skills, commandes et serveurs MCP, mais **pas** les modules d'extension : tant
-que tu n'as pas relancé `omp`, les tools `mem0_*` et les commandes `/mem0-*`
+que tu n'as pas relancé `omp`, les tools `memory_*` et les commandes `/memory-*`
 n'existeront pas. C'est normal, et c'est la première chose à vérifier avant de
 conclure que le plugin est cassé.
 
 ## Le stack n'est pas installé par le plugin
 
-Le marketplace ne déploie que du code d'extension. Le service mem0 reste à
+Le marketplace ne déploie que du code d'extension. Le service mémoire reste à
 lancer à la main, une fois :
 
 ```bash
 git clone https://github.com/<ton-handle>/mem0-omp
-cd mem0-omp/mem0-stack && docker compose up -d
+cd mem0-omp/memory-stack && docker compose up -d
 curl http://localhost:8321/health
 ```
 
 Sans lui, le plugin se charge et se dégrade proprement : le recall renvoie du
-vide, les écritures échouent avec un warning, `/mem0-status` affiche
+vide, les écritures échouent avec un warning, `/memory-status` affiche
 `injoignable`. Aucune session n'est bloquée — c'était un objectif de conception,
 pas un effet de bord.
 
 Mentionne-le en tête du README : quelqu'un qui installe le plugin sans lire
-verra `/mem0-status` en rouge et n'aura aucune idée de pourquoi.
+verra `/memory-status` en rouge et n'aura aucune idée de pourquoi.
 
 ## Mettre à jour
 
 Le catalogue est du contenu de dépôt : rien n'est à republier ailleurs, et surtout
 rien à pousser à la main.
 
+**Une installation d'avant le renommage de la mémoire** (plugins `omp-mem0-memory` et
+`omp-mem0-req`) se met à jour par les mêmes commandes sous les anciens noms :
+`omp plugin marketplace update mem0-omp`, puis
+`omp plugin upgrade omp-mem0-memory@mem0-omp` et
+`omp plugin upgrade omp-mem0-req@mem0-omp`. Le catalogue garde le nom `mem0-omp`
+pendant la transition. Le passage aux nouveaux noms de plugins (désinstaller les
+anciens, installer `omp-memory` et `omp-memory-req`), et ce que les autres types
+d'installation renomment, sont dans [README.md](README.md) § « Passer aux noms memory
+(mise à niveau) ». Les procédures ci-dessous nomment les nouveaux plugins.
+
 **Ne monte plus les versions à la main.** Les quatre fichiers porteurs de version
-— `omp-mem0-memory/package.json`, `omp-mem0-req/package.json`,
+— `omp-memory/package.json`, `omp-memory-req/package.json`,
 `.omp-plugin/marketplace.json` et `.claude-plugin/marketplace.json` (ces deux
 derniers doivent rester identiques octet pour octet) — sont écrits par le **job de
 release**, au moment de la fusion : il lit la dernière version publiée, déduit le
@@ -229,8 +239,8 @@ exact plutôt que sur une branche :
 2. Mets à jour les deux plugins :
 
    ```bash
-   omp plugin upgrade omp-mem0-memory@mem0-omp
-   omp plugin upgrade omp-mem0-req@mem0-omp
+   omp plugin upgrade omp-memory@mem0-omp
+   omp plugin upgrade omp-memory-req@mem0-omp
    ```
 
 3. Relance `omp` : `/reload-plugins` rafraîchit les commandes et les skills, mais
@@ -242,11 +252,11 @@ exact plutôt que sur une branche :
 
    ```bash
    omp plugin list
-   ls -la ~/.omp/plugins/node_modules/omp-mem0-req
+   ls -la ~/.omp/plugins/node_modules/omp-memory-req
    ```
 
    `omp plugin list` affiche la nouvelle version, et le lien pointe vers
-   `~/.omp/plugins/cache/plugins/mem0-omp___omp-mem0-req___<nouvelle version>`.
+   `~/.omp/plugins/cache/plugins/mem0-omp___omp-memory-req___<nouvelle version>`.
 
 ### Tester une branche avant sa release
 
@@ -254,25 +264,25 @@ exact plutôt que sur une branche :
    le chemin du worktree de la branche) :
 
    ```bash
-   omp plugin link <worktree>/omp-mem0-req
+   omp plugin link <worktree>/omp-memory-req
    ```
 
 2. Relance `omp` comme au pas 3 ci-dessus.
 
 3. Vérifie le plugin : `omp plugin list`, et
-   `ls -la ~/.omp/plugins/node_modules/omp-mem0-req` pointe vers
-   `<worktree>/omp-mem0-req`.
+   `ls -la ~/.omp/plugins/node_modules/omp-memory-req` pointe vers
+   `<worktree>/omp-memory-req`.
 
 4. Reviens à la version publiée :
 
    ```bash
    omp plugin marketplace update mem0-omp
-   omp plugin upgrade omp-mem0-req@mem0-omp
+   omp plugin upgrade omp-memory-req@mem0-omp
    ```
 
    Relance `omp`, et refais la même vérification : `omp plugin list` affiche la
-   version publiée, et `ls -la ~/.omp/plugins/node_modules/omp-mem0-req` pointe de
-   nouveau vers `~/.omp/plugins/cache/plugins/mem0-omp___omp-mem0-req___<version>`.
+   version publiée, et `ls -la ~/.omp/plugins/node_modules/omp-memory-req` pointe de
+   nouveau vers `~/.omp/plugins/cache/plugins/mem0-omp___omp-memory-req___<version>`.
 
 ## Release automatique
 
@@ -349,7 +359,7 @@ commit ne compte que pour les plugins dont il touche un fichier : un
 merge qui ne touche que `README.md`, `scripts/`, `test/` ou `.github/` ne bumpe
 rien et ne publie rien.
 
-**Ce que le moteur écrit** — `omp-mem0-*/package.json`, les deux catalogues
+**Ce que le moteur écrit** — `omp-memory-*/package.json`, les deux catalogues
 (identiques octet pour octet ; `metadata.version` = la plus grande version du
 catalogue) et `CHANGELOG.md` à la racine — une section datée
 `## <plugin> <version> — <AAAA-MM-JJ>` par version publiée, la plus récente en
@@ -472,7 +482,7 @@ cinq fois :
   d'app : elle se révoque seule, sans toucher au compte.
 
 Le job importe le certificat, laisse `scripts/swift-app.sh` signer avec lui, puis
-re-signe `mem0-rs` et le bundle avec le runtime renforcé (`--options runtime`) et
+re-signe `memory-rs` et le bundle avec le runtime renforcé (`--options runtime`) et
 un horodatage Apple (`--timestamp`), sans aucun entitlement (l'app n'est pas
 sandboxée, ne charge aucune bibliothèque d'une autre équipe et n'a pas de JIT).
 Il soumet le bundle à Apple (`xcrun notarytool submit --wait`), agrafe le ticket
@@ -627,7 +637,7 @@ d'œil de ce côté.
 
 ## Alternatives
 
-**Chemin manuel, sans marketplace** — `omp-mem0-memory/install.sh` dépose
+**Chemin manuel, sans marketplace** — `omp-memory/install.sh` dépose
 l'extension dans `~/.omp/agent/extensions/` (surchargeable par
 `PI_CODING_AGENT_DIR`), où OMP la découvre seule au démarrage. Aucun
 enregistrement dans `settings.json` ou `config.yml` n'est nécessaire : le
@@ -648,4 +658,4 @@ aussi sur npm, garde le catalogue sur une source relative ou `github`.
 
 **Monorepo** — si tu préfères séparer le plugin du stack Docker, la source
 `git-subdir` pointe un sous-dossier d'un autre dépôt sans le dupliquer :
-`{ "source": "git-subdir", "url": "...", "path": "packages/omp-mem0-memory" }`.
+`{ "source": "git-subdir", "url": "...", "path": "packages/omp-memory" }`.

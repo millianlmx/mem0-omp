@@ -47,7 +47,7 @@ function fakeTree(fake: Fake): { dir: string; log: string } {
     [
       "#!/usr/bin/env bash",
       "TS_VERSION=9.9.9",
-      `echo "\${MEM0_OMP_TSC_ARGS:-}" >> "${log}"`,
+      `echo "\${MEMORY_OMP_TSC_ARGS:-}" >> "${log}"`,
       'cat "$(dirname "$0")/../canned.txt"',
       `exit ${fake.status ?? 0}`,
       "",
@@ -107,7 +107,7 @@ test("types-ratchet/AC-1 : un arbre à son plafond passe, l'option stricte est b
   assert.equal(
     fs.readFileSync(log, "utf8"),
     `--${OPTION}\n`,
-    "scripts/typecheck.sh reçoit l'option par MEM0_OMP_TSC_ARGS",
+    "scripts/typecheck.sh reçoit l'option par MEMORY_OMP_TSC_ARGS",
   );
 });
 
@@ -124,12 +124,12 @@ test("types-ratchet/AC-2 : une erreur en plus dans un fichier, ou dans un fichie
   assert.match(r.stdout, /omp-harness\/a\.ts\(4,5\): error TS2532/, "l'erreur elle-même est montrée");
   assert.doesNotMatch(r.stdout, /✓/, output(r));
 
-  const fresh = fakeTree({ tsc: `${err("omp-harness/a.ts", 3)}\n${err("omp-mem0-req/neuf.ts", 8)}\n`, baseline });
+  const fresh = fakeTree({ tsc: `${err("omp-harness/a.ts", 3)}\n${err("omp-memory-req/neuf.ts", 8)}\n`, baseline });
   const n = run(fresh.dir);
   assert.equal(n.status, 1, output(n));
   assert.match(
     n.stdout,
-    /^ {2}✗ omp-mem0-req\/neuf\.ts : 1 erreur\(s\) noUncheckedIndexedAccess pour un plafond de 0$/m,
+    /^ {2}✗ omp-memory-req\/neuf\.ts : 1 erreur\(s\) noUncheckedIndexedAccess pour un plafond de 0$/m,
     output(n),
   );
   assert.doesNotMatch(n.stdout, /^ {2}✗ omp-harness\/a\.ts/m, "le fichier à son plafond n'est pas accusé");
@@ -256,11 +256,11 @@ test("types-ratchet/AC-8 : avec le vrai tsc, l'option stricte fait apparaître l
   fs.mkdirSync(path.join(dir, "scripts"));
   fs.mkdirSync(path.join(dir, "src"));
   fs.copyFileSync(path.join(ROOT, "scripts", "types-ratchet.ts"), path.join(dir, "scripts", "types-ratchet.ts"));
-  // typecheck.sh de ce mini-projet : le tsc épinglé, un seul programme, les options de MEM0_OMP_TSC_ARGS.
+  // typecheck.sh de ce mini-projet : le tsc épinglé, un seul programme, les options de MEMORY_OMP_TSC_ARGS.
   const tsc = path.join(ROOT, ".typecheck", "typescript", "node_modules", "typescript", "bin", "tsc");
   fs.writeFileSync(
     path.join(dir, "scripts", "typecheck.sh"),
-    `#!/usr/bin/env bash\nTS_VERSION=${TS_VERSION}\nnode "${tsc}" -p tsconfig.json \${MEM0_OMP_TSC_ARGS:-}\n`,
+    `#!/usr/bin/env bash\nTS_VERSION=${TS_VERSION}\nnode "${tsc}" -p tsconfig.json \${MEMORY_OMP_TSC_ARGS:-}\n`,
   );
   fs.mkdirSync(path.join(dir, ".typecheck"));
   fs.symlinkSync(path.join(ROOT, ".typecheck", "typescript"), path.join(dir, ".typecheck", "typescript"), "dir");

@@ -1,0 +1,174 @@
+// Config du dispositif : URL et jeton memory, budgets, seuils de rappel, d'agrafage et de recherche.
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { renamedEnv } from "./env.ts";
+
+/**
+ * L'adresse et le jeton du service : `MEMORY_HTTP_URL` / `MEMORY_HTTP_TOKEN`, sinon
+ * `~/.omp/memory.json` (`{ "url", "token" }`, lu aussi par l'app OMP Console : la mémoire
+ * partagée avec le serveur de pipelines), sinon le service local. Pendant la version de
+ * transition, `~/.omp/mem0.json` est lu quand `memory.json` n'existe pas ; un `memory.json`
+ * présent l'emporte, même illisible (service local). Le jeton du fichier ne vaut que pour
+ * l'adresse du fichier.
+ */
+export function resolveMemoryTarget(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+): { url: string; token: string } {
+  const envToken = renamedEnv(env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN") || "";
+  const envUrl = renamedEnv(env, "MEMORY_HTTP_URL", "MEM0_HTTP_URL");
+  if (envUrl) return { url: envUrl, token: envToken };
+  const current = join(home, ".omp", "memory.json");
+  let file: { url?: unknown; token?: unknown } = {};
+  try {
+    file = JSON.parse(readFileSync(existsSync(current) ? current : join(home, ".omp", "mem0.json"), "utf8"));
+  } catch {
+    // Pas de fichier, ou illisible : le service local.
+  }
+  if (typeof file.url !== "string" || file.url === "") return { url: "http://localhost:8321", token: envToken };
+  const token = envToken || (typeof file.token === "string" ? file.token : "");
+  return { url: file.url.replace(/\/+$/, ""), token };
+}
+
+const TARGET = resolveMemoryTarget();
+
+export const MEMORY_HTTP_URL = TARGET.url;
+
+export const MEMORY_HTTP_TOKEN = TARGET.token;
+
+// Budgets par opération. `add` avec infer=true déclenche DEUX passes LLM côté
+// serveur (extraction de faits + fusion avec l'existant) : sur qwen3-8b en local
+// c'est couramment 10 à 60 s. Un budget global de quelques secondes ferait
+// échouer silencieusement toutes les écritures.
+// Le budget de recherche doit couvrir un premier appel à froid : l'embedding
+// local (oMLX) charge son modèle à la première requête de la session. 3 s
+// suffisaient à faire échouer TOUS les rappels en silence. Ce budget long ne vaut
+// que pour un service FROID : une fois qu'une recherche du rappel a abouti, le
+// modèle est chargé et le rappel passe à `searchWarm`. Un service qui ne répond
+// plus en 5 s à chaud est en panne pour ce tour, pas en train de charger — et le
+// rappel repasse au budget froid après chaque échec (rechargement après une mise
+// en veille du modèle).
+export const TIMEOUT = { search: 20_000, searchWarm: 5_000, write: 120_000, other: 10_000 };
+
+// Disjoncteur du rappel : après un échec (service injoignable ou délai dépassé),
+// le rappel n'appelle plus le service pendant cette durée et injecte une notice
+// courte. Sans lui, chaque tour d'une panne payait le budget entier avant de
+// répondre — et l'hôte coupe un handler `before_agent_start` à 30 s.
+export const RECALL_BACKOFF_MS = 60_000;
+
+export const RECALL_LIMIT = 5; // souvenirs projet injectés par tour
+
+export const RECALL_GLOBAL_LIMIT = 2; // + préférences transverses
+
+export const RECALL_MIN_PROMPT = 12; // en dessous ("ok", "continue"), on ne cherche pas
+
+// Plancher de PERTINENCE. Sémantique, vérifiée dans le source de la bibliothèque Python d'origine 2.0.20 (THIRD_PARTY_NOTICES.md)
+// (`score_and_rank`) : c'est le COSINUS BRUT (`score_details.semantic_score`) qui est
+// filtré, jamais le `score` renvoyé — celui-ci est le score COMBINÉ (sémantique + bm25
+// + boost entités) et BM25 le sature. Mesuré : sur « recette de tarte aux pommes », le
+// souvenir le plus proche reçoit bm25 = 1.000 et un combiné de 0.716, plus haut que
+// n'importe quelle ligne d'une demande pertinente — trier ou filtrer sur le combiné
+// inverse donc l'ordre sémantique. D'où `explain: true` sur la recherche : sans
+// `score_details`, aucune décision de pertinence n'est possible.
+//
+// Mesuré le 2026-09-18 sur la base réelle (69 souvenirs projet + 14 globaux, cosinus
+// bruts) : le hors-sujet ne descend pas sous ~0.25 et les deux classes SE RECOUVRENT —
+// « couleur du bouton de connexion » 0.424-0.478, « recette de tarte » 0.432,
+// « résumé de ce qu'on a fait dans cette session » 0.501-0.534 (le hors-sujet le plus
+// proche du seuil) contre 0.559-0.726 pour les demandes franchement en rapport. 0.55
+// écarte TOUTES les sondes hors-sujet mesurées et garde les souvenirs qui tombent
+// juste. Aucun plancher unique ne sépare parfaitement l'ambigu du modéré : le contrat
+// tranche pour le silence, et c'est le sommaire exhaustif — pas ce seuil — qui rattrape
+// un rappel qui rate. L'ancien 0.4 laissait entrer du hors-sujet mesuré à 0.42-0.53.
+export const RECALL_THRESHOLD = 0.55;
+
+// Sur-échantillonnage demandé au serveur (4 × la limite finale). Le serveur classe par
+// score COMBINÉ : un souvenir à fort cosinus peut être rétrogradé hors du top servi,
+// donc sans marge la sélection finale le manquerait. C'est `selectRelevant` qui tranche.
+export const RECALL_POOL = 20;
+
+export const RECALL_GLOBAL_POOL = 8;
+
+// Plancher du search EXPLICITE (tool memory_search). Sans lui, memory applique son
+// défaut 0.1 = « renvoie tout » : une requête hors-sujet ramène les souvenirs les
+// plus proches quand même. Même sémantique que RECALL_THRESHOLD — cosinus brut — et
+// même valeur ; constante séparée pour la régler indépendamment du rappel.
+export const SEARCH_THRESHOLD = 0.55;
+
+export const SEARCH_POOL_MAX = 50; // plafond du pool demandé par le tool (4 × limit)
+
+// Plancher de la recherche de FIN DE PHASE (session_stop). Elle garde 0.4 — le
+// comportement d'avant : elle est déclenchée par une intention explicite (/set-phase)
+// et filtrée en aval par EXECUTABLE_RE, la sévérité du rappel automatique n'a pas lieu
+// de s'y appliquer.
+export const PHASE_THRESHOLD = 0.4;
+
+export const RECALL_LINE_CHARS = 100; // aperçu d'un souvenir dans le transcript, une ligne
+
+// Budget du bloc de rappel, en caractères de texte de souvenir. Un souvenir n'a pas
+// de longueur maximale (une procédure `kind: "procedure"` est stockée telle quelle) :
+// sans borne, cinq souvenirs longs posaient plusieurs milliers de tokens à CHAQUE
+// tour, et un seul pouvait évincer les quatre autres de l'attention du modèle. Un
+// souvenir est rogné à RECALL_ITEM_CHARS, en le disant (memory_search le rend entier) ;
+// le bloc s'arrête quand le suivant ferait dépasser RECALL_BLOCK_CHARS, le premier
+// passant toujours. Un souvenir laissé hors du bloc n'est pas compté comme montré :
+// il pourra l'être à un tour suivant.
+export const RECALL_ITEM_CHARS = 1200;
+
+export const RECALL_BLOCK_CHARS = 4000;
+
+export const RECALL_MESSAGE_TYPE = "memory-recall";
+
+// Le bloc de rappel est visible par défaut : un rappel muet ne se distingue pas d'un rappel absent.
+export const RECALL_DISPLAY = renamedEnv(process.env, "MEMORY_QUIET", "MEM0_QUIET") !== "1";
+
+// Agrafage d'un souvenir au résultat d'un outil d'exploration.
+export const PIN_TOOLS: Record<string, true> = { read: true, grep: true, glob: true, lsp: true, edit: true, write: true };
+
+export const PIN_MIN_RATIO = 0.5; // part des tokens de l'argument retrouvés dans le souvenir
+
+export const PIN_COMMON_RATIO = 0.4; // au-delà, un token est trop répandu pour être informatif
+
+export const PIN_TEXT_CHARS = 700; // longueur du souvenir agrafé
+
+// Compteurs par outil : ce qui compte comme exploration, ce qui compte comme
+// modification. `mutations > 0 && adds === 0` en fin de session déclenche la relance.
+export const EXPLORE_TOOLS: Record<string, true> = { read: true, grep: true, glob: true, lsp: true };
+
+export const MUTATE_TOOLS: Record<string, true> = { edit: true, write: true, ast_edit: true, apply_patch: true };
+
+export const GLOBAL_SCOPE = "_global";
+
+// MEMORY_MODE=runner : la session est un runner conduit par un orchestrateur (harness)
+// dont un autre composant tient déjà la mémoire à jour (oracle de l'orchestrateur).
+// Tout ce qui s'adresse à un humain ou coûte un tour est coupé : rappel par tour,
+// épinglage sur les outils d'exploration, « memory checkpoint », relance de fin de
+// session, pose du brief. Les outils memory_* restent enregistrés. Lu à l'APPEL,
+// pas à l'évaluation du module : l'environnement fait foi au moment du hook.
+export function runnerMode(env: Record<string, string | undefined> = process.env): boolean {
+  return renamedEnv(env, "MEMORY_MODE", "MEM0_MODE") === "runner";
+}
+
+// MEMORY_NO_GLOBAL=1 : la session tourne POUR un espace du harness (un client) — un run
+// d'un de ses dépôts, un job de son poste. La portée `_global` est partagée entre tous
+// les projets, donc entre tous les clients : elle lui est fermée, en lecture (rappel,
+// memory_search) comme en écriture (memory_add). Sans la variable : inchangé. Lu à l'APPEL.
+export function globalScopeAllowed(env: Record<string, string | undefined> = process.env): boolean {
+  return renamedEnv(env, "MEMORY_NO_GLOBAL", "MEM0_NO_GLOBAL") !== "1";
+}
+
+export const GLOBAL_SCOPE_REFUSED =
+  "[memory] Portée « global » refusée : cette session travaille pour un espace (un client), et la " +
+  "portée globale est partagée entre tous les clients. Rien n'a été lu ni écrit. Reste dans la " +
+  'portée du projet (scope: "project").';
+
+// MEMORY_NUDGE=0 coupe la relance d'écriture de fin de session seule — pour les
+// agents pilotés qui gardent le reste du dispositif : sans elle, chaque étape
+// paierait un tour de plus. MEMORY_MODE=runner la coupe aussi. Lu à l'APPEL.
+export function sessionNudgeEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return renamedEnv(env, "MEMORY_NUDGE", "MEM0_NUDGE") !== "0" && !runnerMode(env);
+}
+
+// MEMORY_AUTOSETUP=0 pour ne jamais écrire dans un dépôt.
+export const AUTOSETUP = renamedEnv(process.env, "MEMORY_AUTOSETUP", "MEM0_AUTOSETUP") !== "0";

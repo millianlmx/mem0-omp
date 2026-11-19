@@ -11,14 +11,14 @@ import Testing
 @testable import OMPConsole
 import ConsoleCore
 
-@Test("memoire-mem0/AC-4 : sans manifeste, la portée est le nom du répertoire du dépôt principal")
+@Test("memoire-memory/AC-4 : sans manifeste, la portée est le nom du répertoire du dépôt principal")
 func ac4ScopeFallsBackToTheRepositoryBasename() async throws {
     let fixture = try GitFixture()
     let scope = await MemoryScope.scope(projectRoot: fixture.root, environment: [:], git: fixtureGit())
     #expect(scope == (fixture.root as NSString).lastPathComponent)
 }
 
-@Test("memoire-mem0/AC-4 : la portée vient du manifeste, dans l'ordre package.json, pyproject.toml, Cargo.toml, Package.swift")
+@Test("memoire-memory/AC-4 : la portée vient du manifeste, dans l'ordre package.json, pyproject.toml, Cargo.toml, Package.swift")
 func ac4ScopeReadsManifestsInOrder() async throws {
     let fixture = try GitFixture()
     try fixture.write("Cargo.toml", "[package]\nname = \"cargo-name\"\n")
@@ -39,7 +39,7 @@ func ac4ScopeReadsManifestsInOrder() async throws {
     #expect(await MemoryScope.scope(projectRoot: fixture.root, environment: [:], git: fixtureGit()) == "package-name")
 }
 
-@Test("memoire-mem0/AC-4 : un nom de manifeste vide ne gagne pas, et un manifeste illisible non plus")
+@Test("memoire-memory/AC-4 : un nom de manifeste vide ne gagne pas, et un manifeste illisible non plus")
 func ac4ScopeIgnoresEmptyAndBrokenManifests() async throws {
     let fixture = try GitFixture()
     try fixture.write("package.json", "{\"name\": \"\"}")
@@ -50,7 +50,7 @@ func ac4ScopeIgnoresEmptyAndBrokenManifests() async throws {
     #expect(await MemoryScope.scope(projectRoot: fixture.root, environment: [:], git: fixtureGit()) == "toml-name")
 }
 
-@Test("memoire-mem0/AC-4 : à défaut de manifeste, le premier *.xcodeproj donne son nom, et le manifeste gagne sur lui")
+@Test("memoire-memory/AC-4 : à défaut de manifeste, le premier *.xcodeproj donne son nom, et le manifeste gagne sur lui")
 func ac4ScopeFallsBackToTheXcodeProject() async throws {
     let fixture = try GitFixture()
     try FileManager.default.createDirectory(
@@ -64,27 +64,27 @@ func ac4ScopeFallsBackToTheXcodeProject() async throws {
     #expect(await MemoryScope.scope(projectRoot: fixture.root, environment: [:], git: fixtureGit()) == "swift-name")
 }
 
-@Test("memoire-mem0/AC-4 : MEM0_PROJECT_ID non vide impose la portée ; posée mais vide, elle est ignorée")
+@Test("memoire-memory/AC-4 : MEMORY_PROJECT_ID non vide impose la portée ; posée mais vide, elle est ignorée")
 func ac4ScopeHonoursTheProjectIdOverride() async throws {
     let fixture = try GitFixture()
     try fixture.write("package.json", "{\"name\": \"package-name\"}")
 
     let forced = await MemoryScope.scope(
         projectRoot: fixture.root,
-        environment: ["MEM0_PROJECT_ID": "force"],
+        environment: ["MEMORY_PROJECT_ID": "force"],
         git: fixtureGit()
     )
     #expect(forced == "force")
 
     let empty = await MemoryScope.scope(
         projectRoot: fixture.root,
-        environment: ["MEM0_PROJECT_ID": ""],
+        environment: ["MEMORY_PROJECT_ID": ""],
         git: fixtureGit()
     )
     #expect(empty == "package-name")
 }
 
-@Test("memoire-mem0/AC-4 : depuis un worktree de feature, la portée est celle du dépôt PRINCIPAL")
+@Test("memoire-memory/AC-4 : depuis un worktree de feature, la portée est celle du dépôt PRINCIPAL")
 func ac4ScopeOfAWorktreeIsThePrimaryRepository() async throws {
     let fixture = try GitFixture()
     try fixture.write("package.json", "{\"name\": \"principal-name\"}")
@@ -98,7 +98,7 @@ func ac4ScopeOfAWorktreeIsThePrimaryRepository() async throws {
     #expect(fromWorktree == fromPrimary)
 }
 
-@Test("memoire-mem0/AC-4 : sans dépôt git, la portée n'est pas calculable — nil, donc aucun appel réseau")
+@Test("memoire-memory/AC-4 : sans dépôt git, la portée n'est pas calculable — nil, donc aucun appel réseau")
 func ac4ScopeIsNilWithoutARepository() async throws {
     let directory = canonicalPath(
         (NSTemporaryDirectory() as NSString).appendingPathComponent("memoire-hors-depot-\(UUID().uuidString)")

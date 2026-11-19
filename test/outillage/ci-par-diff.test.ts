@@ -14,9 +14,10 @@ import * as path from "node:path";
 
 import { GIT_ENV, emptyGitRepo } from "../support/git.ts";
 import { ROOT, childEnv, tmpdir } from "../support/repo.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 const SLUG = "ci-par-diff";
-const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
+const DEPTH = Number(renamedEnv(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
 
 /** Un `git` qui doit réussir, dans `cwd`. */
 function git(cwd: string, args: string[]): string {
@@ -73,16 +74,16 @@ test(`${SLUG}/AC-1 : ci-scope.sh ne fait compiler une app que si le diff touche 
     assert.match(skipped.stderr, new RegExp(`rien du diff depuis HEAD ne touche ${section} .*section sautée`));
   }
 
-  // Chaque préfixe de app-swift impose la section ; app-ios ignore mem0-stack/.
+  // Chaque préfixe de app-swift impose la section ; app-ios ignore memory-stack/.
   write(dir, "omp-console/x.swift", "let x = 1\n");
   write(dir, "scripts/y.sh", "exit 0\n");
-  write(dir, "mem0-stack/z.rs", "fn main() {}\n");
+  write(dir, "memory-stack/z.rs", "fn main() {}\n");
   write(dir, ".github/workflows/check.yml", "name: check\n");
   const swift = run(dir, "ci-scope.sh", ["--base=HEAD", "app-swift"]);
   assert.equal(swift.status, 0, swift.stderr);
   assert.deepEqual(lines(swift.stdout), [
     ".github/workflows/check.yml",
-    "mem0-stack/z.rs",
+    "memory-stack/z.rs",
     "omp-console/x.swift",
     "scripts/y.sh",
   ]);
@@ -90,11 +91,11 @@ test(`${SLUG}/AC-1 : ci-scope.sh ne fait compiler une app que si le diff touche 
   assert.equal(ios.status, 0, ios.stderr);
   assert.deepEqual(lines(ios.stdout), [".github/workflows/check.yml", "omp-console/x.swift", "scripts/y.sh"]);
 
-  // mem0-stack/ seul (le reste commité) : app-swift à lancer, app-ios sautée.
+  // memory-stack/ seul (le reste commité) : app-swift à lancer, app-ios sautée.
   git(dir, ["add", "-A"]);
   git(dir, ["commit", "-q", "-m", "app"]);
-  fs.appendFileSync(path.join(dir, "mem0-stack", "z.rs"), "// plus\n");
-  assert.deepEqual(lines(run(dir, "ci-scope.sh", ["--base=HEAD", "app-swift"]).stdout), ["mem0-stack/z.rs"]);
+  fs.appendFileSync(path.join(dir, "memory-stack", "z.rs"), "// plus\n");
+  assert.deepEqual(lines(run(dir, "ci-scope.sh", ["--base=HEAD", "app-swift"]).stdout), ["memory-stack/z.rs"]);
   assert.equal(run(dir, "ci-scope.sh", ["--base=HEAD", "app-ios"]).status, 1);
 
   // Base inconnue : le doute fait compiler (sortie 0).
@@ -156,13 +157,13 @@ function lightRepo(): string {
 }
 
 const CHECK_ENV = {
-  MEM0_CHECK_DEPTH: String(DEPTH + 1),
-  MEM0_OMP_SKIP_SWIFT_APP: "1",
-  MEM0_OMP_SKIP_IOS: "1",
-  MEM0_OMP_SKIP_RUST: "1",
-  MEM0_OMP_REQUIRE_SMOKE: "",
-  MEM0_OMP_REQUIRE_RUST: "",
-  MEM0_OMP_REQUIRE_IOS: "",
+  MEMORY_CHECK_DEPTH: String(DEPTH + 1),
+  MEMORY_OMP_SKIP_SWIFT_APP: "1",
+  MEMORY_OMP_SKIP_IOS: "1",
+  MEMORY_OMP_SKIP_RUST: "1",
+  MEMORY_OMP_REQUIRE_SMOKE: "",
+  MEMORY_OMP_REQUIRE_RUST: "",
+  MEMORY_OMP_REQUIRE_IOS: "",
 };
 
 const checkTests = (dir: string, args: string[]) => run(dir, "check.sh", ["--sections=tests", ...args], CHECK_ENV);

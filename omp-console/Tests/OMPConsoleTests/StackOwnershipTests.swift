@@ -64,7 +64,7 @@ final class OwnershipDouble: @unchecked Sendable {
 }
 
 /// Notre exécutable de test : jamais lancé, seul son chemin est comparé.
-private let ourExecutable = URL(fileURLWithPath: "/Applications/OMP Console.app/Contents/Resources/mem0-rs")
+private let ourExecutable = URL(fileURLWithPath: "/Applications/OMP Console.app/Contents/Resources/memory-rs")
 
 /// Un enregistrement `lsof -F pcn` pour un processus donné.
 private func lsofRecord(pid: Int32, command: String, port: Int) -> String {
@@ -108,14 +108,14 @@ func noRecordIsFree() async {
 @Test("omp-console-sans-podman : une ligne de commande = chemin de notre exécutable suivi d'arguments ⇒ `.ours`")
 func commandOfOurExecutableIsOurs() async {
     let double = OwnershipDouble()
-    double.lsofResult = ProcessRun(code: 0, stdout: lsofRecord(pid: 11399, command: "mem0-rs", port: 8321), stderr: "", timedOut: false)
+    double.lsofResult = ProcessRun(code: 0, stdout: lsofRecord(pid: 11399, command: "memory-rs", port: 8321), stderr: "", timedOut: false)
     double.psResult = ProcessRun(
         code: 0,
-        stdout: "/Applications/OMP Console.app/Contents/Resources/mem0-rs serve --port 8321\n",
+        stdout: "/Applications/OMP Console.app/Contents/Resources/memory-rs serve --port 8321\n",
         stderr: "", timedOut: false
     )
     let ownership = await StackOwnership.holder(ofPort: 8321, ourExecutable: ourExecutable, environment: [:], run: double.runner)
-    #expect(ownership == .ours(process: "mem0-rs", pid: 11399))
+    #expect(ownership == .ours(process: "memory-rs", pid: 11399))
 }
 
 @Test("bug-embedded-podman-machine/AC-1 : une ligne de commande étrangère ⇒ `.foreign`")
@@ -164,7 +164,7 @@ func failingLsofIsUnknown() async {
 func ownershipTextsAreFrozen() {
     let cases: [(MemoryPortOwnership, String, String)] = [
         (.free, "personne", "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"),
-        (.ours(process: "mem0-rs", pid: 11399),
+        (.ours(process: "memory-rs", pid: 11399),
          "le service mémoire d'OMP Console",
          "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"),
         (.foreign(process: "python3", pid: 4711),

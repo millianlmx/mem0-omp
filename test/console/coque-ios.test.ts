@@ -8,7 +8,7 @@
 //     l'arbre réel, qui doit rester publiable), où `check.sh` ne lance que la
 //     section observée (`--sections=`) ;
 //  2. les vérifications qui portent sur l'arbre réel ne s'exécutent qu'au premier
-//     niveau (`MEM0_CHECK_DEPTH` compte les niveaux : un `check.sh` complet
+//     niveau (`MEMORY_CHECK_DEPTH` compte les niveaux : un `check.sh` complet
 //     relance la suite).
 //
 // INVARIANT DE NOMMAGE : l'invariant `criteria/AC-13` exige qu'un slug de feature
@@ -22,12 +22,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT, sharedRepo, tmpdir } from "../support/repo.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 /** Profondeur d'imbrication : 0 = `node --test test/console/coque-ios.test.ts`. */
-const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
+const DEPTH = Number(renamedEnv(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
 
 /** Hors de l'arbre réel (copie jetable ou suite relancée par `check.sh`). */
-const IN_COPY = DEPTH > 0 || process.env.MEM0_OMP_SKIP_SWIFT_APP === "1" || process.env.MEM0_OMP_SKIP_IOS === "1";
+const IN_COPY =
+  DEPTH > 0 ||
+  renamedEnv(process.env, "MEMORY_OMP_SKIP_SWIFT_APP", "MEM0_OMP_SKIP_SWIFT_APP") === "1" ||
+  renamedEnv(process.env, "MEMORY_OMP_SKIP_IOS", "MEM0_OMP_SKIP_IOS") === "1";
 
 /** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()` (../support/repo.ts). */
 const shared = sharedRepo("coque-copie-");
@@ -44,10 +48,10 @@ function runCheck(cwd: string, sections: string, env: Record<string, string> = {
     encoding: "utf8",
     env: {
       ...process.env,
-      MEM0_CHECK_DEPTH: String(DEPTH + 1),
-      MEM0_OMP_SKIP_SWIFT_APP: "1",
-      MEM0_OMP_SKIP_IOS: "1",
-      MEM0_OMP_SKIP_RUST: "1",
+      MEMORY_CHECK_DEPTH: String(DEPTH + 1),
+      MEMORY_OMP_SKIP_SWIFT_APP: "1",
+      MEMORY_OMP_SKIP_IOS: "1",
+      MEMORY_OMP_SKIP_RUST: "1",
       ...env,
     },
     timeout: 900_000,
@@ -593,7 +597,7 @@ test("coque-ios/AC-5 : la section « App iOS » annonce « non exécuté » sans
   const iosSection = check.indexOf("── App iOS");
   assert.ok(iosSection > 0, "la section « App iOS » est absente de check.sh");
   assert.ok(iosSection > swiftSection, "la section « App iOS » doit suivre « App Swift »");
-  assert.ok(check.includes("MEM0_OMP_SKIP_IOS"), "check.sh ne connaît pas MEM0_OMP_SKIP_IOS");
+  assert.ok(check.includes("MEMORY_OMP_SKIP_IOS"), "check.sh ne connaît pas MEMORY_OMP_SKIP_IOS");
 
   if (IN_COPY) {
     t.skip("copie jetable — la section réelle est éprouvée à la racine");
@@ -607,11 +611,11 @@ test("coque-ios/AC-5 : la section « App iOS » annonce « non exécuté » sans
   stub(bin, "xcodebuild", `printf '%s\\n' "$*" >> '${log}'`);
   const idle = runCheck(shared.fresh(), "app-ios", {
     PATH: `${bin}:${process.env.PATH}`,
-    MEM0_OMP_SKIP_IOS: "",
-    // La CI macOS pose MEM0_OMP_REQUIRE_IOS=1 pour TOUTE la suite : sans la
+    MEMORY_OMP_SKIP_IOS: "",
+    // La CI macOS pose MEMORY_OMP_REQUIRE_IOS=1 pour TOUTE la suite : sans la
     // neutraliser ici, la copie « Linux » hériterait du durcissement et la
     // section rougirait — ce que ce cas ne teste pas.
-    MEM0_OMP_REQUIRE_IOS: "",
+    MEMORY_OMP_REQUIRE_IOS: "",
   });
   const idleOut = output(idle);
   assert.equal(idle.status, 0, idleOut);
@@ -626,8 +630,8 @@ test("coque-ios/AC-5 : la section « App iOS » annonce « non exécuté » sans
   // La même absence, durcie par la variable de la CI macOS : c'est un échec.
   const strict = runCheck(shared.fresh(), "app-ios", {
     PATH: `${bin}:${process.env.PATH}`,
-    MEM0_OMP_SKIP_IOS: "",
-    MEM0_OMP_REQUIRE_IOS: "1",
+    MEMORY_OMP_SKIP_IOS: "",
+    MEMORY_OMP_REQUIRE_IOS: "1",
   });
   assert.notEqual(strict.status, 0, output(strict));
   assert.ok(output(strict).includes("✗ App iOS"), output(strict));

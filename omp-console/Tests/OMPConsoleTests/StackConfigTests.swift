@@ -1,6 +1,6 @@
 // La configuration de la pile et son fichier `stack/env` (BR-2, S-2/S-3/S-6).
 //
-// Les défauts sont ceux de `mem0-stack/.env.example` (mesurés le 2026-10-04) : un
+// Les défauts sont ceux de `memory-stack/.env.example` (mesurés le 2026-10-04) : un
 // `.env` de la pile manuelle doit s'importer sans traduction, et le fichier de
 // l'app doit se relire comme celui de la pile manuelle.
 
@@ -13,14 +13,14 @@ import Testing
 func defaultsMatchTheExampleFile() {
     let defaults = StackConfig.defaults
     #expect(defaults.qdrantApiKey == "mem0-local-qdrant-key")
-    #expect(defaults.mem0HttpToken == "")
+    #expect(defaults.memoryHttpToken == "")
     #expect(defaults.omlxBaseURL == "http://127.0.0.1:8000/v1")
     #expect(defaults.omlxApiToken == "")
     #expect(defaults.omlxLLMModel == "qwen3-8b")
     #expect(defaults.omlxEmbedModel == "bge-m3")
     #expect(defaults.embeddingDims == 1024)
     #expect(StackConfig.keys == [
-        "QDRANT_API_KEY", "MEM0_HTTP_TOKEN", "OMLX_BASE_URL",
+        "QDRANT_API_KEY", "MEMORY_HTTP_TOKEN", "OMLX_BASE_URL",
         "OMLX_API_TOKEN", "OMLX_LLM_MODEL", "OMLX_EMBED_MODEL", "EMBEDDING_DIMS",
     ])
 }
@@ -29,7 +29,7 @@ func defaultsMatchTheExampleFile() {
 func serializationRoundTrips() {
     let config = StackConfig(
         qdrantApiKey: "key",
-        mem0HttpToken: "token",
+        memoryHttpToken: "token",
         omlxBaseURL: "http://host.containers.internal:8000/v1",
         omlxApiToken: "omlx",
         omlxLLMModel: "qwen3-8b",
@@ -38,8 +38,8 @@ func serializationRoundTrips() {
     )
     #expect(StackConfig(values: StackEnvStore.parse(config.serialized)) == config)
     // Une valeur VIDE reste une valeur (un jeton vide est un choix), pas un défaut.
-    let empty = StackConfig(mem0HttpToken: "", omlxApiToken: "")
-    #expect(StackConfig(values: StackEnvStore.parse(empty.serialized)).mem0HttpToken == "")
+    let empty = StackConfig(memoryHttpToken: "", omlxApiToken: "")
+    #expect(StackConfig(values: StackEnvStore.parse(empty.serialized)).memoryHttpToken == "")
 }
 
 @Test("all-in-one-app/AC-1 : le parseur retire les guillemets et ignore commentaires, blancs et clés inconnues")
@@ -48,16 +48,16 @@ func parserHandlesComposeQuirks() {
     # un commentaire
     OMLX_API_TOKEN="  espace conservé  "
 
-    MEM0_HTTP_TOKEN='simple'
+    MEMORY_HTTP_TOKEN='simple'
     INCONNUE=valeur
     """
     let values = StackEnvStore.parse(text)
     #expect(values["OMLX_API_TOKEN"] == "  espace conservé  ")
-    #expect(values["MEM0_HTTP_TOKEN"] == "simple")
+    #expect(values["MEMORY_HTTP_TOKEN"] == "simple")
     // Une clé inconnue est ignorée : elle n'écrase aucun défaut.
     let config = StackConfig(values: values)
     #expect(config.omlxApiToken == "  espace conservé  ")
-    #expect(config.mem0HttpToken == "simple")
+    #expect(config.memoryHttpToken == "simple")
     #expect(config.embeddingDims == StackConfig.defaults.embeddingDims)
 }
 
@@ -88,11 +88,11 @@ func envFileIsWrittenPrivate() throws {
     defer { try? FileManager.default.removeItem(at: root) }
     let url = root.appendingPathComponent("env")
 
-    try StackEnvStore.write(StackConfig(mem0HttpToken: "secret"), to: url)
+    try StackEnvStore.write(StackConfig(memoryHttpToken: "secret"), to: url)
 
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
     #expect(attributes[.posixPermissions] as? Int == 0o600)
-    #expect(StackEnvStore.load(at: url)?.mem0HttpToken == "secret")
+    #expect(StackEnvStore.load(at: url)?.memoryHttpToken == "secret")
 }
 
 @Test("all-in-one-app/AC-1 : l'URL sondée pour oMLX est 127.0.0.1 avec le port d'`OMLX_BASE_URL`, 8000 par défaut")

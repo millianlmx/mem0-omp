@@ -6,12 +6,12 @@
 // réservé à OMP Console et refusé ici, comme le fait `/pair` — ce jeton approuve les
 // envois du poste et ne doit jamais entrer dans `chrome.storage`.
 //
-// Copie autonome de `decodePairing` (omp-mem0-req/harness.ts) : l'extension ne peut pas
+// Copie autonome de `decodePairing` (omp-memory-req/harness.ts) : l'extension ne peut pas
 // importer le plugin, et `Buffer` n'existe pas dans Chrome. Le décodage base64url est
 // donc écrit ici, avec la même tolérance que `Buffer.from(…, "base64url")` : le
 // bourrage `=` final est ignoré et un dernier caractère isolé (6 bits) ne produit rien.
 
-export type Pairing = { url: string; token: string; mem0Url: string; mem0Token: string };
+export type Pairing = { url: string; token: string; memoryUrl: string; memoryToken: string };
 
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -40,11 +40,11 @@ export const APPROVER_CODE_REFUSAL = "code des apps : collez-le dans OMP Console
 export function decodePairing(code: string): Pairing | { refusal: string } | null {
   const match = /^omp1:([A-Za-z0-9_-]+=*)$/.exec(code.trim());
   if (!match) return null;
-  const [url = "", token = "", mem0Url = "", mem0Token = "", approverToken = ""] = new TextDecoder()
+  const [url = "", token = "", memoryUrl = "", memoryToken = "", approverToken = ""] = new TextDecoder()
     .decode(base64urlBytes(match[1] as string))
     .split("\n");
   if (approverToken !== "") return { refusal: APPROVER_CODE_REFUSAL };
   if (!/^https?:\/\/\S+$/.test(url) || !/^\S+$/.test(token)) return null;
-  if (mem0Url !== "" && !/^https?:\/\/\S+$/.test(mem0Url)) return null;
-  return { url: url.replace(/\/+$/, ""), token, mem0Url: mem0Url.replace(/\/+$/, ""), mem0Token };
+  if (memoryUrl !== "" && !/^https?:\/\/\S+$/.test(memoryUrl)) return null;
+  return { url: url.replace(/\/+$/, ""), token, memoryUrl: memoryUrl.replace(/\/+$/, ""), memoryToken };
 }

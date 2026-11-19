@@ -1,13 +1,13 @@
-// Le client mem0-http de l'app (S-1, S-2, S-3, S-6, S-7) : config, lignes de
+// Le client HTTP du service mémoire de l'app (S-1, S-2, S-3, S-6, S-7) : config, lignes de
 // souvenir, page du sommaire, erreurs, protocole et implémentation HTTP.
 //
 // La surface est STRICTEMENT un lecteur (S-2) : le protocole n'expose aucune
 // méthode d'écriture, et `HTTPMemoryService` ne construit ses URL qu'à partir de
 // `MemoryRoute` — trois routes, jamais une de plus. Un test fige cette liste.
 //
-// Le client de référence est le plugin mémoire (`omp-mem0-memory/`) : les gardes de
+// Le client de référence est le plugin mémoire (`omp-memory/`) : les gardes de
 // décodage reproduisent `memoryId` / `memoryLine` / `semanticScore`
-// (mem0Client.ts:82-111), et les budgets sont ceux de `TIMEOUT` (config.ts:13).
+// (memoryClient.ts:82-111), et les budgets sont ceux de `TIMEOUT` (config.ts:13).
 
 import ConsoleClient
 import ConsoleCore
@@ -16,7 +16,7 @@ import Foundation
 // MARK: - Configuration
 
 /// L'adresse et le jeton du service (S-7) : l'environnement du process, sinon
-/// `~/.omp/mem0.json` (le fichier que lit aussi le plugin mémoire), sinon le service
+/// `~/.omp/memory.json` (le fichier que lit aussi le plugin mémoire), sinon le service
 /// de l'app. Une variable posée mais VIDE est traitée comme absente (le `||` du
 /// plugin, config.ts).
 struct MemoryServiceConfig: Equatable, Sendable {
@@ -31,23 +31,24 @@ struct MemoryServiceConfig: Equatable, Sendable {
     /// aucune donnée réseau.
     static let defaultBaseURL = URL(string: "http://localhost:8321")!
 
-    /// Sans `MEM0_HTTP_URL`, la base vise le port de l'agent mem0-rs de l'app
-    /// (`MemoryAgent.port(environment:)`, 8321 hors recette — S-8).
+    /// Sans `MEMORY_HTTP_URL`, la base vise le port de l'agent memory-rs de l'app
+    /// (`MemoryAgent.port(environment:)`, 8321 hors recette — S-8). Chaque variable se lit
+    /// sous son nom, puis sous son ancien nom (`MEM0_HTTP_URL`, `MEM0_HTTP_TOKEN`, S-6).
     static func fromEnvironment(_ environment: [String: String]) -> MemoryServiceConfig {
-        let value: (String) -> String? = { key in environment[key].flatMap { $0.isEmpty ? nil : $0 } }
+        let url = RenamedEnvironment.value(environment, "MEMORY_HTTP_URL", legacy: "MEM0_HTTP_URL")
         let agentBase = URL(string: "http://localhost:\(MemoryAgent.port(environment: environment))") ?? defaultBaseURL
         // Le jeton du fichier ne vaut que pour l'adresse du fichier : une adresse de
         // l'environnement ne reçoit jamais le jeton d'un autre service.
-        let file = value("MEM0_HTTP_URL") == nil ? MemorySettingsFile.load(environment: environment) : nil
-        let raw = value("MEM0_HTTP_URL") ?? file?.url
+        let file = url == nil ? MemorySettingsFile.load(environment: environment) : nil
+        let raw = url ?? file?.url
         let baseURL = raw.flatMap { URL(string: $0) } ?? agentBase
-        let token = value("MEM0_HTTP_TOKEN") ?? file?.token ?? ""
+        let token = RenamedEnvironment.value(environment, "MEMORY_HTTP_TOKEN", legacy: "MEM0_HTTP_TOKEN") ?? file?.token ?? ""
         var config = MemoryServiceConfig(baseURL: baseURL, token: token)
         config.chosen = file != nil && raw == file?.url
         return config
     }
 
-    /// L'adresse vient de `~/.omp/mem0.json` : la mémoire que l'utilisateur a choisie
+    /// L'adresse vient de `~/.omp/memory.json` : la mémoire que l'utilisateur a choisie
     /// (celle d'un serveur, ou une pile en conteneurs sur ce Mac), jamais un port de
     /// l'app tenu par un autre.
     var chosen: Bool = false
@@ -96,14 +97,16 @@ enum MemoryRoute: String, CaseIterable, Sendable {
     }
 }
 
-/// `~/.omp/mem0.json` — `{ "url": …, "token": … }` : la mémoire partagée avec le
+/// `~/.omp/memory.json` — `{ "url": …, "token": … }` : la mémoire partagée avec le
 /// serveur de pipelines. Une app lancée par le Finder ne voit pas le profil du
 /// shell ; ce fichier, lu aussi par le plugin mémoire, donne la même adresse aux
-/// sessions et à l'app.
+/// sessions et à l'app. Une installation d'avant n'a que `~/.omp/mem0.json` : il est
+/// lu tant que `memory.json` n'existe pas (S-8) — jamais en repli d'un `memory.json`
+/// illisible.
 enum MemorySettingsFile {
     static func url(environment: [String: String]) -> URL? {
         guard let home = environment["HOME"], !home.isEmpty else { return nil }
-        return URL(fileURLWithPath: home, isDirectory: true).appendingPathComponent(".omp/mem0.json")
+        return HarnessPairing.sharedMemoryFile(home: URL(fileURLWithPath: home, isDirectory: true))
     }
 
     /// L'adresse et le jeton du fichier ; `nil` s'il manque, est illisible ou ne
@@ -165,7 +168,7 @@ enum MemoryServiceError: Error, Equatable, Sendable {
     }
 
     /// Le début du corps d'une réponse en échec, borné comme celui du plugin
-    /// (`mem0Client.ts:24`, `body.slice(0, 300)`).
+    /// (`memoryClient.ts:24`, `body.slice(0, 300)`).
     static func detail(_ data: Data) -> String {
         let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? "corps vide" : String(text.prefix(300))
@@ -280,7 +283,7 @@ struct HTTPMemoryService: MemoryServing {
         var body: [String: Any] = [
             "text": text,
             "agent_id": scope,
-            // REQUIS : sans lui, mem0 ferait résumer le texte par le LLM au lieu de
+            // REQUIS : sans lui, le service ferait résumer le texte par le LLM au lieu de
             // le stocker mot pour mot (S-10).
             "infer": false,
         ]
@@ -315,7 +318,7 @@ struct HTTPMemoryService: MemoryServing {
         )
     }
 
-    /// L'URL d'une route, quelle que soit la barre oblique finale de `MEM0_HTTP_URL`.
+    /// L'URL d'une route, quelle que soit la barre oblique finale de `MEMORY_HTTP_URL`.
     private func url(for route: MemoryRoute) -> URL {
         url(for: route.rawValue)
     }
@@ -335,6 +338,8 @@ struct HTTPMemoryService: MemoryServing {
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
         if !config.token.isEmpty {
+            // Les deux noms de l'en-tête, même valeur : un service d'avant ne lit que l'ancien (S-11).
+            request.setValue(config.token, forHTTPHeaderField: "X-Memory-Token")
             request.setValue(config.token, forHTTPHeaderField: "X-Mem0-Token")
         }
 

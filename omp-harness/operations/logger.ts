@@ -13,7 +13,7 @@ export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
 
 export type LogLevel = (typeof LOG_LEVELS)[number];
 
-export type LogSource = "harness" | "mem0" | "vigie";
+export type LogSource = "harness" | "memory" | "vigie";
 
 /** Ce qu'une ligne porte en plus de son message. */
 export type LogFields = {

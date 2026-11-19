@@ -11,7 +11,7 @@ import ConsoleCore
 // MARK: - Sommaire (S-3)
 
 @MainActor
-@Test("memoire-mem0/AC-3 : le sommaire affiche le compte et l'ordre du service, sur la portée du projet")
+@Test("memoire-memory/AC-3 : le sommaire affiche le compte et l'ordre du service, sur la portée du projet")
 func ac3SummaryShowsServiceOrderAndCount() async throws {
     let service = ScriptedMemoryService(
         page: .success(MemoryPage(total: 3, rows: [
@@ -25,31 +25,31 @@ func ac3SummaryShowsServiceOrderAndCount() async throws {
     #expect(model.state == .loading)
     await model.refresh()
 
-    #expect(model.state == .summary(scope: "memoire-mem0", total: 3, rows: [
+    #expect(model.state == .summary(scope: "memoire-memory", total: 3, rows: [
         memoryRow(id: "m-3", text: "récent"),
         memoryRow(id: "m-2", text: "moyen"),
         memoryRow(id: "m-1", text: "ancien"),
     ]))
-    #expect(service.allScopes == ["memoire-mem0"])
+    #expect(service.allScopes == ["memoire-memory"])
     #expect(service.searches.isEmpty)
 }
 
 @MainActor
-@Test("memoire-mem0/AC-3 : un sommaire vide est un état VIDE explicite, jamais un silence")
+@Test("memoire-memory/AC-3 : un sommaire vide est un état VIDE explicite, jamais un silence")
 func ac3EmptySummaryIsExplicit() async {
     let service = ScriptedMemoryService(page: .success(MemoryPage(total: 0, rows: [])))
     let model = memoryModel(service: service)
 
     await model.refresh()
 
-    #expect(model.state == .summaryEmpty(scope: "memoire-mem0"))
-    #expect(MemoryText.emptySummary("memoire-mem0").contains("Aucun souvenir"))
+    #expect(model.state == .summaryEmpty(scope: "memoire-memory"))
+    #expect(MemoryText.emptySummary("memoire-memory").contains("Aucun souvenir"))
 }
 
 // MARK: - Recherche (S-1)
 
 @MainActor
-@Test("memoire-mem0/AC-1 : la recherche demande le pool du plugin et rend les souvenirs triés par cosinus")
+@Test("memoire-memory/AC-1 : la recherche demande le pool du plugin et rend les souvenirs triés par cosinus")
 func ac1SearchUsesPluginPoolAndSelects() async {
     let service = ScriptedMemoryService(search: .success([
         memoryRow(id: "m-1", text: "un", score: 0.9),
@@ -66,7 +66,7 @@ func ac1SearchUsesPluginPoolAndSelects() async {
 
     // Le pool demandé est `min(6 × 4, 50)` = 24, la portée est celle du projet.
     #expect(service.searches == [
-        ScriptedMemoryService.Search(query: "sujet", scope: "memoire-mem0", pool: 24),
+        ScriptedMemoryService.Search(query: "sujet", scope: "memoire-memory", pool: 24),
     ])
     #expect(model.state == .search(query: "sujet", rows: [
         memoryRow(id: "m-1", text: "un", score: 0.9),
@@ -78,7 +78,7 @@ func ac1SearchUsesPluginPoolAndSelects() async {
 }
 
 @MainActor
-@Test("memoire-mem0/AC-1 : une recherche sans ligne, sans score ou sous le seuil a TROIS messages distincts")
+@Test("memoire-memory/AC-1 : une recherche sans ligne, sans score ou sous le seuil a TROIS messages distincts")
 func ac1SearchEmptyStatesAreDistinct() async {
     let empty = memoryModel(service: ScriptedMemoryService(search: .success([])), query: "sujet")
     await empty.search()
@@ -100,7 +100,7 @@ func ac1SearchEmptyStatesAreDistinct() async {
 }
 
 @MainActor
-@Test("memoire-mem0/AC-1 : une requête vide après trim n'émet AUCUNE requête et ramène la liste au sommaire")
+@Test("memoire-memory/AC-1 : une requête vide après trim n'émet AUCUNE requête et ramène la liste au sommaire")
 func ac1EmptyQueryNeverHitsTheNetwork() async {
     let service = ScriptedMemoryService(
         page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")])),
@@ -115,20 +115,20 @@ func ac1EmptyQueryNeverHitsTheNetwork() async {
 
     // Vider le champ ramène au sommaire à lui seul ; le valider ensuite n'émet rien.
     model.updateQuery("   ")
-    #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+    #expect(model.state == .summary(scope: "memoire-memory", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
     await model.search()
 
     // Ni requête de recherche, ni rechargement du sommaire : le sommaire DÉJÀ lu
     // revient tel quel.
     #expect(service.searches.count == searches)
     #expect(service.allScopes.count == scopeCalls)
-    #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+    #expect(model.state == .summary(scope: "memoire-memory", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
 }
 
 // MARK: - Indisponibilité (S-6)
 
 @MainActor
-@Test("memoire-mem0/AC-8 : un service arrêté affiche l'adresse ET la dernière erreur, jamais une liste vide")
+@Test("memoire-memory/AC-8 : un service arrêté affiche l'adresse ET la dernière erreur, jamais une liste vide")
 func ac8UnavailableServiceIsExplicit() async {
     let service = ScriptedMemoryService(
         health: [MemoryHealth(isAvailable: false, errorMessage: "Connexion impossible")],
@@ -153,7 +153,7 @@ func ac8UnavailableServiceIsExplicit() async {
 }
 
 @MainActor
-@Test("memoire-mem0/AC-7 : un service joignable passe directement à la liste, sans état « indisponible »")
+@Test("memoire-memory/AC-7 : un service joignable passe directement à la liste, sans état « indisponible »")
 func ac7AvailableServiceShowsTheList() async {
     let service = ScriptedMemoryService(
         page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
@@ -164,11 +164,11 @@ func ac7AvailableServiceShowsTheList() async {
 
     #expect(model.serviceAvailable)
     #expect(model.address == "http://localhost:8321")
-    #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+    #expect(model.state == .summary(scope: "memoire-memory", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
 }
 
 @MainActor
-@Test("memoire-mem0/AC-8 : un service redevenu joignable repasse à « disponible » au rafraîchissement")
+@Test("memoire-memory/AC-8 : un service redevenu joignable repasse à « disponible » au rafraîchissement")
 func ac8RefreshRecovers() async {
     let service = ScriptedMemoryService(
         health: [
@@ -185,11 +185,11 @@ func ac8RefreshRecovers() async {
     await model.refresh()
     #expect(model.serviceAvailable)
     #expect(model.serviceError == nil)
-    #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+    #expect(model.state == .summary(scope: "memoire-memory", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
 }
 
 @MainActor
-@Test("memoire-mem0/AC-8 : une requête en échec en cours de route rend le service indisponible")
+@Test("memoire-memory/AC-8 : une requête en échec en cours de route rend le service indisponible")
 func ac8TransportFailureDuringLoadMarksUnavailable() async {
     let service = ScriptedMemoryService(
         page: .failure(.notReachable("Connexion interrompue"))
@@ -204,25 +204,25 @@ func ac8TransportFailureDuringLoadMarksUnavailable() async {
 // MARK: - Portée (S-4)
 
 @MainActor
-@Test("memoire-mem0/AC-4 : la portée est celle du projet, `_global` n'est JAMAIS envoyé")
+@Test("memoire-memory/AC-4 : la portée est celle du projet, `_global` n'est JAMAIS envoyé")
 func ac4ScopeIsTheProjectAndNeverGlobal() async {
     let service = ScriptedMemoryService(
         page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")])),
         search: .success([memoryRow(id: "m-2", text: "b", score: 0.9)])
     )
-    let model = memoryModel(service: service, scope: "mem0-omp", query: "sujet")
+    let model = memoryModel(service: service, scope: "memory-omp", query: "sujet")
 
     await model.refresh()
     await model.search()
 
-    #expect(service.allScopes == ["mem0-omp"])
-    #expect(service.searches.map(\.scope) == ["mem0-omp"])
+    #expect(service.allScopes == ["memory-omp"])
+    #expect(service.searches.map(\.scope) == ["memory-omp"])
     #expect(!service.allScopes.contains("_global"))
     #expect(!service.searches.contains { $0.scope == "_global" })
 }
 
 @MainActor
-@Test("memoire-mem0/AC-5 : le sommaire ne contient que la portée du projet, jamais la mémoire globale")
+@Test("memoire-memory/AC-5 : le sommaire ne contient que la portée du projet, jamais la mémoire globale")
 func ac5SummaryNeverCarriesGlobalMemories() async {
     let service = ScriptedMemoryService(
         page: .success(MemoryPage(total: 2, rows: [
@@ -230,19 +230,19 @@ func ac5SummaryNeverCarriesGlobalMemories() async {
             memoryRow(id: "m-2", text: "projet deux"),
         ]))
     )
-    let model = memoryModel(service: service, scope: "mem0-omp")
+    let model = memoryModel(service: service, scope: "memory-omp")
 
     await model.refresh()
 
-    #expect(service.allScopes == ["mem0-omp"])
-    #expect(model.state == .summary(scope: "mem0-omp", total: 2, rows: [
+    #expect(service.allScopes == ["memory-omp"])
+    #expect(model.state == .summary(scope: "memory-omp", total: 2, rows: [
         memoryRow(id: "m-1", text: "projet un"),
         memoryRow(id: "m-2", text: "projet deux"),
     ]))
 }
 
 @MainActor
-@Test("memoire-mem0/AC-4 : sans portée calculable, aucun appel de portée n'est émis et l'état le dit")
+@Test("memoire-memory/AC-4 : sans portée calculable, aucun appel de portée n'est émis et l'état le dit")
 func ac4NoScopeMeansNoScopeRequest() async {
     let service = ScriptedMemoryService()
     let model = memoryModel(service: service, scope: nil)
@@ -264,7 +264,7 @@ func ac4NoScopeMeansNoScopeRequest() async {
 // MARK: - Détail (S-5)
 
 @MainActor
-@Test("memoire-mem0/AC-6 : ouvrir un souvenir affiche son texte complet, à l'identique")
+@Test("memoire-memory/AC-6 : ouvrir un souvenir affiche son texte complet, à l'identique")
 func ac6OpeningARowShowsTheFullText() async {
     let full = "ligne 1 avec des espaces   \n\nligne 3\n" + String(repeating: "x", count: 500)
     let service = ScriptedMemoryService(
@@ -283,7 +283,7 @@ func ac6OpeningARowShowsTheFullText() async {
 }
 
 @MainActor
-@Test("memoire-mem0/AC-6 : une nouvelle liste repose la sélection à zéro")
+@Test("memoire-memory/AC-6 : une nouvelle liste repose la sélection à zéro")
 func ac6NewListClearsTheSelection() async {
     let service = ScriptedMemoryService(
         page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")])),
@@ -302,7 +302,7 @@ func ac6NewListClearsTheSelection() async {
 // MARK: - Le bouton « Sommaire » (S-3)
 
 @MainActor
-@Test("memoire-mem0/AC-3 : le retour au sommaire recharge la liste et vide le champ de recherche")
+@Test("memoire-memory/AC-3 : le retour au sommaire recharge la liste et vide le champ de recherche")
 func ac3ReturnToSummaryClearsTheQuery() async {
     let service = ScriptedMemoryService(
         page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")])),
@@ -316,10 +316,10 @@ func ac3ReturnToSummaryClearsTheQuery() async {
 
     await model.showSummary()
 
-    #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+    #expect(model.state == .summary(scope: "memoire-memory", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
     #expect(model.query.isEmpty)
     #expect(model.canShowSummary == false)
-    #expect(service.allScopes == ["memoire-mem0", "memoire-mem0"])
+    #expect(service.allScopes == ["memoire-memory", "memoire-memory"])
 }
 
 // MARK: - Prérequis oMLX (S-6, all-in-one-app/AC-6)
@@ -346,7 +346,7 @@ func ac6OMLXConnectionRefusedIsNamed() async {
             == "oMLX est injoignable (http://127.0.0.1:8000/v1/models) — la mémoire a besoin de ses vecteurs sémantiques pour chercher."
     )
     // Le prérequis manquant n'efface JAMAIS la mémoire : la liste reste servie.
-    #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+    #expect(model.state == .summary(scope: "memoire-memory", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
 }
 
 @MainActor
@@ -418,7 +418,7 @@ func ac6OMLXReachableShowsNoBanner() async {
 }
 
 @MainActor
-@Test("all-in-one-app/AC-6 : service mem0 indisponible → AUCUNE sonde oMLX et aucun bandeau")
+@Test("all-in-one-app/AC-6 : service mémoire indisponible → AUCUNE sonde oMLX et aucun bandeau")
 func ac6UnavailableServiceNeverProbesOMLX() async {
     // Une réponse joignable est ARMÉE : si la sonde partait, elle la consommerait.
     StubURLProtocol.reset()
@@ -516,5 +516,5 @@ func ac4RecoveredServiceLeavesForeignState() async {
     #expect(model.state == .foreignOwned(ownership))
 
     await model.refresh()
-    #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+    #expect(model.state == .summary(scope: "memoire-memory", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
 }

@@ -396,10 +396,11 @@ test("reorganisation-ranger-les-tests-du-serve/AC-4 : la carte des tests de DEVE
   );
   assert.ok(mapGaps(withZz.join("\n"), subdirs).some((g) => g.includes("test/harness/zz/")));
 
-  const mem0 = lines
-    .map((l) => (l.startsWith("| `test/harness/api/` |") ? "| `test/harness/api/` | Mem0 |" : l))
+  const planted = `Mem${0}`;
+  const named = lines
+    .map((l) => (l.startsWith("| `test/harness/api/` |") ? `| \`test/harness/api/\` | ${planted} |` : l))
     .join("\n");
-  assert.ok(mapGaps(mem0, subdirs).some((g) => g.includes("test/harness/api/") && g.includes("mem0")));
+  assert.ok(mapGaps(named, subdirs).some((g) => g.includes("test/harness/api/") && g.includes("nomme")));
 
   assert.deepEqual(mapGaps("# rien\n", subdirs), ["DEVELOPPEMENT.md : section « Tests et scripts » absente"]);
 });

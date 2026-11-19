@@ -208,7 +208,7 @@ const launches = (world: FakeWorld): { cwd: string; scope: unknown }[] =>
     .filter((entry) => entry.kind === "argv")
     .map((entry) => ({
       cwd: path.basename(String(entry.cwd)),
-      scope: (entry.env as Record<string, unknown> | undefined)?.MEM0_PROJECT_ID,
+      scope: (entry.env as Record<string, unknown> | undefined)?.MEMORY_PROJECT_ID,
     }));
 
 async function until(world: FakeWorld, id: string, state: WorkstationRequest["state"]): Promise<WorkstationRequest> {

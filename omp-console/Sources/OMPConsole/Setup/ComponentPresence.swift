@@ -1,5 +1,5 @@
 // L'état de présence des composants embarqués de l'app (S-1, BR-1) — OMP seul
-// depuis que la mémoire est servie par mem0-rs : son binaire est-il un fichier
+// depuis que la mémoire est servie par memory-rs : son binaire est-il un fichier
 // EXÉCUTABLE ? C'est la SEULE question posée — jamais son état de marche (aucun
 // `omp --version`, aucun `/health`) : le badge dit « installé ou pas », pas
 // « en marche ou pas ».
@@ -18,7 +18,7 @@ import Combine
 import ConsoleCore
 import Foundation
 
-/// Un composant embarqué de l'app : OMP seul, le service mémoire (mem0-rs) vivant
+/// Un composant embarqué de l'app : OMP seul, le service mémoire (memory-rs) vivant
 /// dans le bundle.
 enum ComponentID: String, CaseIterable, Sendable {
     case omp

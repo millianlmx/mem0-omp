@@ -12,7 +12,7 @@ import Testing
 @testable import OMPConsole
 import ConsoleCore
 
-@Test("memoire-mem0/AC-8 : l'indisponibilité garde l'adresse du service et la dernière erreur en détail secondaire")
+@Test("memoire-memory/AC-8 : l'indisponibilité garde l'adresse du service et la dernière erreur en détail secondaire")
 func ac8UnavailableDetailKeepsAddressAndError() {
     #expect(MemoryText.unavailableDetail(address: "http://localhost:8321", error: "") == "http://localhost:8321")
     #expect(
@@ -62,11 +62,11 @@ func memoryErrorTextsAreReadable() {
     #expect(MemoryText.saveFailed.contains("Réessayez"))
 }
 
-@Test("memoire-mem0/AC-3 : les messages de liste sont figés, et le compte prend un vrai pluriel")
+@Test("memoire-memory/AC-3 : les messages de liste sont figés, et le compte prend un vrai pluriel")
 func ac3ListTextsAreFrozen() {
     #expect(MemoryText.summaryCount(1) == "1 souvenir")
     #expect(MemoryText.summaryCount(3) == "3 souvenirs")
-    #expect(MemoryText.emptySummary("mem0-omp") == "Aucun souvenir dans la mémoire du projet « mem0-omp ».")
+    #expect(MemoryText.emptySummary("memory-omp") == "Aucun souvenir dans la mémoire du projet « memory-omp ».")
     #expect(MemoryText.searchResults("sujet") == "Résultats pour « sujet »")
 }
 

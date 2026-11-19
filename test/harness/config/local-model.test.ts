@@ -140,7 +140,7 @@ test("local-model/AC-4 : harness.sh up --omlx sonde oMLX avant tout, garde le mo
   );
   assert.match(script, /OMP_HARNESS_OMLX_MODEL=\$OMLX_MODEL/, "le mode est gardé dans compose.env");
   assert.match(script, /ask_llm_key\(\) \{\n {2}\[ -z "\$OMLX_MODEL" \] \|\| return 0/, "aucune clé demandée en local");
-  assert.match(script, /set_line OMLX_BASE_URL "\$\(omlx_url\)" "\$SECRETS\/mem0\.env"/);
+  assert.match(script, /set_line OMLX_BASE_URL "\$\(omlx_url\)" "\$memory_env"/);
   // bash 3.2 (celui de macOS) refuse un tableau vide sous `set -u` : jamais de "${x[@]}" nu sur un tableau qui peut l'être.
   for (const name of ["profiles", "auth"])
     assert.match(script, new RegExp(`\\$\\{${name}\\[@\\]\\+"\\$\\{${name}\\[@\\]\\}"\\}`));

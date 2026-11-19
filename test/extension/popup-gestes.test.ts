@@ -230,8 +230,8 @@ test("popup-gestes/AC-5 : rien ne part d'un site exclu (ni adresse, ni titre, ni
 
 test("popup-gestes/AC-6 : la Demande sans la page (repliée) part comme avant, sans contexte ; chaque appel de la Demande présente ce navigateur ; un navigateur non appairé rend un message français", async () => {
   await start();
-  const plain = await ask({ type: "intake-post", text: "corrige le bug X dans mem0-omp" });
-  assert.deepEqual(posted()[0]?.body, { text: "corrige le bug X dans mem0-omp", source: "chrome" });
+  const plain = await ask({ type: "intake-post", text: "corrige le bug X dans memory-omp" });
+  assert.deepEqual(posted()[0]?.body, { text: "corrige le bug X dans memory-omp", source: "chrome" });
   assert.deepEqual(injections, [], "la demande libre ne lit pas l'onglet");
   const id = plain.value?.id as string;
   await ask({ type: "intake-get" });

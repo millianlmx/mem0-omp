@@ -1,16 +1,16 @@
-// Preuves de memoire-liee : le graphe de liens et le rêve de mem0-rs (schéma v4).
+// Preuves de memoire-liee : le graphe de liens et le rêve de memory-rs (schéma v4).
 //
 // - AC-1 : les tests de la crate qui éprouvent le graphe (entités, liens, migration
 //   v3 → v4, fusion `graphe`) et le rêve (paires jugées, propositions, consolidation)
 //   passent contre le vrai binaire ;
 // - AC-2 : sur le corpus commité, la fusion `graphe` ne fait pire que la RRF dans
 //   aucune catégorie, et fait mieux sur les requêtes `liee` ;
-// - AC-3 : le README de mem0-rs documente chaque route ajoutée, et la pile chaque
+// - AC-3 : le README de memory-rs documente chaque route ajoutée, et la pile chaque
 //   réglage du rêve.
 //
 // Les tests qui compilent la crate ne tournent qu'au premier niveau
-// (`MEM0_CHECK_DEPTH` 0). cargo manquant est un saut annoncé, ou un échec sous
-// MEM0_OMP_REQUIRE_RUST=1.
+// (`MEMORY_CHECK_DEPTH` 0). cargo manquant est un saut annoncé, ou un échec sous
+// MEMORY_OMP_REQUIRE_RUST=1.
 import test from "node:test";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
@@ -20,21 +20,22 @@ import * as path from "node:path";
 import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT, childEnv } from "../support/repo.ts";
 import { spawnAsync } from "../support/spawn.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
-const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
+const DEPTH = Number(renamedEnv(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
 const DELAI_LOURD = 1_200_000;
-const CRATE = path.join(ROOT, "mem0-stack", "mem0-rs");
-const MANIFESTE = "mem0-stack/mem0-rs/Cargo.toml";
+const CRATE = path.join(ROOT, "memory-stack", "memory-rs");
+const MANIFESTE = "memory-stack/memory-rs/Cargo.toml";
 
 /** cargo est-il utilisable ici ? Sinon le test est sauté (profondeur) ou annoncé. */
 function cargoPret(t: TestContext): boolean {
   if (DEPTH !== 0) {
-    t.skip(`cargo à la racine seulement (MEM0_CHECK_DEPTH=${DEPTH})`);
+    t.skip(`cargo à la racine seulement (MEMORY_CHECK_DEPTH=${DEPTH})`);
     return false;
   }
   if (spawnSync("cargo", ["--version"], { encoding: "utf8" }).status !== 0) {
-    const exige = process.env.MEM0_OMP_REQUIRE_RUST === "1";
-    prerequisAbsent(t, "cargo", "mem0-rs non construit", exige ? "MEM0_OMP_REQUIRE_RUST=1" : null);
+    const exige = renamedEnv(process.env, "MEMORY_OMP_REQUIRE_RUST", "MEM0_OMP_REQUIRE_RUST") === "1";
+    prerequisAbsent(t, "cargo", "memory-rs non construit", exige ? "MEMORY_OMP_REQUIRE_RUST=1" : null);
     return false;
   }
   return true;
@@ -43,7 +44,7 @@ function cargoPret(t: TestContext): boolean {
 /** `cargo <args>` à la racine, sans les réglages de recherche ou de rêve de l'opérateur. */
 function cargo(args: string[]) {
   const env = childEnv();
-  for (const cle of Object.keys(env)) if (/^MEM0_(SEARCH_FUSION|RRF_K|DREAM_)/.test(cle)) delete env[cle];
+  for (const cle of Object.keys(env)) if (/^MEMORY_(SEARCH_FUSION|RRF_K|DREAM_)/.test(cle)) delete env[cle];
   return spawnAsync("cargo", args, { cwd: ROOT, env, timeout: DELAI_LOURD });
 }
 
@@ -127,10 +128,10 @@ function section(markdown: string, titre: string): string {
   return markdown.slice(debut, suite === -1 ? undefined : suite);
 }
 
-test("memoire-liee/AC-3 : le README de mem0-rs documente chaque route ajoutée, la pile chaque réglage du rêve", () => {
+test("memoire-liee/AC-3 : le README de memory-rs documente chaque route ajoutée, la pile chaque réglage du rêve", () => {
   const readme = fs.readFileSync(path.join(CRATE, "README.md"), "utf8");
   const http = fs.readFileSync(path.join(CRATE, "src", "api", "http.rs"), "utf8");
-  // Chaque route propre à mem0-rs déclarée par le routeur a sa ligne dans l'une des deux sections.
+  // Chaque route propre à memory-rs déclarée par le routeur a sa ligne dans l'une des deux sections.
   const routes = [
     ...http.matchAll(/"(\/memory\/(?:link|unlink|links|entities|models|dream[a-z/]*|\{memory_id\}\/links))"/g),
   ].map((m) => m[1]!.replace("{memory_id}", "{id}"));
@@ -142,20 +143,22 @@ test("memoire-liee/AC-3 : le README de mem0-rs documente chaque route ajoutée, 
 
   // Chaque réglage du rêve est lu par le serveur, documenté, transmis par le compose et proposé par .env.example.
   const config = fs.readFileSync(path.join(CRATE, "src", "config.rs"), "utf8");
-  const compose = fs.readFileSync(path.join(ROOT, "mem0-stack", "docker-compose.yml"), "utf8");
-  const exemple = fs.readFileSync(path.join(ROOT, "mem0-stack", ".env.example"), "utf8");
-  const pile = fs.readFileSync(path.join(ROOT, "mem0-stack", "README.md"), "utf8");
-  const lus = [...config.matchAll(/"(MEM0_DREAM_[A-Z_]+)"/g)].map((m) => m[1]!).filter((v, i, a) => a.indexOf(v) === i);
+  const compose = fs.readFileSync(path.join(ROOT, "memory-stack", "docker-compose.yml"), "utf8");
+  const exemple = fs.readFileSync(path.join(ROOT, "memory-stack", ".env.example"), "utf8");
+  const pile = fs.readFileSync(path.join(ROOT, "memory-stack", "README.md"), "utf8");
+  const lus = [...config.matchAll(/"(MEMORY_DREAM_[A-Z_]+)"/g)]
+    .map((m) => m[1]!)
+    .filter((v, i, a) => a.indexOf(v) === i);
   assert.deepEqual(lus, [
-    "MEM0_DREAM_INTERVAL_MINUTES",
-    "MEM0_DREAM_QUIET_MINUTES",
-    "MEM0_DREAM_PAIRS",
-    "MEM0_DREAM_FORGET_DAYS",
+    "MEMORY_DREAM_INTERVAL_MINUTES",
+    "MEMORY_DREAM_QUIET_MINUTES",
+    "MEMORY_DREAM_PAIRS",
+    "MEMORY_DREAM_FORGET_DAYS",
   ]);
   for (const v of lus) {
     assert.ok(
       section(readme, "Variables d'environnement").includes(`| \`${v}\` |`),
-      `${v} absente du README de mem0-rs`,
+      `${v} absente du README de memory-rs`,
     );
     assert.ok(compose.includes(`${v}: \${${v}:-`), `${v} absente du compose de la pile`);
     assert.ok(new RegExp(`^${v}=`, "m").test(exemple), `${v} absente de .env.example`);

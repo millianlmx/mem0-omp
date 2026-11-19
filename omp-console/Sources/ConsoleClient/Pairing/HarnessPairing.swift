@@ -1,5 +1,5 @@
 // Le code d'appairage du serveur de pipelines (`harness.sh pair`) et le réglage
-// partagé `~/.omp/harness.json` : les mêmes que lit le plugin `omp-mem0-req`
+// partagé `~/.omp/harness.json` : les mêmes que lit le plugin `omp-memory-req`
 // (`decodePairing`, `resolveTarget`), pour qu'une seule saisie relie tout.
 
 import Foundation
@@ -55,10 +55,22 @@ public struct HarnessPairing: Equatable, Sendable {
         return (address, token)
     }
 
+    /// Le fichier des réglages de la mémoire partagée (S-8, S-9) : `~/.omp/memory.json`
+    /// s'il existe, sinon `~/.omp/mem0.json` (nom d'avant, gardé pendant la version de
+    /// transition). Quand `memory.json` existe, il l'emporte : jamais de repli vers
+    /// l'ancien. Aucun fichier n'est créé ici.
+    public static func sharedMemoryFile(home: URL) -> URL {
+        let directory = home.appendingPathComponent(".omp", isDirectory: true)
+        let current = directory.appendingPathComponent("memory.json")
+        if FileManager.default.fileExists(atPath: current.path) { return current }
+        return directory.appendingPathComponent("mem0.json")
+    }
+
     /// Écrit l'appairage là où le lisent les plugins d'omp et l'app (comme `/pair`) :
     /// `~/.omp/harness.json`, dont les correspondances `repos` sont gardées, et
-    /// `~/.omp/mem0.json` quand le code porte une mémoire. En 0600. Le jeton écrit est
-    /// TOUJOURS l'ordinaire : toute session omp lit ce fichier, l'approbateur n'y entre pas.
+    /// `~/.omp/memory.json` quand le code porte une mémoire — ou `~/.omp/mem0.json` quand
+    /// seul celui-là existe : `memory.json` n'est jamais créé ici (S-9). En 0600. Le jeton
+    /// écrit est TOUJOURS l'ordinaire : toute session omp lit ce fichier, l'approbateur n'y entre pas.
     public func writeShared(home: URL) throws {
         let directory = home.appendingPathComponent(".omp", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -69,7 +81,7 @@ public struct HarnessPairing: Equatable, Sendable {
         harness["token"] = token
         try Self.writePrivate(harness, to: harnessFile)
         if !memoryAddress.isEmpty {
-            try Self.writePrivate(["url": memoryAddress, "token": memoryToken], to: directory.appendingPathComponent("mem0.json"))
+            try Self.writePrivate(["url": memoryAddress, "token": memoryToken], to: Self.sharedMemoryFile(home: home))
         }
     }
 

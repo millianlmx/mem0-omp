@@ -9,19 +9,19 @@ import Testing
 @testable import ConsoleUI
 @testable import OMPConsole
 
-/// Un HOME jetable, avec ou sans `.omp/mem0.json`.
+/// Un HOME jetable, avec ou sans `.omp/memory.json`.
 private func home(settings: [String: Any]?) throws -> String {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("pair-memory-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir.appendingPathComponent(".omp"), withIntermediateDirectories: true)
     if let settings {
-        try JSONSerialization.data(withJSONObject: settings).write(to: dir.appendingPathComponent(".omp/mem0.json"))
+        try JSONSerialization.data(withJSONObject: settings).write(to: dir.appendingPathComponent(".omp/memory.json"))
     }
     return dir.path
 }
 
 @Suite("Appairer un iPhone — Mac")
 struct PairDeviceTests {
-    @Test("la mémoire jointe au ticket est celle d'un serveur (~/.omp/mem0.json) avec son jeton ; la mémoire de ce Mac n'est jamais jointe")
+    @Test("la mémoire jointe au ticket est celle d'un serveur (~/.omp/memory.json) avec son jeton ; la mémoire de ce Mac n'est jamais jointe")
     func memoryAttached() throws {
         let remote = try home(settings: ["url": "https://vps.tailnet.ts.net:8443", "token": "memoire"])
         let attached = PairMemory.current(environment: ["HOME": remote])
@@ -32,7 +32,7 @@ struct PairDeviceTests {
         #expect(PairMemory.current(environment: ["HOME": try home(settings: nil)]) == nil, "sans fichier : l'agent de l'app")
 
         // L'environnement prime sur le fichier, et son jeton n'est pas celui du fichier.
-        let env = PairMemory.current(environment: ["HOME": remote, "MEM0_HTTP_URL": "https://autre.example", "MEM0_HTTP_TOKEN": "autre"])
+        let env = PairMemory.current(environment: ["HOME": remote, "MEMORY_HTTP_URL": "https://autre.example", "MEMORY_HTTP_TOKEN": "autre"])
         #expect(env == HarnessPairMemory(url: "https://autre.example", token: "autre"))
     }
 

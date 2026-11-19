@@ -10,9 +10,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { outilEpingleAbsent } from "../support/prerequis.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 const RULES_DIR = path.join(ROOT, "scripts", "biome-rules");
-const LINT_DIR = path.resolve(ROOT, process.env.MEM0_OMP_LINT_DIR || ".lint");
+const LINT_DIR = path.resolve(ROOT, renamedEnv(process.env, "MEMORY_OMP_LINT_DIR", "MEM0_OMP_LINT_DIR") || ".lint");
 const BIOME = path.join(LINT_DIR, "node_modules", ".bin", "biome");
 
 type Diagnostic = { file: string; line: number; message: string };
@@ -310,7 +311,7 @@ test("anti-slop/AC-9 : l'arbre livré ne porte aucune violation hors baseline, e
     spawnSync("bash", ["scripts/lint.sh"], {
       cwd: dir,
       encoding: "utf8",
-      env: { ...process.env, MEM0_OMP_LINT_DIR: LINT_DIR },
+      env: { ...process.env, MEMORY_OMP_LINT_DIR: LINT_DIR },
       timeout: 120_000,
     });
   const file = path.join(dir, "test", "zz-neuf.test.ts");

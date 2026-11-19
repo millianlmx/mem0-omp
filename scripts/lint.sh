@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lint + format du TypeScript de omp-mem0-req/, omp-harness/, omp-chrome/, scripts/ et test/
+# Lint + format du TypeScript de omp-memory-req/, omp-harness/, omp-chrome/, scripts/ et test/
 # par un Biome ÉPINGLÉ (feature no-ts-lint-formatter, spec S-1). Le périmètre et
 # les règles vivent dans biome.jsonc.
 #
@@ -8,7 +8,7 @@
 #                                    (réseau requis une seule fois).
 #
 # Le dossier de l'outil est résolu dans cet ordre :
-#   1. MEM0_OMP_LINT_DIR (posée par les tests et la simulation de release) —
+#   1. MEMORY_OMP_LINT_DIR (posée par les tests et la simulation de release) —
 #      déclarée, elle fait AUTORITÉ : sans Biome dedans, on échoue en la nommant ;
 #   2. sinon <racine>/.lint (gitignoré).
 # Un `biome` du PATH n'est jamais utilisé : seul le binaire du dossier épinglé fait foi.
@@ -22,7 +22,7 @@ BIOME_VERSION="2.5.15"
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
-D="${MEM0_OMP_LINT_DIR:-.lint}"
+D="${MEMORY_OMP_LINT_DIR:-${MEM0_OMP_LINT_DIR:-.lint}}"
 B="$D/node_modules/.bin/biome"
 
 # Vérification commune : 0 si `B` est le Biome épinglé, sinon message ✗ et 3.

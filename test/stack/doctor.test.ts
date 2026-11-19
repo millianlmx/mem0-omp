@@ -1,8 +1,8 @@
-// Tests de mem0-stack/doctor.sh, le diagnostic de la stack mem0-rs.
+// Tests de memory-stack/doctor.sh, le diagnostic de la stack memory-rs.
 //
-// Le banc (faux `podman` en tête de PATH, API mem0 jouée par node:http, lancement
+// Le banc (faux `podman` en tête de PATH, API memory jouée par node:http, lancement
 // du vrai script) vit dans test/support/doctor-banc.ts : il sert aussi aux preuves AC-8 et
-// AC-9 de test/stack/mem0-stack-bascule-rust.test.ts. Aucun conteneur n'est démarré : ce
+// AC-9 de test/stack/memory-stack-bascule-rust.test.ts. Aucun conteneur n'est démarré : ce
 // que l'on éprouve ici, ce sont les décisions du script (code de sortie, absence
 // nommée, en-tête de token), pas la santé de la machine.
 import test from "node:test";
@@ -17,10 +17,10 @@ test("doctor/AC-7 : une vérification en échec rend un code de sortie non nul",
   const broken = await runDoctor(doctorEnv(shimDir, "absent"));
   assert.notEqual(broken.status, 0, `doctor.sh a rendu 0 sur une stack absente :\n${broken.output}`);
 
-  // Stack saine : conteneurs annoncés par le shim, API mem0 servie par le test.
+  // Stack saine : conteneurs annoncés par le shim, API memory servie par le test.
   const api = await startApi();
   try {
-    const healthy = await runDoctor(doctorEnv(shimDir, "healthy", { MEM0_HTTP_URL: api.url }));
+    const healthy = await runDoctor(doctorEnv(shimDir, "healthy", { MEMORY_HTTP_URL: api.url }));
     assert.equal(healthy.status, 0, `doctor.sh a rendu ${healthy.status} sur une stack saine :\n${healthy.output}`);
     assert.match(healthy.output, /écriture et relecture fonctionnelles/);
   } finally {
@@ -36,7 +36,7 @@ test("doctor/AC-8 : l'absence de conteneur est nommée, sans panne inventée", a
   assert.notEqual(status, 0, `doctor.sh a rendu 0 alors qu'il n'y a aucun conteneur :\n${output}`);
   assert.match(output, /absent/, `l'absence du conteneur n'est pas nommée :\n${output}`);
   assert.match(output, /compose up -d/, `le remède compose up -d n'est pas donné :\n${output}`);
-  // Plus de sonde Qdrant ni d'appel Python : la pile n'est plus que mem0-rs. Casse
+  // Plus de sonde Qdrant ni d'appel Python : la pile n'est plus que memory-rs. Casse
   // respectée : l'en-tête « Ancienne mémoire Python+Qdrant » est légitime.
   assert.doesNotMatch(output, /qdrant:6333|readyz|python/, `vérification de l'ancienne pile :\n${output}`);
 });
@@ -47,7 +47,7 @@ test("doctor/AC-9 : le token du conteneur est envoyé dans l'aller-retour écrit
   try {
     const shimDir = writeShim(tmpdir("doctor-ac9-"));
     const { status, output } = await runDoctor(
-      doctorEnv(shimDir, "healthy", { MEM0_HTTP_URL: api.url, SHIM_TOKEN: token }),
+      doctorEnv(shimDir, "healthy", { MEMORY_HTTP_URL: api.url, SHIM_TOKEN: token }),
     );
 
     assert.equal(status, 0, `doctor.sh a rendu ${status} avec un token défini dans le conteneur :\n${output}`);

@@ -14,10 +14,14 @@ fi
 # Le jeton mémoire propre au dépôt (policy.ts) : il remplace le jeton global de runner.env.
 # Monté mais illisible : le runner s'arrête (`set -e`), jamais de repli sur le jeton global.
 if [ -e /run/secrets/memory.env ]; then
-  unset MEM0_HTTP_TOKEN
+  unset MEMORY_HTTP_TOKEN MEM0_HTTP_TOKEN
   set -a
   . /run/secrets/memory.env
   set +a
+  # Le fichier peut porter l'un ou l'autre nom : les deux noms reçoivent la même valeur.
+  repo_token="${MEMORY_HTTP_TOKEN:-${MEM0_HTTP_TOKEN:-}}"
+  export MEMORY_HTTP_TOKEN="$repo_token" MEM0_HTTP_TOKEN="$repo_token"
+  unset repo_token
 fi
 # Un dépôt `local-only` : aucune clé de fournisseur distant, ni de runner.env ni de l'API.
 if [ "${OMP_HARNESS_LOCAL_ONLY:-}" = 1 ]; then

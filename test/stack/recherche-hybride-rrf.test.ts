@@ -1,9 +1,9 @@
-// Preuves de recherche-hybride-rrf : la fusion Reciprocal Rank Fusion de mem0-rs,
-// choisie par MEM0_SEARCH_FUSION (ou le champ `fusion` d'une requête, prouvé par
-// les tests d'intégration de la crate), et le banc de mesure `mem0-rs banc`.
+// Preuves de recherche-hybride-rrf : la fusion Reciprocal Rank Fusion de memory-rs,
+// choisie par MEMORY_SEARCH_FUSION (ou le champ `fusion` d'une requête, prouvé par
+// les tests d'intégration de la crate), et le banc de mesure `memory-rs banc`.
 //
 // - AC-1 / AC-2 : le contrat boîte noire contre le vrai binaire. Sans réglage, la
-//   phase `rang` garde la parité de rang.json ; sous MEM0_SEARCH_FUSION=rrf, seul
+//   phase `rang` garde la parité de rang.json ; sous MEMORY_SEARCH_FUSION=rrf, seul
 //   l'ordre de cette phase change, toutes les formes de réponse restent conformes ;
 // - AC-3 : un réglage invalide arrête le serveur avant l'écoute ;
 // - AC-4 / AC-5 : le banc tourne hors ligne et son rapport a une forme fixe ; sur
@@ -11,8 +11,8 @@
 // - AC-6 : la documentation de la crate suit le code (variables, usage).
 //
 // Les tests qui compilent la crate ne tournent qu'au premier niveau
-// (`MEM0_CHECK_DEPTH` 0). cargo manquant est un saut annoncé, ou un échec sous
-// MEM0_OMP_REQUIRE_RUST=1.
+// (`MEMORY_CHECK_DEPTH` 0). cargo manquant est un saut annoncé, ou un échec sous
+// MEMORY_OMP_REQUIRE_RUST=1.
 import test from "node:test";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
@@ -21,32 +21,33 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 /** Profondeur d'imbrication : 0 = suite lancée à la main ou par check.sh racine. */
-const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
+const DEPTH = Number(renamedEnv(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
 
 /** Délai d'un test qui compile la crate ou démarre de vrais serveurs. */
 const DELAI_LOURD = 1_200_000;
 
-const CRATE = path.join(ROOT, "mem0-stack", "mem0-rs");
-const MANIFESTE = "mem0-stack/mem0-rs/Cargo.toml";
+const CRATE = path.join(ROOT, "memory-stack", "memory-rs");
+const MANIFESTE = "memory-stack/memory-rs/Cargo.toml";
 const BINAIRE = path.join(
-  path.resolve(ROOT, process.env.CARGO_TARGET_DIR || path.join("mem0-stack", "mem0-rs", "target")),
+  path.resolve(ROOT, process.env.CARGO_TARGET_DIR || path.join("memory-stack", "memory-rs", "target")),
   "debug",
-  "mem0-rs",
+  "memory-rs",
 );
-const LIBELLE_RANG = "rang/rang · mem0-rs-noyau AC-13 · chaque requête rend les clés de la fixture dans l'ordre";
+const LIBELLE_RANG = "rang/rang · memory-rs-noyau AC-13 · chaque requête rend les clés de la fixture dans l'ordre";
 
 /**
  * Environnement d'un enfant : celui du processus, sans les marqueurs de
- * travailleur de `node:test`, sans aucune `MEM0_CONTRAT_*`, fusion de recherche
- * ou binaire mem0-rs hérités de l'opérateur — seules les variables posées comptent.
+ * travailleur de `node:test`, sans aucune `MEMORY_CONTRAT_*`, fusion de recherche
+ * ou binaire memory-rs hérités de l'opérateur — seules les variables posées comptent.
  */
 function envEnfant(poses: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
-  const exclues = ["NODE_TEST_CONTEXT", "NODE_TEST_WORKER_ID", "MEM0_RS_BIN", "MEM0_SEARCH_FUSION", "MEM0_RRF_K"];
+  const exclues = ["NODE_TEST_CONTEXT", "NODE_TEST_WORKER_ID", "MEMORY_RS_BIN", "MEMORY_SEARCH_FUSION", "MEMORY_RRF_K"];
   for (const [cle, valeur] of Object.entries(process.env)) {
-    if (valeur === undefined || exclues.includes(cle) || cle.startsWith("MEM0_CONTRAT_")) continue;
+    if (valeur === undefined || exclues.includes(cle) || cle.startsWith("MEMORY_CONTRAT_")) continue;
     env[cle] = valeur;
   }
   return { ...env, ...poses };
@@ -82,12 +83,12 @@ let construction: Promise<Resultat> | null = null;
  */
 async function binairePret(t: TestContext): Promise<boolean> {
   if (DEPTH !== 0) {
-    t.skip(`cargo et serveurs réels à la racine seulement (MEM0_CHECK_DEPTH=${DEPTH})`);
+    t.skip(`cargo et serveurs réels à la racine seulement (MEMORY_CHECK_DEPTH=${DEPTH})`);
     return false;
   }
   if (!cargoPresent()) {
-    const exige = process.env.MEM0_OMP_REQUIRE_RUST === "1";
-    prerequisAbsent(t, "cargo", "mem0-rs non construit", exige ? "MEM0_OMP_REQUIRE_RUST=1" : null);
+    const exige = renamedEnv(process.env, "MEMORY_OMP_REQUIRE_RUST", "MEM0_OMP_REQUIRE_RUST") === "1";
+    prerequisAbsent(t, "cargo", "memory-rs non construit", exige ? "MEMORY_OMP_REQUIRE_RUST=1" : null);
     return false;
   }
   construction ??= lancer("cargo", ["build", "--manifest-path", MANIFESTE, "--locked"], envEnfant({}));
@@ -96,29 +97,33 @@ async function binairePret(t: TestContext): Promise<boolean> {
   return true;
 }
 
-/** Le contrat boîte noire contre mem0-rs (groupe infer=true coupé : hors sujet). */
+/** Le contrat boîte noire contre memory-rs (groupe infer=true coupé : hors sujet). */
 function contrat(env: Record<string, string>): Promise<Resultat> {
   return lancer(
     "bash",
-    ["scripts/mem0-http-contrat.sh", "--run"],
-    envEnfant({ MEM0_CONTRAT_START: "bash scripts/mem0-http-contrat.sh --start-rs", MEM0_CONTRAT_INFER: "0", ...env }),
+    ["scripts/memory-http-contrat.sh", "--run"],
+    envEnfant({
+      MEMORY_CONTRAT_START: "bash scripts/memory-http-contrat.sh --start-rs",
+      MEMORY_CONTRAT_INFER: "0",
+      ...env,
+    }),
   );
 }
 
 /** Contrat non exécuté (code 2 : binaire ou pièce absente) : saut annoncé ou échec. */
 function contratNonExecute(t: TestContext, r: Resultat): boolean {
   if (r.code !== 2) return false;
-  const exige = process.env.MEM0_OMP_REQUIRE_RUST === "1";
+  const exige = renamedEnv(process.env, "MEMORY_OMP_REQUIRE_RUST", "MEM0_OMP_REQUIRE_RUST") === "1";
   prerequisAbsent(
     t,
     r.sortie.split("\n")[0] ?? "",
-    "contrat contre mem0-rs non exécuté",
-    exige ? "MEM0_OMP_REQUIRE_RUST=1" : null,
+    "contrat contre memory-rs non exécuté",
+    exige ? "MEMORY_OMP_REQUIRE_RUST=1" : null,
   );
   return true;
 }
 
-test("recherche-hybride-rrf/AC-1 : sans réglage, mem0-rs garde la fusion additive et la parité de rang.json", {
+test("recherche-hybride-rrf/AC-1 : sans réglage, memory-rs garde la fusion additive et la parité de rang.json", {
   timeout: DELAI_LOURD,
 }, async (t) => {
   if (!(await binairePret(t))) return;
@@ -128,11 +133,11 @@ test("recherche-hybride-rrf/AC-1 : sans réglage, mem0-rs garde la fusion additi
   assert.ok(r.sortie.includes(`PASS  ${LIBELLE_RANG}`), r.sortie);
 });
 
-test("recherche-hybride-rrf/AC-2 : MEM0_SEARCH_FUSION=rrf change l'ordre de la phase rang et garde toutes les formes de réponse", {
+test("recherche-hybride-rrf/AC-2 : MEMORY_SEARCH_FUSION=rrf change l'ordre de la phase rang et garde toutes les formes de réponse", {
   timeout: DELAI_LOURD,
 }, async (t) => {
   if (!(await binairePret(t))) return;
-  const r = await contrat({ MEM0_SEARCH_FUSION: "rrf" });
+  const r = await contrat({ MEMORY_SEARCH_FUSION: "rrf" });
   if (contratNonExecute(t, r)) return;
   assert.equal(r.code, 1, r.sortie);
   // Un seul cas en échec : l'ordre de la fixture, réservé au défaut. Les jeux de
@@ -146,19 +151,19 @@ test("recherche-hybride-rrf/AC-2 : MEM0_SEARCH_FUSION=rrf change l'ordre de la p
   );
 });
 
-test("recherche-hybride-rrf/AC-3 : une fusion ou un k invalides arrêtent mem0-rs en code 1 avant l'écoute", {
+test("recherche-hybride-rrf/AC-3 : une fusion ou un k invalides arrêtent memory-rs en code 1 avant l'écoute", {
   timeout: DELAI_LOURD,
 }, async (t) => {
   if (!(await binairePret(t))) return;
-  const dossier = tmpdir("mem0-rs-rrf-refus-");
+  const dossier = tmpdir("memory-rs-rrf-refus-");
   const base = path.join(dossier, "refus.db");
   for (const [nom, valeur, message] of [
-    ["MEM0_SEARCH_FUSION", "hybride", "MEM0_SEARCH_FUSION doit valoir additive, rrf ou graphe (reçu « hybride »)"],
-    ["MEM0_SEARCH_FUSION", "RRF", "MEM0_SEARCH_FUSION doit valoir additive, rrf ou graphe (reçu « RRF »)"],
-    ["MEM0_RRF_K", "0", "MEM0_RRF_K doit être un entier positif (reçu « 0 »)"],
-    ["MEM0_RRF_K", "6.5", "MEM0_RRF_K doit être un entier positif (reçu « 6.5 »)"],
+    ["MEMORY_SEARCH_FUSION", "hybride", "MEMORY_SEARCH_FUSION doit valoir additive, rrf ou graphe (reçu « hybride »)"],
+    ["MEMORY_SEARCH_FUSION", "RRF", "MEMORY_SEARCH_FUSION doit valoir additive, rrf ou graphe (reçu « RRF »)"],
+    ["MEMORY_RRF_K", "0", "MEMORY_RRF_K doit être un entier positif (reçu « 0 »)"],
+    ["MEMORY_RRF_K", "6.5", "MEMORY_RRF_K doit être un entier positif (reçu « 6.5 »)"],
   ] as const) {
-    const r = await lancer(BINAIRE, ["--port", "1"], envEnfant({ MEM0_DB_PATH: base, [nom]: valeur }));
+    const r = await lancer(BINAIRE, ["--port", "1"], envEnfant({ MEMORY_DB_PATH: base, [nom]: valeur }));
     assert.equal(r.code, 1, `${nom}=${valeur} : ${r.sortie}`);
     assert.ok(r.sortie.includes(message), r.sortie);
   }
@@ -182,7 +187,7 @@ type Rapport = {
 
 let banc: Promise<Resultat> | null = null;
 
-/** `mem0-rs banc --json --repetitions 1`, joué une fois par fichier. */
+/** `memory-rs banc --json --repetitions 1`, joué une fois par fichier. */
 async function rapportDuBanc(t: TestContext): Promise<Rapport | null> {
   if (!(await binairePret(t))) return null;
   banc ??= lancer(BINAIRE, ["banc", "--json", "--repetitions", "1"], envEnfant({}));
@@ -196,7 +201,7 @@ async function rapportDuBanc(t: TestContext): Promise<Rapport | null> {
 const cles = (o: object): string[] => Object.keys(o);
 const CLES_MESURES = ["requetes", "recall_5", "recall_10", "mrr_10", "ndcg_10"];
 
-test("recherche-hybride-rrf/AC-4 : mem0-rs banc mesure hors ligne chaque stratégie et rend un rapport de forme fixe", {
+test("recherche-hybride-rrf/AC-4 : memory-rs banc mesure hors ligne chaque stratégie et rend un rapport de forme fixe", {
   timeout: DELAI_LOURD,
 }, async (t) => {
   const r = await rapportDuBanc(t);
@@ -259,17 +264,17 @@ function section(markdown: string, titre: string): string {
   return markdown.slice(debut, suite === -1 ? undefined : suite);
 }
 
-test("recherche-hybride-rrf/AC-6 : le README de mem0-rs suit le code : variables lues, formes d'usage et champ fusion", () => {
+test("recherche-hybride-rrf/AC-6 : le README de memory-rs suit le code : variables lues, formes d'usage et champ fusion", () => {
   const config = fs.readFileSync(path.join(CRATE, "src", "config.rs"), "utf8");
   const readme = fs.readFileSync(path.join(CRATE, "README.md"), "utf8");
 
   // Chaque variable que lit `lire_env` a sa ligne dans la table du README, sauf
-  // HOME, qui n'y figure que comme défaut de MEM0_DB_PATH.
+  // HOME, qui n'y figure que comme défaut de MEMORY_DB_PATH.
   const lireEnv = config.slice(config.indexOf("pub fn lire_env"), config.indexOf("#[cfg(test)]"));
   const lues = [...lireEnv.matchAll(/\blire\(\s*"([A-Z0-9_]+)"|&lire,\s*"([A-Z0-9_]+)"/g)]
     .map((m) => m[1] ?? m[2])
     .filter((v) => v !== "HOME");
-  assert.ok(lues.includes("MEM0_SEARCH_FUSION") && lues.includes("MEM0_RRF_K"), lues.join(", "));
+  assert.ok(lues.includes("MEMORY_SEARCH_FUSION") && lues.includes("MEMORY_RRF_K"), lues.join(", "));
   const table = section(readme, "Variables d'environnement");
   const absentes = lues.filter((v) => !table.includes(`| \`${v}\` |`));
   assert.deepEqual(absentes, [], `variables lues mais absentes de la table : ${absentes.join(", ")}`);
@@ -279,7 +284,7 @@ test("recherche-hybride-rrf/AC-6 : le README de mem0-rs suit le code : variables
   assert.ok(usage, "USAGE introuvable");
   const formes = usage.split("\n").map((l) => l.replace(/^usage : /, "").trim());
   assert.ok(
-    formes.some((f) => f.startsWith("mem0-rs banc ")),
+    formes.some((f) => f.startsWith("memory-rs banc ")),
     formes.join("\n"),
   );
   const blocUsage = section(readme, "Usage");
@@ -300,8 +305,8 @@ test("recherche-hybride-rrf/AC-6 : le README de mem0-rs suit le code : variables
   );
 
   // Le gabarit de la pile propose les deux réglages.
-  const exemple = fs.readFileSync(path.join(ROOT, "mem0-stack", ".env.example"), "utf8");
-  for (const v of ["MEM0_SEARCH_FUSION", "MEM0_RRF_K"]) {
-    assert.ok(new RegExp(`^${v}=`, "m").test(exemple), `${v} absente de mem0-stack/.env.example`);
+  const exemple = fs.readFileSync(path.join(ROOT, "memory-stack", ".env.example"), "utf8");
+  for (const v of ["MEMORY_SEARCH_FUSION", "MEMORY_RRF_K"]) {
+    assert.ok(new RegExp(`^${v}=`, "m").test(exemple), `${v} absente de memory-stack/.env.example`);
   }
 });

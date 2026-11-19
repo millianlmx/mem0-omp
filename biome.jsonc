@@ -1,12 +1,12 @@
 {
-  // Biome (version épinglée dans scripts/lint.sh) : lint + format du TypeScript de omp-mem0-req/, omp-harness/, omp-chrome/, scripts/ et test/ seulement.
+  // Biome (version épinglée dans scripts/lint.sh) : lint + format du TypeScript de omp-memory-req/, omp-harness/, omp-chrome/, scripts/ et test/ seulement.
   "root": true,
   "vcs": { "enabled": false },
   // `!!` : les worktrees d'agents (.claude/worktrees/, des dépôts complets) ne sont même pas parcourus — sinon
   // leur propre biome.jsonc est refusé comme seconde racine.
   "files": {
     "includes": [
-      "omp-mem0-req/**/*.ts",
+      "omp-memory-req/**/*.ts",
       "omp-harness/**/*.ts",
       "omp-chrome/**/*.ts",
       "scripts/**/*.ts",

@@ -59,28 +59,33 @@ services:
       VIGIE_STATE_DIR: /var/lib/omp-vigie
       VIGIE_LOGS_DIR: /logs
       VIGIE_REPOS_DIR: /repos
-      MEM0_HTTP_URL: http://mem0:8321
+      MEMORY_HTTP_URL: http://memory:8321
     volumes:
       - ${OMP_HARNESS_ROOT}/vigie:/var/lib/omp-vigie
       - ${OMP_HARNESS_ROOT}/state/logs:/logs:ro
       - ${OMP_HARNESS_ROOT}/repos:/repos:ro
       - ${OMP_HARNESS_SECRETS}/vigie:/run/secrets/omp-vigie:ro
 
+  # Sous la clé `mem0` pendant la transition (une configuration copiée avant garde
+  # http://mem0:8321) ; l'alias `memory` est le nom d'aujourd'hui.
   mem0:
-    build: ../../../mem0-stack/mem0-rs
-    image: mem0-rs:local
+    build: ../../../memory-stack/memory-rs
+    image: memory-rs:local
     restart: unless-stopped
+    networks:
+      default:
+        aliases: [memory]
     env_file:
-      - ${OMP_HARNESS_SECRETS}/mem0.env
+      - ${OMP_HARNESS_MEMORY_ENV}
     extra_hosts:
       # L'hôte (oMLX natif sur le Mac, ou un relais local) sous ses deux noms usuels.
       - "host.docker.internal:host-gateway"
       - "host.containers.internal:host-gateway"
     ports:
       # Pour la mémoire partagée avec le Mac (tailscale serve --https=8443).
-      - "127.0.0.1:${OMP_HARNESS_MEM0_PORT:-8321}:8321"
+      - "127.0.0.1:${OMP_HARNESS_MEMORY_PORT:-8321}:8321"
     volumes:
-      - ${OMP_HARNESS_ROOT}/mem0:/data
+      - ${OMP_HARNESS_MEMORY_DATA}:/data
     healthcheck:
       test: ["CMD", "curl", "-fsS", "-m", "3", "http://127.0.0.1:8321/health"]
       interval: 10s
@@ -89,14 +94,14 @@ services:
       start_period: 10s
 
   # Les embeddings de la mémoire quand `harness.sh up` n'en a pas reçu d'autres
-  # (OMLX_BASE_URL) : un Ollama sur le CPU, joint par mem0 sur le réseau interne. Il
-  # n'a pas de modèle de chat : mem0.env porte alors OMLX_CHAT_BASE_URL=off.
+  # (OMLX_BASE_URL) : un Ollama sur le CPU, joint par memory sur le réseau interne. Il
+  # n'a pas de modèle de chat : memory.env porte alors OMLX_CHAT_BASE_URL=off.
   embeddings:
     image: docker.io/ollama/ollama:0.40.14
     restart: unless-stopped
     profiles: ["embeddings"]
     environment:
-      # Le modèle reste chargé : un rechargement à froid ferait expirer les écritures de mem0.
+      # Le modèle reste chargé : un rechargement à froid ferait expirer les écritures de memory.
       OLLAMA_KEEP_ALIVE: "-1"
     volumes:
       - ${OMP_HARNESS_ROOT}/ollama:/root/.ollama
@@ -112,5 +117,5 @@ services:
 
 networks:
   default:
-    # Le réseau que rejoignent les runners (`container.network`) : ils y joignent `mem0`.
+    # Le réseau que rejoignent les runners (`container.network`) : ils y joignent `memory`.
     name: omp-harness

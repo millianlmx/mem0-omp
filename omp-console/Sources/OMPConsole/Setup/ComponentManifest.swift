@@ -1,5 +1,5 @@
 // Le manifeste du composant que l'app INSTALLE elle-même (S-1, BR-1) : OMP seul,
-// le service mémoire (mem0-rs) étant embarqué dans le bundle.
+// le service mémoire (memory-rs) étant embarqué dans le bundle.
 //
 // Les valeurs sont figées sur la Documentation du contrat (mesures du 2026-10-04) :
 // omp 18.6.0 (binaire autonome GitHub, sha256 de SHA256SUMS.txt).

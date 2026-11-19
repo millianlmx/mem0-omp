@@ -13,7 +13,7 @@ import Foundation
 /// Le propriétaire EFFECTIF de l'adresse du service quand elle répond sans porter
 /// le jeton de l'app (S-2, BR-9) : ce que la section Mémoire affiche.
 struct ForeignOwnership: Equatable, Sendable {
-    /// L'adresse EFFECTIVE sondée (`MEM0_HTTP_URL`).
+    /// L'adresse EFFECTIVE sondée (`MEMORY_HTTP_URL`).
     var address: String
     /// `MemoryPortOwnership.userDescription`, ou « le service distant <hôte> ».
     var owner: String
@@ -24,7 +24,7 @@ struct ForeignOwnership: Equatable, Sendable {
 extension StackOwnership {
     /// Le geste d'une adresse DISTANTE : on ne peut pas arrêter un service hors de
     /// la machine, seule l'adresse du plugin se change.
-    static let remoteAddressGesture = "arrêtez le service distant ou changez l'adresse MEM0_HTTP_URL"
+    static let remoteAddressGesture = "arrêtez le service distant ou changez l'adresse MEMORY_HTTP_URL"
 
     /// Qui tient l'adresse du service (S-3) : `nil` seulement si l'adresse ne porte
     /// ni hôte ni port exploitables — l'appelant reste alors sur son état
@@ -33,7 +33,7 @@ extension StackOwnership {
     /// Un hôte NON local (`localhost`, `127.0.0.1`, `::1` sont les seuls locaux)
     /// ne sonde aucun port : le propriétaire est « le service distant <hôte> », et
     /// le geste nomme l'adresse. Un hôte local est classé contre `ourExecutable`
-    /// (le mem0-rs embarqué, `MemoryAgent.embeddedBinary()`).
+    /// (le memory-rs embarqué, `MemoryAgent.embeddedBinary()`).
     static func foreignOwnership(
         address: String,
         ourExecutable: URL,

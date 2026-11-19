@@ -1,5 +1,5 @@
 // Les liens MANUELS entre souvenirs (S-11) : un artefact de la vue, persisté dans
-// un fichier local — jamais écrit dans mem0, donc jamais visible des agents.
+// un fichier local — jamais écrit dans le service mémoire, donc jamais visible des agents.
 //
 // La lecture est TOLÉRANTE borne par borne (patron `AlertLedger`) : un fichier
 // absent, illisible, non JSON, d'une autre version ou dont une entrée est mal

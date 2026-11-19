@@ -1,12 +1,12 @@
-// La scope mem0 d'un dépôt : la MÊME identité de projet que le plugin mémoire.
+// La scope memory d'un dépôt : la MÊME identité de projet que le plugin mémoire.
 //
-// Le plugin `omp-mem0-memory` nomme un projet d'après son manifeste (package.json,
+// Le plugin `omp-memory` nomme un projet d'après son manifeste (package.json,
 // pyproject.toml, Cargo.toml, Package.swift, puis un .xcodeproj, puis le dossier).
 // Le harness lit les mêmes manifestes — la même table, importée — dans l'arbre de
 // `main` du clone (souvent nu, sans fichiers extraits) : souvenirs du Mac, des
 // runners et de l'oracle tombent ainsi dans une seule mémoire de projet.
 import * as path from "node:path";
-import { MANIFESTS } from "../../omp-mem0-memory/state.ts";
+import { MANIFESTS } from "../../omp-memory/state.ts";
 import type { Git } from "../forge/git.ts";
 
 /** La scope du projet d'après les manifestes de `ref`, sinon le nom du dossier du clone. */

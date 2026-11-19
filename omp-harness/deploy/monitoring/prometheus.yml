@@ -2,7 +2,8 @@
 # Les jetons sont lus dans des fichiers montés en lecture seule (jamais dans ce fichier) :
 #   harness.token : le jeton d'un client viewer du harness qui voit tous les dépôts
 #                   (`--add-client prometheus --role viewer`), GET /metrics ;
-#   mem0.token    : le MEM0_HTTP_TOKEN de mem0-rs (GET /metrics accepte `Authorization: Bearer`).
+#   mem0.token    : le MEMORY_HTTP_TOKEN de memory-rs (GET /metrics accepte `Authorization: Bearer`) ;
+#                   nom de fichier gardé pendant la transition : le fichier existe déjà chez l'opérateur.
 # Le détail : omp-harness/README.md § « Observabilité ».
 global:
   scrape_interval: 30s
@@ -17,10 +18,12 @@ scrape_configs:
     static_configs:
       - targets: ["harness:8790"]
 
-  - job_name: mem0
+  - job_name: memory
     metrics_path: /metrics
     authorization:
       type: Bearer
+      # Nom du fichier gardé pendant la transition (créé à la main par l'opérateur : memory.token le remplacera).
       credentials_file: /run/secrets/monitoring/mem0.token
     static_configs:
+      # La clé du service de la pile reste `mem0` pendant la transition (alias réseau : memory).
       - targets: ["mem0:8321"]

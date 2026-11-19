@@ -6,7 +6,7 @@
 #
 # Usage : bash scripts/recette/smoke-pile.sh [--omlx <url …/v1>] [--keep]
 #
-#   1. monte la pile sans clé de modèle : le harness, sa mémoire (mem0-rs) et un faux
+#   1. monte la pile sans clé de modèle : le harness, sa mémoire (memory-rs) et un faux
 #      serveur de modèles compatible OpenAI (embeddings déterministes) — ou le
 #      serveur oMLX donné par --omlx (http://host.docker.internal:8000/v1 sur un Mac) ;
 #      ni Ollama, ni pairing (Tailscale), ni image des runners ;
@@ -16,7 +16,7 @@
 #      jeton ouvre l'API, l'absence de jeton y est refusée (401) ;
 #   4. mène un run trivial de /req au merge sur un dépôt jetable, avec le faux runner
 #      des tests (test/support/fake-omp-rpc.ts) à la place d'omp ;
-#   5. écrit un souvenir dans mem0 puis le retrouve par une recherche.
+#   5. écrit un souvenir dans memory puis le retrouve par une recherche.
 #
 # Une ligne par vérification : `✓ <constat>` ou `✗ <attendu> / <obtenu>`, puis, au
 # premier écart, le diagnostic (état des conteneurs, journaux du harness et de la
@@ -68,7 +68,7 @@ SECRETS="$WORK/secrets"
 SMOKE="$ROOT/smoke"
 PROJECT="omp-smoke-$(basename "$WORK" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9')"
 mkdir -p "$SMOKE/fake-state" "$SECRETS"
-read -r PORT MEM0_PORT < <(node -e '
+read -r PORT MEMORY_PORT < <(node -e '
   const net = require("node:net");
   const free = () => new Promise((resolve) => { const s = net.createServer().listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => resolve(p)); }); });
   Promise.all([free(), free()]).then(([a, b]) => console.log(a, b));
@@ -79,7 +79,7 @@ COMMIT="$(git -C "$REPO" rev-parse HEAD)"
 # Aucune clé : le faux serveur de modèles de la pile, ou l'oMLX donné.
 if [ -n "$OMLX" ]; then MODELS_URL="$OMLX"; else MODELS_URL="http://fake-llm:8000/v1"; fi
 export OMP_HARNESS_ROOT="$ROOT" OMP_HARNESS_SECRETS="$SECRETS" OMP_HARNESS_PORT="$PORT" \
-  OMP_HARNESS_MEM0_PORT="$MEM0_PORT" OMP_HARNESS_COMMIT="$COMMIT" OMLX_BASE_URL="$MODELS_URL" \
+  OMP_HARNESS_MEMORY_PORT="$MEMORY_PORT" OMP_HARNESS_COMMIT="$COMMIT" OMLX_BASE_URL="$MODELS_URL" \
   OMLX_CHAT_BASE_URL=off OMP_HARNESS_SOCKET="$WORK/sans-moteur.sock" OMP_HARNESS_REPOS=""
 # Le service n'a pas accès au moteur : la recette ne lance aucun conteneur frère.
 : > "$WORK/sans-moteur.sock"
@@ -92,7 +92,7 @@ services:
   harness:
     depends_on: !override
       setup: { condition: service_completed_successfully }
-      mem0: { condition: service_healthy }
+      memory: { condition: service_healthy }
     environment:
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: safe.directory
@@ -122,7 +122,7 @@ cleanup() {
     echo
     echo "── diagnostic (étape : $STAGE)"
     compose ps -a 2>&1 || true
-    for service in harness mem0 setup; do
+    for service in harness memory setup; do
       echo "── journal de $service"
       compose logs --no-color --tail 80 "$service" 2>&1 || true
     done
@@ -234,12 +234,12 @@ echo "// routes" > "$DEMO/src/api/routes.ts"
 git -C "$DEMO" add -A
 git -C "$DEMO" -c user.name=recette -c user.email=recette@localhost commit -q -m init
 git -C "$DEMO" checkout -q --detach
-ok "dossier de travail $WORK, projet $PROJECT, ports $PORT et $MEM0_PORT"
+ok "dossier de travail $WORK, projet $PROJECT, ports $PORT et $MEMORY_PORT"
 
 # ------------------------------------------------------------------- 1. la pile
 STAGE="construction des images"
-compose build harness mem0 >"$WORK/build.log" 2>&1 || { tail -n 60 "$WORK/build.log"; fail "images construites / échec (journal ci-dessus)"; }
-ok "images du harness et de mem0 construites"
+compose build harness memory >"$WORK/build.log" 2>&1 || { tail -n 60 "$WORK/build.log"; fail "images construites / échec (journal ci-dessus)"; }
+ok "images du harness et de memory construites"
 
 STAGE="setup"
 compose run --rm --no-deps setup >"$WORK/setup.log" 2>&1 || { cat "$WORK/setup.log"; fail "setup sort 0 / échec"; }
@@ -314,16 +314,16 @@ ok "run $run_id de /req au merge avec le faux runner : export.ts sur main"
 # ----------------------------------------------------------------- 4. la mémoire
 STAGE="mémoire"
 needle="recette de la pile $PROJECT"
-mem0() {
-  compose exec -T mem0 sh -c '. /run/secrets/mem0/mem0.env && curl -fsS -m 30 -H "X-Mem0-Token: $MEM0_HTTP_TOKEN" -H "Content-Type: application/json" -d @- "http://127.0.0.1:8321$1"' sh "$1"
+memory() {
+  compose exec -T memory sh -c '. /run/secrets/memory/memory.env && curl -fsS -m 30 -H "X-Memory-Token: ${MEMORY_HTTP_TOKEN:-$MEM0_HTTP_TOKEN}" -H "Content-Type: application/json" -d @- "http://127.0.0.1:8321$1"' sh "$1"
 }
-printf '{"text":"%s","agent_id":"recette","infer":false}' "$needle" | mem0 /memory/add >/dev/null ||
-  fail "POST /memory/add de mem0 / échec"
-found="$(printf '{"query":"%s","agent_id":"recette","limit":3}' "$needle" | mem0 /memory/search)" ||
-  fail "POST /memory/search de mem0 / échec"
+printf '{"text":"%s","agent_id":"recette","infer":false}' "$needle" | memory /memory/add >/dev/null ||
+  fail "POST /memory/add de memory / échec"
+found="$(printf '{"query":"%s","agent_id":"recette","limit":3}' "$needle" | memory /memory/search)" ||
+  fail "POST /memory/search de memory / échec"
 case "$found" in
-  *"$needle"*) ok "mem0 : souvenir écrit puis retrouvé par la recherche" ;;
-  *) fail "mem0 retrouve « $needle » / $found" ;;
+  *"$needle"*) ok "memory : souvenir écrit puis retrouvé par la recherche" ;;
+  *) fail "memory retrouve « $needle » / $found" ;;
 esac
 
 STAGE="fin"

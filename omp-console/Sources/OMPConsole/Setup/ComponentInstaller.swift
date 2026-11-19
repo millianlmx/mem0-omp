@@ -2,7 +2,7 @@
 // depuis l'URL épinglée du manifeste, son empreinte SHA-256 est vérifiée EN FLUX
 // (jamais 208 Mo en mémoire), puis il est déplacé sous la racine privée de l'app.
 // L'app n'installe plus podman : la mémoire est servie par l'agent launchd
-// mem0-rs embarqué.
+// memory-rs embarqué.
 //
 // Ce que ce fichier ne fait JAMAIS (S-1, AC-3) : consulter `PATH`, `~/.bun/bin`,
 // `/opt/homebrew/bin` ou `/usr/local/bin` pour trouver un omp système, ni

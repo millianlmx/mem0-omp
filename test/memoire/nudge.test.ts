@@ -1,10 +1,10 @@
-// Tests de pickSessionStopNudge (omp-mem0-memory/extension.ts) : la politique de
+// Tests de pickSessionStopNudge (omp-memory/extension.ts) : la politique de
 // relance de fin de session. L'invariant : ne pousse à écrire que si rien n'a
 // été mémorisé (adds===0) ET que la session a produit du durable — code modifié
 // OU discussion substantielle sans édition (needs/specs, l'angle mort corrigé).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pickSessionStopNudge } from "../../omp-mem0-memory/extension.ts";
+import { pickSessionStopNudge } from "../../omp-memory/extension.ts";
 
 test("pickSessionStopNudge: session vide → null", () => {
   assert.equal(pickSessionStopNudge({ adds: 0, mutations: 0, substantiveTurns: 1 }), null);

@@ -23,6 +23,7 @@ import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../../omp-harness/workstation
 import { fakeWorld, harnessRepo, waitFor } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../../support/repo.ts";
+import { renamedEnv } from "../../../omp-harness/config/env.ts";
 
 type View = IntakeView;
 type Args = Record<string, unknown>;
@@ -815,17 +816,17 @@ test("demande/AC-15 : les six routes sont servies par apiRoutes(), décrites dan
   }
 });
 
-test("demande/AC-22 : une vraie demande « corrige le bug X dans mem0-omp » donne un plan bug puis un run (vrai runner, OMP_DEMANDE_REEL=1)", async (t) => {
+test("demande/AC-22 : une vraie demande « corrige le bug X dans memory-omp » donne un plan bug puis un run (vrai runner, OMP_DEMANDE_REEL=1)", async (t) => {
   if (process.env.OMP_DEMANDE_REEL !== "1") {
     t.skip("vrai runner : lancer avec OMP_DEMANDE_REEL=1");
     return;
   }
-  // Le vrai `omp` du PATH, isolation `none`, le dépôt `mem0-omp` sur un clone temporaire.
+  // Le vrai `omp` du PATH, isolation `none`, le dépôt `memory-omp` sur un clone temporaire.
   const world = fakeWorld(
     {},
     {
       patch: (config) => {
-        config.repos = [repoDefaults({ name: "mem0-omp", path: harnessRepo("demande-reel-"), scope: "mem0-omp" })];
+        config.repos = [repoDefaults({ name: "memory-omp", path: harnessRepo("demande-reel-"), scope: "memory-omp" })];
       },
     },
   );
@@ -837,7 +838,7 @@ test("demande/AC-22 : une vraie demande « corrige le bug X dans mem0-omp » don
   });
   let runId: string | null = null;
   try {
-    const text = "corrige le bug X dans mem0-omp";
+    const text = "corrige le bug X dans memory-omp";
     const intake = orchestrator.intake.create({ text, source: "cli" }, OWNER, { by: "mac" });
     await orchestrator.start();
     await waitFor(
@@ -849,7 +850,7 @@ test("demande/AC-22 : une vraie demande « corrige le bug X dans mem0-omp » don
     const why = `état ${row?.state} — question : ${row?.question} — raison : ${row?.reason}`;
     assert.equal(row?.state, "planned", why);
     assert.equal(row?.plan?.kind, "bug");
-    assert.equal(row?.plan?.repo, "mem0-omp");
+    assert.equal(row?.plan?.repo, "memory-omp");
     const confirmed = orchestrator.intake.confirm(intake.id, OWNER, { by: "mac" }, {});
     runId = confirmed.targetId;
     assert.equal(confirmed.targetKind, "run");
@@ -930,15 +931,15 @@ test("demande/AC-25 : le classeur n'a que `progress`, `intake_recall` (la mémoi
     const demande = path.join(world.config.worktreesDir, "intake", "_demande");
     for (const line of argvs) {
       assert.equal(line.cwd, demande);
-      assert.ok(!line.argv.some((arg) => arg.includes("omp-mem0-memory")), "aucun plugin mémoire");
+      assert.ok(!line.argv.some((arg) => arg.includes("omp-memory")), "aucun plugin mémoire");
     }
     const spec = { unit: "u", cwd: "/tmp", overlay: "/tmp/o.json", model: null, scope: "demo-scope" };
     const control = runnerArgv(world.config, spec);
     assert.ok(
-      control.args.some((arg) => arg.includes("omp-mem0-memory/extension.ts")),
+      control.args.some((arg) => arg.includes("omp-memory/extension.ts")),
       "un pipeline le porte",
     );
-    const scopes = argvs.map((line) => line.env.MEM0_PROJECT_ID).sort();
+    const scopes = argvs.map((line) => renamedEnv(line.env, "MEMORY_PROJECT_ID", "MEM0_PROJECT_ID")).sort();
     assert.deepEqual(scopes, [`intake-${a.id}`, `intake-${b.id}`].sort());
     const prompt = prompts(world)[0] ?? "";
     assert.match(prompt, /- demo\b/);
@@ -952,9 +953,9 @@ test("demande/AC-25 : le classeur n'a que `progress`, `intake_recall` (la mémoi
       scope: `intake-${a.id}`,
       memory: false,
     });
-    assert.ok(line.args.includes(`--setenv=MEM0_PROJECT_ID=intake-${a.id}`));
+    assert.ok(line.args.includes(`--setenv=MEMORY_PROJECT_ID=intake-${a.id}`));
     assert.match(`intake-${a.id}`, /^[A-Za-z0-9@._/-]{1,128}$/, "le lanceur accepte la scope");
-    assert.ok(!line.args.some((arg) => arg.includes("omp-mem0-memory")));
+    assert.ok(!line.args.some((arg) => arg.includes("omp-memory")));
   } finally {
     await done();
   }

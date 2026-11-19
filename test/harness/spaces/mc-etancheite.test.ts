@@ -252,7 +252,7 @@ const codes = (isolation: Isolation): [string, string | null][] => isolation.gap
 const OWN = {
   remote: "origin",
   sshKey: "/var/lib/omp-harness/.ssh/repos/acme",
-  memory: { tokenEnv: "ACME_MEM0_TOKEN" },
+  memory: { tokenEnv: "ACME_MEMORY_TOKEN" },
   git: { name: "Agent Acme", email: "agent@acme.example" },
   gh: { tokenEnv: "ACME_GH_TOKEN" },
 };

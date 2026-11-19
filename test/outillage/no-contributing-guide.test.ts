@@ -10,7 +10,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { ROOT, childEnv, tmpdir } from "../support/repo.ts";
-import { AGENTS_BLOCK, MARKER_CLOSE, MARKER_OPEN, ensureBrief } from "../../omp-mem0-memory/brief.ts";
+import { AGENTS_BLOCK, MARKER_CLOSE, MARKER_OPEN, ensureBrief } from "../../omp-memory/brief.ts";
 
 const GUIDE = "CONTRIBUTING.md";
 // Constantes plutôt que littéraux : un tableau réduit au seul chemin de check.sh
@@ -265,10 +265,10 @@ test("no-contributing-guide/AC-7 : une règle retirée, ou le guide absent, fait
   assert.deepEqual(guideFaults(readGuide(empty), ROOT), [`fichier absent : ${GUIDE}`]);
 });
 
-test("no-contributing-guide/AC-8 : AGENTS.md lie le guide hors du bloc mem0, qui survit à sa régénération", () => {
+test("no-contributing-guide/AC-8 : AGENTS.md lie le guide hors du bloc memory, qui survit à sa régénération", () => {
   const text = fs.readFileSync(path.join(ROOT, "AGENTS.md"), "utf8");
   const outside = (body: string): string | null => {
-    const open = body.indexOf("<!-- mem0:brief");
+    const open = body.indexOf("<!-- memory:brief");
     const close = body.indexOf(MARKER_CLOSE);
     if (open < 0 || close < open) return null;
     return body.slice(0, open) + body.slice(close + MARKER_CLOSE.length);
@@ -276,16 +276,16 @@ test("no-contributing-guide/AC-8 : AGENTS.md lie le guide hors du bloc mem0, qui
 
   const open = text.indexOf(MARKER_OPEN);
   const close = text.indexOf(MARKER_CLOSE);
-  assert.ok(open >= 0 && close > open, "bloc mem0 introuvable dans AGENTS.md");
+  assert.ok(open >= 0 && close > open, "bloc memory introuvable dans AGENTS.md");
   assert.equal(text.slice(open, close + MARKER_CLOSE.length), AGENTS_BLOCK);
   assert.match(outside(text) ?? "", LINK);
 
   const dir = fs.realpathSync(tmpdir("no-contributing-guide-"));
-  const stale = mutate(text, MARKER_OPEN, "<!-- mem0:brief v4 -->");
+  const stale = mutate(text, MARKER_OPEN, "<!-- memory:brief v4 -->");
   fs.writeFileSync(path.join(dir, "AGENTS.md"), stale);
   ensureBrief(dir, true);
   const regenerated = fs.readFileSync(path.join(dir, "AGENTS.md"), "utf8");
-  assert.ok(regenerated.includes(MARKER_OPEN), "bloc mem0 non régénéré");
-  assert.ok(!regenerated.includes("v4 -->"), "ancien bloc mem0 conservé");
+  assert.ok(regenerated.includes(MARKER_OPEN), "bloc memory non régénéré");
+  assert.ok(!regenerated.includes("v4 -->"), "ancien bloc memory conservé");
   assert.match(outside(regenerated) ?? "", LINK);
 });

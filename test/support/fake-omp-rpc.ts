@@ -115,12 +115,12 @@ log({
   cwd: process.cwd(),
   env: Object.fromEntries(
     [
-      "MEM0_PROJECT_ID",
-      "MEM0_AUTOSETUP",
-      "MEM0_NUDGE",
-      "MEM0_MODE",
-      "MEM0_HTTP_URL",
-      "MEM0_HTTP_TOKEN",
+      "MEMORY_PROJECT_ID",
+      "MEMORY_AUTOSETUP",
+      "MEMORY_NUDGE",
+      "MEMORY_MODE",
+      "MEMORY_HTTP_URL",
+      "MEMORY_HTTP_TOKEN",
       "HARNESS_TOKEN",
     ].map((key) => [key, process.env[key] ?? null]),
   ),

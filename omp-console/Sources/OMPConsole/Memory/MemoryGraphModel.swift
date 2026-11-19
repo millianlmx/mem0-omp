@@ -96,7 +96,7 @@ final class MemoryGraphModel: ObservableObject {
     /// La confirmation de suppression en attente (le substitut de `@State`).
     @Published private(set) var pendingDelete: String?
 
-    /// L'adresse affichée par l'état indisponible, celle de `MEM0_HTTP_URL` (S-1).
+    /// L'adresse affichée par l'état indisponible, celle de `MEMORY_HTTP_URL` (S-1).
     let address: String
 
     // MARK: - Dépendances

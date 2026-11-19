@@ -81,7 +81,7 @@ enum IOSMemoryLoad: Equatable {
     case loading
     /// Le sommaire accumulé, page après page.
     case page(IOSMemorySummary)
-    /// Une recherche, sélectionnée comme `mem0_search`.
+    /// Une recherche, sélectionnée comme `memory_search`.
     case search(RemoteMemorySearchPayload)
     /// La lecture a échoué : la cause distinguable rendue par le traducteur partagé.
     case failed(IOSMemoryFailure)

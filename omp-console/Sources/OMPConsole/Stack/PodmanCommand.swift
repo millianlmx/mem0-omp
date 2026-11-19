@@ -3,7 +3,7 @@
 // `PodmanLegacy` est le seul à exécuter, et les tests figent ici chaque commande
 // au caractère près.
 //
-// La pile podman d'avant mem0-rs vivait dans la machine dédiée `omp-console`
+// La pile podman d'avant memory-rs vivait dans la machine dédiée `omp-console`
 // (conteneurs `omp-console-qdrant` / `omp-console-mem0-http`) ; l'app ne la
 // crée plus, elle ne fait que la démarrer pour l'importer, l'arrêter, puis la
 // supprimer sur confirmation.

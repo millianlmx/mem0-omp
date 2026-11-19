@@ -53,10 +53,10 @@ fi
 
 # Étape 1 : quels fichiers du diff portent chaque identifiant. python imprime la
 # liste des fichiers UNIQUES à lancer sur la dernière ligne, préfixée `FILES\t`.
-mapping="$(MEM0_AC_IDS="${ids[*]}" MEM0_AC_FILES="$files_list" python3 - <<'PY'
+mapping="$(MEMORY_AC_IDS="${ids[*]}" MEMORY_AC_FILES="$files_list" python3 - <<'PY'
 import os, re, sys
-ids = os.environ["MEM0_AC_IDS"].split()
-files = [f for f in os.environ["MEM0_AC_FILES"].split("\n") if f.strip() != "" and f.startswith("test/")]
+ids = os.environ["MEMORY_AC_IDS"].split()
+files = [f for f in os.environ["MEMORY_AC_FILES"].split("\n") if f.strip() != "" and f.startswith("test/")]
 texts = {}
 for path in files:
     with open(path, encoding="utf-8") as handle:
@@ -91,14 +91,14 @@ if [ -n "$to_run" ]; then
   fi
 fi
 
-MEM0_AC_IDS="${ids[*]}" MEM0_AC_TAP="$tap" python3 - <<'PY'
+MEMORY_AC_IDS="${ids[*]}" MEMORY_AC_TAP="$tap" python3 - <<'PY'
 import os, re, sys
-ids = os.environ["MEM0_AC_IDS"].split()
+ids = os.environ["MEMORY_AC_IDS"].split()
 # Une ligne de résultat TAP, à toute profondeur : `ok 3 - nom`, `not ok 3 - nom`,
 # avec une directive `# SKIP`/`# TODO` éventuelle en fin de ligne.
 line_rule = re.compile(r"^\s*(not ok|ok) \d+ - (.*?)(?:\s+# (SKIP|TODO)\b.*)?$")
 results = []
-with open(os.environ["MEM0_AC_TAP"], encoding="utf-8") as handle:
+with open(os.environ["MEMORY_AC_TAP"], encoding="utf-8") as handle:
     for line in handle:
         match = line_rule.match(line.rstrip("\n"))
         if match:

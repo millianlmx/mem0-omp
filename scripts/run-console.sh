@@ -22,7 +22,7 @@
 # appellent ce script en mode `hook`, qui recompile le bundle si — et seulement
 # si — les commits arrivés ont touché une ENTRÉE de l'app :
 #   omp-console/Sources/**/*.swift, omp-console/Package.swift,
-#   omp-console/Bundle/**  et  mem0-stack/mem0-rs/{src/**,Cargo.toml,Cargo.lock}
+#   omp-console/Bundle/**  et  memory-stack/memory-rs/{src/**,Cargo.toml,Cargo.lock}
 #   (le service mémoire, compilé et embarqué dans le bundle par swift-app.sh).
 # Les tests, la documentation et le reste du dépôt ne déclenchent donc rien : un
 # pull sans entrée d'app ne paie que la lecture du diff. Le point de comparaison
@@ -30,7 +30,7 @@
 # La compilation ne tourne que dans l'arbre PRINCIPAL du dépôt : les hooks vivent
 # dans le dépôt COMMUN, donc ils tirent aussi dans les worktrees de pipeline, où
 # les fusions de main sont fréquentes — chacun paierait sinon sa compilation.
-# Forcer partout : MEM0_CONSOLE_HOOK_ALL_WORKTREES=1.
+# Forcer partout : MEMORY_CONSOLE_HOOK_ALL_WORKTREES=1.
 # Les hooks vivent dans .git/hooks, jamais versionnés : `install-hook` les
 # (ré)installe — à refaire après un clone.
 #
@@ -119,7 +119,7 @@ hook_mode() {
   # Hors macOS le bundle ne s'assemble pas : un pull ailleurs sort proprement.
   [ "$(uname -s)" = "Darwin" ] || exit 0
 
-  if [ "${MEM0_CONSOLE_HOOK_ALL_WORKTREES:-}" != "1" ]; then
+  if [ "${MEMORY_CONSOLE_HOOK_ALL_WORKTREES:-${MEM0_CONSOLE_HOOK_ALL_WORKTREES:-}}" != "1" ]; then
     main_worktree="$(git worktree list --porcelain | sed -n 's/^worktree //p' | head -1)"
     if [ -n "$main_worktree" ] && [ "$main_worktree" != "$ROOT" ]; then
       exit 0
@@ -134,7 +134,7 @@ hook_mode() {
     echo "OMP Console : point de comparaison absent — recompilation par précaution…"
   else
     changed="$(git diff --name-only "$base" HEAD 2>/dev/null |
-      grep -E '^(omp-console/(Sources/.*\.swift|Package\.swift|Bundle/)|mem0-stack/mem0-rs/(src/|Cargo\.toml|Cargo\.lock))' || true)"
+      grep -E '^(omp-console/(Sources/.*\.swift|Package\.swift|Bundle/)|memory-stack/memory-rs/(src/|Cargo\.toml|Cargo\.lock))' || true)"
     [ -n "$changed" ] || exit 0
     echo "OMP Console : $(printf '%s\n' "$changed" | grep -c .) entrée(s) d'app modifiée(s) — recompilation…"
   fi

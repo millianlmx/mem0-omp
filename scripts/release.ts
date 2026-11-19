@@ -157,6 +157,21 @@ export const SERVICES: ReadonlyArray<{ name: string; dir: string; install: strin
   },
 ];
 
+/**
+ * Les plugins renommés : nom et dossier d'AVANT, par nom courant. L'ancien nom reste une entrée du
+ * catalogue (un alias pendant la transition, même source que le plugin) sans release propre ; ses tags
+ * `<ancien>-v<version>` comptent comme ceux du plugin, et son dossier porte la première partie de l'historique.
+ */
+export const RENAMED_PLUGINS: Readonly<Record<string, { name: string; dir: string }>> = {
+  "omp-memory": { name: "omp-mem0-memory", dir: "omp-mem0-memory" },
+  "omp-memory-req": { name: "omp-mem0-req", dir: "omp-mem0-req" },
+};
+
+/** Le nom courant d'un plugin : lui-même, ou le plugin dont il est l'ancien nom. */
+function currentNameOf(name: string): string {
+  return Object.entries(RENAMED_PLUGINS).find(([, renamed]) => renamed.name === name)?.[0] ?? name;
+}
+
 /** Sujet conventionnel : `type(scope)!: …` — le `!` porte la rupture (CC §13). */
 const SUBJECT = /^([A-Za-z]+)(\([^)]*\))?(!)?:/;
 
@@ -260,10 +275,13 @@ export function parseCommits(raw: string): Commit[] {
   return commits;
 }
 
-/** Les commits qui touchent au moins un fichier du plugin (tout le sous-dossier). */
-export function commitsTouching(commits: Commit[], dir: string): Commit[] {
-  const prefix = `${dir}/`;
-  return commits.filter((commit) => commit.files.some((file) => file.startsWith(prefix)));
+/**
+ * Les commits qui touchent au moins un fichier du plugin (tout le sous-dossier ; plusieurs dossiers pour un plugin
+ * renommé : le courant et celui d'avant).
+ */
+export function commitsTouching(commits: Commit[], dir: string | readonly string[]): Commit[] {
+  const prefixes = (typeof dir === "string" ? [dir] : dir).map((one) => `${one}/`);
+  return commits.filter((commit) => commit.files.some((file) => prefixes.some((prefix) => file.startsWith(prefix))));
 }
 
 /** Un commit tel qu'il apparaît dans le changelog et la note (sujet sur une ligne). */
@@ -277,7 +295,7 @@ function asChange(commit: Commit): Change {
 }
 
 /** Les changements d'un plugin dans une liste de commits, du plus récent au plus ancien. */
-export function changesBetween(commits: Commit[], dir: string): Change[] {
+export function changesBetween(commits: Commit[], dir: string | readonly string[]): Change[] {
   return commitsTouching(commits, dir).map(asChange);
 }
 
@@ -302,9 +320,26 @@ export function versionTag(name: string, version: string): string {
   return `${name}-v${version}`;
 }
 
-/** Les versions de `history` dont le tag n'existe pas encore sur le remote (S-4). */
+/**
+ * Le tag existant d'une version : sous le nom courant du plugin, sinon sous son nom d'avant le renommage ;
+ * `null` quand aucun des deux n'existe.
+ */
+function existingTagOf(name: string, version: string, existingTags: ReadonlySet<string>): string | null {
+  const current = versionTag(name, version);
+  if (existingTags.has(current)) return current;
+  const renamed = RENAMED_PLUGINS[name];
+  const legacy = renamed === undefined ? null : versionTag(renamed.name, version);
+  return legacy !== null && existingTags.has(legacy) ? legacy : null;
+}
+
+/** Le tag que cite une release comme point de départ : l'existant (nom courant, sinon ancien nom), sinon le courant. */
+function previousTagOf(name: string, version: string, existingTags: ReadonlySet<string>): string {
+  return existingTagOf(name, version, existingTags) ?? versionTag(name, version);
+}
+
+/** Les versions de `history` dont le tag n'existe pas encore sur le remote (S-4), sous l'un ou l'autre nom. */
 export function backlogOf(name: string, history: VersionEntry[], existingTags: ReadonlySet<string>): VersionEntry[] {
-  return history.filter((entry) => !existingTags.has(versionTag(name, entry.version)));
+  return history.filter((entry) => existingTagOf(name, entry.version, existingTags) === null);
 }
 
 /**
@@ -349,7 +384,7 @@ export function planOf(
         level: maxLevel(changes.map((change) => change.level).filter((level): level is Level => level !== null)),
         changes,
         breaking: changes.filter((change) => change.level === "major"),
-        previousTag: previous === undefined ? null : versionTag(plugin.name, previous.version),
+        previousTag: previous === undefined ? null : previousTagOf(plugin.name, previous.version, existingTags),
       });
     }
     releases.push(...backfills);
@@ -389,7 +424,7 @@ export function planOf(
       level,
       changes: plugin.sinceCurrent,
       breaking: plugin.sinceCurrent.filter((change) => change.level === "major"),
-      previousTag: versionTag(plugin.name, current.version),
+      previousTag: previousTagOf(plugin.name, current.version, existingTags),
     };
     releases.push(bump);
     journalBumps.push(bump);
@@ -615,12 +650,16 @@ function versionOnMain(dir: string, main: string): string {
   return pkg.version;
 }
 
-/** Un plugin est local quand sa source commence par `./`. */
+/**
+ * Un plugin est local quand sa source commence par `./`. Un alias (l'ancien nom d'un plugin renommé, même source
+ * que lui) n'a pas de release propre : il est sauté.
+ */
 function localPlugins(catalog: Catalog): Array<{ name: string; dir: string }> {
   const out: Array<{ name: string; dir: string }> = [];
   for (const entry of catalog.plugins) {
     const source = entry.source;
     if (typeof source !== "string" || !source.startsWith("./")) continue;
+    if (currentNameOf(entry.name) !== entry.name) continue;
     out.push({ name: entry.name, dir: source.slice(2) });
   }
   return out;
@@ -649,24 +688,22 @@ function commitsIn(range: string[]): Commit[] {
  * bump (convergence : jamais la seule plage `before..after`).
  */
 function historyOfPlugin(plugin: { name: string; dir: string }, main: string): PluginHistory {
-  const listing = git([
-    "log",
-    "--reverse",
-    "--no-merges",
-    "--format=%H%x1f%aI",
-    main,
-    "--",
-    `${plugin.dir}/package.json`,
-  ]);
+  // Un plugin renommé : le dossier d'avant d'abord, puis le courant (ordre chronologique) ; `historyOf` garde la
+  // première apparition de chaque version.
+  const renamed = RENAMED_PLUGINS[plugin.name];
+  const dirs = renamed === undefined ? [plugin.dir] : [renamed.dir, plugin.dir];
   const rows: VersionEntry[] = [];
-  for (const line of listing.stdout.split("\n")) {
-    const [sha = "", iso = ""] = line.trim().split("\u001f");
-    if (sha === "") continue;
-    const show = gitQuiet(["show", `${sha}:${plugin.dir}/package.json`]);
-    if (show.code !== 0) continue;
-    const pkg = JSON.parse(show.stdout) as { version?: string };
-    if (typeof pkg.version !== "string") continue;
-    rows.push({ sha, version: pkg.version, date: utcDate(iso) });
+  for (const dir of dirs) {
+    const listing = git(["log", "--reverse", "--no-merges", "--format=%H%x1f%aI", main, "--", `${dir}/package.json`]);
+    for (const line of listing.stdout.split("\n")) {
+      const [sha = "", iso = ""] = line.trim().split("\u001f");
+      if (sha === "") continue;
+      const show = gitQuiet(["show", `${sha}:${dir}/package.json`]);
+      if (show.code !== 0) continue;
+      const pkg = JSON.parse(show.stdout) as { version?: string };
+      if (typeof pkg.version !== "string") continue;
+      rows.push({ sha, version: pkg.version, date: utcDate(iso) });
+    }
   }
   const history = historyOf(rows);
   if (history.length === 0) {
@@ -685,10 +722,10 @@ function historyOfPlugin(plugin: { name: string; dir: string }, main: string): P
   const ranges = history.map((entry, index) => {
     const previous = history[index - 1];
     const range = previous === undefined ? [entry.sha] : [`${previous.sha}..${entry.sha}`];
-    return changesBetween(commitsIn(range), plugin.dir);
+    return changesBetween(commitsIn(range), dirs);
   });
   const current = history[history.length - 1];
-  const sinceCurrent = current === undefined ? [] : changesBetween(commitsIn([`${current.sha}..${main}`]), plugin.dir);
+  const sinceCurrent = current === undefined ? [] : changesBetween(commitsIn([`${current.sha}..${main}`]), dirs);
 
   return { name: plugin.name, dir: plugin.dir, history, ranges, sinceCurrent };
 }
@@ -803,7 +840,8 @@ function writeBumpedVersions(plan: Plan, catalog: Catalog): string[] {
     plan.releases.filter((release) => release.kind === "bump").map((release) => [release.name, release.version]),
   );
   for (const entry of catalog.plugins) {
-    const target = bumped.get(entry.name);
+    // Un alias prend la version bumpée de son plugin.
+    const target = bumped.get(currentNameOf(entry.name));
     if (target !== undefined) entry.version = target;
   }
   // `metadata.version` doit NOMMER une version publiée (invariant de check.sh) :

@@ -9,7 +9,7 @@
 #   2. le `.git` du contexte (HEAD, refs, packed-refs, que .dockerignore laisse
 #      entrer) : un `docker compose up` lancé depuis un clone ;
 #   3. le tag `omp-harness-v<version>` du dépôt OMP_HARNESS_SOURCE_REPO, retenu
-#      SEULEMENT si les arbres omp-harness et omp-mem0-memory du contexte sont
+#      SEULEMENT si les arbres omp-harness et omp-memory du contexte sont
 #      ceux du tag : Portainer CE supprime le `.git` de ses clones, et la pile
 #      qui suit la branche `deploy` construit toujours un commit tagué. Récupéré
 #      sans le contenu des fichiers (`--filter=blob:none`, profondeur 1).
@@ -69,14 +69,14 @@ commit="$(git --git-dir="$work/tag.git" rev-parse "refs/tags/$tag^{commit}")"
 # celui du tag, réduit de même.
 plain="$work/plain.git"
 git init -q --bare "$plain"
-git --git-dir="$work/tag.git" ls-tree -r "$commit" omp-harness omp-mem0-memory |
+git --git-dir="$work/tag.git" ls-tree -r "$commit" omp-harness omp-memory |
   grep -v "$(printf '\t')omp-harness/deploy/nixos/" |
   GIT_INDEX_FILE="$work/expected" git --git-dir="$plain" update-index --add --index-info
 expected="$(GIT_INDEX_FILE="$work/expected" git --git-dir="$plain" write-tree --missing-ok)"
 # `--force` : le contexte ne porte que des fichiers suivis, même ceux qu'un .gitignore
 # imbriqué nommerait.
 GIT_INDEX_FILE="$work/built" git --git-dir="$plain" --work-tree="$ctx" -c core.autocrlf=false \
-  add --all --force -- omp-harness omp-mem0-memory
+  add --all --force -- omp-harness omp-memory
 built="$(GIT_INDEX_FILE="$work/built" git --git-dir="$plain" write-tree)"
 if [ "$expected" = "$built" ]; then
   echo "$commit"

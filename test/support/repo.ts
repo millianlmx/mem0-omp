@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 /** Racine absolue du dépôt (test/support/ → ../..). */
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -78,7 +79,7 @@ export function excludedFromCopy(rel: string): boolean {
  * étaler dans l'env de tout lancement qui exécute un check.sh complet.
  */
 export const LINT_TOOL_ENV: Record<string, string> = {
-  MEM0_OMP_LINT_DIR: process.env.MEM0_OMP_LINT_DIR || path.join(ROOT, ".lint"),
+  MEMORY_OMP_LINT_DIR: renamedEnv(process.env, "MEMORY_OMP_LINT_DIR", "MEM0_OMP_LINT_DIR") || path.join(ROOT, ".lint"),
 };
 
 export type CopyOptions = {

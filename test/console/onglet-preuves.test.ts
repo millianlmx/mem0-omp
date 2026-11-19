@@ -19,6 +19,7 @@ import { currentRound, ProofStore } from "../../omp-harness/heavy/proofs.ts";
 import { DEMO_RUN, demoWorld } from "../../scripts/recette/mac-shots-serveur.ts";
 import { ROOT } from "../support/repo.ts";
 import { covers, swiftFields } from "../support/swift-contract.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 const CONSOLE = path.join(ROOT, "omp-console");
 const read = (...parts: string[]) => fs.readFileSync(path.join(...parts), "utf8");
@@ -152,8 +153,8 @@ test("onglet-preuves/AC-97 : le programme de capture Mac sert une feature qui at
   }
 
   // La capture réelle : macOS, app construite, écran disponible — à la demande seulement.
-  if (process.platform !== "darwin" || process.env.MEM0_OMP_MAC_SHOTS !== "1") {
-    t.diagnostic("capture réelle non lancée : MEM0_OMP_MAC_SHOTS=1 sous macOS la produit");
+  if (process.platform !== "darwin" || renamedEnv(process.env, "MEMORY_OMP_MAC_SHOTS", "MEM0_OMP_MAC_SHOTS") !== "1") {
+    t.diagnostic("capture réelle non lancée : MEMORY_OMP_MAC_SHOTS=1 sous macOS la produit");
     return;
   }
   const run = spawnSync("bash", [script], { cwd: ROOT, encoding: "utf8", timeout: 1_800_000 });

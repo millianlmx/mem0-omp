@@ -1,6 +1,6 @@
 // Les SESSIONS LOCALES (omp-harness local-sessions.ts, capacité `local-sessions`) : les
 // sessions omp qui travaillent sur une machine de l'humain, rapportées au serveur par le
-// plugin `omp-mem0-req` — un agent de plus dans l'OS, à côté de l'usine et du poste.
+// plugin `omp-memory-req` — un agent de plus dans l'OS, à côté de l'usine et du poste.
 // `GET /v1/local-sessions`, passage de relais à l'usine
 // (`POST /v1/local-sessions/{id}/handoff`), retrait (`DELETE`), événement `local_session`.
 //

@@ -1,5 +1,5 @@
 // La racine privée de l'app (S-1, BR-1) : TOUT ce que l'app possède vit dessous —
-// composant téléchargé (omp), service mémoire mem0-rs et sa base, état de la
+// composant téléchargé (omp), service mémoire memory-rs et sa base, état de la
 // pile mémoire, et les restes de l'ancien moteur podman (configuration XDG et
 // données de sa VM) que la migration lit et que le nettoyage confirmé supprime.
 //
@@ -19,7 +19,7 @@ struct AppPaths: Equatable, Sendable {
     /// La racine est-elle DÉPLACÉE (S-2) ? Vrai quand `OMP_CONSOLE_SUPPORT_ROOT`
     /// est posée et non vide, et pour tout `AppPaths` construit directement sur une
     /// racine (cas des tests) : une telle racine isole le label et le dossier du
-    /// plist de l'agent mem0-rs, sans jamais toucher `~/Library/LaunchAgents`.
+    /// plist de l'agent memory-rs, sans jamais toucher `~/Library/LaunchAgents`.
     var isOverridden: Bool
 
     init(supportRoot: URL, isOverridden: Bool = true) {
@@ -44,19 +44,26 @@ struct AppPaths: Equatable, Sendable {
         return AppPaths(supportRoot: root, isOverridden: false)
     }
 
-    /// `<racine>/mem0-rs` : le dossier de travail de l'agent mem0-rs (0700).
-    var mem0Root: URL {
-        supportRoot.appendingPathComponent("mem0-rs", isDirectory: true)
+    /// Le dossier de travail de l'agent memory-rs (0700) : `<racine>/memory-rs` s'il
+    /// existe, sinon `<racine>/mem0-rs` (le dossier d'une installation d'avant le
+    /// renommage, gardé tel quel avec sa base), sinon `<racine>/memory-rs`. Le choix est
+    /// refait à chaque accès ; quand les deux existent, le nouveau l'emporte.
+    var memoryRoot: URL {
+        let current = supportRoot.appendingPathComponent("memory-rs", isDirectory: true)
+        if FileManager.default.fileExists(atPath: current.path) { return current }
+        let legacy = supportRoot.appendingPathComponent("mem0-rs", isDirectory: true)
+        return FileManager.default.fileExists(atPath: legacy.path) ? legacy : current
     }
 
-    /// `<racine>/mem0-rs/mem0-rs.db` : la base SQLite servie par l'agent.
-    var mem0Database: URL {
-        mem0Root.appendingPathComponent("mem0-rs.db")
+    /// `<memoryRoot>/memory-rs.db` : la base SQLite servie par l'agent. Dans un dossier
+    /// d'avant le renommage, le service retrouve son `mem0-rs.db` voisin.
+    var memoryDatabase: URL {
+        memoryRoot.appendingPathComponent("memory-rs.db")
     }
 
-    /// `<racine>/mem0-rs/mem0-rs.log` : stdout et stderr de l'agent.
-    var mem0Log: URL {
-        mem0Root.appendingPathComponent("mem0-rs.log")
+    /// `<memoryRoot>/memory-rs.log` : stdout et stderr de l'agent.
+    var memoryLog: URL {
+        memoryRoot.appendingPathComponent("memory-rs.log")
     }
 
     /// Le dossier des plists d'agent : `~/Library/LaunchAgents` pour la racine
@@ -116,20 +123,20 @@ struct AppPaths: Equatable, Sendable {
         stackRoot.appendingPathComponent("qdrant_storage", isDirectory: true)
     }
 
-    /// Le `.env` de la pile de l'app (mêmes clés que `mem0-stack/.env`).
+    /// Le `.env` de la pile de l'app (mêmes clés que `memory-stack/.env`).
     var stackEnv: URL {
         stackRoot.appendingPathComponent("env")
     }
 
     /// `<racine>/memory-links.json` : les liens MANUELS du graphe de la mémoire
-    /// (S-11). C'est un artefact de la vue, pas une donnée mem0 — il vit donc sous
+    /// (S-11). C'est un artefact de la vue, pas une donnée du service mémoire — il vit donc sous
     /// la racine de l'app, comme le reste de son état.
     var memoryLinks: URL {
         supportRoot.appendingPathComponent(MemoryLinkStore.fileName)
     }
 
     /// `<stackRoot>/podman-migration` (0700) : les artefacts de la migration
-    /// unique de la pile podman vers mem0-rs (S-4 d'omp-console-sans-podman).
+    /// unique de la pile podman vers memory-rs (S-4 d'omp-console-sans-podman).
     var podmanMigrationRoot: URL {
         stackRoot.appendingPathComponent("podman-migration", isDirectory: true)
     }
@@ -139,7 +146,7 @@ struct AppPaths: Equatable, Sendable {
         podmanMigrationRoot.appendingPathComponent("history.db")
     }
 
-    /// Le stdout brut du dernier `mem0-rs import --json` terminé (codes 0 et 3).
+    /// Le stdout brut du dernier `memory-rs import --json` terminé (codes 0 et 3).
     var podmanImportReport: URL {
         podmanMigrationRoot.appendingPathComponent("import-report.json")
     }

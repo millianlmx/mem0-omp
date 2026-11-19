@@ -1,4 +1,4 @@
-// Tests de HANDLER du plugin MÉMOIRE (omp-mem0-memory/extension.ts).
+// Tests de HANDLER du plugin MÉMOIRE (omp-memory/extension.ts).
 //
 // La suite ne couvrait que les fonctions pures exportées du plugin (selectRelevant,
 // buildIndex, planDedupe) : les corps des 9 commandes, des 4 tools et des hooks
@@ -8,7 +8,7 @@
 // l'appel, CI verte ».
 //
 // Ici l'extension est importée pour de vrai, les handlers sont capturés par un
-// `pi` factice et le service mem0 est remplacé par une doublure de `fetch` :
+// `pi` factice et le service memory est remplacé par une doublure de `fetch` :
 // c'est le seul niveau où l'on voit un identifiant indéfini, un enchaînement
 // cassé ou un effet disque manqué (phases.json, brief du projet).
 //
@@ -20,11 +20,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-// Import STATIQUE assumé : mem0Client.ts ne lit que MEM0_HTTP_URL/MEM0_HTTP_TOKEN
+// Import STATIQUE assumé : memoryClient.ts ne lit que MEMORY_HTTP_URL/MEMORY_HTTP_TOKEN
 // à l'évaluation (aucun état d'extension, aucune écriture disque), donc il est
 // sans danger avant l'isolation du HOME. L'extension, elle, reste importée
 // dynamiquement pour cette raison.
-import { mem0, rows } from "../../omp-mem0-memory/mem0Client.ts";
+import { memory, rows } from "../../omp-memory/memoryClient.ts";
 import { fakeSchema } from "../support/fake-zod.ts";
 import { tmpdir } from "../support/repo.ts";
 
@@ -51,27 +51,27 @@ const HOME = tmpdir("plugin-handlers-home-");
 const PHASES_FILE = path.join(HOME, ".omp", "agent", "phases.json");
 process.env.HOME = HOME;
 
-// MEM0_AUTOSETUP n'est PAS mis à "0" : le provisionnement du brief EST un point
+// MEMORY_AUTOSETUP n'est PAS mis à "0" : le provisionnement du brief EST un point
 // d'entrée du plugin (hook session_start), donc un comportement à exercer.
-delete process.env.MEM0_AUTOSETUP;
+delete process.env.MEMORY_AUTOSETUP;
 
-const { default: mem0MemoryExtension, BRIEF_VERSION } = await import("../../omp-mem0-memory/extension.ts");
+const { default: memoryPluginExtension, BRIEF_VERSION } = await import("../../omp-memory/extension.ts");
 
 // ---------------------------------------------------------------------------
-// Doublure du service mem0 : enregistre chaque requête, sert des lignes choisies
+// Doublure du service memory : enregistre chaque requête, sert des lignes choisies
 // ---------------------------------------------------------------------------
 
 type Call = { method: string; url: string; body: Record<string, unknown> | null };
 
 type Service = {
-  /** Lignes servies par `GET /memory/all` (cache local, sommaire, /mem0-dedupe, /mem0-init). */
+  /** Lignes servies par `GET /memory/all` (cache local, sommaire, /memory-dedupe, /memory-init). */
   project: unknown[];
   global: unknown[];
   /** Lignes servies par `POST /memory/search` — recall, tools, dédup à l'écriture. */
   search: unknown[];
   globalSearch: unknown[];
   health: { ok: boolean };
-  /** Toutes les requêtes sortantes échouent (chemin d'erreur de /mem0-status). */
+  /** Toutes les requêtes sortantes échouent (chemin d'erreur de /memory-status). */
   offline: boolean;
   /**
    * Ids dont le `DELETE` rend 500 alors que la ligne est servie : modélise ce que
@@ -112,14 +112,14 @@ const scored = (id: string, semantic: number) => ({
   score_details: { semantic_score: semantic, threshold: 0.55 },
 });
 
-/** Doublure de `Response` : `mem0Fetch` ne lit que `ok`, `json()` et `text()`. */
+/** Doublure de `Response` : `memoryFetch` ne lit que `ok`, `json()` et `text()`. */
 function jsonResponse(payload: unknown): Response {
   const res = { ok: true, status: 200, json: async () => payload, text: async () => JSON.stringify(payload) };
   // Forme partielle de Response, connue de ce fichier seulement : cast local assumé.
   return res as unknown as Response;
 }
 
-/** Doublure de `Response` en échec : `mem0Fetch` lit `ok`, `status` et `text()`. */
+/** Doublure de `Response` en échec : `memoryFetch` lit `ok`, `status` et `text()`. */
 function errorResponse(status: number, body: string): Response {
   const res = { ok: false, status, json: async () => JSON.parse(body), text: async () => body };
   return res as unknown as Response;
@@ -230,7 +230,11 @@ function mkApp(): App {
     },
   };
 
-  mem0MemoryExtension(pi as unknown as Parameters<typeof mem0MemoryExtension>[0]);
+  // L'extension se garde d'un second chargement dans le même process : chaque test repart d'une session neuve.
+
+  delete (globalThis as Record<symbol, unknown>)[Symbol.for("omp-memory.extension")];
+
+  memoryPluginExtension(pi as unknown as Parameters<typeof memoryPluginExtension>[0]);
   return { commands, hooks, tools, defs, sent };
 }
 
@@ -250,7 +254,7 @@ function mkCtx(cwd: string, options: CtxOptions = {}) {
       notices.push({ message, type });
     },
     input: async (_label: string, _placeholder?: string) => "",
-    // Sans cette touche, `ctx.ui.confirm` lève dans /mem0-init : le message exact
+    // Sans cette touche, `ctx.ui.confirm` lève dans /memory-init : le message exact
     // de la garde anti-doublon (le total réel) resterait inobservable.
     confirm: async (title: string, message: string) => {
       confirms.push({ title, message });
@@ -309,25 +313,25 @@ test("plugin-handlers/AC-12 : session_start provisionne le brief du dépôt temp
 
   await app.hooks.get("session_start")!({} as never, ctx as never);
 
-  const ref = path.join(repo, ".omp", "mem0-brief.md");
+  const ref = path.join(repo, ".omp", "memory-brief.md");
   const agents = path.join(repo, "AGENTS.md");
   assert.equal(fs.existsSync(ref), true, "le fichier de référence doit être créé");
   assert.equal(fs.existsSync(agents), true, "AGENTS.md doit être créé");
   // Le fichier de référence se reconnaît à son marqueur de VERSION (c'est lui que
-  // /mem0-brief --update compare) ; le couple ouverture/fermeture délimite le bloc
+  // /memory-brief --update compare) ; le couple ouverture/fermeture délimite le bloc
   // inséré dans AGENTS.md, seule forme que le remplacement sous --force sait viser.
   // La version est LUE sur la constante du module : pinnée en dur, ce test
   // signalerait un faux périmé au premier bump du brief.
-  assert.match(fs.readFileSync(ref, "utf8"), new RegExp(`<!-- mem0:brief ${BRIEF_VERSION} -->`));
+  assert.match(fs.readFileSync(ref, "utf8"), new RegExp(`<!-- memory:brief ${BRIEF_VERSION} -->`));
   const agentsText = fs.readFileSync(agents, "utf8");
-  assert.match(agentsText, new RegExp(`<!-- mem0:brief ${BRIEF_VERSION} -->`));
-  assert.match(agentsText, /<!-- \/mem0:brief -->/);
-  assert.match(notices[0]!.message, /\[mem0\] brief mémoire posé sur "plugin-handlers-fixture"/);
+  assert.match(agentsText, new RegExp(`<!-- memory:brief ${BRIEF_VERSION} -->`));
+  assert.match(agentsText, /<!-- \/memory:brief -->/);
+  assert.match(notices[0]!.message, /\[memory\] brief mémoire posé sur "plugin-handlers-fixture"/);
   assert.equal(notices[0]!.type, "info");
 });
 
 // `plugin-handlers/AC-5` — la recommandation du brief est ce que l'agent lit
-// avant son premier `mem0_add` : elle doit annoncer le stockage tel quel d'une
+// avant son premier `memory_add` : elle doit annoncer le stockage tel quel d'une
 // procédure, sans quoi elle promet une réécriture que le serveur ne fait plus.
 test('plugin-handlers/AC-5 : le brief provisionné annonce kind:"procedure" comme un stockage conservé tel quel', async () => {
   resetService();
@@ -337,7 +341,7 @@ test('plugin-handlers/AC-5 : le brief provisionné annonce kind:"procedure" comm
 
   await app.hooks.get("session_start")!({} as never, ctx as never);
 
-  const ref = fs.readFileSync(path.join(repo, ".omp", "mem0-brief.md"), "utf8");
+  const ref = fs.readFileSync(path.join(repo, ".omp", "memory-brief.md"), "utf8");
   assert.match(ref, /kind: "procedure"/);
   assert.match(ref, /le texte est conservé tel quel/);
 });
@@ -370,7 +374,7 @@ test("session_compact, auto_compaction_end et session_branch autorisent la réin
   }
 });
 
-test("tool_result pose le bloc [mem0] Déjà en mémoire EN TÊTE et conserve le résultat d'origine", async () => {
+test("tool_result pose le bloc [memory] Déjà en mémoire EN TÊTE et conserve le résultat d'origine", async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
@@ -395,7 +399,7 @@ test("tool_result pose le bloc [mem0] Déjà en mémoire EN TÊTE et conserve le
   )) as ToolResult | undefined;
 
   assert.ok(res, "un souvenir proche des arguments doit être agrafé");
-  assert.match(res.content[0]!.text, /^\[mem0\] Déjà en mémoire à propos de ceci/);
+  assert.match(res.content[0]!.text, /^\[memory\] Déjà en mémoire à propos de ceci/);
   assert.match(res.content[0]!.text, /\[pin-1\]/);
   assert.deepEqual(res.content.slice(1), [original], "le contenu d'origine doit suivre, intact");
   assert.equal(service.calls.length, networkBefore, "l'agrafe ne fait aucun appel réseau");
@@ -424,7 +428,7 @@ test("session_stop relance l'écriture quand la session a modifié sans mémoris
     additionalContext: string;
   };
   assert.equal(nudge.continue, true);
-  assert.match(nudge.additionalContext, /\[mem0\] Cette session a modifié 1 fichier\(s\)/);
+  assert.match(nudge.additionalContext, /\[memory\] Cette session a modifié 1 fichier\(s\)/);
 });
 
 test("un ctx dégradé (sans setInterval ni sessionManager) ne fait échouer aucun hook", async () => {
@@ -463,12 +467,12 @@ test("un ctx dégradé (sans setInterval ni sessionManager) ne fait échouer auc
 // Tools d'écriture
 // ---------------------------------------------------------------------------
 
-test('plugin-handlers/AC-3 : mem0_add accepte kind:"procedure" et l\'écrit par POST /memory/add_procedure', async () => {
+test('plugin-handlers/AC-3 : memory_add accepte kind:"procedure" et l\'écrit par POST /memory/add_procedure', async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
   const { ctx } = mkCtx(repo);
-  const add = app.tools.get("mem0_add")!;
+  const add = app.tools.get("memory_add")!;
   service.project = [{ id: "a-1", memory: "un souvenir du projet", updated_at: "2026-09-20" }];
   await app.hooks.get("before_agent_start")!({ prompt: "ok", systemPrompt: [] } as never, ctx as never);
   assert.equal(callsTo("/memory/all", "GET").length, 1, "le cache local est chargé au premier tour");
@@ -509,12 +513,12 @@ test('plugin-handlers/AC-3 : mem0_add accepte kind:"procedure" et l\'écrit par 
 // requête (`loadMode: "essential"`) : c'est elle qui dit au modèle comment écrire.
 // Le serveur stocke désormais une procédure mot pour mot ; la description doit le
 // dire, sinon le contrat visible du tool annonce l'inverse de ce qui est écrit.
-test("plugin-handlers/AC-4 : la description de mem0_add annonce le stockage mot pour mot d'une procédure", async () => {
+test("plugin-handlers/AC-4 : la description de memory_add annonce le stockage mot pour mot d'une procédure", async () => {
   resetService();
   const app = mkApp();
-  const def = app.defs.get("mem0_add");
-  assert.ok(def, "mem0_add doit être enregistré");
-  assert.ok(def.description, "mem0_add doit déclarer une description");
+  const def = app.defs.get("memory_add");
+  assert.ok(def, "memory_add doit être enregistré");
+  assert.ok(def.description, "memory_add doit déclarer une description");
   assert.match(def.description, /mot pour mot/);
   assert.match(def.description, /kind: "procedure"/);
   // Le reste de la promesse n'est pas sacrifié au passage : la phrase finale,
@@ -522,7 +526,7 @@ test("plugin-handlers/AC-4 : la description de mem0_add annonce le stockage mot 
   assert.match(def.description, /écris donc la phrase finale/);
 });
 
-test("mem0_update réécrit par PUT /memory/<id> et périme le cache local", async () => {
+test("memory_update réécrit par PUT /memory/<id> et périme le cache local", async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
@@ -533,7 +537,7 @@ test("mem0_update réécrit par PUT /memory/<id> et périme le cache local", asy
   const loaded = callsTo("/memory/all", "GET").length;
   assert.equal(loaded, 1, "le premier tour charge le cache local depuis /memory/all");
 
-  const res = await app.tools.get("mem0_update")!(
+  const res = await app.tools.get("memory_update")!(
     "call-1",
     { memory_id: "u-1", text: "texte réécrit" },
     undefined,
@@ -551,7 +555,7 @@ test("mem0_update réécrit par PUT /memory/<id> et périme le cache local", asy
   assert.equal(callsTo("/memory/all", "GET").length, 2, "le tour suivant doit relire la mémoire");
 });
 
-test("mem0_forget supprime par DELETE /memory/<id> et périme le cache local", async () => {
+test("memory_forget supprime par DELETE /memory/<id> et périme le cache local", async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
@@ -560,7 +564,7 @@ test("mem0_forget supprime par DELETE /memory/<id> et périme le cache local", a
   await app.hooks.get("before_agent_start")!({ prompt: "ok", systemPrompt: [] } as never, ctx as never);
   assert.equal(callsTo("/memory/all", "GET").length, 1);
 
-  const res = await app.tools.get("mem0_forget")!("call-1", { memory_id: "f-1" }, undefined, undefined, ctx);
+  const res = await app.tools.get("memory_forget")!("call-1", { memory_id: "f-1" }, undefined, undefined, ctx);
   const deletes = callsTo("/memory/f-1", "DELETE");
   assert.equal(deletes.length, 1);
   assert.match(deletes[0]!.url, /\/memory\/f-1$/);
@@ -575,7 +579,7 @@ test("mem0_forget supprime par DELETE /memory/<id> et périme le cache local", a
 // Commandes
 // ---------------------------------------------------------------------------
 
-test("mem0-status annonce ok= avec le projet résolu, et signale l'injoignable", async () => {
+test("memory-status annonce ok= avec le projet résolu, et signale l'injoignable", async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
@@ -583,7 +587,7 @@ test("mem0-status annonce ok= avec le projet résolu, et signale l'injoignable",
   service.project = [{ id: "s-1", memory: "un souvenir du projet" }];
   service.global = [{ id: "g-1", memory: "une préférence transverse" }];
 
-  await app.commands.get("mem0-status")!("", ctx);
+  await app.commands.get("memory-status")!("", ctx);
   const status = notices.map((n) => n.message).find((m) => m.includes("ok="));
   assert.ok(status, "la notice d'état doit être émise");
   assert.match(status, /ok=true/);
@@ -593,15 +597,15 @@ test("mem0-status annonce ok= avec le projet résolu, et signale l'injoignable",
 
   notices.length = 0;
   service.offline = true;
-  await app.commands.get("mem0-status")!("", ctx);
-  assert.match(notices.at(-1)!.message, /\[mem0\] injoignable sur /);
+  await app.commands.get("memory-status")!("", ctx);
+  assert.match(notices.at(-1)!.message, /\[memory\] injoignable sur /);
   assert.equal(notices.at(-1)!.type, "error");
 });
 
-test("mem0-init refuse hors dépôt sans --force, et --scan-only n'appelle pas le modèle", async () => {
+test("memory-init refuse hors dépôt sans --force, et --scan-only n'appelle pas le modèle", async () => {
   resetService();
   const app = mkApp();
-  const init = app.commands.get("mem0-init")!;
+  const init = app.commands.get("memory-init")!;
 
   // 1. Hors dépôt (ni .git ni AGENTS.md) : refus, aucun appel réseau, aucun tour.
   const plain = tmpdir("plugin-handlers-plain-");
@@ -622,23 +626,23 @@ test("mem0-init refuse hors dépôt sans --force, et --scan-only n'appelle pas l
   // 3. Sans --scan-only, la relecture guidée part comme message utilisateur.
   await init("", repoCtx.ctx);
   assert.equal(app.sent.length, 1);
-  assert.match(app.sent[0]!, /^\[mem0-init\] Amorçage de la mémoire du projet/);
+  assert.match(app.sent[0]!, /^\[memory-init\] Amorçage de la mémoire du projet/);
 });
 
-test("mem0-brief rend l'état ref=/agents= et --update récrit le brief", async () => {
+test("memory-brief rend l'état ref=/agents= et --update récrit le brief", async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
   const { ctx, notices } = mkCtx(repo);
-  const brief = app.commands.get("mem0-brief")!;
-  const ref = path.join(repo, ".omp", "mem0-brief.md");
+  const brief = app.commands.get("memory-brief")!;
+  const ref = path.join(repo, ".omp", "memory-brief.md");
   const provision = "(created|present|outdated|skipped|failed)";
 
   await brief("", ctx);
   assert.match(
     notices.at(-1)!.message,
     new RegExp(
-      `^\\[mem0\\] brief ${BRIEF_VERSION} · .*plugin-handlers-repo-.* · \\.omp/mem0-brief\\.md=${provision} · AGENTS\\.md=${provision}`,
+      `^\\[memory\\] brief ${BRIEF_VERSION} · .*plugin-handlers-repo-.* · \\.omp/memory-brief\\.md=${provision} · AGENTS\\.md=${provision}`,
     ),
   );
   assert.equal(fs.existsSync(ref), true);
@@ -647,11 +651,11 @@ test("mem0-brief rend l'état ref=/agents= et --update récrit le brief", async 
   fs.writeFileSync(ref, "brief trafiqué", "utf8");
   notices.length = 0;
   await brief("--update", ctx);
-  assert.match(fs.readFileSync(ref, "utf8"), new RegExp(`<!-- mem0:brief ${BRIEF_VERSION} -->`));
-  assert.match(notices.at(-1)!.message, /\.omp\/mem0-brief\.md=created/);
+  assert.match(fs.readFileSync(ref, "utf8"), new RegExp(`<!-- memory:brief ${BRIEF_VERSION} -->`));
+  assert.match(notices.at(-1)!.message, /\.omp\/memory-brief\.md=created/);
 });
 
-test("mem0-dedupe simule par défaut (aucun DELETE) et supprime seulement en --apply", async () => {
+test("memory-dedupe simule par défaut (aucun DELETE) et supprime seulement en --apply", async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
@@ -664,7 +668,7 @@ test("mem0-dedupe simule par défaut (aucun DELETE) et supprime seulement en --a
     },
     { id: "drop-1", memory: "Le cache local des souvenirs est invalidé après chaque écriture." },
   ];
-  const dedupe = app.commands.get("mem0-dedupe")!;
+  const dedupe = app.commands.get("memory-dedupe")!;
 
   await dedupe("", ctx);
   assert.match(notices.at(-1)!.message, /simulation, rien n'est écrit/);
@@ -680,7 +684,7 @@ test("mem0-dedupe simule par défaut (aucun DELETE) et supprime seulement en --a
 });
 
 // ---------------------------------------------------------------------------
-// /mem0-purge-procedures : purge des souvenirs procéduraux de la scope
+// /memory-purge-procedures : purge des souvenirs procéduraux de la scope
 // ---------------------------------------------------------------------------
 
 /** Ligne servie par `GET /memory/all`, avec la métadonnée qui décide du type. */
@@ -711,7 +715,7 @@ test("purge/AC-1 : la simulation liste l'id et le texte des procéduraux, et rie
     memoryRow("f-2", "fait portant une autre valeur de type", { memory_type: "fact" }),
   ];
 
-  await app.commands.get("mem0-purge-procedures")!("", ctx);
+  await app.commands.get("memory-purge-procedures")!("", ctx);
 
   assert.equal(notices.length, 1, "une seule notice");
   const notice = notices[0]!;
@@ -741,7 +745,7 @@ test("purge/AC-2 : une scope sans procédural annonce qu'il n'y a rien à purger
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
   const { ctx, notices } = mkCtx(repo);
-  const purge = app.commands.get("mem0-purge-procedures")!;
+  const purge = app.commands.get("memory-purge-procedures")!;
   service.project = [
     memoryRow("f-1", "fait sans métadonnée"),
     memoryRow("f-2", "fait typé autrement", { memory_type: "fact" }),
@@ -780,7 +784,7 @@ test("purge/AC-3 : --apply supprime chaque procédural visé et cite les ids sup
     memoryRow("p-2", "procédure deux", PROCEDURE),
   ];
 
-  await app.commands.get("mem0-purge-procedures")!("--apply", ctx);
+  await app.commands.get("memory-purge-procedures")!("--apply", ctx);
 
   assert.equal(callsTo("/memory/p-1", "DELETE").length, 1, "un DELETE exactement, pour p-1");
   assert.equal(callsTo("/memory/p-2", "DELETE").length, 1, "un DELETE exactement, pour p-2");
@@ -791,7 +795,7 @@ test("purge/AC-3 : --apply supprime chaque procédural visé et cite les ids sup
 
   // Scope relue : plus aucun procédural — une seconde invocation le confirme.
   notices.length = 0;
-  await app.commands.get("mem0-purge-procedures")!("", ctx);
+  await app.commands.get("memory-purge-procedures")!("", ctx);
   assert.match(notices.at(-1)!.message, /aucun souvenir procédural — rien à purger \(1 souvenir\(s\) dans la scope\)/);
 });
 
@@ -811,7 +815,7 @@ test("purge/AC-4 : la purge ne touche aucun non-procédural de la scope", async 
   ];
   const total = service.project.length;
 
-  await app.commands.get("mem0-purge-procedures")!("--apply", ctx);
+  await app.commands.get("memory-purge-procedures")!("--apply", ctx);
 
   for (const call of service.calls.filter((c) => c.method !== "GET")) {
     const touched = `${call.url} ${JSON.stringify(call.body ?? "")}`;
@@ -838,7 +842,7 @@ test("purge/AC-5 : la purge ne vise que la scope du projet, jamais la mémoire t
     memoryRow("f-projet", "fait du projet", null),
   ];
 
-  await app.commands.get("mem0-purge-procedures")!("--apply", ctx);
+  await app.commands.get("memory-purge-procedures")!("--apply", ctx);
 
   const deletes = service.calls.filter((c) => c.method === "DELETE");
   assert.deepEqual<string[]>(
@@ -858,7 +862,7 @@ test("purge/AC-5 : la purge ne vise que la scope du projet, jamais la mémoire t
 // Un id périmé (500 côté serveur) ne doit ni interrompre la boucle ni passer pour
 // une suppression réussie : la ligne « supprimés » est la seule trace, l'y mettre
 // ferait croire à une purge complète.
-test("mem0-purge-procedures isole un échec unitaire et ne le compte pas comme supprimé", async () => {
+test("memory-purge-procedures isole un échec unitaire et ne le compte pas comme supprimé", async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
@@ -870,18 +874,18 @@ test("mem0-purge-procedures isole un échec unitaire et ne le compte pas comme s
   // La ligne est servie mais le DELETE échoue : c'est l'id disparu entre la lecture et la boucle.
   service.failDelete = ["p-absent"];
 
-  await app.commands.get("mem0-purge-procedures")!("--apply", ctx);
+  await app.commands.get("memory-purge-procedures")!("--apply", ctx);
 
   const notice = notices.at(-1)!;
   assert.equal(notice.type, "warning");
   assert.match(notice.message, /1\/2 souvenir\(s\) procédural\(aux\) supprimé\(s\)/);
   assert.match(notice.message, /\n {2}supprimés : p-present$/m, "seul le succès figure dans les supprimés");
-  assert.match(notice.message, /1 échec\(s\) : \[p-absent\] mem0-http 500: /);
+  assert.match(notice.message, /1 échec\(s\) : \[p-absent\] memory-http 500: /);
   assert.equal(callsTo("/memory/p-absent", "DELETE").length, 1, "la cible en échec a bien reçu son DELETE");
   assert.equal(callsTo("/memory/p-present", "DELETE").length, 1, "la boucle est allée au bout");
 });
 
-test("mem0-save envoie l'amorce d'écriture qui correspond à la session", async () => {
+test("memory-save envoie l'amorce d'écriture qui correspond à la session", async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
@@ -891,11 +895,11 @@ test("mem0-save envoie l'amorce d'écriture qui correspond à la session", async
     { toolName: "write", input: { path: "extension.ts" }, content: [], isError: false } as never,
     ctx as never,
   );
-  await app.commands.get("mem0-save")!("", ctx);
+  await app.commands.get("memory-save")!("", ctx);
 
   assert.equal(app.sent.length, 1);
-  assert.match(app.sent[0]!, /^\[mem0\] Cette session a modifié 1 fichier\(s\) et n'a rien écrit en mémoire/);
-  assert.match(app.sent[0]!, /mem0_add/);
+  assert.match(app.sent[0]!, /^\[memory\] Cette session a modifié 1 fichier\(s\) et n'a rien écrit en mémoire/);
+  assert.match(app.sent[0]!, /memory_add/);
 });
 
 test("add-phase enregistre la phase dans le registry persistant", async () => {
@@ -905,7 +909,7 @@ test("add-phase enregistre la phase dans le registry persistant", async () => {
   const { ctx, notices } = mkCtx(repo);
 
   await app.commands.get("add-phase")!("add-phase-fixture RUN: publier", ctx);
-  assert.match(notices.at(-1)!.message, /\[mem0\] phase "add-phase-fixture" enregistrée\./);
+  assert.match(notices.at(-1)!.message, /\[memory\] phase "add-phase-fixture" enregistrée\./);
   assert.deepEqual(phasesOnDisk()["add-phase-fixture"], { brief: "RUN: publier" });
   // Isolation : le registry écrit est celui du HOME temporaire, pas celui de l'utilisateur.
   assert.equal(readOrNull(REAL_PHASES_FILE), REAL_PHASES, "le phases.json du HOME réel n'a pas bougé");
@@ -922,14 +926,14 @@ test("set-phase active une phase, et --default réinitialise le registry", async
   await app.commands.get("set-phase")!("set-phase-fixture", ctx);
   assert.match(
     notices.at(-1)!.message,
-    /\[mem0\] phase "set-phase-fixture" active pour cette session — rôle : tenir la revue\./,
+    /\[memory\] phase "set-phase-fixture" active pour cette session — rôle : tenir la revue\./,
   );
 
   notices.length = 0;
   await app.commands.get("set-phase")!("--default", ctx);
   assert.match(
     notices.at(-1)!.message,
-    /\[mem0\] registry réinitialisé : release, version-bump, deploy, review\. Aucune phase active\./,
+    /\[memory\] registry réinitialisé : release, version-bump, deploy, review\. Aucune phase active\./,
   );
   assert.deepEqual(Object.keys(phasesOnDisk()).sort(), ["deploy", "release", "review", "version-bump"]);
 });
@@ -945,7 +949,7 @@ test("remove-phase retire la phase du registry persistant", async () => {
   notices.length = 0;
 
   await app.commands.get("remove-phase")!("remove-phase-fixture", ctx);
-  assert.match(notices.at(-1)!.message, /\[mem0\] phase "remove-phase-fixture" désenregistrée\./);
+  assert.match(notices.at(-1)!.message, /\[memory\] phase "remove-phase-fixture" désenregistrée\./);
   assert.equal("remove-phase-fixture" in phasesOnDisk(), false);
 });
 
@@ -958,7 +962,7 @@ test("remove-phase retire la phase du registry persistant", async () => {
 // plugin n'y remet un plafond. Le corpus est ordonné comme le renvoie le
 // serveur — updated_at décroissant — et ses `uniq(i)` ne se recouvrent qu'à 0,5
 // (le mot « souvenir » partagé, sous le seuil de balayage 0,75) : aucune paire
-// parasite ne vient polluer /mem0-dedupe.
+// parasite ne vient polluer /memory-dedupe.
 // ---------------------------------------------------------------------------
 
 /** Mot distinct par ligne, de plus de 3 caractères (seuil de `contentTokens`). */
@@ -975,12 +979,12 @@ function corpus(n: number): Array<{ id: string; memory: string; updated_at: stri
   }));
 }
 
-test("plafond/AC-2 : mem0.getAll rend la scope entière, sans troncature ni réordonnancement", async () => {
+test("plafond/AC-2 : memory.getAll rend la scope entière, sans troncature ni réordonnancement", async () => {
   resetService();
   // Ordre du serveur : le plus récent d'abord.
   service.project = [...corpus(150)].reverse();
 
-  const all = rows(await mem0.getAll("plafond-fixture"));
+  const all = rows(await memory.getAll("plafond-fixture"));
 
   assert.equal(all.length, 150, "aucune ligne ne doit être perdue côté client");
   assert.equal(all[0]!.id, "m-149", "la tête est le souvenir le plus récent de la scope");
@@ -991,7 +995,7 @@ test("plafond/AC-2 : mem0.getAll rend la scope entière, sans troncature ni réo
   );
 });
 
-test("plafond/AC-3 : sommaire injecté et /mem0-status comptent la scope entière", async () => {
+test("plafond/AC-3 : sommaire injecté et /memory-status comptent la scope entière", async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
@@ -1011,7 +1015,7 @@ test("plafond/AC-3 : sommaire injecté et /mem0-status comptent la scope entièr
   assert.match(injected, /\(\+ 90 souvenir\(s\) plus anciens/, "les 90 hors liste sont annoncés");
 
   notices.length = 0;
-  await app.commands.get("mem0-status")!("", ctx);
+  await app.commands.get("memory-status")!("", ctx);
   const status = notices.map((n) => n.message).find((m) => m.includes("ok="));
   assert.ok(status, "la notice d'état doit être émise");
   assert.match(status, /projet="plugin-handlers-fixture" 150 souvenir\(s\)/);
@@ -1030,13 +1034,13 @@ test("plafond/AC-6 : sous le seuil de 100, les comptes restent exacts", async ()
   )) as { systemPrompt: string[] };
   assert.match(started.systemPrompt.join("\n"), /80 souvenir\(s\)/);
 
-  await app.commands.get("mem0-status")!("", ctx);
+  await app.commands.get("memory-status")!("", ctx);
   const status = notices.map((n) => n.message).find((m) => m.includes("ok="));
   assert.ok(status);
   assert.match(status, /80 souvenir\(s\)/);
 });
 
-test("plafond/AC-4 : /mem0-dedupe voit les paires au-delà des 100 premiers", async () => {
+test("plafond/AC-4 : /memory-dedupe voit les paires au-delà des 100 premiers", async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
@@ -1053,7 +1057,7 @@ test("plafond/AC-4 : /mem0-dedupe voit les paires au-delà des 100 premiers", as
   store[121] = { ...store[121]!, memory: "Le cache local des souvenirs est invalidé après chaque écriture." };
   service.project = store;
 
-  await app.commands.get("mem0-dedupe")!("", ctx);
+  await app.commands.get("memory-dedupe")!("", ctx);
 
   const notice = notices.at(-1)!.message;
   assert.match(notice, /sur 150 souvenir\(s\)/, "M est le total réel de la scope, pas 100");
@@ -1061,14 +1065,14 @@ test("plafond/AC-4 : /mem0-dedupe voit les paires au-delà des 100 premiers", as
   assert.equal(service.calls.filter((c) => c.method === "DELETE").length, 0, "la simulation n'écrit rien");
 });
 
-test("plafond/AC-7 : /mem0-init sans --force annonce le total réel, pas 100", async () => {
+test("plafond/AC-7 : /memory-init sans --force annonce le total réel, pas 100", async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
   const { ctx, notices, confirms } = mkCtx(repo, { hasUI: true });
   service.project = corpus(150);
 
-  await app.commands.get("mem0-init")!("", ctx);
+  await app.commands.get("memory-init")!("", ctx);
 
   assert.equal(confirms.length, 1, "la garde anti-doublon doit demander confirmation");
   assert.match(confirms[0]!.title, /^Réamorcer "plugin-handlers-fixture" \?$/);

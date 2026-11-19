@@ -321,7 +321,7 @@ test("poste-agent/AC-6 : les jobs tournent sur un dépôt synthétique (scope wo
     const launched = world.log().find((entry) => entry.kind === "argv");
     const target = workstationTarget(world.config);
     assert.equal(fs.realpathSync(String(launched?.cwd)), fs.realpathSync(target.cwd));
-    assert.equal((launched?.env as Record<string, unknown> | undefined)?.MEM0_PROJECT_ID, WORKSTATION_SCOPE);
+    assert.equal((launched?.env as Record<string, unknown> | undefined)?.MEMORY_PROJECT_ID, WORKSTATION_SCOPE);
   } finally {
     await teardown(world, api);
   }
@@ -350,6 +350,6 @@ test("poste-agent/AC-6 : les jobs tournent sur un dépôt synthétique (scope wo
     String(workdir),
     new RegExp(`^--working-directory=${config.worktreesDir}/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9_][A-Za-z0-9._-]*$`),
   );
-  assert.ok(systemd.includes(`--setenv=MEM0_PROJECT_ID=${WORKSTATION_SCOPE}`));
+  assert.ok(systemd.includes(`--setenv=MEMORY_PROJECT_ID=${WORKSTATION_SCOPE}`));
   assert.equal(path.basename(target.cwd), "_poste");
 });

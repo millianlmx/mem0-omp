@@ -1,20 +1,21 @@
-// La recette RÉELLE de l'agent launchd mem0-rs (omp-console-sans-podman, S-2 ;
+// La recette RÉELLE de l'agent launchd memory-rs (omp-console-sans-podman, S-2 ;
 // AC-2, AC-3, AC-4, AC-5, AC-13) : hors suite, hors CI.
 //
 // Désactivée par défaut : ni `.github/workflows/check.yml` ni `scripts/check.sh` ni
-// `scripts/swift-app.sh` ne posent `MEM0_AGENT_RECIPE`. Variable posée ⇒ chaque
+// `scripts/swift-app.sh` ne posent `MEMORY_AGENT_RECIPE`. Variable posée ⇒ chaque
 // test lance le VRAI launchctl sur une racine jetable (label et plist isolés sous
 // `<racine>/LaunchAgents`, jamais `~/Library/LaunchAgents`), sur un port libre
 // choisi par la recette (jamais 8321), puis décharge le job et supprime la racine.
 //
-// Binaire : `MEM0_RS_BIN`, sinon `mem0-stack/mem0-rs/target/release/mem0-rs`, COPIÉ
+// Binaire : `MEMORY_RS_BIN`, sinon `memory-stack/memory-rs/target/release/memory-rs`, COPIÉ
 // dans la racine (la recette AC-4 re-signe la copie, jamais l'original).
 //
-//   MEM0_AGENT_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel --filter recette
+//   MEMORY_AGENT_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel --filter recette
 //
 // Le nom de chaque FONCTION porte « recette » : `swift test --filter` filtre sur
 // l'identifiant du test, pas sur son titre affiché.
 
+import ConsoleCore
 import CryptoKit
 import Darwin
 import Foundation
@@ -22,7 +23,7 @@ import Testing
 
 @testable import OMPConsole
 
-private let recipeEnabled = ProcessInfo.processInfo.environment["MEM0_AGENT_RECIPE"] != nil
+private let recipeEnabled = RenamedEnvironment.value(ProcessInfo.processInfo.environment, "MEMORY_AGENT_RECIPE", legacy: "MEM0_AGENT_RECIPE") != nil
 
 /// La racine du dépôt, depuis ce fichier (Tests/OMPConsoleTests/<fichier>).
 private let repositoryRoot = URL(fileURLWithPath: #filePath)
@@ -35,7 +36,7 @@ private enum RecipeError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .missingBinary(let path):
-            return "mem0-rs introuvable (\(path)) : lance `cargo build --release --locked --manifest-path mem0-stack/mem0-rs/Cargo.toml` ou pose MEM0_RS_BIN"
+            return "memory-rs introuvable (\(path)) : lance `cargo build --release --locked --manifest-path memory-stack/memory-rs/Cargo.toml` ou pose MEMORY_RS_BIN"
         case .noPort:
             return "aucun port libre"
         }
@@ -52,19 +53,19 @@ private final class RecipeRoot {
     let uid = getuid()
 
     init(httpToken: String = "recette", environment: [String: String] = [:]) throws {
-        let source = ProcessInfo.processInfo.environment["MEM0_RS_BIN"].flatMap { $0.isEmpty ? nil : $0 }
+        let source = RenamedEnvironment.value(ProcessInfo.processInfo.environment, "MEMORY_RS_BIN", legacy: "MEM0_RS_BIN")
             .map { URL(fileURLWithPath: $0) }
-            ?? repositoryRoot.appendingPathComponent("mem0-stack/mem0-rs/target/release/mem0-rs")
+            ?? repositoryRoot.appendingPathComponent("memory-stack/memory-rs/target/release/memory-rs")
         guard FileManager.default.isExecutableFile(atPath: source.path) else {
             throw RecipeError.missingBinary(source.path)
         }
         // /tmp (et non $TMPDIR, très long) : chemins lisibles dans `ps` et le plist.
         root = URL(fileURLWithPath: "/tmp/omp-agent-recette-\(UUID().uuidString.prefix(8))", isDirectory: true)
         paths = AppPaths(supportRoot: root.appendingPathComponent("support", isDirectory: true))
-        executable = root.appendingPathComponent("OMP Console.app/Contents/Resources/mem0-rs")
+        executable = root.appendingPathComponent("OMP Console.app/Contents/Resources/memory-rs")
         try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: source, to: executable)
-        var config = StackConfig(mem0HttpToken: httpToken)
+        var config = StackConfig(memoryHttpToken: httpToken)
         let env = ProcessInfo.processInfo.environment.merging(environment) { $1 }
         if let base = env["OMLX_BASE_URL"], !base.isEmpty { config.omlxBaseURL = base }
         if let token = env["OMLX_API_TOKEN"] { config.omlxApiToken = token }
@@ -119,7 +120,7 @@ private final class RecipeRoot {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 30
-        if let token { request.setValue(token, forHTTPHeaderField: "X-Mem0-Token") }
+        if let token { request.setValue(token, forHTTPHeaderField: "X-Memory-Token") }
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -134,7 +135,7 @@ private final class RecipeRoot {
         guard let token = InstallationTokenStore.load(at: paths.installationToken),
               let result = await MemoryAgent.liveHealthProbe(URL(string: "http://127.0.0.1:\(port)/health")!)
         else { return false }
-        return MemoryAgent.isOurMem0(result, token: token)
+        return MemoryAgent.isOurMemory(result, token: token)
     }
 
     /// Un port éphémère libre, attribué par le noyau puis relâché.
@@ -207,7 +208,7 @@ func recetteAgentRacineViergeServLesNeufRoutes() async throws {
     }
     // Les routes qui appellent oMLX : la route existe et le jeton passe (oMLX peut
     // être injoignable, d'où un statut quelconque hors 401/404/405). Un DELETE
-    // d'id inconnu rend, par parité avec mem0 2.2.1, un 500 en texte brut : seul
+    // d'id inconnu rend, par parité avec la bibliothèque d'origine 2.2.1, un 500 en texte brut : seul
     // son statut compte ici.
     for (method, path, body) in [
         ("POST", "/memory/add", ["text": "recette agent", "agent_id": "recette", "infer": false] as [String: Any]),
@@ -221,7 +222,7 @@ func recetteAgentRacineViergeServLesNeufRoutes() async throws {
     }
 
     #expect(await recipe.call("GET", "/memory/all", token: nil).status == 401)
-    #expect(FileManager.default.fileExists(atPath: recipe.paths.supportRoot.appendingPathComponent("mem0-rs/mem0-rs.db").path))
+    #expect(FileManager.default.fileExists(atPath: recipe.paths.supportRoot.appendingPathComponent("memory-rs/memory-rs.db").path))
     #expect(!FileManager.default.fileExists(atPath: recipe.paths.componentsRoot.appendingPathComponent("podman").path))
 }
 
@@ -254,7 +255,7 @@ func recetteAgentSurvitEtRevientApresKill() async throws {
         }
         try await Task.sleep(for: .milliseconds(500))
     }
-    let newPid = try #require(revived, "launchd n'a pas relancé mem0-rs en 30 s")
+    let newPid = try #require(revived, "launchd n'a pas relancé memory-rs en 30 s")
     #expect(newPid != pid)
     #expect(await ppid(of: newPid) == 1)
 }
@@ -288,7 +289,7 @@ func recetteAgentBinaireResigneRemplaceLeProcess() async throws {
     let data = try Data(contentsOf: agent.plistURL)
     let plist = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
     let environment = try #require(plist["EnvironmentVariables"] as? [String: String])
-    #expect(environment["OMP_CONSOLE_MEM0_RS_SHA256"] == (try sha256(recipe.executable)))
+    #expect(environment["OMP_CONSOLE_MEMORY_RS_SHA256"] == (try sha256(recipe.executable)))
     #expect(await recipe.healthy())
 }
 
@@ -345,7 +346,7 @@ private let omlxConfigured: Bool = {
     "omp-console-sans-podman/AC-13 : recette — liste, ajout, recherche et suppression par HTTPMemoryService contre l'agent",
     .enabled(if: recipeEnabled && omlxConfigured)
 )
-func recetteAgentVuesMemoireContreMem0Rs() async throws {
+func recetteAgentVuesMemoireContreMemoryRs() async throws {
     let recipe = try RecipeRoot()
     defer { recipe.cleanUp() }
     try await recipe.agent().ensureRunning { _ in }
@@ -358,7 +359,7 @@ func recetteAgentVuesMemoireContreMem0Rs() async throws {
     #expect(await service.health().isAvailable)
 
     let scope = "recette-ac13"
-    let text = "La recette AC-13 vérifie la section Mémoire contre mem0-rs."
+    let text = "La recette AC-13 vérifie la section Mémoire contre memory-rs."
     try await service.add(text: text, scope: scope, tags: [])
     let listed = try await service.all(scope: scope)
     let row = try #require(listed.rows.first { $0.text == text })

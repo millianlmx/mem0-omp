@@ -34,7 +34,7 @@ export const GH_TOKEN_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
 /** Les jetons GitLab que `glab` lit (`GITLAB_TOKEN` d'abord). */
 export const GITLAB_TOKEN_VARS = ["GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN"] as const;
 
-/** Un jeton mémoire tel que mem0-rs l'accepte dans `MEM0_HTTP_TOKENS` (ni `:`, ni `;`, ni espace). */
+/** Un jeton mémoire tel que memory-rs l'accepte dans `MEMORY_HTTP_TOKENS` (ni `:`, ni `;`, ni espace). */
 const MEMORY_TOKEN = /^[A-Za-z0-9._~+/=-]{16,512}$/;
 
 /** La politique permet-elle ce modèle : `local-only` ne permet que le fournisseur local, `providers` est une liste blanche. */
@@ -239,6 +239,17 @@ export function glabEnv(
 }
 
 /**
+ * Les deux noms d'une variable de jeton mémoire pendant la version de transition : `[nouveau, ancien]`. Un nom qui
+ * contient `MEM0` (déclaré avant le renommage) a pour nouveau nom le même avec `MEMORY` ; un nom qui contient
+ * `MEMORY` a pour ancien nom le même avec `MEM0` ; tout autre nom est seul.
+ */
+function renamedPair(name: string): [string] | [string, string] {
+  if (name.includes("MEM0")) return [name.replaceAll("MEM0", "MEMORY"), name];
+  if (name.includes("MEMORY")) return [name, name.replaceAll("MEMORY", "MEM0")];
+  return [name];
+}
+
+/**
  * Le jeton mémoire propre au dépôt, ou `null` (le jeton global). Déclaré mais absent ou
  * illisible : refus — le jeton global ouvrirait la mémoire de tous les projets.
  */
@@ -248,7 +259,8 @@ export function repoMemoryToken(
 ): string | null {
   const name = repo.memory?.tokenEnv;
   if (name === undefined) return null;
-  const token = env[name]?.trim() ?? "";
+  const [current, legacy] = renamedPair(name);
+  const token = (env[current] || (legacy === undefined ? undefined : env[legacy]) || "").trim();
   if (token === "")
     throw new PolicyRefusal(
       `dépôt ${repo.name} : ${name} (son jeton mémoire) est absente de l'environnement du service — aucun runner avec le jeton global`,
@@ -278,7 +290,7 @@ export function syncMemoryTokenFile(config: HarnessConfig, repoName: string, tok
   }
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const temp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(temp, `MEM0_HTTP_TOKEN=${token}\n`, { mode: 0o600 });
+  fs.writeFileSync(temp, `MEMORY_HTTP_TOKEN=${token}\n`, { mode: 0o600 });
   fs.renameSync(temp, file);
   return file;
 }
@@ -287,9 +299,10 @@ export function syncMemoryTokenFile(config: HarnessConfig, repoName: string, tok
 export function policySecretVars(config: HarnessConfig): string[] {
   return [
     ...new Set(
-      config.repos.flatMap((repo) =>
-        [repo.gh?.tokenEnv, repo.gitlab?.tokenEnv, repo.memory?.tokenEnv].filter((name) => name !== undefined),
-      ),
+      config.repos.flatMap((repo) => [
+        ...[repo.gh?.tokenEnv, repo.gitlab?.tokenEnv].filter((name) => name !== undefined),
+        ...(repo.memory?.tokenEnv === undefined ? [] : renamedPair(repo.memory.tokenEnv)),
+      ]),
     ),
   ];
 }

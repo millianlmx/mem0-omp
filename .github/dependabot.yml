@@ -6,7 +6,7 @@
 #   test/outillage (elles jugent la version majeure, test/support/workflows.ts) ;
 #   une montée MAJEURE arrive seule et les fait rougir : on la relit, puis on
 #   monte sa majeure dans `ACTIONS` (test/support/workflows.ts) dans la même PR.
-# - cargo : la crate mem0-stack/mem0-rs (son Cargo.lock).
+# - cargo : la crate memory-stack/memory-rs (son Cargo.lock).
 # - docker / docker-compose : les images de base des Dockerfile et les images
 #   tierces des fichiers compose.
 #
@@ -31,7 +31,7 @@ updates:
         update-types: [minor, patch]
 
   - package-ecosystem: cargo
-    directory: /mem0-stack/mem0-rs
+    directory: /memory-stack/memory-rs
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
@@ -44,7 +44,7 @@ updates:
 
   - package-ecosystem: docker
     directories:
-      - /mem0-stack/mem0-rs
+      - /memory-stack/memory-rs
       - /omp-harness/deploy/container
     schedule:
       interval: weekly
@@ -59,6 +59,7 @@ updates:
   - package-ecosystem: docker-compose
     directories:
       - /
+      - /memory-stack
       - /mem0-stack
       - /omp-harness/deploy/container
     schedule:

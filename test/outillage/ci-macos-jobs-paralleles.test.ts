@@ -9,7 +9,7 @@
 //     jetable dont le dossier test/ ne contient que des fixtures — jamais la
 //     vraie suite, que `── Tests` relancerait ;
 //  2. ce qui porte sur l'arbre réel, ou relance `check.sh`, ne s'exécute qu'au
-//     premier niveau (`MEM0_CHECK_DEPTH`) : les copies d'autres tests élaguent
+//     premier niveau (`MEMORY_CHECK_DEPTH`) : les copies d'autres tests élaguent
 //     test/ et relancent cette suite.
 //
 // Les sources des fixtures sont assemblées par concaténation, jamais écrites en
@@ -26,9 +26,10 @@ import { fileURLToPath } from "node:url";
 
 import { LINT_TOOL_ENV, linkPinnedTypescript, listTestFiles } from "../support/repo.ts";
 import { ACTIONS, lireWorkflow } from "../support/workflows.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
+const DEPTH = Number(renamedEnv(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
 const NESTED = "copie jetable — l'arbre réel est éprouvé au premier niveau";
 
 /** Les 14 en-têtes de check.sh, dans l'ordre d'exécution (S-1). */
@@ -41,7 +42,7 @@ const HEADERS = [
   "── Types",
   "── Lint TypeScript",
   "── Plafond de types",
-  "── Rust mem0-rs",
+  "── Rust memory-rs",
   "── Plugins réels (OMP)",
   "── Tests",
   "── Noyau partagé",
@@ -75,10 +76,10 @@ const output = (r: SpawnSyncReturns<string>) => `${r.stdout ?? ""}${r.stderr ?? 
 function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    MEM0_CHECK_DEPTH: String(DEPTH + 1),
-    MEM0_OMP_SKIP_SWIFT_APP: "1",
-    MEM0_OMP_SKIP_IOS: "1",
-    MEM0_OMP_SKIP_RUST: "1",
+    MEMORY_CHECK_DEPTH: String(DEPTH + 1),
+    MEMORY_OMP_SKIP_SWIFT_APP: "1",
+    MEMORY_OMP_SKIP_IOS: "1",
+    MEMORY_OMP_SKIP_RUST: "1",
     ...LINT_TOOL_ENV,
     ...extra,
   };
@@ -501,12 +502,12 @@ test("ci-macos-jobs-paralleles/AC-3 : l'agrégateur ne réussit que sur trois su
   assert.ok(stepsOf(aggregator).includes(`        run: bash scripts/ci-verdict.sh ${call}`), aggregator);
 });
 
-/** L'étape de la Qdrant source des tests d'import mem0-rs, juste après celle du linter. */
+/** L'étape de la Qdrant source des tests d'import memory-rs, juste après celle du linter. */
 const QDRANT_STEP = [
-  "      - name: Préparer la Qdrant source des tests d'import mem0-rs",
-  "        run: bash scripts/mem0-http-contrat.sh --prepare",
+  "      - name: Préparer la Qdrant source des tests d'import memory-rs",
+  "        run: bash scripts/memory-http-contrat.sh --prepare",
 ];
-/** L'étape de la toolchain Rust (mem0-rs-noyau S-11), juste après celle de la Qdrant source. */
+/** L'étape de la toolchain Rust (memory-rs-noyau S-11), juste après celle de la Qdrant source. */
 const RUST_STEP = ["      - name: Préparer la toolchain Rust (clippy)", "        run: rustup component add clippy"];
 /** L'étape d'empreinte des toolchains (ci-without-cache S-1), juste après setup-node : elle nourrit les clés de cache. */
 const FINGERPRINT_STEP = [
@@ -527,17 +528,17 @@ const NPM_CACHE_STEP = [
   "          path: ~/.npm",
   "          key: npm-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.toolchain.outputs.node }}-omp-${{ env.OMP_HOST_VERSION }}-types-node-${{ env.OMP_HOST_TYPES_NODE }}",
 ];
-/** Le cache cargo de mem0-rs (ci-without-cache S-2), juste après le cache npm. */
+/** Le cache cargo de memory-rs (ci-without-cache S-2), juste après le cache npm. */
 const CARGO_CACHE_STEP = [
-  "      - name: Cache cargo (mem0-rs)",
+  "      - name: Cache cargo (memory-rs)",
   `        uses: ${ACTIONS.cache}`,
   "        with:",
   "          path: |",
   "            ~/.cargo/registry/index",
   "            ~/.cargo/registry/cache",
   "            ~/.cargo/git/db",
-  "            mem0-stack/mem0-rs/target",
-  "          key: cargo-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('mem0-stack/mem0-rs/Cargo.lock', 'mem0-stack/mem0-rs/Cargo.toml') }}",
+  "            memory-stack/memory-rs/target",
+  "          key: cargo-${{ github.job }}-${{ strategy.job-index }}-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('memory-stack/memory-rs/Cargo.lock', 'memory-stack/memory-rs/Cargo.toml') }}",
 ];
 /** L'installation de l'hôte : la version vient de l'`env:` du workflow (ci-without-cache S-1). */
 const HOST_INSTALL =
@@ -569,14 +570,14 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique 
     /\$\{\{ github\.event_name == 'pull_request' && format\('--tests-base=\{0\}', github\.event\.pull_request\.base\.sha\) \|\| '' \}\}$/,
     runs[0],
   );
-  assert.ok(!check.includes("MEM0_OMP_REQUIRE_IOS"), check);
+  assert.ok(!check.includes("MEMORY_OMP_REQUIRE_IOS"), check);
   // (a) Plus aucune trace du banc Python de mem0-http.
   for (const needle of ["mem0-http-test.sh", "setup-python", "image_python", "MEM0_OMP_REQUIRE_HTTP_API"]) {
     assert.ok(!steps.some((line) => line.includes(needle)), `${needle} encore présent dans le job check :\n${check}`);
   }
   // (b) L'étape de la Qdrant source : une seule fois, ses deux lignes consécutives,
   // immédiatement suivie de l'étape Rust ; la section Rust y est exigée
-  // (MEM0_OMP_REQUIRE_RUST), une seule fois.
+  // (MEMORY_OMP_REQUIRE_RUST), une seule fois.
   const at = steps.indexOf(QDRANT_STEP[0] ?? "");
   assert.equal(steps.filter((line) => QDRANT_STEP.includes(line)).length, 2, check);
   assert.ok(at > 0, check);
@@ -584,7 +585,7 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique 
   assert.equal(steps.filter((line) => RUST_STEP.includes(line)).length, 2, check);
   assert.equal(steps[at + 2], RUST_STEP[0], check);
   assert.equal(steps[at + 3], RUST_STEP[1], check);
-  assert.equal(steps.filter((line) => line === '          MEM0_OMP_REQUIRE_RUST: "1"').length, 1, check);
+  assert.equal(steps.filter((line) => line === '          MEMORY_OMP_REQUIRE_RUST: "1"').length, 1, check);
   // (b') ci-without-cache : l'empreinte puis les caches npm et cargo, d'un seul
   // tenant et juste après setup-node ; l'installation lit la version de l'hôte
   // dans l'`env:` du workflow, une seule fois.

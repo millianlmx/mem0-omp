@@ -4,7 +4,7 @@
 // relancer avec une consigne, donner à un run son propre budget (au lancement ou ensuite,
 // prioritaire sur `monitoring.runBudgetUsd`), déclarer un dépôt et relire la
 // configuration par l'API (ce que `--add-repo` et SIGHUP faisaient en ssh). Les mêmes
-// gestes passent par le serveur MCP et par les outils du plugin omp-mem0-req.
+// gestes passent par le serveur MCP et par les outils du plugin omp-memory-req.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -16,7 +16,7 @@ import { Git } from "../../../omp-harness/forge/git.ts";
 import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
 import { execProcess, type Exec } from "../../../omp-harness/runners/proc.ts";
 import { ConfigAdmin, type KeyGen } from "../../../omp-harness/config/repos.ts";
-import reqExtension from "../../../omp-mem0-req/extension.ts";
+import reqExtension from "../../../omp-memory-req/extension.ts";
 import { fakeSchema } from "../../support/fake-zod.ts";
 import { OK, fakeWorld, git, harnessRepo, waitFor } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
@@ -593,7 +593,7 @@ test("harness-gestes-clients/AC-9 : le serveur MCP porte les mêmes gestes — `
   }
 });
 
-/** Le plugin omp-mem0-req, ses outils capturés par un `pi` factice. */
+/** Le plugin omp-memory-req, ses outils capturés par un `pi` factice. */
 function reqTools() {
   type Tool = {
     name: string;
@@ -619,7 +619,7 @@ function reqTools() {
   return tools;
 }
 
-test("harness-gestes-clients/AC-10 : le plugin omp-mem0-req lance avec un budget (`harness_launch`), parle à un run (`harness_instruct`) et relance avec une consigne (`harness_retry`), contre le vrai harness", async () => {
+test("harness-gestes-clients/AC-10 : le plugin omp-memory-req lance avec un budget (`harness_launch`), parle à un run (`harness_instruct`) et relance avec une consigne (`harness_retry`), contre le vrai harness", async () => {
   const world = fakeWorld({ req: [[{ waitSteer: 15_000 }, ...OK.req]], specs: [[{ sleep: 60_000 }]] });
   const api = await serve(world);
   const tools = reqTools();

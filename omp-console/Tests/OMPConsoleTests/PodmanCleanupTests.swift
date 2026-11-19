@@ -72,7 +72,7 @@ private struct CleanupSandbox {
             paths.installationToken,
             paths.switchState,
             paths.podmanImportReport,
-            paths.mem0Database,
+            paths.memoryDatabase,
             paths.ompDir("1.0.0").appendingPathComponent("omp"),
         ]
     }
@@ -107,7 +107,7 @@ private struct CleanupSandbox {
             try write("{}", to: paths.podmanImportReport)
         }
         try write("jeton", to: paths.installationToken)
-        try write("base", to: paths.mem0Database)
+        try write("base", to: paths.memoryDatabase)
         try write("#!/bin/sh\n", to: paths.ompDir("1.0.0").appendingPathComponent("omp"))
         double = CleanupDouble(sandbox: base)
         model = PodmanCleanupModel(

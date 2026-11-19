@@ -57,10 +57,23 @@ function execDir(prefix: string): string {
   return dir;
 }
 
-/** Le bloc d'un service du compose racine, de sa ligne `  <nom>:` à la suivante. */
+/**
+ * Le bloc d'un service du compose racine, de sa ligne `  <nom>:` à la suivante. Pendant la version de transition,
+ * le service mémoire garde son ancienne clé et `memory` en est l'alias réseau : un nom absent des clés se résout
+ * par l'alias.
+ */
 function service(name: string): string {
   const lines = compose.split("\n");
-  const start = lines.indexOf(`  ${name}:`);
+  let start = lines.indexOf(`  ${name}:`);
+  if (start === -1) {
+    const alias = lines.findIndex((line) => line.trim() === `aliases: [${name}]`);
+    for (let i = alias; i >= 0 && alias !== -1; i -= 1) {
+      if (/^ {2}\S[^:]*:\s*$/.test(lines[i]!)) {
+        start = i;
+        break;
+      }
+    }
+  }
   assert.notEqual(start, -1, `service ${name} absent de docker-compose.yml`);
   const rest = lines.slice(start + 1);
   const end = rest.findIndex((line) => /^ {2}\S/.test(line) || /^\S/.test(line));
@@ -233,7 +246,7 @@ test("moli-socle/AC-2 : `setup` crée deux jetons CDP distincts (0600) et le pro
       .join("\n"),
     `MOLI_CDP_URL=http://moli:9222\nMOLI_CDP_TOKEN=${t1}\nMOLI_POSTE_CDP_URL=http://moli-poste:9222\nMOLI_POSTE_CDP_TOKEN=${t2}`,
   );
-  for (const file of ["runner.env", "mem0/mem0.env"])
+  for (const file of ["runner.env", "memory/memory.env"])
     assert.doesNotMatch(read(path.join(secrets, file)), /MOLI/, `${file} voit un jeton CDP`);
 
   const second = init();
@@ -269,7 +282,7 @@ test("moli-socle/AC-4 : `moli-poste` a un réseau interne partagé avec `harness
   assert.doesNotMatch(networkBlock("moli-sortie"), /internal: true/);
   // `harness` garde `default` (celui des runners) en tête.
   assert.deepEqual(networksOf("harness"), ["default", "moli", "moli-poste"]);
-  for (const name of ["setup", "repos", "vigie", "mem0", "pairing", "embeddings", "runner-image", "test-image"])
+  for (const name of ["setup", "repos", "vigie", "memory", "pairing", "embeddings", "runner-image", "test-image"])
     assert.deepEqual(networksOf(name), ["default"], `${name} ne rejoint aucun réseau de Moli`);
   assert.match(compose, /^networks:\n {2}default:\n(.*\n)*? {4}name: omp-harness\n/m);
 });
@@ -1091,7 +1104,7 @@ test("moli-socle : le total de contextes est borné, `browser.url` null répond 
 // ─── La garde réseau ────────────────────────────────────────────────────────────────────────
 
 const PRIVATE_LOOKUP: Lookup = async (host) => {
-  if (host === "mem0" || host === "harness") return [{ address: host === "mem0" ? "172.18.0.3" : "172.18.0.4" }];
+  if (host === "memory" || host === "harness") return [{ address: host === "memory" ? "172.18.0.3" : "172.18.0.4" }];
   throw new Error("ENOTFOUND");
 };
 
@@ -1167,7 +1180,7 @@ test("moli-socle/AC-14 : le navigateur éphémère n'a pas le réseau privé ; t
       "http://100.100.100.100/",
       `http://[::1]:${pages.port}/`,
       "http://[fd7a:115c:a1e0::1]/",
-      "http://mem0:8321/",
+      "http://memory:8321/",
       "http://harness:8790/",
     ];
     for (const url of targets) {
@@ -1175,7 +1188,7 @@ test("moli-socle/AC-14 : le navigateur éphémère n'a pas le réseau privé ; t
       assert.equal(result.isError, true, url);
       assert.ok(!textOf(result).includes("CIBLE-LOCALE"));
     }
-    assert.match(textOf(await mcp.call("operator", "browser_open", { url: "http://mem0:8321/" })), /réseau privé/);
+    assert.match(textOf(await mcp.call("operator", "browser_open", { url: "http://memory:8321/" })), /réseau privé/);
     assert.match(textOf(await mcp.call("operator", "browser_open", { url: "http://harness:8790/" })), /réseau privé/);
     assert.deepEqual(pages.requests(), []);
     assert.equal(relayed.relay.total(), 0, "aucune connexion CDP : aucun contexte créé");

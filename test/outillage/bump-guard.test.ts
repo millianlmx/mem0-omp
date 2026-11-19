@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { RENAMED_PLUGINS } from "../../scripts/release.ts";
 import { GIT_ENV } from "../support/git.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
@@ -26,9 +27,11 @@ function readJson<T>(dir: string, rel: string): T {
   return JSON.parse(fs.readFileSync(path.join(dir, rel), "utf8")) as T;
 }
 
-/** Les plugins LOCAUX du catalogue : les porteurs de version du dépôt. */
+/** Les plugins LOCAUX du catalogue, hors anciens noms (alias) : les porteurs de version du dépôt. */
+const estAncienNom = (name: string): boolean => Object.values(RENAMED_PLUGINS).some((renamed) => renamed.name === name);
 const PLUGINS = readJson<Catalog>(ROOT, CATALOGS[0])
   .plugins.filter((entry) => typeof entry.source === "string" && entry.source.startsWith("./"))
+  .filter((entry) => !estAncienNom(entry.name))
   .map((entry) => ({ name: entry.name, dir: String(entry.source).slice(2) }));
 
 function git(args: string[], cwd: string): string {
@@ -146,7 +149,7 @@ test("trailer `Release-Event:` dans la PR : aucune exemption, le bump reste refu
   pkg.version = "0.0.1";
   fs.writeFileSync(path.join(dir, rel), `${JSON.stringify(pkg, null, 2)}\n`);
   // Le trailer est dans le CORPS du commit, comme celui que le job écrit.
-  commitAll(dir, "chore(release): omp-mem0-memory 0.0.1", "Release-Event: 0123456789abcdef");
+  commitAll(dir, "chore(release): omp-memory 0.0.1", "Release-Event: 0123456789abcdef");
 
   // Le job de release pousse son commit sur `main` sans PR : une PR qui imite
   // son trailer ne contourne pas la garde.
@@ -186,7 +189,7 @@ test("base avancée : un bump déjà publié sur `main` ne fait pas échouer la 
   const pkg = readJson<Record<string, unknown>>(dir, rel);
   pkg.version = "7.7.7";
   fs.writeFileSync(path.join(dir, rel), `${JSON.stringify(pkg, null, 2)}\n`);
-  const mainTip = commitAll(dir, "chore(release): omp-mem0-memory 7.7.7", "Release-Event: abcdef");
+  const mainTip = commitAll(dir, "chore(release): omp-memory 7.7.7", "Release-Event: abcdef");
 
   const run = runGuard(dir, ["--base", mainTip, "--head", "pr"]);
   assert.equal(run.status, 0, output(run));

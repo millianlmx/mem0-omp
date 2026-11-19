@@ -4,7 +4,7 @@
 //
 // Règle du paradigme : quatre noms (fil, agent, décision, savoir), aucune phrase d'aide,
 // un état = un symbole et un mot. Les états d'un fil et d'une feature s'écrivent en
-// minuscules : ils se lisent en étiquette, ou à la suite d'un lieu (« mem0-omp · en file »).
+// minuscules : ils se lisent en étiquette, ou à la suite d'un lieu (« memory-omp · en file »).
 //
 // Fichier de VOCABULAIRE (`*Text.swift`) : typographie française et glossaire
 // GLOSSAIRE.md. Chaque phrase passe par `L10n` : sa clé est le texte français, sa

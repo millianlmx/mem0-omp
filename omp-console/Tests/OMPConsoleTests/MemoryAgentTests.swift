@@ -1,4 +1,4 @@
-// L'agent launchd mem0-rs (omp-console-sans-podman, S-2/S-3 ; AC-2, AC-4, AC-5,
+// L'agent launchd memory-rs (omp-console-sans-podman, S-2/S-3 ; AC-2, AC-4, AC-5,
 // AC-12). Aucun launchctl, lsof ni ps réel : la doublure `AgentDouble` route par
 // binaire ABSOLU et joue un launchd minimal (job chargé ou non, pid, bootout lent,
 // bootstrap en EIO), et la sonde `/health` est scriptée. La racine est jetable :
@@ -38,6 +38,12 @@ final class AgentDouble: @unchecked Sendable {
     /// Le corps rendu par `/health` quand le job est chargé ; nil ⇒ aucune réponse.
     var healthBody: (() -> Data?)?
 
+    /// L'ancien agent (label d'avant le renommage) est-il chargé ? Indépendant du job
+    /// courant : la doublure route par le label de la cible.
+    var legacyLoaded = false
+    /// Le programme qui tient le port tant que l'ancien agent est chargé (son `KeepAlive`).
+    var legacyHolder: (pid: Int32, command: String, commandLine: String)?
+
     private var unloading: Int?
 
     var runner: CommandRunner {
@@ -47,10 +53,10 @@ final class AgentDouble: @unchecked Sendable {
             case "/bin/launchctl":
                 return launchctl(arguments)
             case "/usr/sbin/lsof":
-                guard let holder = portHolder else { return ProcessRun(code: 1, stdout: "", stderr: "", timedOut: false) }
+                guard let holder = currentHolder else { return ProcessRun(code: 1, stdout: "", stderr: "", timedOut: false) }
                 return ProcessRun(code: 0, stdout: "p\(holder.pid)\nc\(holder.command)\nf3\nn127.0.0.1:8321\n", stderr: "", timedOut: false)
             case "/bin/ps":
-                return ProcessRun(code: 0, stdout: (portHolder?.commandLine ?? "") + "\n", stderr: "", timedOut: false)
+                return ProcessRun(code: 0, stdout: (currentHolder?.commandLine ?? "") + "\n", stderr: "", timedOut: false)
             default:
                 Issue.record("binaire inattendu : \(binary.path)")
                 return ProcessRun(code: 127, stdout: "", stderr: "", timedOut: false)
@@ -65,12 +71,62 @@ final class AgentDouble: @unchecked Sendable {
         }
     }
 
-    /// Les sous-commandes launchctl, dans l'ordre (`print`, `bootout`, `bootstrap`).
+    /// Les appels `launchctl` du job courant, dans l'ordre : ceux de l'ancien label
+    /// (`legacyCalls`) n'y figurent pas.
+    var launchctlCalls: [Call] {
+        calls.filter { $0.binary == "/bin/launchctl" && !Self.targetsLegacy($0.arguments) }
+    }
+
+    /// Les appels `launchctl` visant l'ancien label, dans l'ordre.
+    var legacyCalls: [Call] {
+        calls.filter { $0.binary == "/bin/launchctl" && Self.targetsLegacy($0.arguments) }
+    }
+
+    /// Les sous-commandes launchctl du job courant, dans l'ordre (`print`, `bootout`, `bootstrap`).
     var launchctlVerbs: [String] {
-        calls.filter { $0.binary == "/bin/launchctl" }.compactMap(\.arguments.first)
+        launchctlCalls.compactMap(\.arguments.first)
+    }
+
+    /// Les sous-commandes launchctl du job courant passées après le `index`-ième appel.
+    func launchctlVerbs(after index: Int) -> [String] {
+        calls.dropFirst(index)
+            .filter { $0.binary == "/bin/launchctl" && !Self.targetsLegacy($0.arguments) }
+            .compactMap(\.arguments.first)
+    }
+
+    private static func targetsLegacy(_ arguments: [String]) -> Bool {
+        arguments.contains { $0.contains(MemoryAgent.legacyDefaultLabel) }
+    }
+
+    /// Qui tient le port : l'ancien agent tant qu'il est chargé, sinon `portHolder`.
+    private var currentHolder: (pid: Int32, command: String, commandLine: String)? {
+        (legacyLoaded ? legacyHolder : nil) ?? portHolder
+    }
+
+    /// L'ancien agent ne répond qu'à `print` (chargé ⇒ 0) et `bootout` (déchargé d'un coup).
+    private func legacyLaunchctl(_ arguments: [String]) -> ProcessRun {
+        switch arguments.first {
+        case "print":
+            guard legacyLoaded else {
+                return ProcessRun(code: 113, stdout: "", stderr: "Could not find service", timedOut: false)
+            }
+            return ProcessRun(
+                code: 0,
+                stdout: "\(arguments[1]) = {\n\tstate = running\n\tpid = \(legacyHolder?.pid ?? 800)\n}\n",
+                stderr: "",
+                timedOut: false
+            )
+        case "bootout":
+            legacyLoaded = false
+            return ProcessRun(code: 0, stdout: "", stderr: "", timedOut: false)
+        default:
+            Issue.record("sous-commande inattendue pour l'ancien label : \(arguments)")
+            return ProcessRun(code: 64, stdout: "", stderr: "usage", timedOut: false)
+        }
     }
 
     private func launchctl(_ arguments: [String]) -> ProcessRun {
+        if Self.targetsLegacy(arguments) { return legacyLaunchctl(arguments) }
         switch arguments.first {
         case "print":
             if let remaining = unloading {
@@ -87,7 +143,7 @@ final class AgentDouble: @unchecked Sendable {
             let pidLine = jobPid.map { "\tpid = \($0)\n" } ?? ""
             return ProcessRun(
                 code: 0,
-                stdout: "\(arguments[1]) = {\n\tstate = running\n\tprogram = /x/mem0-rs\n\(pidLine)\t\tstate = active\n}\n",
+                stdout: "\(arguments[1]) = {\n\tstate = running\n\tprogram = /x/memory-rs\n\(pidLine)\t\tstate = active\n}\n",
                 stderr: "",
                 timedOut: false
             )
@@ -112,7 +168,7 @@ final class AgentDouble: @unchecked Sendable {
     }
 }
 
-/// Une racine jetable avec un faux binaire mem0-rs exécutable.
+/// Une racine jetable avec un faux binaire memory-rs exécutable.
 struct AgentSandbox {
     let root: URL
     let paths: AppPaths
@@ -122,7 +178,7 @@ struct AgentSandbox {
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("omp-agent-\(UUID().uuidString)", isDirectory: true)
         paths = AppPaths(supportRoot: root.appendingPathComponent("support", isDirectory: true))
-        executable = root.appendingPathComponent("OMP Console.app/Contents/Resources/mem0-rs")
+        executable = root.appendingPathComponent("OMP Console.app/Contents/Resources/memory-rs")
         try FileManager.default.createDirectory(
             at: executable.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -163,11 +219,11 @@ private func makeAgent(_ sandbox: AgentSandbox, _ double: AgentDouble) -> Memory
     return agent
 }
 
-/// Le `/health` de NOTRE mem0-rs : il rend le jeton d'installation du disque.
+/// Le `/health` de NOTRE memory-rs : il rend le jeton d'installation du disque.
 private func ourHealth(_ paths: AppPaths) -> () -> Data? {
     {
         guard let token = InstallationTokenStore.load(at: paths.installationToken) else { return nil }
-        return memoryJSON(["ok": true, "mem0": "mem0-rs 0.1.0", "user": "moi", "installation": token])
+        return memoryJSON(["ok": true, "memory": "memory-rs 0.1.0", "user": "moi", "installation": token])
     }
 }
 
@@ -197,11 +253,12 @@ func ac2VirginRootWritesPlistAndBootstraps() async throws {
     #expect(steps == [.agent, .health])
     #expect(double.launchctlVerbs == ["print", "bootstrap"])
     let target = "gui/501/\(agent.label)"
-    #expect(double.calls.first?.arguments == ["print", target])
+    #expect(double.legacyCalls.first?.arguments == ["print", "gui/501/\(agent.legacyLabel)"])
+    #expect(double.launchctlCalls.first?.arguments == ["print", target])
     #expect(double.calls.last { $0.arguments.first == "bootstrap" }?.arguments == ["bootstrap", "gui/501", agent.plistURL.path])
 
     // Label et plist isolés sous la racine de test, jamais ~/Library/LaunchAgents.
-    #expect(agent.label.hasPrefix("com.omp.console.mem0-rs."))
+    #expect(agent.label.hasPrefix("com.omp.console.memory-rs."))
     #expect(agent.plistURL.path == sandbox.paths.supportRoot.appendingPathComponent("LaunchAgents/\(agent.label).plist").path)
 
     let token = try #require(InstallationTokenStore.load(at: sandbox.paths.installationToken))
@@ -213,27 +270,27 @@ func ac2VirginRootWritesPlistAndBootstraps() async throws {
     #expect(written["KeepAlive"] as? Bool == true)
     #expect(written["RunAtLoad"] as? Bool == true)
     #expect(written["ProcessType"] as? String == "Interactive")
-    #expect(written["WorkingDirectory"] as? String == sandbox.paths.mem0Root.path)
-    #expect(written["StandardOutPath"] as? String == sandbox.paths.mem0Log.path)
-    #expect(written["StandardErrorPath"] as? String == sandbox.paths.mem0Log.path)
+    #expect(written["WorkingDirectory"] as? String == sandbox.paths.memoryRoot.path)
+    #expect(written["StandardOutPath"] as? String == sandbox.paths.memoryLog.path)
+    #expect(written["StandardErrorPath"] as? String == sandbox.paths.memoryLog.path)
 
     let environment = try plistEnvironment(at: agent.plistURL)
     #expect(environment == [
-        "MEM0_DB_PATH": sandbox.paths.supportRoot.appendingPathComponent("mem0-rs/mem0-rs.db").path,
+        "MEMORY_DB_PATH": sandbox.paths.supportRoot.appendingPathComponent("memory-rs/memory-rs.db").path,
         "EMBEDDING_DIMS": "1024",
         "OMLX_BASE_URL": "http://127.0.0.1:8000/v1",
         "OMLX_API_TOKEN": "",
         "OMLX_LLM_MODEL": "qwen3-8b",
         "OMLX_EMBED_MODEL": "bge-m3",
-        "MEM0_HTTP_TOKEN": "",
+        "MEMORY_HTTP_TOKEN": "",
         "OMP_INSTALLATION_TOKEN": token,
-        "OMP_CONSOLE_MEM0_RS_SHA256": try sandbox.sha(),
+        "OMP_CONSOLE_MEMORY_RS_SHA256": try sandbox.sha(),
     ])
 
     // Droits : le plist porte des jetons (0600), le dossier de travail est privé (0700).
     let fileManager = FileManager.default
     #expect(try fileManager.attributesOfItem(atPath: agent.plistURL.path)[.posixPermissions] as? Int == 0o600)
-    #expect(try fileManager.attributesOfItem(atPath: sandbox.paths.mem0Root.path)[.posixPermissions] as? Int == 0o700)
+    #expect(try fileManager.attributesOfItem(atPath: sandbox.paths.memoryRoot.path)[.posixPermissions] as? Int == 0o700)
     // Aucun podman : ni composant, ni configuration de machine.
     #expect(!fileManager.fileExists(atPath: sandbox.paths.componentsRoot.appendingPathComponent("podman").path))
     #expect(!fileManager.fileExists(atPath: sandbox.paths.configDir.path))
@@ -257,7 +314,7 @@ func ac2SlowBootoutThenRetriedBootstrap() async throws {
 
     #expect(double.launchctlVerbs == ["print", "bootout", "print", "print", "print", "bootstrap", "bootstrap"])
     // Le premier bootstrap suit un print en échec (113), jamais un print qui montre le job.
-    let launchctlCalls = double.calls.filter { $0.binary == "/bin/launchctl" }
+    let launchctlCalls = double.launchctlCalls
     #expect(launchctlCalls.firstIndex { $0.arguments.first == "bootstrap" } == 5)
     #expect(double.loaded)
     #expect(double.jobPid == 901)
@@ -310,12 +367,12 @@ func ac2HealthTimeoutCarriesLogTail() async throws {
     defer { sandbox.remove() }
     let double = AgentDouble()
     // Un service répond, mais sans le jeton d'installation : jamais « le nôtre ».
-    double.healthBody = { memoryJSON(["ok": true, "mem0": "mem0-rs 0.1.0", "user": "moi"]) }
-    try FileManager.default.createDirectory(at: sandbox.paths.mem0Root, withIntermediateDirectories: true)
+    double.healthBody = { memoryJSON(["ok": true, "memory": "memory-rs 0.1.0", "user": "moi"]) }
+    try FileManager.default.createDirectory(at: sandbox.paths.memoryRoot, withIntermediateDirectories: true)
     let lines = (1...30).map { "ligne \($0)" } + [
         "erreur : la base a été créée avec EMBEDDING_DIMS=768",
     ]
-    try Data(lines.joined(separator: "\n").utf8).write(to: sandbox.paths.mem0Log)
+    try Data(lines.joined(separator: "\n").utf8).write(to: sandbox.paths.memoryLog)
     let agent = makeAgent(sandbox, double)
 
     do {
@@ -340,7 +397,7 @@ func ac4DifferentBinaryReloadsTheJob() async throws {
     let double = AgentDouble()
     double.healthBody = ourHealth(sandbox.paths)
     try await makeAgent(sandbox, double).ensureRunning { _ in }
-    let oldSha = try plistEnvironment(at: makeAgent(sandbox, double).plistURL)["OMP_CONSOLE_MEM0_RS_SHA256"]
+    let oldSha = try plistEnvironment(at: makeAgent(sandbox, double).plistURL)["OMP_CONSOLE_MEMORY_RS_SHA256"]
 
     // Nouvelle version de l'app : le binaire embarqué change.
     try sandbox.writeBinary("binaire v2")
@@ -351,9 +408,9 @@ func ac4DifferentBinaryReloadsTheJob() async throws {
 
     try await agent.ensureRunning { _ in }
 
-    let verbs = double.calls.dropFirst(before).filter { $0.binary == "/bin/launchctl" }.compactMap(\.arguments.first)
+    let verbs = double.launchctlVerbs(after: before)
     #expect(verbs == ["print", "bootout", "print", "print", "bootstrap"])
-    let newSha = try plistEnvironment(at: agent.plistURL)["OMP_CONSOLE_MEM0_RS_SHA256"]
+    let newSha = try plistEnvironment(at: agent.plistURL)["OMP_CONSOLE_MEMORY_RS_SHA256"]
     #expect(newSha == (try sandbox.sha()))
     #expect(newSha != oldSha)
     #expect(double.jobPid == 1200)
@@ -373,7 +430,7 @@ func ac4UpToDateAgentIsLeftAlone() async throws {
 
     try await makeAgent(sandbox, double).ensureRunning { _ in }
 
-    let verbs = double.calls.dropFirst(before).filter { $0.binary == "/bin/launchctl" }.compactMap(\.arguments.first)
+    let verbs = double.launchctlVerbs(after: before)
     #expect(verbs == ["print"])
     #expect(!double.calls.dropFirst(before).contains { $0.binary == "/usr/sbin/lsof" })
     #expect(try FileManager.default.attributesOfItem(atPath: plistURL.path)[.modificationDate] as? Date == modified)
@@ -393,7 +450,7 @@ func ac4ChangedStackEnvReloads() async throws {
     let agent = makeAgent(sandbox, double)
     try await agent.ensureRunning { _ in }
 
-    let verbs = double.calls.dropFirst(before).filter { $0.binary == "/bin/launchctl" }.compactMap(\.arguments.first)
+    let verbs = double.launchctlVerbs(after: before)
     #expect(verbs == ["print", "bootout", "print", "bootstrap"])
     #expect(try plistEnvironment(at: agent.plistURL)["OMLX_EMBED_MODEL"] == "bge-m3-mlx-8bit")
 }
@@ -401,7 +458,7 @@ func ac4ChangedStackEnvReloads() async throws {
 // MARK: - AC-12 : mêmes jetons
 
 @MainActor
-@Test("omp-console-sans-podman/AC-12 : le plist porte MEM0_HTTP_TOKEN de stack/env et le jeton d'installation existant, inchangés, et OMLX_BASE_URL host.containers.internal devient 127.0.0.1")
+@Test("omp-console-sans-podman/AC-12 : le plist porte MEMORY_HTTP_TOKEN de stack/env et le jeton d'installation existant, inchangés, et OMLX_BASE_URL host.containers.internal devient 127.0.0.1")
 func ac12PlistKeepsTokensAndTranslatesOMLX() async throws {
     let sandbox = try AgentSandbox()
     defer { sandbox.remove() }
@@ -410,7 +467,7 @@ func ac12PlistKeepsTokensAndTranslatesOMLX() async throws {
     try Data((existingToken + "\n").utf8).write(to: sandbox.paths.installationToken)
     let stackEnv = """
     QDRANT_API_KEY=cle-qdrant
-    MEM0_HTTP_TOKEN=jeton-iphone
+    MEMORY_HTTP_TOKEN=jeton-iphone
     OMLX_BASE_URL=http://host.containers.internal:8000/v1
     OMLX_API_TOKEN=cle-omlx
     OMLX_LLM_MODEL=qwen3-8b
@@ -426,7 +483,7 @@ func ac12PlistKeepsTokensAndTranslatesOMLX() async throws {
     try await agent.ensureRunning { _ in }
 
     let environment = try plistEnvironment(at: agent.plistURL)
-    #expect(environment["MEM0_HTTP_TOKEN"] == "jeton-iphone")
+    #expect(environment["MEMORY_HTTP_TOKEN"] == "jeton-iphone")
     #expect(environment["OMP_INSTALLATION_TOKEN"] == existingToken)
     #expect(environment["OMLX_BASE_URL"] == "http://127.0.0.1:8000/v1")
     #expect(environment["OMLX_API_TOKEN"] == "cle-omlx")
@@ -445,13 +502,13 @@ func ac12NativeOMLXBaseURL() {
     #expect(StackConfig.nativeOMLXBaseURL("pas une url") == "pas une url")
 }
 
-@Test("omp-console-sans-podman/AC-12 : sans MEM0_HTTP_URL, le client vise localhost sur le port de l'agent (8321 hors recette)")
+@Test("omp-console-sans-podman/AC-12 : sans MEMORY_HTTP_URL, le client vise localhost sur le port de l'agent (8321 hors recette)")
 func ac12ClientDefaultsToAgentPort() {
     #expect(MemoryServiceConfig.fromEnvironment([:]).baseURL.absoluteString == "http://localhost:8321")
-    #expect(MemoryServiceConfig.fromEnvironment(["OMP_CONSOLE_MEM0_PORT": "18321"]).baseURL.absoluteString == "http://localhost:18321")
+    #expect(MemoryServiceConfig.fromEnvironment(["OMP_CONSOLE_MEMORY_PORT": "18321"]).baseURL.absoluteString == "http://localhost:18321")
     #expect(MemoryServiceConfig.fromEnvironment([
-        "OMP_CONSOLE_MEM0_PORT": "18321",
-        "MEM0_HTTP_URL": "http://127.0.0.1:9000",
+        "OMP_CONSOLE_MEMORY_PORT": "18321",
+        "MEMORY_HTTP_URL": "http://127.0.0.1:9000",
     ]).baseURL.absoluteString == "http://127.0.0.1:9000")
 }
 
@@ -461,26 +518,26 @@ func ac12ClientDefaultsToAgentPort() {
 func ac2LabelAndPlistFollowTheRoot() {
     let real = AppPaths.standard(home: "/Users/x", environment: [:])
     #expect(!real.isOverridden)
-    #expect(MemoryAgent.label(paths: real) == "com.omp.console.mem0-rs")
+    #expect(MemoryAgent.label(paths: real) == "com.omp.console.memory-rs")
     #expect(real.launchAgentsDir.path.hasSuffix("/Library/LaunchAgents"))
-    #expect(real.mem0Database.path == "/Users/x/Library/Application Support/com.omp.console/mem0-rs/mem0-rs.db")
+    #expect(real.memoryDatabase.path == "/Users/x/Library/Application Support/com.omp.console/memory-rs/memory-rs.db")
 
     let moved = AppPaths.standard(environment: ["OMP_CONSOLE_SUPPORT_ROOT": "/tmp/recette"])
     #expect(moved.isOverridden)
     let label = MemoryAgent.label(paths: moved)
-    #expect(label.count == "com.omp.console.mem0-rs.".count + 12)
-    #expect(label.hasPrefix("com.omp.console.mem0-rs."))
-    #expect(label.dropFirst("com.omp.console.mem0-rs.".count).allSatisfy { $0.isHexDigit && !$0.isUppercase })
+    #expect(label.count == "com.omp.console.memory-rs.".count + 12)
+    #expect(label.hasPrefix("com.omp.console.memory-rs."))
+    #expect(label.dropFirst("com.omp.console.memory-rs.".count).allSatisfy { $0.isHexDigit && !$0.isUppercase })
     #expect(MemoryAgent.label(paths: AppPaths.standard(environment: ["OMP_CONSOLE_SUPPORT_ROOT": "/tmp/autre"])) != label)
     #expect(moved.launchAgentPlist(label: label).path == "/tmp/recette/LaunchAgents/\(label).plist")
 }
 
-@Test("omp-console-sans-podman/AC-2 : OMP_CONSOLE_MEM0_PORT n'est retenu que s'il est un entier décimal 1–65535")
+@Test("omp-console-sans-podman/AC-2 : OMP_CONSOLE_MEMORY_PORT n'est retenu que s'il est un entier décimal 1–65535")
 func ac2PortOverride() {
     #expect(MemoryAgent.port(environment: [:]) == 8321)
-    #expect(MemoryAgent.port(environment: ["OMP_CONSOLE_MEM0_PORT": "18321"]) == 18321)
+    #expect(MemoryAgent.port(environment: ["OMP_CONSOLE_MEMORY_PORT": "18321"]) == 18321)
     for invalid in ["", "0", "65536", "-1", "+80", "8321x", " 8321", "0x10"] {
-        #expect(MemoryAgent.port(environment: ["OMP_CONSOLE_MEM0_PORT": invalid]) == 8321)
+        #expect(MemoryAgent.port(environment: ["OMP_CONSOLE_MEMORY_PORT": invalid]) == 8321)
     }
 }
 
@@ -538,7 +595,7 @@ func ac5RetryAfterPortFreed() async throws {
 }
 
 @MainActor
-@Test("omp-console-sans-podman/AC-5 : moteur — le port tenu par le job lui-même (pid du job) ou par le mem0-rs embarqué n'est pas un conflit")
+@Test("omp-console-sans-podman/AC-5 : moteur — le port tenu par le job lui-même (pid du job) ou par le memory-rs embarqué n'est pas un conflit")
 func ac5OwnJobOrOurBinaryIsNotAConflict() async throws {
     let sandbox = try AgentSandbox()
     defer { sandbox.remove() }
@@ -548,14 +605,14 @@ func ac5OwnJobOrOurBinaryIsNotAConflict() async throws {
     ownJob.healthBody = ourHealth(sandbox.paths)
     ownJob.loaded = true
     ownJob.jobPid = 900
-    ownJob.portHolder = (900, "mem0-rs", "/Applications/Ancienne.app/Contents/Resources/mem0-rs --host 127.0.0.1 --port 8321")
+    ownJob.portHolder = (900, "memory-rs", "/Applications/Ancienne.app/Contents/Resources/memory-rs --host 127.0.0.1 --port 8321")
     try await makeAgent(sandbox, ownJob).ensureRunning { _ in }
     #expect(ownJob.launchctlVerbs.contains("bootstrap"))
 
-    // Le mem0-rs embarqué tient le port (ligne de commande = son chemin).
+    // Le memory-rs embarqué tient le port (ligne de commande = son chemin).
     let ours = AgentDouble()
     ours.healthBody = ourHealth(sandbox.paths)
-    ours.portHolder = (777, "mem0-rs", sandbox.executable.path + " --host 127.0.0.1 --port 8321")
+    ours.portHolder = (777, "memory-rs", sandbox.executable.path + " --host 127.0.0.1 --port 8321")
     try await makeAgent(sandbox, ours).ensureRunning { _ in }
     #expect(ours.launchctlVerbs.contains("bootstrap"))
 }
@@ -597,26 +654,26 @@ func ac5PortTakenDuringHealth() async throws {
     #expect(!double.loaded)
 }
 
-@Test("omp-console-sans-podman/AC-5 : le processus du mem0-rs embarqué est « ours », un autre mem0-rs est « foreign »")
-func ac5EmbeddedMem0IsOursAnotherIsForeign() async {
-    let embedded = URL(fileURLWithPath: "/Applications/OMP Console.app/Contents/Resources/mem0-rs")
+@Test("omp-console-sans-podman/AC-5 : le processus du memory-rs embarqué est « ours », un autre memory-rs est « foreign »")
+func ac5EmbeddedMemoryIsOursAnotherIsForeign() async {
+    let embedded = URL(fileURLWithPath: "/Applications/OMP Console.app/Contents/Resources/memory-rs")
     let double = OwnershipDouble()
-    double.lsofResult = ProcessRun(code: 0, stdout: "p321\ncmem0-rs\nf3\nn127.0.0.1:8321\n", stderr: "", timedOut: false)
+    double.lsofResult = ProcessRun(code: 0, stdout: "p321\ncmemory-rs\nf3\nn127.0.0.1:8321\n", stderr: "", timedOut: false)
 
     double.psResult = ProcessRun(code: 0, stdout: embedded.path + " --host 127.0.0.1 --port 8321\n", stderr: "", timedOut: false)
     #expect(await StackOwnership.holder(ofPort: 8321, ourExecutable: embedded, environment: [:], run: double.runner)
-        == .ours(process: "mem0-rs", pid: 321))
+        == .ours(process: "memory-rs", pid: 321))
 
-    // La pile manuelle mem0-stack : un AUTRE binaire mem0-rs.
-    double.psResult = ProcessRun(code: 0, stdout: "/usr/local/bin/mem0-rs --host 0.0.0.0\n", stderr: "", timedOut: false)
+    // La pile manuelle memory-stack : un AUTRE binaire memory-rs.
+    double.psResult = ProcessRun(code: 0, stdout: "/usr/local/bin/memory-rs --host 0.0.0.0\n", stderr: "", timedOut: false)
     #expect(await StackOwnership.holder(ofPort: 8321, ourExecutable: embedded, environment: [:], run: double.runner)
-        == .foreign(process: "mem0-rs", pid: 321))
+        == .foreign(process: "memory-rs", pid: 321))
 
     // Un homonyme dont le chemin PROLONGE le nôtre n'est pas le nôtre.
     double.psResult = ProcessRun(code: 0, stdout: embedded.path + "-old --port 8321\n", stderr: "", timedOut: false)
     #expect(await StackOwnership.holder(ofPort: 8321, ourExecutable: embedded, environment: [:], run: double.runner)
-        == .foreign(process: "mem0-rs", pid: 321))
+        == .foreign(process: "memory-rs", pid: 321))
 
     #expect(StackOwnership.isCommandLine(embedded.path, of: embedded))
-    #expect(MemoryPortOwnership.ours(process: "mem0-rs", pid: 1).userDescription == "le service mémoire d'OMP Console")
+    #expect(MemoryPortOwnership.ours(process: "memory-rs", pid: 1).userDescription == "le service mémoire d'OMP Console")
 }

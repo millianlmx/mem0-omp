@@ -78,7 +78,7 @@ test("harness-isolation-runners/AC-1 : un runner systemd est un service transito
   ] as const)
     assert.equal(prop(systemd, key), value, key);
   const hidden = prop(systemd, "InaccessiblePaths") ?? "";
-  for (const path of ["-/var/lib/omp-harness/state", "-/var/lib/omp-heavy", "-/var/lib/omp-mem0", "-/run/dbus"])
+  for (const path of ["-/var/lib/omp-harness/state", "-/var/lib/omp-heavy", "-/var/lib/omp-memory", "-/run/dbus"])
     assert.ok(hidden.split(" ").includes(path), path);
   assert.match(prop(systemd, "ReadWritePaths") ?? "", /^-\//, "seul le HOME du runner s'ajoute en écriture");
   assert.equal(
@@ -148,8 +148,8 @@ test("harness-isolation-runners/AC-3 : les clés d'un runner passent par un fich
     runnerEnv,
     [
       "ANTHROPIC_API_KEY=root-key-0001",
-      'MEM0_HTTP_URL="http://127.0.0.1:8321"',
-      "MEM0_HTTP_TOKEN='abc'",
+      'MEMORY_HTTP_URL="http://127.0.0.1:8321"',
+      "MEMORY_HTTP_TOKEN='abc'",
       "LD_PRELOAD=/tmp/x.so",
       "PATH=/tmp/evil",
       "TRICKY=$(id)",
@@ -174,13 +174,13 @@ test("harness-isolation-runners/AC-3 : les clés d'un runner passent par un fich
   assert.deepEqual(file, [
     "PATH='/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/bin'",
     "ANTHROPIC_API_KEY='root-key-0001'",
-    "MEM0_HTTP_URL='http://127.0.0.1:8321'",
-    "MEM0_HTTP_TOKEN='abc'",
+    "MEMORY_HTTP_URL='http://127.0.0.1:8321'",
+    "MEMORY_HTTP_TOKEN='abc'",
     "ANTHROPIC_API_KEY='api-key-0002'",
-    "MEM0_PROJECT_ID='mon-produit'",
-    "MEM0_AUTOSETUP='0'",
-    "MEM0_NUDGE='0'",
-    "MEM0_MODE='runner'",
+    "MEMORY_PROJECT_ID='mon-produit'",
+    "MEMORY_AUTOSETUP='0'",
+    "MEMORY_NUDGE='0'",
+    "MEMORY_MODE='runner'",
   ]);
   assert.match(err, /TRICKY de .* ignorée/);
   const systemd = out.slice(out.indexOf("systemd-run")).join("\n");

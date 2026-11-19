@@ -2,14 +2,15 @@
 //
 // Elle est persistée dans `<stackRoot>/env` (`StackEnvStore`) au format du `.env`
 // de la pile manuelle — MÊMES noms de clés, MÊMES défauts que
-// `mem0-stack/.env.example` — pour qu'un `.env` existant s'importe sans
+// `memory-stack/.env.example` — pour qu'un `.env` existant s'importe sans
 // traduction (S-3) et qu'un œil humain relise le fichier de l'app comme celui de
 // la pile manuelle.
 //
-// Défauts (mesurés sur `mem0-stack/.env.example` le 2026-10-04) : la clé Qdrant
-// locale `mem0-local-qdrant-key`, les modèles `qwen3-8b`/`bge-m3`, 1024
+// Défauts (mesurés sur `memory-stack/.env.example` le 2026-10-04) : la clé Qdrant
+// locale `mem0-local-qdrant-key` (la valeur que portait l'ancien conteneur Qdrant :
+// la migration unique en a besoin telle quelle), les modèles `qwen3-8b`/`bge-m3`, 1024
 // dimensions, jetons vides. `OMLX_BASE_URL` par défaut vise oMLX sur le Mac
-// lui-même (`127.0.0.1:8000/v1`) : l'agent mem0-rs tourne en natif, hors de tout
+// lui-même (`127.0.0.1:8000/v1`) : l'agent memory-rs tourne en natif, hors de tout
 // conteneur (S-2) ; une valeur `host.containers.internal` héritée d'un `stack/env`
 // existant est traduite par `nativeOMLXBaseURL` sans réécrire le fichier.
 
@@ -17,7 +18,7 @@ import Foundation
 
 struct StackConfig: Equatable, Sendable {
     var qdrantApiKey: String
-    var mem0HttpToken: String
+    var memoryHttpToken: String
     var omlxBaseURL: String
     var omlxApiToken: String
     var omlxLLMModel: String
@@ -29,7 +30,7 @@ struct StackConfig: Equatable, Sendable {
     /// secret de production).
     static let defaults = StackConfig(
         qdrantApiKey: "mem0-local-qdrant-key",
-        mem0HttpToken: "",
+        memoryHttpToken: "",
         omlxBaseURL: "http://127.0.0.1:8000/v1",
         omlxApiToken: "",
         omlxLLMModel: "qwen3-8b",
@@ -40,7 +41,7 @@ struct StackConfig: Equatable, Sendable {
     /// Les clés connues, dans l'ordre où `serialized` les écrit.
     static let keys = [
         "QDRANT_API_KEY",
-        "MEM0_HTTP_TOKEN",
+        "MEMORY_HTTP_TOKEN",
         "OMLX_BASE_URL",
         "OMLX_API_TOKEN",
         "OMLX_LLM_MODEL",
@@ -50,7 +51,7 @@ struct StackConfig: Equatable, Sendable {
 
     init(
         qdrantApiKey: String = StackConfig.defaults.qdrantApiKey,
-        mem0HttpToken: String = StackConfig.defaults.mem0HttpToken,
+        memoryHttpToken: String = StackConfig.defaults.memoryHttpToken,
         omlxBaseURL: String = StackConfig.defaults.omlxBaseURL,
         omlxApiToken: String = StackConfig.defaults.omlxApiToken,
         omlxLLMModel: String = StackConfig.defaults.omlxLLMModel,
@@ -58,7 +59,7 @@ struct StackConfig: Equatable, Sendable {
         embeddingDims: Int = StackConfig.defaults.embeddingDims
     ) {
         self.qdrantApiKey = qdrantApiKey
-        self.mem0HttpToken = mem0HttpToken
+        self.memoryHttpToken = memoryHttpToken
         self.omlxBaseURL = omlxBaseURL
         self.omlxApiToken = omlxApiToken
         self.omlxLLMModel = omlxLLMModel
@@ -68,11 +69,13 @@ struct StackConfig: Equatable, Sendable {
 
     /// Applique des valeurs lues d'un `.env` aux défauts : une clé connue écrase
     /// son défaut (une valeur VIDE reste une valeur — un jeton vide est un choix),
-    /// une clé inconnue est ignorée, une clé absente garde son défaut.
+    /// une clé inconnue est ignorée, une clé absente garde son défaut. Le jeton se lit
+    /// sous `MEMORY_HTTP_TOKEN`, sinon sous l'ancien `MEM0_HTTP_TOKEN` (un `stack/env`
+    /// d'avant garde son jeton) ; `serialized` n'écrit que le nouveau nom.
     init(values: [String: String]) {
         self = .defaults
         if let value = values["QDRANT_API_KEY"] { qdrantApiKey = value }
-        if let value = values["MEM0_HTTP_TOKEN"] { mem0HttpToken = value }
+        if let value = values["MEMORY_HTTP_TOKEN"] ?? values["MEM0_HTTP_TOKEN"] { memoryHttpToken = value }
         if let value = values["OMLX_BASE_URL"] { omlxBaseURL = value }
         if let value = values["OMLX_API_TOKEN"] { omlxApiToken = value }
         if let value = values["OMLX_LLM_MODEL"] { omlxLLMModel = value }
@@ -85,7 +88,7 @@ struct StackConfig: Equatable, Sendable {
     var values: [String: String] {
         [
             "QDRANT_API_KEY": qdrantApiKey,
-            "MEM0_HTTP_TOKEN": mem0HttpToken,
+            "MEMORY_HTTP_TOKEN": memoryHttpToken,
             "OMLX_BASE_URL": omlxBaseURL,
             "OMLX_API_TOKEN": omlxApiToken,
             "OMLX_LLM_MODEL": omlxLLMModel,

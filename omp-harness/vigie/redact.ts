@@ -8,17 +8,17 @@
 //   pour mot, avant toute autre passe (un secret masqué casserait la correspondance) ; de
 //   même, sur un serveur à plusieurs clients, les titres et les demandes des runs et des
 //   Demandes des AUTRES espaces que celui du dépôt visé (VigieStore.foreignSpaceTexts) ;
-// - les secrets : les familles de mem0-rs (mem0-stack/mem0-rs/src/api/redaction.rs, celles
+// - les secrets : les familles de memory-rs (memory-stack/memory-rs/src/api/redaction.rs, celles
 //   du plugin mémoire), réécrites ici, plus ce qu'un dépôt public ne doit pas lire —
 //   jetons hexadécimaux longs, chaînes à forte entropie, e-mails, la requête d'une URL,
 //   les chemins personnels, les adresses du tailnet et les IP.
-// Best-effort, comme mem0-rs : un secret hors motif passe. La vigie ne lit d'ailleurs du
+// Best-effort, comme memory-rs : un secret hors motif passe. La vigie ne lit d'ailleurs du
 // poste que des métadonnées (vigie/collect.ts) : cette passe est le second verrou.
 
 export const REDACTED = "[REDACTED]";
 export const POSTE = "[POSTE]";
 
-/** Les familles de secrets de mem0-rs (redaction.rs), dans le même ordre. */
+/** Les familles de secrets de memory-rs (redaction.rs), dans le même ordre. */
 const SECRET_PATTERNS: readonly RegExp[] = [
   /sk-[a-zA-Z0-9]{16,}/g,
   /ghp_[a-zA-Z0-9]{20,}/g,
@@ -40,7 +40,7 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   /gh[osur]_[A-Za-z0-9]{20,}/g,
 ];
 
-/** `scheme://user:pass@` : le mot de passe d'une URL (mem0-rs, URL_CREDS_PATTERN). */
+/** `scheme://user:pass@` : le mot de passe d'une URL (memory-rs, URL_CREDS_PATTERN). */
 const URL_CREDS = /([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]*):([^/\s:@]+)@/gi;
 
 /** Une suite de lettres, chiffres, `_` et `-` d'au moins 32 caractères : un jeton probable. */

@@ -73,7 +73,7 @@ test("harness-prompts/AC-3 : /impl exige des tests nommés AC-n, aucun stub, la 
     /`split_feature` est refusé ici/,
     /## Fait/,
     /## Reste/,
-    /`mem0_add` pour les SEULS pièges durables/,
+    /`memory_add` pour les SEULS pièges durables/,
     /un fait autoportant par appel/,
   ]) {
     assert.match(prompt, expected, String(expected));

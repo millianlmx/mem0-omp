@@ -15,6 +15,7 @@ import { clientEnv } from "../../../omp-harness/heavy/heavy.ts";
 import { loginEnv } from "../../../omp-harness/config/oauth.ts";
 import { testConfig } from "../../support/harness-fixtures.ts";
 import { tmpdir } from "../../support/repo.ts";
+import { renamedEnv } from "../../../omp-harness/config/env.ts";
 
 /** Lit un chemin dans le schéma JSON d'un outil hôte, sans en figer le type. */
 function at(step: Parameters<typeof hostToolsFor>[0], name: string, ...keys: string[]): unknown {
@@ -42,7 +43,7 @@ test("harness-runner/AC-1 : un runner part en service systemd transitoire par le
   const line = args.join(" ");
   assert.match(
     line,
-    /^-n \/usr\/local\/libexec\/omp-harness-systemd-run --wait --pipe --collect --service-type=exec --unit=omp-runner-r1-3 --quiet --slice=omp-harness-runners\.slice --working-directory=\/w\/feat -p MemoryMax=1G -p OOMScoreAdjust=300 -p BindReadOnlyPaths=\/var\/lib\/omp-harness\/repos\/mon-produit --setenv=MEM0_PROJECT_ID=demo-scope --setenv=MEM0_AUTOSETUP=0 --setenv=MEM0_NUDGE=0 --setenv=MEM0_MODE=runner -- omp /,
+    /^-n \/usr\/local\/libexec\/omp-harness-systemd-run --wait --pipe --collect --service-type=exec --unit=omp-runner-r1-3 --quiet --slice=omp-harness-runners\.slice --working-directory=\/w\/feat -p MemoryMax=1G -p OOMScoreAdjust=300 -p BindReadOnlyPaths=\/var\/lib\/omp-harness\/repos\/mon-produit --setenv=MEMORY_PROJECT_ID=demo-scope --setenv=MEMORY_AUTOSETUP=0 --setenv=MEMORY_NUDGE=0 --setenv=MEMORY_MODE=runner -- omp /,
   );
   // Sans lanceur, rien ne poserait l'user ni le bac à sable : refusé plutôt qu'un runner root.
   assert.throws(
@@ -87,9 +88,9 @@ test("harness-runner/AC-1 : un runner part en service systemd transitoire par le
     { unit: "u", cwd: "/w", overlay: "/o", model: null, scope: "demo-scope", repo: "/srv/repo" },
   );
   assert.equal(
-    classic.args.some((arg) => arg.startsWith("--setenv=MEM0_MODE=")),
+    classic.args.some((arg) => arg.startsWith("--setenv=MEMORY_MODE=")),
     false,
-    "runnerMode:false ⇒ pas de MEM0_MODE",
+    "runnerMode:false ⇒ pas de MEMORY_MODE",
   );
 });
 
@@ -110,15 +111,15 @@ test("harness-runner/AC-3 : un runner hérite des clés des fournisseurs mais ja
   );
   assert.equal(env.ANTHROPIC_API_KEY, "k");
   assert.equal("HARNESS_TOKEN" in env, false);
-  assert.equal(env.MEM0_PROJECT_ID, "demo-scope");
-  assert.equal(env.MEM0_MODE, "runner");
+  assert.equal(renamedEnv(env, "MEMORY_PROJECT_ID", "MEM0_PROJECT_ID"), "demo-scope");
+  assert.equal(renamedEnv(env, "MEMORY_MODE", "MEM0_MODE"), "runner");
   assert.equal(env.PI_PY, "0");
-  assert.equal("MEM0_MODE" in runnerEnv("demo-scope", null, {}, false), false);
+  assert.equal("MEMORY_MODE" in runnerEnv("demo-scope", null, {}, false), false);
   assert.deepEqual(runnerMemoryEnv("s", true), {
-    MEM0_PROJECT_ID: "s",
-    MEM0_AUTOSETUP: "0",
-    MEM0_NUDGE: "0",
-    MEM0_MODE: "runner",
+    MEMORY_PROJECT_ID: "s",
+    MEMORY_AUTOSETUP: "0",
+    MEMORY_NUDGE: "0",
+    MEMORY_MODE: "runner",
   });
 });
 

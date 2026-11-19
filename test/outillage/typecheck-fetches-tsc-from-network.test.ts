@@ -146,7 +146,7 @@ test("typecheck-fetches-tsc-from-network/AC-3 : TypeScript absent ⇒ ✗ citant
     FAKE_NPM_ROOT: tmpdir("typecheck-tsc-npmroot-"),
   });
   const env = childEnv(doubles.env);
-  delete env.MEM0_OMP_HOST_TYPES;
+  delete env.MEMORY_OMP_HOST_TYPES;
   const r = runTypesSection(copy, env);
   const out = output(r);
   assert.notEqual(r.status, 0, out);
@@ -222,7 +222,7 @@ test("typecheck-fetches-tsc-from-network/AC-2 : une erreur de type dans une copi
   // La copie n'emporte pas .typecheck/ : son TypeScript est le lien vers ROOT.
   assert.ok(fs.lstatSync(path.join(copy, TS_DIR)).isSymbolicLink(), "la copie ne relie pas le TypeScript épinglé");
   assert.equal(fs.realpathSync(path.join(copy, TS_DIR, "node_modules", "typescript")), pinned);
-  fs.writeFileSync(path.join(copy, "omp-mem0-req", "typecheck-ac2-faute.ts"), 'export const q: number = "boom";\n');
+  fs.writeFileSync(path.join(copy, "omp-memory-req", "typecheck-ac2-faute.ts"), 'export const q: number = "boom";\n');
   const doubles = npmDoubles({ npm_config_cache: tmpdir("typecheck-tsc-cache-"), npm_config_offline: "true" });
   const r = runTypesSection(copy, childEnv(doubles.env));
   const out = output(r);

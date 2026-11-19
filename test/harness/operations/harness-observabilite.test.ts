@@ -119,7 +119,7 @@ test("harness-observabilite/AC-1 : ctx.log écrit une ligne JSON C1 par événem
   const dir = path.join(tmpdir("harness-observabilite-logs-"), "logs");
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "harness-2000-01-01.jsonl"), "{}\n");
-  fs.writeFileSync(path.join(dir, "mem0-2000-01-01.jsonl"), "{}\n");
+  fs.writeFileSync(path.join(dir, "memory-2000-01-01.jsonl"), "{}\n");
   const printed: string[] = [];
   const logger = new Logger({
     src: "harness",
@@ -147,7 +147,7 @@ test("harness-observabilite/AC-1 : ctx.log écrit une ligne JSON C1 par événem
   assert.equal(new Date(line.ts).toISOString(), line.ts, "un horodatage ISO 8601");
   assert.ok(printed.includes(JSON.stringify(line)), "la même ligne sur la sortie");
   assert.ok(!fs.existsSync(path.join(dir, "harness-2000-01-01.jsonl")), "le fichier trop vieux est retiré");
-  assert.ok(fs.existsSync(path.join(dir, "mem0-2000-01-01.jsonl")), "celui d'une autre source reste");
+  assert.ok(fs.existsSync(path.join(dir, "memory-2000-01-01.jsonl")), "celui d'une autre source reste");
 
   // Une erreur garde son message et sa pile ; le niveau minimal écarte le debug.
   logger.error("échec", { err: new Error("boum"), event: "backup_failed" });
@@ -461,7 +461,7 @@ test("harness-observabilite/AC-6 : la santé de la mémoire (version, souvenirs,
   const world = fakeWorld({}, { patch: (c) => (c.oracle = { url: "http://127.0.0.1:1", token: null }) });
   world.oracle.healthBody = {
     ok: true,
-    mem0: "mem0-rs 0.2.0",
+    memory: "memory-rs 0.2.0",
     version: "0.2.0",
     uptime_s: 42,
     memories: 1234,

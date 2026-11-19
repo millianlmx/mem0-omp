@@ -67,27 +67,45 @@ export function writePipelineOverlay(dataDir: string, scout: ModelChoice | null 
  * Le plugin mémoire, partie de la pile : chaque runner le charge, sans qu'on le déclare.
  * Il vit à côté du harness dans toutes les installations (le dépôt, `/opt/omp-harness`,
  * les images du service et des runners, NixOS) ; sans lui, les prompts d'étape
- * demanderaient un `mem0_add` absent.
+ * demanderaient un `memory_add` absent.
  */
-export const MEMORY_EXTENSION = fileURLToPath(new URL("../../omp-mem0-memory/extension.ts", import.meta.url));
+export const MEMORY_EXTENSION = fileURLToPath(new URL("../../omp-memory/extension.ts", import.meta.url));
 
-/** Un chemin d'extension qui désigne le plugin mémoire (`…/omp-mem0-memory/extension.ts`). */
-function isMemoryExtension(file: string): boolean {
-  return path.basename(file) === "extension.ts" && path.basename(path.dirname(file)) === "omp-mem0-memory";
+/** Le dossier d'un plugin mémoire déclaré sous son ancien nom : une configuration d'avant la version de transition. */
+const LEGACY_MEMORY_DIR = "omp-mem0-memory";
+
+function memoryExtensionDir(file: string): string | null {
+  return path.basename(file) === "extension.ts" ? path.basename(path.dirname(file)) : null;
 }
 
-/** Le plugin mémoire que chargent les runners : celui que la configuration déclare encore, sinon celui de la pile. */
+/** Un chemin d'extension qui désigne le plugin mémoire (`…/omp-memory/extension.ts`, ou son ancien nom). */
+function isMemoryExtension(file: string): boolean {
+  const dir = memoryExtensionDir(file);
+  return dir === "omp-memory" || dir === LEGACY_MEMORY_DIR;
+}
+
+/**
+ * Le plugin mémoire que chargent les runners : celui que la configuration déclare encore, sinon celui de la pile.
+ * Un chemin déclaré sous l'ancien nom du plugin donne celui de la pile.
+ */
 export function memoryExtension(config: HarnessConfig): string {
-  return config.runner.extensions.find(isMemoryExtension) ?? MEMORY_EXTENSION;
+  const declared = config.runner.extensions.find(isMemoryExtension);
+  if (!declared || memoryExtensionDir(declared) === LEGACY_MEMORY_DIR) return MEMORY_EXTENSION;
+  return declared;
 }
 
 /**
  * Les extensions d'un runner : le plugin mémoire d'abord, toujours, puis celles de la
- * configuration. Un plugin mémoire déclaré à un autre chemin est pris tel quel, jamais doublé.
+ * configuration. Un plugin mémoire déclaré à un autre chemin est pris tel quel, jamais doublé ;
+ * un chemin déclaré sous l'ancien nom du plugin devient celui de la pile, à sa place (aucun runner ne charge
+ * un ancien plugin resté sur le disque, qui ne lirait que les anciens noms de variables).
  */
 export function runnerExtensions(config: HarnessConfig): string[] {
-  const declared = config.runner.extensions;
-  return declared.some(isMemoryExtension) ? [...declared] : [MEMORY_EXTENSION, ...declared];
+  const declared = config.runner.extensions.map((file) =>
+    memoryExtensionDir(file) === LEGACY_MEMORY_DIR ? MEMORY_EXTENSION : file,
+  );
+  const unique = declared.filter((file, index) => declared.indexOf(file) === index);
+  return unique.some(isMemoryExtension) ? unique : [MEMORY_EXTENSION, ...unique];
 }
 
 /** Le nom d'unité d'un runner : retrouvable (et arrêtable) après un redémarrage du service. */
@@ -141,13 +159,13 @@ export async function stopRunner(
  * Mac et de l'oracle), ne jamais écrire dans le dépôt (le brief finirait dans la
  * PR), pas de relance de fin de session (le knowledge-updater tient la mémoire), et
  * le mode runner (`config.memory.runnerMode`) : ni rappel par tour ni épinglage —
- * la section Oracle du prompt est la seule source ; les outils mem0_* restent.
+ * la section Oracle du prompt est la seule source ; les outils memory_* restent.
  * `noGlobal` : le runner tourne POUR un espace (le dépôt d'un client, le poste ou le savoir d'un
- * espace) — la portée `_global`, partagée entre tous les clients, lui est fermée (`MEM0_NO_GLOBAL`).
+ * espace) — la portée `_global`, partagée entre tous les clients, lui est fermée (`MEMORY_NO_GLOBAL`).
  */
 export function runnerMemoryEnv(scope: string, runnerMode: boolean, noGlobal = false): Record<string, string> {
-  const env: Record<string, string> = { MEM0_PROJECT_ID: scope, MEM0_AUTOSETUP: "0", MEM0_NUDGE: "0" };
-  if (runnerMode) env.MEM0_MODE = "runner";
+  const env: Record<string, string> = { MEMORY_PROJECT_ID: scope, MEMORY_AUTOSETUP: "0", MEMORY_NUDGE: "0" };
+  if (runnerMode) env.MEMORY_MODE = "runner";
   if (noGlobal) env[NO_GLOBAL_ENV] = "1";
   return env;
 }
@@ -156,7 +174,7 @@ export function runnerMemoryEnv(scope: string, runnerMode: boolean, noGlobal = f
  * Le drapeau d'un runner qui tourne pour un espace : le plugin mémoire lui refuse `scope: "global"`
  * (lecture et écriture) et ne lui rappelle rien de `_global`. Hors espace : jamais posé.
  */
-export const NO_GLOBAL_ENV = "MEM0_NO_GLOBAL";
+export const NO_GLOBAL_ENV = "MEMORY_NO_GLOBAL";
 
 /** La portée mémoire du poste ou du savoir d'UN espace (`workstation:<espace>`, `corpo:<espace>`). */
 export function spaceScope(scope: string): boolean {
@@ -201,7 +219,7 @@ function containerRunnerArgv(
     HOME: "/home/runner",
     PI_PY: "0",
     ...runnerMemoryEnv(spec.scope, config.memory.runnerMode, spec.noGlobal),
-    ...(spec.oracleUrl ? { MEM0_HTTP_URL: spec.oracleUrl } : {}),
+    ...(spec.oracleUrl ? { MEMORY_HTTP_URL: spec.oracleUrl } : {}),
     ...(spec.localOnly ? { [LOCAL_ONLY_ENV]: "1" } : {}),
   };
   return engine(config, [
@@ -317,7 +335,7 @@ export type RunnerEnvPolicy = {
   hidden?: readonly string[];
   /** `local-only` : toute clé `*_API_KEY` retirée. */
   localOnly?: boolean;
-  /** Le runner tourne pour un espace : `MEM0_NO_GLOBAL=1` (voir `runnerMemoryEnv`). */
+  /** Le runner tourne pour un espace : `MEMORY_NO_GLOBAL=1` (voir `runnerMemoryEnv`). */
   noGlobal?: boolean;
 };
 
@@ -340,10 +358,19 @@ export function runnerEnv(
     PI_PY: "0",
   };
   if (oracle) {
+    env.MEMORY_HTTP_URL = oracle.url;
     env.MEM0_HTTP_URL = oracle.url;
-    if (oracle.token) env.MEM0_HTTP_TOKEN = oracle.token;
+    if (oracle.token) {
+      env.MEMORY_HTTP_TOKEN = oracle.token;
+      env.MEM0_HTTP_TOKEN = oracle.token;
+    }
   }
-  if (policy.memoryToken) env.MEM0_HTTP_TOKEN = policy.memoryToken;
+  // Le jeton du dépôt remplace le jeton global sous les DEUX noms : un jeton global hérité de l'environnement du
+  // service sous l'ancien nom (`/etc/omp-harness/env` d'une installation d'avant) ne reste jamais visible.
+  if (policy.memoryToken) {
+    env.MEMORY_HTTP_TOKEN = policy.memoryToken;
+    env.MEM0_HTTP_TOKEN = policy.memoryToken;
+  }
   for (const key of [...SERVICE_SECRETS, ...(policy.hidden ?? [])]) delete env[key];
   if (policy.localOnly) {
     for (const key of Object.keys(env)) if (key.endsWith("_API_KEY")) delete env[key];
@@ -1288,7 +1315,7 @@ export function hostToolsFor(
       ...ATLASSIAN_WRITE_TOOLS,
       ATLASSIAN_PLAN_TOOL,
     ];
-  // Sans `corpo_recall` : la mémoire de la passe de savoir EST `corpo` (`mem0_search`).
+  // Sans `corpo_recall` : la mémoire de la passe de savoir EST `corpo` (`memory_search`).
   if (step === "poste-savoir")
     return [
       PROGRESS_TOOL,

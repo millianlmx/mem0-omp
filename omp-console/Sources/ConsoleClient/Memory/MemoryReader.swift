@@ -1,9 +1,9 @@
-// La mémoire du serveur, lue DIRECTEMENT par l'app iOS (mem0-rs, publié par
+// La mémoire du serveur, lue DIRECTEMENT par l'app iOS (memory-rs, publié par
 // `harness.sh up` et porté par le code d'appairage) : aucun Mac sur le chemin.
 //
 // Trois lectures, comme la section Mémoire de la coque macOS : le sommaire d'une
 // portée par pages, une recherche sélectionnée exactement comme l'outil
-// `mem0_search` (`MemorySearch`), et le graphe des souvenirs, dérivé par le noyau
+// `memory_search` (`MemorySearch`), et le graphe des souvenirs, dérivé par le noyau
 // partagé (`MemoryGraph`). Le décodage des réponses est celui de la coque
 // (`MemoryPage`, `MemoryJSON`, `MemoryGraphEdges`). Les deux écritures permises depuis
 // la liste (corriger, supprimer) passent par `MemoryWriter`, sur le même échange.
@@ -11,7 +11,7 @@
 import ConsoleCore
 import Foundation
 
-/// L'adresse de la mémoire et son jeton (`X-Mem0-Token`).
+/// L'adresse de la mémoire et son jeton (`X-Memory-Token`, avec `X-Mem0-Token` pour un service d'avant).
 public struct MemoryServer: Equatable, Sendable {
     public var baseURL: URL
     public var token: String
@@ -32,7 +32,7 @@ public enum MemoryReadError: Error, Equatable, Sendable {
     case unauthorized
     /// 503 : le service répond qu'il n'est pas prêt.
     case unavailable
-    /// 404 ou 405 sur le graphe : un mem0-rs trop ancien pour cette route.
+    /// 404 ou 405 sur le graphe : un memory-rs trop ancien pour cette route.
     case outdated
     /// Tout autre statut, ou un corps illisible.
     case failed
@@ -124,7 +124,7 @@ public struct MemoryReader: Sendable {
         try await all(scope: scope)
     }
 
-    /// La recherche de `mem0_search` : pool sur-échantillonné, seuil du plugin, tri
+    /// La recherche de `memory_search` : pool sur-échantillonné, seuil du plugin, tri
     /// par cosinus brut (`MemorySearch.select`).
     public func search(query: String, scope: String?, limit: Int? = nil) async throws -> RemoteMemorySearchPayload {
         let limit = limit ?? MemorySearch.defaultLimit
@@ -206,7 +206,7 @@ public struct MemoryReader: Sendable {
     }
 
     /// L'échange avec la mémoire, partagé par la lecture et l'écriture : le jeton en
-    /// `X-Mem0-Token`, chaque statut traduit en `MemoryReadError`.
+    /// `X-Memory-Token` ET `X-Mem0-Token` (même valeur, S-11), chaque statut traduit en `MemoryReadError`.
     static func send(
         server: MemoryServer, transport: any MemoryTransport, path: String, method: String, body: [String: Any]?, timeout: TimeInterval
     ) async throws -> Any {
@@ -220,7 +220,10 @@ public struct MemoryReader: Sendable {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
-        if !server.token.isEmpty { request.setValue(server.token, forHTTPHeaderField: "X-Mem0-Token") }
+        if !server.token.isEmpty {
+            request.setValue(server.token, forHTTPHeaderField: "X-Memory-Token")
+            request.setValue(server.token, forHTTPHeaderField: "X-Mem0-Token")
+        }
 
         let reply: (status: Int, body: Data)
         do {

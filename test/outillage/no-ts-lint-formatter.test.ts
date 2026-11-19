@@ -17,16 +17,17 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { outilEpingleAbsent } from "../support/prerequis.ts";
 import { LINT_TOOL_ENV, ROOT, sharedRepo, tmpdir } from "../support/repo.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 /** Profondeur d'imbrication : 0 = `node --test test/outillage/no-ts-lint-formatter.test.ts`. */
-const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
+const DEPTH = Number(renamedEnv(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
 
 const LINT_SH = fs.readFileSync(path.join(ROOT, "scripts", "lint.sh"), "utf8");
 const BIOME_VERSION = /^BIOME_VERSION="([^"]+)"$/m.exec(LINT_SH)![1]!;
 const PREPARE = "« bash scripts/lint.sh --prepare »";
 
 /** Le dossier de l'outil préparé à la racine (même résolution que lint.sh). */
-const LINT_DIR = path.resolve(ROOT, process.env.MEM0_OMP_LINT_DIR || ".lint");
+const LINT_DIR = path.resolve(ROOT, renamedEnv(process.env, "MEMORY_OMP_LINT_DIR", "MEM0_OMP_LINT_DIR") || ".lint");
 
 const output = (r: SpawnSyncReturns<string>) => `${r.stdout ?? ""}${r.stderr ?? ""}`;
 
@@ -83,7 +84,7 @@ function assertLintShOffline(): void {
   const { bin, log } = stubBin("lint-reseau-");
   for (const name of ["npm", "npx", "curl"]) stub(bin, name, `echo "${name} $*" >> "${log}"\nexit 1`);
   const env = {
-    MEM0_OMP_LINT_DIR: LINT_DIR,
+    MEMORY_OMP_LINT_DIR: LINT_DIR,
     PATH: `${bin}:${process.env.PATH}`,
     HTTP_PROXY: "http://127.0.0.1:9",
     HTTPS_PROXY: "http://127.0.0.1:9",
@@ -91,7 +92,7 @@ function assertLintShOffline(): void {
     https_proxy: "http://127.0.0.1:9",
   };
   const conforme = 'export const a = "x";\n';
-  const tree = miniTree({ "omp-mem0-req/a.ts": conforme, "test/b.ts": conforme });
+  const tree = miniTree({ "omp-memory-req/a.ts": conforme, "test/b.ts": conforme });
 
   const prepared = runLint(tree, ["--prepare"], env);
   assert.equal(prepared.status, 0, output(prepared));
@@ -112,7 +113,7 @@ function assertLintShOffline(): void {
 
 /** AC-6 au niveau de lint.sh : Biome absent ou d'une autre version ⇒ exit 3 et commande de (ré)installation. */
 function assertLintShUnavailable(): void {
-  const tree = miniTree({ "omp-mem0-req/a.ts": "export const a = 1;\n" });
+  const tree = miniTree({ "omp-memory-req/a.ts": "export const a = 1;\n" });
   // Un `biome` du PATH, même à la bonne version, n'est jamais utilisé.
   const { bin } = stubBin("lint-path-");
   stub(bin, "biome", `echo "Version: ${BIOME_VERSION}"\nexit 0`);
@@ -124,7 +125,7 @@ function assertLintShUnavailable(): void {
     ["lanceur sans ligne Version", fakeLintDir('echo "biome"\nexit 0')],
   ];
   for (const [label, dir] of absentCases) {
-    const r = runLint(tree, [], { MEM0_OMP_LINT_DIR: dir, PATH });
+    const r = runLint(tree, [], { MEMORY_OMP_LINT_DIR: dir, PATH });
     assert.equal(r.status, 3, `${label} : ${output(r)}`);
     assert.equal(
       r.stdout,
@@ -135,7 +136,7 @@ function assertLintShUnavailable(): void {
   }
 
   const wrong = fakeLintDir('echo "Version: 0.0.0-faux"\nexit 0');
-  const r = runLint(tree, [], { MEM0_OMP_LINT_DIR: wrong, PATH });
+  const r = runLint(tree, [], { MEMORY_OMP_LINT_DIR: wrong, PATH });
   assert.equal(r.status, 3, output(r));
   assert.equal(
     r.stdout,
@@ -149,7 +150,7 @@ const repo = sharedRepo("lint-", { keepTest: () => false });
 
 const LINT_FAULT = "export function f(): void {\n  debugger;\n}\n";
 const FORMAT_FAULT = "export const  a = 1;\n";
-const PASS_LINE = "  ✓ lint et format du TypeScript conformes (omp-mem0-req/, omp-harness/, scripts/, test/)";
+const PASS_LINE = "  ✓ lint et format du TypeScript conformes (omp-memory-req/, omp-harness/, scripts/, test/)";
 const UNAVAILABLE_LINE = "  ✗ linter épinglé indisponible (installe : bash scripts/lint.sh --prepare)";
 
 /** `scripts/check.sh --sections=lint` dans `cwd`, avec le Biome de la racine. */
@@ -157,7 +158,7 @@ function runSection(cwd: string, env: Record<string, string> = {}) {
   return spawnSync("bash", ["scripts/check.sh", "--sections=lint"], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, ...LINT_TOOL_ENV, MEM0_CHECK_DEPTH: String(DEPTH + 1), ...env },
+    env: { ...process.env, ...LINT_TOOL_ENV, MEMORY_CHECK_DEPTH: String(DEPTH + 1), ...env },
     timeout: 300_000,
   });
 }
@@ -188,10 +189,10 @@ test("no-ts-lint-formatter/AC-1 : sur l'arbre livré, la section lint de check.s
   assert.ok(r.stdout.includes("Dépôt prêt à publier."), output(r));
 });
 
-test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/, omp-harness/, omp-chrome/, scripts/ puis test/ rougit la section et désigne le fichier", (t) => {
+test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-memory-req/, omp-harness/, omp-chrome/, scripts/ puis test/ rougit la section et désigne le fichier", (t) => {
   if (outilEpingleAbsent(t, "biome")) return;
   for (const rel of [
-    "omp-mem0-req/zz-faute-lint.ts",
+    "omp-memory-req/zz-faute-lint.ts",
     "omp-harness/zz-faute-lint.ts",
     "omp-chrome/src/zz-faute-lint.ts",
     "scripts/zz-faute-lint.ts",
@@ -210,10 +211,10 @@ test("no-ts-lint-formatter/AC-2 : une faute de lint dans omp-mem0-req/, omp-harn
   }
 });
 
-test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/, omp-harness/, omp-chrome/, scripts/ puis test/ rougit la section", (t) => {
+test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-memory-req/, omp-harness/, omp-chrome/, scripts/ puis test/ rougit la section", (t) => {
   if (outilEpingleAbsent(t, "biome")) return;
   for (const rel of [
-    "omp-mem0-req/zz-faute-format.ts",
+    "omp-memory-req/zz-faute-format.ts",
     "omp-harness/zz-faute-format.ts",
     "omp-chrome/src/zz-faute-format.ts",
     "scripts/zz-faute-format.ts",
@@ -237,10 +238,10 @@ test("no-ts-lint-formatter/AC-3 : une faute de format seule dans omp-mem0-req/, 
   }
 });
 
-test("no-ts-lint-formatter/AC-4 : les mêmes fautes hors de omp-mem0-req/, omp-harness/, omp-chrome/, scripts/ et test/ laissent la section verte", (t) => {
+test("no-ts-lint-formatter/AC-4 : les mêmes fautes hors de omp-memory-req/, omp-harness/, omp-chrome/, scripts/ et test/ laissent la section verte", (t) => {
   if (outilEpingleAbsent(t, "biome")) return;
   const dir = repo.fresh();
-  for (const rel of ["omp-console/zz-faute.ts", "omp-mem0-memory/zz-faute.ts"]) {
+  for (const rel of ["omp-console/zz-faute.ts", "omp-memory/zz-faute.ts"]) {
     fs.writeFileSync(path.join(dir, rel), `${LINT_FAULT}${FORMAT_FAULT}`);
   }
   const r = runSection(dir);
@@ -299,7 +300,7 @@ test("no-ts-lint-formatter/AC-6 : outil absent ou d'une autre version ⇒ lint.s
     ],
   ];
   for (const [label, lintDir, toolLine] of cases) {
-    const r = runSection(dir, { MEM0_OMP_LINT_DIR: lintDir });
+    const r = runSection(dir, { MEMORY_OMP_LINT_DIR: lintDir });
     assert.equal(r.status, 1, `${label} :\n${output(r)}`);
     // Exactement ces deux lignes : ni `  · ` (saut), ni `✓`.
     assert.deepEqual(sectionLines(r.stdout), [toolLine, UNAVAILABLE_LINE], `${label} :\n${output(r)}`);
@@ -377,7 +378,7 @@ test("no-ts-lint-formatter/AC-7 : seules les règles contraires à une conventio
   // Aucune règle n'est coupée fichier par fichier : pas de commentaire de suppression.
   const marker = ["biome", "ignore"].join("-");
   const suppressed = [
-    ...walk(path.join(ROOT, "omp-mem0-req")),
+    ...walk(path.join(ROOT, "omp-memory-req")),
     ...walk(path.join(ROOT, "omp-harness")),
     ...walk(path.join(ROOT, "omp-chrome")),
     ...walk(path.join(ROOT, "test")),

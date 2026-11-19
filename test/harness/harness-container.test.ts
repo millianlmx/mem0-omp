@@ -45,7 +45,7 @@ test("harness-container/AC-1 : un runner est un conteneur frère plafonné, qui 
     model: { provider: "anthropic", model: "claude-sonnet-5-5" },
     scope: "demo",
     repo: REPO,
-    oracleUrl: "http://mem0:8321",
+    oracleUrl: "http://memory:8321",
   });
   assert.equal(line.command, "docker");
   const image = line.args.indexOf(config.container.runnerImage);
@@ -74,11 +74,11 @@ test("harness-container/AC-1 : un runner est un conteneur frère plafonné, qui 
   ]);
   assert.deepEqual(envs(flags).sort(), [
     "HOME=/home/runner",
-    "MEM0_AUTOSETUP=0",
-    "MEM0_HTTP_URL=http://mem0:8321",
-    "MEM0_MODE=runner",
-    "MEM0_NUDGE=0",
-    "MEM0_PROJECT_ID=demo",
+    "MEMORY_AUTOSETUP=0",
+    "MEMORY_HTTP_URL=http://memory:8321",
+    "MEMORY_MODE=runner",
+    "MEMORY_NUDGE=0",
+    "MEMORY_PROJECT_ID=demo",
     "PI_PY=0",
   ]);
   assert.ok(!flags.some((flag) => /TOKEN|API_KEY|docker\.sock/.test(flag)), "ni jeton, ni clé, ni socket du moteur");
@@ -237,7 +237,7 @@ test("harness-container/AC-5 : le déploiement tient la même promesse — omp �
   assert.equal(config.heavy.isolation, "container");
   assert.equal(config.container.network, "omp-harness");
   assert.equal(config.container.runnerEnvFile, "/srv/secrets/runner.env");
-  assert.equal(config.oracle?.url, "http://mem0:8321");
+  assert.equal(config.oracle?.url, "http://memory:8321");
   assert.equal(config.listen.host, "0.0.0.0", "publié sur la boucle locale de l'hôte par le compose");
 
   // Un uid de lancement inconnu de l'image : déclaré (ssh l'exige), et la clé nommée par GIT_SSH_COMMAND.
@@ -285,7 +285,7 @@ test("harness-container/AC-6 : `harness.sh up` coupe le chat de la mémoire sur 
         ...extra,
       },
     });
-    return path.join(dir, "secrets", "mem0.env");
+    return path.join(dir, "secrets", "memory.env");
   };
 
   const builtin = tmpdir("harness-container-up-");

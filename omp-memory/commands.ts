@@ -1,0 +1,498 @@
+// Les 17 commandes de l'extension (7 memory-*, leurs 7 alias de la transition, 3 de phase) : état et
+// amorçage mémoire, brief, dédup, purge des procédures, relance d'écriture, rêve de la mémoire, phases.
+import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
+import { initPrompt, scanStack } from "./bootstrap.ts";
+import { BRIEF_REF_PATH, BRIEF_VERSION, checkBrief } from "./brief.ts";
+import { discussionNudgeText, nudgeText } from "./checkpoint.ts";
+import { GLOBAL_SCOPE, MEMORY_HTTP_URL } from "./config.ts";
+import {
+  dedupTokens,
+  DEDUPE_SWEEP_CONTAINED,
+  DEDUP_CONTAINED,
+  findSimilar,
+  planDedupe,
+  planMerge,
+  renderDedupePreview,
+} from "./dedupe.ts";
+import type { DedupeEntry } from "./dedupe.ts";
+import { renderDreamJournal } from "./liens.ts";
+import { memory, memoryFetch, memoryLine, rows } from "./memoryClient.ts";
+import { DEFAULT_PHASES, mutatePhases, phaseWriteError, phases } from "./phases.ts";
+import { planPurge, renderPurgePreview } from "./purge.ts";
+import { projectId, rootOf, stateOf } from "./state.ts";
+import type { MemoryRuntime } from "./state.ts";
+
+/**
+ * Les 17 commandes, chacune avec sa description — recopiée dans le tableau
+ * `commands` du catalogue marketplace, que scripts/check.sh compare à ces
+ * appels. `pi` sert à memory-init et memory-save, qui démarrent un tour.
+ * Les alias `mem0-*` portent le même gestionnaire, le temps de la transition.
+ */
+function legacyCommand<T extends { description: string }>(command: T, current: string): T {
+  return { ...command, description: `Ancien nom de /${current}, gardé pendant la transition.` };
+}
+
+export function registerMemoryCommands(pi: ExtensionAPI, rt: MemoryRuntime): void {
+  const memoryStatus = {
+    description: "Connexion memory, projet résolu, état du brief, nombre de souvenirs",
+    handler: async (_args: string, ctx: ExtensionCommandContext) => {
+      const st = stateOf(rt, ctx);
+      const scope = projectId(ctx.cwd);
+      const brief = rt.provisioned.get(rootOf(ctx.cwd).dir) ?? checkBrief(rt, ctx);
+      try {
+        const health = await memoryFetch("/health");
+        const [proj, glob] = await Promise.all([memory.getAll(scope), memory.getAll(GLOBAL_SCOPE)]);
+        ctx.ui.notify(
+          `[memory] ok=${!!health.ok} · ${MEMORY_HTTP_URL} · projet="${scope}" ${rows(proj).length} souvenir(s) · ` +
+            `global ${rows(glob).length} · brief ref=${brief.ref} agents=${brief.agents}`,
+          "info",
+        );
+        // Ce sont les ratios qui disent si le dispositif tient : recalls/turns et
+        // pinned/explorations pour la couverture en lecture, adds/mutations en écriture.
+        ctx.ui.notify(
+          `[memory] session : ${st.turns} tour(s) · ${st.recalls} rappel(s) non vide(s) · ` +
+            `${st.explorations} exploration(s) · ${st.pinned} agrafage(s) · ${st.mutations} modification(s) · ` +
+            `${st.adds} écriture(s) mémoire · sommaire ${st.index ? "présent" : "absent"}`,
+          "info",
+        );
+      } catch (err) {
+        ctx.ui.notify(
+          `[memory] injoignable sur ${MEMORY_HTTP_URL} : ${(err as Error).message} · brief ref=${brief.ref} agents=${brief.agents}`,
+          "error",
+        );
+      }
+    },
+  };
+  pi.registerCommand("memory-status", memoryStatus);
+
+  const memoryInit = {
+    description:
+      "Amorce la mémoire d'un projet déjà existant : empreinte technique du dépôt + relecture guidée. " +
+      "--scan-only pour l'empreinte seule, --force pour réamorcer un projet déjà en mémoire",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const argv = String(args ?? "");
+      const force = argv.includes("--force");
+      const scanOnly = argv.includes("--scan-only");
+      const scope = projectId(ctx.cwd);
+      const { dir, isRepo } = rootOf(ctx.cwd);
+
+      if (!isRepo && !force) {
+        ctx.ui.notify(
+          `[memory] ${dir} ne ressemble pas à un projet (ni .git ni AGENTS.md). --force pour amorcer quand même.`,
+          "warning",
+        );
+        return;
+      }
+
+      // Le brief d'abord : sans lui, l'agent ne saura pas quoi enregistrer.
+      checkBrief(rt, ctx);
+
+      // Garde anti-doublon. Réamorcer un projet déjà en mémoire crée des
+      // quasi-doublons que la fusion memory ne rattrape pas toujours, et qui
+      // diluent le recall.
+      let existing = 0;
+      try {
+        existing = rows(await memory.getAll(scope)).length;
+      } catch (err) {
+        ctx.ui.notify(`[memory] injoignable sur ${MEMORY_HTTP_URL} : ${(err as Error).message}`, "error");
+        return;
+      }
+
+      if (existing > 0 && !force) {
+        let go = false;
+        if (ctx.hasUI) {
+          try {
+            // `confirm` prend (titre, message) : l'appel à un seul argument passait
+            // un message `undefined` au dialogue.
+            go = await ctx.ui.confirm(
+              `Réamorcer "${scope}" ?`,
+              `Ce projet a déjà ${existing} souvenir(s). Réamorcer risque de créer des doublons.`,
+            );
+          } catch { go = false; }
+        }
+        if (!go) {
+          ctx.ui.notify(`[memory] amorçage annulé (${existing} souvenir(s) existants) — /memory-init --force pour forcer.`, "info");
+          return;
+        }
+      }
+
+      // 1. Empreinte technique : lue sur disque, écrite en verbatim (infer=false).
+      // Pas d'extraction LLM ici — ce sont déjà des faits, et les faire passer
+      // par le modèle ne ferait que les paraphraser en perdant des détails.
+      const facts = scanStack(dir, scope);
+      if (!facts.length) {
+        ctx.ui.notify(`[memory] rien de détectable sur disque dans ${dir} — l'amorçage repose entièrement sur la relecture.`, "warning");
+      }
+
+      let written = 0;
+      let merged = 0;
+      const failures: string[] = [];
+      for (const fact of facts) {
+        try {
+          // Même chemin que memory_add : un réamorçage ne doit pas empiler une
+          // deuxième copie de l'empreinte.
+          const plan = planMerge(fact, await findSimilar(fact, scope));
+          if (plan.action === "skip") continue;
+          if (plan.action === "update") {
+            await memory.update(plan.target.id, plan.merged);
+            merged++;
+            continue;
+          }
+          await memory.add(fact, scope, { infer: false, tags: "stack,init" });
+          written++;
+        } catch (err) {
+          failures.push((err as Error).message);
+        }
+      }
+      ctx.ui.notify(
+        `[memory] empreinte de "${scope}" : ${written} nouveau(x), ${merged} complété(s), ` +
+          `${facts.length - written - merged - failures.length} déjà connu(s)` +
+          (failures.length ? ` · ${failures.length} échec(s) : ${failures[0]}` : ""),
+        failures.length ? "warning" : "info",
+      );
+
+      if (scanOnly) return;
+      if (written + merged === 0 && facts.length > 0 && failures.length > 0) {
+        ctx.ui.notify("[memory] aucune écriture n'a abouti — relecture non lancée. Vérifie /memory-status.", "error");
+        return;
+      }
+
+      // 2. Relecture guidée : la partie qui demande du jugement part au modèle,
+      // en tant que message utilisateur pour que le tour démarre normalement.
+      try {
+        await ctx.waitForIdle?.();
+        pi.sendUserMessage(initPrompt(scope, written + merged));
+      } catch (err) {
+        ctx.ui.notify(`[memory] relecture non lancée : ${(err as Error).message}`, "warning");
+      }
+    },
+  };
+  pi.registerCommand("memory-init", memoryInit);
+
+  const memoryBrief = {
+    description: "État du brief mémoire du projet ; --update pour réécrire la version courante",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const force = String(args ?? "").includes("--update");
+      const st = checkBrief(rt, ctx, force);
+      ctx.ui.notify(
+        `[memory] brief ${BRIEF_VERSION} · ${st.root} · ${BRIEF_REF_PATH}=${st.ref} · AGENTS.md=${st.agents}` +
+          (st.detail ? ` (${st.detail})` : ""),
+        st.ref === "failed" || st.agents === "failed" ? "warning" : "info",
+      );
+    },
+  };
+  pi.registerCommand("memory-brief", memoryBrief);
+
+  const memoryDedupe = {
+    description:
+      "Repère les souvenirs redondants du projet et supprime les moins informatifs. Simulation " +
+      "par défaut : chaque paire est affichée avec son score de recouvrement, le texte intégral " +
+      "du souvenir voué à la suppression et les mots qu'elle ferait perdre. --apply pour écrire, " +
+      "--strict pour ne traiter que les recouvrements quasi totaux, --scope global pour la " +
+      "mémoire transverse",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const argv = String(args ?? "");
+      const apply = argv.includes("--apply");
+      const threshold = argv.includes("--strict") ? DEDUP_CONTAINED : DEDUPE_SWEEP_CONTAINED;
+      const scope = argv.includes("--scope global") ? GLOBAL_SCOPE : projectId(ctx.cwd);
+
+      let all: any[];
+      try {
+        all = rows(await memory.getAll(scope));
+      } catch (err) {
+        ctx.ui.notify(`[memory] injoignable sur ${MEMORY_HTTP_URL} : ${(err as Error).message}`, "error");
+        return;
+      }
+
+      // Comparaison lexicale pure, sans embedding : on travaille sur une base
+      // déjà chargée en mémoire, et un aller-retour vectoriel par paire coûterait
+      // O(n²) requêtes pour un gain nul sur des quasi-doublons.
+      const entries: DedupeEntry[] = all
+        .map((m) => ({ id: String(m?.id ?? ""), text: memoryLine(m) }))
+        .filter((e) => e.id)
+        .map((e) => ({ ...e, tokens: dedupTokens(e.text) }));
+
+      const actions = planDedupe(entries, threshold);
+
+      if (!actions.length) {
+        ctx.ui.notify(
+          `[memory] "${scope}" : ${entries.length} souvenir(s), aucun doublon au seuil ${threshold}.`,
+          "info",
+        );
+        return;
+      }
+
+      if (!apply) {
+        ctx.ui.notify(
+          `[memory] "${scope}" : ${actions.length} doublon(s) sur ${entries.length} souvenir(s) — simulation, rien n'est écrit.\n\n` +
+            `${renderDedupePreview(actions, threshold)}\n\n` +
+            `/memory-dedupe --apply supprime les ${actions.length} souvenir(s) marqués SUPPRIME.`,
+          "info",
+        );
+        return;
+      }
+
+      const deleted: string[] = [];
+      const failures: string[] = [];
+      for (const action of actions) {
+        try {
+          await memory.delete(action.drop.id);
+          deleted.push(action.drop.id);
+        } catch (err) {
+          failures.push(`[${action.drop.id}] ${(err as Error).message}`);
+        }
+      }
+      // La base a changé sous le cache local : sommaire et agrafage seraient faux.
+      const st = stateOf(rt, ctx);
+      st.mem = null;
+      st.index = null;
+      // Les ids supprimés partent dans le rapport : après coup, c'est la seule
+      // trace qui permet de dire ce qui a disparu.
+      ctx.ui.notify(
+        `[memory] "${scope}" : ${deleted.length} doublon(s) supprimé(s), ` +
+          `${entries.length - deleted.length} restant(s)` +
+          (deleted.length ? `\n  supprimés : ${deleted.join(", ")}` : "") +
+          (failures.length ? `\n  ${failures.length} échec(s) : ${failures.join(" · ")}` : ""),
+        failures.length ? "warning" : "info",
+      );
+    },
+  };
+  pi.registerCommand("memory-dedupe", memoryDedupe);
+
+  const memoryPurgeProcedures = {
+    description:
+      "Liste les souvenirs procéduraux du projet (metadata.memory_type = \"procedural_memory\") " +
+      "avec leur id et leur texte intégral. Simulation par défaut, rien n'est supprimé : " +
+      "l'aperçu montre exactement ce qui partirait. --apply supprime la liste entière, sans " +
+      "exception ni moyen d'épargner un souvenir, et le rapport cite les ids supprimés. " +
+      "Ne touche que la scope du projet, jamais la mémoire transverse",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const apply = String(args ?? "").includes("--apply");
+      const scope = projectId(ctx.cwd);
+
+      // Lignes réseau non validées : `unknown[]` plutôt qu'un `any[]` — `planPurge`
+      // porte les gardes de forme, la commande n'a rien à supposer.
+      let all: unknown[];
+      try {
+        all = rows(await memory.getAll(scope));
+      } catch (err) {
+        ctx.ui.notify(`[memory] injoignable sur ${MEMORY_HTTP_URL} : ${(err as Error).message}`, "error");
+        return;
+      }
+
+      const { targets, anonymous } = planPurge(all);
+      const found = targets.length;
+
+      // `renderPurgePreview([])` vaut "": les segments vides sont écartés pour
+      // qu'une scope peuplée de procéduraux tous anonymes ne rende pas une ligne
+      // blanche à la place de l'aperçu — le compte, lui, reste dit.
+      if (found + anonymous === 0) {
+        ctx.ui.notify(
+          `[memory] "${scope}" : aucun souvenir procédural — rien à purger (${all.length} souvenir(s) dans la scope).`,
+          "info",
+        );
+        return;
+      }
+
+      if (!apply) {
+        ctx.ui.notify(
+          [
+            `[memory] "${scope}" : ${found + anonymous} souvenir(s) procédural(aux) sur ${all.length} — simulation, rien n'est supprimé.`,
+            targets.length ? renderPurgePreview(targets) : "",
+            anonymous ? `  ${anonymous} souvenir(s) procédural(aux) sans id — non supprimables.` : "",
+            `/memory-purge-procedures --apply supprime ces ${found} souvenir(s).`,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+          "info",
+        );
+        return;
+      }
+
+      // Un DELETE par cible, EN SÉRIE, sans borne ni épargne (B-2 : aucun moyen
+      // d'épargner un souvenir). L'échec est isolé par id : un id déjà disparu
+      // rend 500 côté serveur (delete unitaire, aucun lot), c'est un échec
+      // ordinaire — interrompre la boucle laisserait des procéduraux derrière.
+      const deleted: string[] = [];
+      const failures: string[] = [];
+      for (const target of targets) {
+        try {
+          await memory.delete(target.id);
+          deleted.push(target.id);
+        } catch (err) {
+          failures.push(`[${target.id}] ${(err as Error).message}`);
+        }
+      }
+      // La base a changé sous le cache local : sommaire et agrafage seraient faux.
+      const st = stateOf(rt, ctx);
+      st.mem = null;
+      st.index = null;
+      // Les ids supprimés partent dans le rapport : c'est la seule trace, et elle
+      // est voulue — B-2 interdit tout fichier de trace.
+      ctx.ui.notify(
+        `[memory] "${scope}" : ${deleted.length}/${found} souvenir(s) procédural(aux) supprimé(s)` +
+          (deleted.length ? `\n  supprimés : ${deleted.join(", ")}` : "") +
+          (anonymous ? `\n  ${anonymous} souvenir(s) procédural(aux) sans id — non supprimables.` : "") +
+          (failures.length ? `\n  ${failures.length} échec(s) : ${failures.join(" · ")}` : ""),
+        failures.length || anonymous ? "warning" : "info",
+      );
+    },
+  };
+  pi.registerCommand("memory-purge-procedures", memoryPurgeProcedures);
+
+  const memorySave = {
+    description: "Demande à l'agent d'écrire maintenant ce que cette session a produit de durable",
+    handler: async (_args: string, ctx: ExtensionCommandContext) => {
+      const st = stateOf(rt, ctx);
+      st.nudged = true;
+      await ctx.waitForIdle?.();
+      pi.sendUserMessage(st.mutations > 0 ? nudgeText(st.mutations) : discussionNudgeText(st.substantiveTurns));
+    },
+  };
+  pi.registerCommand("memory-save", memorySave);
+
+  const memoryDream = {
+    description:
+      "Rêve de la mémoire : derniers rêves et propositions en attente (doublons, remplacements, " +
+      "contradictions, oublis). accept <id> ou reject <id> pour trancher, now pour rêver tout de suite",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const scope = projectId(ctx.cwd);
+      const [verb = "", id = ""] = String(args ?? "").trim().split(/\s+/);
+      const absent = (err: unknown) =>
+        /memory-http 404/.test((err as Error).message)
+          ? "le service mémoire n'a pas de rêve (memory-rs v4 requis)"
+          : (err as Error).message;
+      try {
+        if (verb === "accept" || verb === "reject") {
+          if (!id) {
+            ctx.ui.notify(`[memory] /memory-dream ${verb} <id> : l'id de la proposition manque.`, "warning");
+            return;
+          }
+          const r = await memory.decide(id, verb);
+          if (r?.deleted) {
+            const st = stateOf(rt, ctx);
+            st.mem = null;
+            st.index = null;
+          }
+          ctx.ui.notify(
+            `[memory] Proposition ${id} ${verb === "accept" ? "acceptée" : "refusée"}` +
+              (r?.deleted ? " : le souvenir proposé est supprimé (son historique reste)." : "."),
+            "info",
+          );
+          return;
+        }
+        if (verb === "now") {
+          const r = await memory.dreamNow(scope);
+          const d = (rows(r?.dreams)[0] ?? {}) as Record<string, unknown>;
+          const errors = Array.isArray(d.errors) ? (d.errors as string[]) : [];
+          ctx.ui.notify(
+            `[memory] Rêve de "${scope}" : ${d.reindexed ?? 0} réindexé(s), ` +
+              `${d.pairs_judged ?? 0} paire(s) jugée(s), ` +
+              `${d.links ?? 0} lien(s), ${d.proposals ?? 0} proposition(s), ${d.orphans_removed ?? 0} observation(s) orpheline(s) retirée(s)` +
+              (errors.length ? ` · ${errors.join(" ; ")}` : ""),
+            errors.length ? "warning" : "info",
+          );
+        } else if (verb !== "") {
+          ctx.ui.notify("[memory] /memory-dream [now | accept <id> | reject <id>]", "warning");
+          return;
+        }
+        ctx.ui.notify(renderDreamJournal(await memory.dreamJournal(scope)), "info");
+      } catch (err) {
+        ctx.ui.notify(`[memory] rêve indisponible : ${absent(err)}`, "error");
+      }
+    },
+  };
+  pi.registerCommand("memory-dream", memoryDream);
+
+  pi.registerCommand("add-phase", {
+    description: "Enregistre une phase et le brief de rôle de l'agent : /add-phase NOM BRIEF",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const argv = String(args ?? "").trim();
+      const sp = argv.indexOf(" ");
+      const name = (sp === -1 ? argv : argv.slice(0, sp)).trim();
+      const brief = sp === -1 ? "" : argv.slice(sp + 1).trim();
+      if (!name) {
+        ctx.ui.notify("[memory] usage : /add-phase NOM BRIEF", "error");
+        return;
+      }
+      if (phases.has(name)) {
+        ctx.ui.notify(`[memory] phase "${name}" existe déjà — /remove-phase pour la retirer d'abord.`, "warning");
+        return;
+      }
+      if (mutatePhases((r) => r.set(name, { brief }))) {
+        ctx.ui.notify(`[memory] phase "${name}" enregistrée.`, "info");
+      } else {
+        ctx.ui.notify(`[memory] phases non enregistrées : ${phaseWriteError}`, "warning");
+      }
+    },
+  });
+
+  pi.registerCommand("set-phase", {
+    description: "Active une phase pour la session (--default réinitialise le registry) : /set-phase NOM",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const argv = String(args ?? "").trim();
+      const st = stateOf(rt, ctx);
+
+      if (argv === "--default") {
+        st.currentPhase = null;
+        st.phaseTriggered = false;
+        // Seule opération destructive du registry : par définition, elle retire
+        // les phases des autres sessions (README, § La mémoire).
+        const ok = mutatePhases((r) => {
+          r.clear();
+          for (const d of DEFAULT_PHASES) r.set(d, { brief: "" });
+        });
+        if (!ok) {
+          ctx.ui.notify(`[memory] phases non enregistrées : ${phaseWriteError}`, "warning");
+          return;
+        }
+        ctx.ui.notify(`[memory] registry réinitialisé : ${DEFAULT_PHASES.join(", ")}. Aucune phase active.`, "info");
+        return;
+      }
+
+      const name = argv.split(/\s+/)[0] ?? "";
+      if (!name) {
+        ctx.ui.notify("[memory] usage : /set-phase NOM", "error");
+        return;
+      }
+      if (!phases.has(name)) {
+        ctx.ui.notify(`[memory] phase "${name}" inconnue. /add-phase pour l'enregistrer, /set-phase --default pour les valeurs par défaut.`, "error");
+        return;
+      }
+      st.currentPhase = name;
+      st.phaseTriggered = false;
+      const brief = phases.get(name)?.brief;
+      ctx.ui.notify(`[memory] phase "${name}" active pour cette session${brief ? ` — rôle : ${brief}` : ""}.`, "info");
+    },
+  });
+
+  pi.registerCommand("remove-phase", {
+    description: "Désenregistre une phase : /remove-phase NOM",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const name = String(args ?? "").trim().split(/\s+/)[0] ?? "";
+      if (!name) {
+        ctx.ui.notify("[memory] usage : /remove-phase NOM", "error");
+        return;
+      }
+      if (!phases.has(name)) {
+        ctx.ui.notify(`[memory] phase "${name}" inconnue.`, "warning");
+        return;
+      }
+      if (!mutatePhases((r) => r.delete(name))) {
+        ctx.ui.notify(`[memory] phases non enregistrées : ${phaseWriteError}`, "warning");
+        return;
+      }
+      const st = stateOf(rt, ctx);
+      if (st.currentPhase === name) st.currentPhase = null;
+      ctx.ui.notify(`[memory] phase "${name}" désenregistrée.`, "info");
+    },
+  });
+
+  pi.registerCommand("mem0-status", legacyCommand(memoryStatus, "memory-status"));
+  pi.registerCommand("mem0-init", legacyCommand(memoryInit, "memory-init"));
+  pi.registerCommand("mem0-brief", legacyCommand(memoryBrief, "memory-brief"));
+  pi.registerCommand("mem0-dedupe", legacyCommand(memoryDedupe, "memory-dedupe"));
+  pi.registerCommand("mem0-purge-procedures", legacyCommand(memoryPurgeProcedures, "memory-purge-procedures"));
+  pi.registerCommand("mem0-save", legacyCommand(memorySave, "memory-save"));
+  pi.registerCommand("mem0-dream", legacyCommand(memoryDream, "memory-dream"));
+}

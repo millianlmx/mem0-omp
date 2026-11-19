@@ -79,7 +79,7 @@ const redact = (text: string): string => (secret === "" ? text : text.replaceAll
 /**
  * Où et comment joindre le harness : `HARNESS_URL` / `HARNESS_TOKEN`, sinon `~/.omp/harness.json`
  * (`{url, token}`, le fichier qu'écrit `harness.sh pair` et que lisent le plugin et les apps ; même
- * lecture que `resolveTarget` d'omp-mem0-req/harness.ts, sans le dépôt). Le serveur est un dossier
+ * lecture que `resolveTarget` d'omp-memory-req/harness.ts, sans le dépôt). Le serveur est un dossier
  * à part : le plugin n'est pas importé.
  */
 function connectionOf(

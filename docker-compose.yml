@@ -8,7 +8,7 @@
 #   ANTHROPIC_API_KEY (ou OPENROUTER_API_KEY)  la clé des agents
 #   GH_TOKEN               un jeton GitHub (issues en MCP, merge gh) : écrit dans le secret du service, jamais donné aux runners
 #   OMP_HARNESS_MEMORY_TOKENS    des jetons mémoire limités à des portées, `nom:jeton:scope1,scope2;…` :
-#                                mem0-rs les accepte, le service les voit en MEM0_TOKEN_<NOM> (`memory.tokenEnv` d'un dépôt)
+#                                memory-rs les accepte, le service les voit en MEMORY_TOKEN_<NOM> (`memory.tokenEnv` d'un dépôt)
 #   OMP_HARNESS_GITHUB_ACCOUNTS  des comptes GitHub par dépôt, `nom:jeton;…` : GH_TOKEN_<NOM> du service (`gh.tokenEnv`)
 #   OMP_HARNESS_GITLAB_ACCOUNTS  des comptes GitLab par dépôt, `nom:jeton;…` : GITLAB_TOKEN_<NOM> du service (`gitlab.tokenEnv`)
 #   OMP_HARNESS_REPOS      les dépôts, séparés par des virgules (git@github.com:toi/dépôt.git)
@@ -19,7 +19,7 @@
 #                          défaut : OMLX_BASE_URL, coupé (off) avec l'Ollama de la pile
 #   OMLX_CHAT_API_TOKEN    sa clé ; défaut : OMLX_API_TOKEN
 #   OMP_HARNESS_TAILNET_PORT       le port https du harness sur le tailnet (443)
-#   OMP_HARNESS_TAILNET_MEM0_PORT  celui de la mémoire (8443)
+#   OMP_HARNESS_TAILNET_MEMORY_PORT  celui de la mémoire (8443)
 #   OMP_HARNESS_TAILSCALE_SERVE=0  ne touche pas au `tailscale serve` de l'hôte
 #   OMP_HARNESS_COMMIT     le commit construit, rendu par /v1/health ; sans lui, lu
 #                          dans le .git du clone, sinon prouvé par le tag de la version
@@ -163,33 +163,38 @@ services:
       VIGIE_LOGS_DIR: /logs
       VIGIE_REPOS_DIR: /repos
       VIGIE_MODEL: ${VIGIE_MODEL:-}
-      MEM0_HTTP_URL: http://mem0:8321
+      MEMORY_HTTP_URL: http://memory:8321
     volumes:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/vigie:/var/lib/omp-vigie
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/state/logs:/logs:ro
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/repos:/repos:ro
       - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/vigie:/run/secrets/omp-vigie:ro
 
+  # La clé de service reste `mem0` pendant la version de transition : une configuration d'avant (`oracle.url` =
+  # http://mem0:8321) joint toujours le service. Le nom à jour, `memory`, en est l'alias réseau.
   mem0:
-    build: mem0-stack/mem0-rs
-    image: mem0-rs:local
+    networks:
+      default:
+        aliases: [memory]
+    build: memory-stack/memory-rs
+    image: memory-rs:local
     pull_policy: build
     restart: unless-stopped
     depends_on:
       setup: { condition: service_completed_successfully }
     # Ses réglages et son jeton, écrits par `setup` : lus au démarrage.
-    entrypoint: ["/bin/sh", "-c", "set -a && . /run/secrets/mem0/mem0.env && set +a && exec /usr/local/bin/mem0-rs --host 0.0.0.0 --port 8321"]
+    entrypoint: ["/bin/sh", "-c", "set -a && . /run/secrets/memory/memory.env && set +a && exec /usr/local/bin/memory-rs --host 0.0.0.0 --port 8321"]
     # La copie hors machine de chaque instantané (`sh -c`, chemin en $1) : passée telle
-    # quelle, jamais sourcée. L'image n'a que sh et curl (mem0-stack/README.md).
+    # quelle, jamais sourcée. L'image n'a que sh et curl (memory-stack/README.md).
     environment:
-      MEM0_BACKUP_REMOTE_CMD: ${MEM0_BACKUP_REMOTE_CMD:-}
+      MEMORY_BACKUP_REMOTE_CMD: ${MEMORY_BACKUP_REMOTE_CMD:-${MEM0_BACKUP_REMOTE_CMD:-}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "127.0.0.1:${OMP_HARNESS_MEM0_PORT:-8321}:8321"
+      - "127.0.0.1:${OMP_HARNESS_MEMORY_PORT:-${OMP_HARNESS_MEM0_PORT:-8321}}:8321"
     volumes:
-      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/mem0:/data
-      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/mem0:/run/secrets/mem0:ro
+      - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/memory:/data
+      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/memory:/run/secrets/memory:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "-m", "3", "http://127.0.0.1:8321/health"]
       interval: 10s
@@ -202,7 +207,7 @@ services:
     image: docker.io/ollama/ollama:0.40.14
     restart: unless-stopped
     environment:
-      # Le modèle reste chargé : un rechargement à froid ferait expirer les écritures de mem0.
+      # Le modèle reste chargé : un rechargement à froid ferait expirer les écritures de memory.
       OLLAMA_KEEP_ALIVE: "-1"
     volumes:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/ollama:/root/.ollama
@@ -230,13 +235,13 @@ services:
     depends_on: [harness]
     environment:
       OMP_HARNESS_PORT: ${OMP_HARNESS_PORT:-8790}
-      OMP_HARNESS_MEM0_PORT: ${OMP_HARNESS_MEM0_PORT:-8321}
+      OMP_HARNESS_MEMORY_PORT: ${OMP_HARNESS_MEMORY_PORT:-${OMP_HARNESS_MEM0_PORT:-8321}}
       OMP_HARNESS_TAILNET_PORT: ${OMP_HARNESS_TAILNET_PORT:-443}
-      OMP_HARNESS_TAILNET_MEM0_PORT: ${OMP_HARNESS_TAILNET_MEM0_PORT:-8443}
+      OMP_HARNESS_TAILNET_MEMORY_PORT: ${OMP_HARNESS_TAILNET_MEMORY_PORT:-${OMP_HARNESS_TAILNET_MEM0_PORT:-8443}}
       OMP_HARNESS_TAILSCALE_SERVE: ${OMP_HARNESS_TAILSCALE_SERVE:-1}
     volumes:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/state:/state:ro
-      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/mem0:/secrets:ro
+      - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/memory:/secrets:ro
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/published:/published
       # Le dossier du socket de tailscaled sur l'hôte, pas le socket lui-même : un
       # fichier absent deviendrait un dossier.
@@ -314,7 +319,7 @@ services:
 
 networks:
   default:
-    # Le réseau que rejoignent les runners (`container.network`) : ils y joignent `mem0`.
+    # Le réseau que rejoignent les runners (`container.network`) : ils y joignent `memory`.
     name: omp-harness
   # Les navigateurs Moli (jamais publiés) : chacun a un réseau interne qu'il ne partage
   # qu'avec `harness`, et un réseau de sortie dont il est le seul membre.

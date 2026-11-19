@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT } from "../support/repo.ts";
 
-const CRATE = path.join(ROOT, "mem0-stack", "mem0-rs");
+const CRATE = path.join(ROOT, "memory-stack", "memory-rs");
 const CRATE_REL = path.relative(ROOT, CRATE).split(path.sep).join("/");
 const SRC = path.join(CRATE, "src");
 

@@ -89,20 +89,20 @@ async function start(): Promise<void> {
 
 test("demande-popup/AC-1 : une demande posée depuis le popup appairé part avec source chrome et son plan s'affiche avec Confirmer / Annuler", async () => {
   await start();
-  const posted = await ask({ type: "intake-post", text: "corrige le bug X dans mem0-omp" });
+  const posted = await ask({ type: "intake-post", text: "corrige le bug X dans memory-omp" });
   assert.equal(posted.ok, true);
   const id = posted.value?.id as string;
   const call = calls.find((each) => each.path === "/v1/intake");
-  assert.deepEqual(call?.body, { text: "corrige le bug X dans mem0-omp", source: "chrome" });
+  assert.deepEqual(call?.body, { text: "corrige le bug X dans memory-omp", source: "chrome" });
   assert.equal(call?.auth, "Bearer jeton");
   assert.equal(intakes.get(id)?.source, "chrome");
 
-  classify(id, { state: "planned", kind: "bug", plan: plan("bug", "mem0-omp") });
+  classify(id, { state: "planned", kind: "bug", plan: plan("bug", "memory-omp") });
   const read = await ask({ type: "intake-get" });
   const display = describeIntake(read.value as Intake);
   assert.equal(display.confirm, true);
   assert.equal(display.cancel, true);
-  assert.ok(display.lines.includes("Dépôt : mem0-omp"));
+  assert.ok(display.lines.includes("Dépôt : memory-omp"));
   assert.ok(display.lines.includes("À créer : un bug"));
 
   const confirmed = await ask({ type: "intake-confirm", id });
@@ -122,7 +122,7 @@ test("demande-popup/AC-2 : posée puis popup fermé pendant le classement, la de
   assert.equal(chrome.local.get(INTAKE_KEY), id);
   // Le popup est fermé : rien ne le relie à la demande sinon `chrome.storage.local`.
   for (const [patch, expected] of [
-    [{ state: "planned", plan: plan("audit", "mem0-omp") }, "Plan prêt"],
+    [{ state: "planned", plan: plan("audit", "memory-omp") }, "Plan prêt"],
     [{ state: "clarifying", plan: null, question: "Quel dépôt ?" }, "Quel dépôt ?"],
     [{ state: "answered", question: null, answer: "Oui, c'est fait." }, "Oui, c'est fait."],
     [{ state: "failed", answer: null, reason: "le classement a échoué : délai" }, "le classement a échoué : délai"],
@@ -152,16 +152,16 @@ test("demande-popup/AC-3 : une réponse à la question reclasse la MÊME demande
   assert.equal(asked.confirm, false);
 
   assert.equal((await ask({ type: "intake-answer", id, text: "" })).ok, false);
-  const answered = await ask({ type: "intake-answer", id, text: "mem0-omp" });
+  const answered = await ask({ type: "intake-answer", id, text: "memory-omp" });
   assert.equal(answered.value?.id, id);
   assert.equal(answered.value?.state, "classifying");
-  assert.deepEqual(calls.at(-1)?.body, { text: "mem0-omp" });
+  assert.deepEqual(calls.at(-1)?.body, { text: "memory-omp" });
   assert.equal(calls.filter((each) => each.path === "/v1/intake").length, 1);
 
   classify(id, { state: "clarifying", question: "Bug ou feature ?" });
   assert.ok(describeIntake((await ask({ type: "intake-get" })).value as Intake).lines.includes("Bug ou feature ?"));
   await ask({ type: "intake-answer", id, text: "bug" });
-  classify(id, { state: "planned", plan: plan("bug", "mem0-omp") });
+  classify(id, { state: "planned", plan: plan("bug", "memory-omp") });
   const planned = await ask({ type: "intake-get" });
   assert.equal(planned.value?.id, id);
   assert.equal(describeIntake(planned.value as Intake).confirm, true);

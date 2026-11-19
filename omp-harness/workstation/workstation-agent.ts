@@ -17,7 +17,7 @@
 //   `atlassian.planHour` (fuseau `schedules.timezone`) ou à la demande d'une app, poste hors pause
 //   et Atlassian branché ; rendu par `atlassian_plan_write` ;
 // - `poste-savoir` : la passe de savoir de la boîte, toutes les `atlassian.knowledgeEveryHours`
-//   heures ou à la demande, Atlassian branché : ses `mem0_*` écrivent dans la scope `corpo`,
+//   heures ou à la demande, Atlassian branché : ses `memory_*` écrivent dans la scope `corpo`,
 //   son compte rendu rendu par `atlassian_knowledge_report`.
 //
 // Avec Atlassian branché, `poste-service`, `poste-demande` et `poste-plan` lisent Jira et
@@ -453,7 +453,7 @@ export class WorkstationAgent {
     const space = live.space === null ? null : this.#ctx.store.getSpace(live.space);
     if (live.space !== null && space === null) throw new Error(`espace ${live.space} retiré : le job ne part pas`);
     const workstation = workstationTarget(this.#ctx.config, space);
-    // La passe de savoir écrit dans la mémoire de la boîte : ses `mem0_*` visent `corpo` (`corpo:<espace>` pour un espace).
+    // La passe de savoir écrit dans la mémoire de la boîte : ses `memory_*` visent `corpo` (`corpo:<espace>` pour un espace).
     const target =
       job === "poste-savoir"
         ? { ...workstation, repo: { ...workstation.repo, scope: corpoScopeOf(live.space) } }

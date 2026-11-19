@@ -315,7 +315,7 @@ export function spaceRoutes(kit: RouteKit) {
   const localSessionRoutes = [
     // ── OS agentique : les sessions locales ──
     // Les sessions omp du poste du développeur (local-sessions.ts) : le rapporteur du plugin
-    // `omp-mem0-req` envoie ses battements avec le jeton du propriétaire ; battre, lire, confier à un
+    // `omp-memory-req` envoie ses battements avec le jeton du propriétaire ; battre, lire, confier à un
     // run et retirer sont au propriétaire (un client borné ou pilote : 403).
     route("POST", "/v1/local-sessions", "operator", async (call) => {
       ownerOf(call, BEATS_LOCAL_SESSIONS);

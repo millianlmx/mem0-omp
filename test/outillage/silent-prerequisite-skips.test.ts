@@ -1,15 +1,15 @@
 // Critères de la feature silent-prerequisite-skips : le mode `--strict` de
 // `scripts/check.sh`, qui change en échec nommé tout saut faute de prérequis
 // installable (forme unique `prerequisAbsent` de test/support/prerequis.ts) et
-// toute absence que MEM0_OMP_REQUIRE_SMOKE/RUST/IOS=1 durcirait, sans toucher aux
-// sauts de plateforme, de copie imbriquée ni aux neutralisations MEM0_OMP_SKIP_*.
+// toute absence que MEMORY_OMP_REQUIRE_SMOKE/RUST/IOS=1 durcirait, sans toucher aux
+// sauts de plateforme, de copie imbriquée ni aux neutralisations MEMORY_OMP_SKIP_*.
 //
 // Trois règles structurent ce fichier, comme test/outillage/ci-macos-jobs-paralleles.test.ts :
 //  1. ce qui lance `── Tests` tourne dans une COPIE LÉGÈRE dont le dossier test/
 //     ne contient que des fixtures — jamais la vraie suite ;
 //  2. ce qui exige une copie du dépôt (sections app-swift/app-ios) ne tourne
-//     qu'au premier niveau (`MEM0_CHECK_DEPTH`) ;
-//  3. les enfants reçoivent les trois MEM0_OMP_REQUIRE_* VIDES (la CI les pose et
+//     qu'au premier niveau (`MEMORY_CHECK_DEPTH`) ;
+//  3. les enfants reçoivent les trois MEMORY_OMP_REQUIRE_* VIDES (la CI les pose et
 //     la suite les hérite), surchargés cas par cas.
 //
 // Les sources des fixtures sont assemblées par concaténation, jamais écrites en
@@ -22,8 +22,9 @@ import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT, childEnv, sharedRepo, tmpdir } from "../support/repo.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
-const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
+const DEPTH = Number(renamedEnv(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
 const NESTED = "copie jetable — les sections réelles sont éprouvées au premier niveau";
 /** PATH sans cargo, bun ni node sur un poste ou un runner ordinaire. */
 const BARE_PATH = "/usr/bin:/bin";
@@ -36,13 +37,13 @@ function runCheck(cwd: string, args: string[], extra: Record<string, string> = {
     cwd,
     encoding: "utf8",
     env: childEnv({
-      MEM0_CHECK_DEPTH: String(DEPTH + 1),
-      MEM0_OMP_SKIP_SWIFT_APP: "1",
-      MEM0_OMP_SKIP_IOS: "1",
-      MEM0_OMP_SKIP_RUST: "1",
-      MEM0_OMP_REQUIRE_SMOKE: "",
-      MEM0_OMP_REQUIRE_RUST: "",
-      MEM0_OMP_REQUIRE_IOS: "",
+      MEMORY_CHECK_DEPTH: String(DEPTH + 1),
+      MEMORY_OMP_SKIP_SWIFT_APP: "1",
+      MEMORY_OMP_SKIP_IOS: "1",
+      MEMORY_OMP_SKIP_RUST: "1",
+      MEMORY_OMP_REQUIRE_SMOKE: "",
+      MEMORY_OMP_REQUIRE_RUST: "",
+      MEMORY_OMP_REQUIRE_IOS: "",
       ...extra,
     }),
     timeout: 900_000,
@@ -129,7 +130,7 @@ test("silent-prerequisite-skips/AC-1 : sans --strict, un prérequis installable 
       st.skip(`cargo présent dans ${BARE_PATH}`);
       return;
     }
-    const rust = runCheck(ROOT, ["--sections=rust"], { PATH: BARE_PATH, MEM0_OMP_SKIP_RUST: "" });
+    const rust = runCheck(ROOT, ["--sections=rust"], { PATH: BARE_PATH, MEMORY_OMP_SKIP_RUST: "" });
     assert.equal(rust.status, 0, output(rust));
     assert.ok(
       output(rust).includes(
@@ -194,8 +195,8 @@ test("silent-prerequisite-skips/AC-3 : hors macOS, --strict laisse les sauts de 
   stub(bin, "xcodebuild", `printf 'xcodebuild %s\\n' "$*" >> '${log}'`);
   const run = runCheck(shared.fresh(), ["--sections=app-swift,app-ios", "--strict"], {
     PATH: `${bin}:${process.env.PATH}`,
-    MEM0_OMP_SKIP_SWIFT_APP: "",
-    MEM0_OMP_SKIP_IOS: "",
+    MEMORY_OMP_SKIP_SWIFT_APP: "",
+    MEMORY_OMP_SKIP_IOS: "",
   });
   const out = output(run);
   assert.equal(run.status, 0, out);
@@ -205,7 +206,7 @@ test("silent-prerequisite-skips/AC-3 : hors macOS, --strict laisse les sauts de 
   assert.equal(calls, "", "swift et xcodebuild ne doivent jamais être appelés hors macOS");
 });
 
-test("silent-prerequisite-skips/AC-4 : en --strict, les sauts de copie imbriquée et les MEM0_OMP_SKIP_* restent des sauts", (t) => {
+test("silent-prerequisite-skips/AC-4 : en --strict, les sauts de copie imbriquée et les MEMORY_OMP_SKIP_* restent des sauts", (t) => {
   const dir = lightCopy({
     "outillage/fixture.test.ts": fixture(fixtureTest("fixture/imbriquee", 't.skip("copie imbriquée — fixture");')),
   });
@@ -224,7 +225,7 @@ test("silent-prerequisite-skips/AC-4 : en --strict, les sauts de copie imbriqué
   const out = output(run);
   assert.equal(run.status, 0, out);
   for (const name of ["RUST", "SWIFT_APP", "IOS"]) {
-    assert.ok(out.includes(`  · ignorée (MEM0_OMP_SKIP_${name}=1)\n`), out);
+    assert.ok(out.includes(`  · ignorée (MEMORY_OMP_SKIP_${name}=1)\n`), out);
   }
 });
 
@@ -270,26 +271,26 @@ test("silent-prerequisite-skips/AC-5 : en --strict, la section Tests rougit et n
   assert.ok(redLines[named + 1]?.startsWith("  ✗ tests unitaires — relance : "), output(red));
 });
 
-test("silent-prerequisite-skips/AC-6 : une variable MEM0_OMP_REQUIRE_* seule durcit son domaine, et lui seul", async (t) => {
+test("silent-prerequisite-skips/AC-6 : une variable MEMORY_OMP_REQUIRE_* seule durcit son domaine, et lui seul", async (t) => {
   await t.test("REQUIRE_SMOKE / REQUIRE_RUST sans bun ni cargo", (st) => {
     if (presentIn("bun", BARE_PATH) || presentIn("cargo", BARE_PATH)) {
       st.skip(`bun ou cargo présent dans ${BARE_PATH}`);
       return;
     }
-    const smoke = runCheck(ROOT, ["--sections=smoke"], { PATH: BARE_PATH, MEM0_OMP_REQUIRE_SMOKE: "1" });
+    const smoke = runCheck(ROOT, ["--sections=smoke"], { PATH: BARE_PATH, MEMORY_OMP_REQUIRE_SMOKE: "1" });
     assert.equal(smoke.status, 1, output(smoke));
     assert.ok(lines(output(smoke)).includes("  ✗ plugins réels : bun absent"), output(smoke));
 
-    const other = runCheck(ROOT, ["--sections=smoke"], { PATH: BARE_PATH, MEM0_OMP_REQUIRE_RUST: "1" });
+    const other = runCheck(ROOT, ["--sections=smoke"], { PATH: BARE_PATH, MEMORY_OMP_REQUIRE_RUST: "1" });
     assert.equal(other.status, 0, output(other));
     assert.ok(lines(output(other)).includes("  · bun absent, plugins réels non vérifiés"), output(other));
 
     // Sous la variable, le message historique est inchangé, --strict ou non.
     for (const args of [["--sections=rust"], ["--sections=rust", "--strict"]]) {
-      const rust = runCheck(ROOT, args, { PATH: BARE_PATH, MEM0_OMP_SKIP_RUST: "", MEM0_OMP_REQUIRE_RUST: "1" });
+      const rust = runCheck(ROOT, args, { PATH: BARE_PATH, MEMORY_OMP_SKIP_RUST: "", MEMORY_OMP_REQUIRE_RUST: "1" });
       assert.equal(rust.status, 1, `${args.join(" ")} :\n${output(rust)}`);
       assert.ok(
-        lines(output(rust)).includes("  ✗ Rust mem0-rs — cargo absent (MEM0_OMP_REQUIRE_RUST=1)"),
+        lines(output(rust)).includes("  ✗ Rust memory-rs — cargo absent (MEMORY_OMP_REQUIRE_RUST=1)"),
         output(rust),
       );
     }
@@ -304,23 +305,23 @@ test("silent-prerequisite-skips/AC-6 : une variable MEM0_OMP_REQUIRE_* seule dur
     stub(bin, "uname", "printf 'Linux\\n'");
     const ios = runCheck(shared.fresh(), ["--sections=app-ios", "--strict"], {
       PATH: `${bin}:${process.env.PATH}`,
-      MEM0_OMP_SKIP_IOS: "",
-      MEM0_OMP_REQUIRE_IOS: "1",
+      MEMORY_OMP_SKIP_IOS: "",
+      MEMORY_OMP_REQUIRE_IOS: "1",
     });
     assert.notEqual(ios.status, 0, output(ios));
     assert.ok(output(ios).includes("✗ App iOS"), output(ios));
   });
 });
 
-test("silent-prerequisite-skips/AC-7 : --strict durcit seul les prérequis que les MEM0_OMP_REQUIRE_* durciraient", async (t) => {
+test("silent-prerequisite-skips/AC-7 : --strict durcit seul les prérequis que les MEMORY_OMP_REQUIRE_* durciraient", async (t) => {
   await t.test("rust : cargo absent", (st) => {
     if (presentIn("cargo", BARE_PATH)) {
       st.skip(`cargo présent dans ${BARE_PATH}`);
       return;
     }
-    const rust = runCheck(ROOT, ["--sections=rust", "--strict"], { PATH: BARE_PATH, MEM0_OMP_SKIP_RUST: "" });
+    const rust = runCheck(ROOT, ["--sections=rust", "--strict"], { PATH: BARE_PATH, MEMORY_OMP_SKIP_RUST: "" });
     assert.equal(rust.status, 1, output(rust));
-    assert.ok(lines(output(rust)).includes("  ✗ Rust mem0-rs — cargo absent (--strict)"), output(rust));
+    assert.ok(lines(output(rust)).includes("  ✗ Rust memory-rs — cargo absent (--strict)"), output(rust));
   });
 
   await t.test("smoke : bun absent", (st) => {
@@ -345,7 +346,7 @@ test("silent-prerequisite-skips/AC-7 : --strict durcit seul les prérequis que l
     );
     const { bin } = stubBin("strict-ios-darwin-");
     stub(bin, "uname", "printf 'Darwin\\n'");
-    const env = { PATH: `${bin}:${process.env.PATH}`, MEM0_OMP_SKIP_IOS: "" };
+    const env = { PATH: `${bin}:${process.env.PATH}`, MEMORY_OMP_SKIP_IOS: "" };
     const ios = runCheck(copy, ["--sections=app-ios", "--strict"], env);
     assert.equal(ios.status, 1, output(ios));
     assert.ok(

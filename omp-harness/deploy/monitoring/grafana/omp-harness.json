@@ -3,7 +3,7 @@
   "title": "omp-harness — santé du serveur",
   "tags": [
     "omp-harness",
-    "mem0"
+    "memory"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -378,8 +378,8 @@
         },
         {
           "refId": "B",
-          "expr": "time() - mem0_backup_last_success_timestamp_seconds",
-          "legendFormat": "mem0",
+          "expr": "time() - memory_backup_last_success_timestamp_seconds",
+          "legendFormat": "memory",
           "datasource": {
             "type": "prometheus",
             "uid": "omp-prometheus"
@@ -419,8 +419,8 @@
         },
         {
           "refId": "B",
-          "expr": "mem0_backup_failing",
-          "legendFormat": "mem0",
+          "expr": "memory_backup_failing",
+          "legendFormat": "memory",
           "datasource": {
             "type": "prometheus",
             "uid": "omp-prometheus"
@@ -445,7 +445,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "mem0_memories",
+          "expr": "memory_memories",
           "legendFormat": "souvenirs",
           "datasource": {
             "type": "prometheus",
@@ -454,7 +454,7 @@
         },
         {
           "refId": "B",
-          "expr": "mem0_db_bytes",
+          "expr": "memory_db_bytes",
           "legendFormat": "octets",
           "datasource": {
             "type": "prometheus",
@@ -480,7 +480,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (route, status) (rate(mem0_http_requests_total[5m]))",
+          "expr": "sum by (route, status) (rate(memory_http_requests_total[5m]))",
           "legendFormat": "{{route}} {{status}}",
           "datasource": {
             "type": "prometheus",

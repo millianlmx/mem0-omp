@@ -3,9 +3,9 @@
 # omp-console-sans-podman) : preuves en conditions réelles d'AC-6, AC-7 et
 # AC-12 côté service. Jouée à la main par l'orchestrateur, JAMAIS par
 # scripts/check.sh ni la CI : elle lit la vraie pile podman d'OMP Console et le
-# vrai agent launchd `com.omp.console.mem0-rs`.
+# vrai agent launchd `com.omp.console.memory-rs`.
 #
-# Usage : MEM0_SANS_PODMAN_REEL=1 bash scripts/recette/sans-podman-bascule-recette.sh avant|apres|relance
+# Usage : MEMORY_SANS_PODMAN_REEL=1 bash scripts/recette/sans-podman-bascule-recette.sh avant|apres|relance
 #
 #   avant    ancienne app, pile podman en marche (Qdrant sur 127.0.0.1:6333) :
 #            lit `stack/env` (QDRANT_API_KEY), fait défiler la collection
@@ -31,9 +31,9 @@
 #
 # Racine : `OMP_CONSOLE_SUPPORT_ROOT` sinon
 # `~/Library/Application Support/com.omp.console` ; une racine surchargée a son
-# propre label (`com.omp.console.mem0-rs.<12 hex du SHA-256 du chemin>`, comme
-# `MemoryAgent.label(paths:)`). Port du service : `OMP_CONSOLE_MEM0_PORT` sinon
-# 8321. Jeton X-Mem0-Token : `MEM0_HTTP_TOKEN` de `stack/env`, envoyé s'il n'est
+# propre label (`com.omp.console.memory-rs.<12 hex du SHA-256 du chemin>`, comme
+# `MemoryAgent.label(paths:)`). Port du service : `OMP_CONSOLE_MEMORY_PORT` sinon
+# 8321. Jeton X-Memory-Token : `MEMORY_HTTP_TOKEN` de `stack/env`, envoyé s'il n'est
 # pas vide.
 #
 # Une ligne par vérification : `✓ <constat>` ou `✗ <attendu> / <obtenu>`.
@@ -46,7 +46,7 @@ not_run() { say "non exécuté : $*"; exit 2; }
 ok() { say "✓ $*"; }
 fail() { say "✗ $*"; exit 1; }
 
-[ "${MEM0_SANS_PODMAN_REEL:-}" = "1" ] || not_run "MEM0_SANS_PODMAN_REEL=1 requis (bascule réelle du poste)"
+[ "${MEMORY_SANS_PODMAN_REEL:-${MEM0_SANS_PODMAN_REEL:-}}" = "1" ] || not_run "MEMORY_SANS_PODMAN_REEL=1 requis (bascule réelle du poste)"
 
 MODE="${1:-}"
 case "$MODE" in
@@ -62,12 +62,12 @@ PYTHON=/usr/bin/python3
 ROOT="${OMP_CONSOLE_SUPPORT_ROOT:-}"
 if [ -n "$ROOT" ]; then
   ROOT="${ROOT%/}"
-  LABEL="com.omp.console.mem0-rs.$(printf '%s' "$ROOT" | shasum -a 256 | cut -c1-12)"
+  LABEL="com.omp.console.memory-rs.$(printf '%s' "$ROOT" | shasum -a 256 | cut -c1-12)"
 else
   ROOT="$HOME/Library/Application Support/com.omp.console"
-  LABEL="com.omp.console.mem0-rs"
+  LABEL="com.omp.console.memory-rs"
 fi
-PORT="${OMP_CONSOLE_MEM0_PORT:-8321}"
+PORT="${OMP_CONSOLE_MEMORY_PORT:-${OMP_CONSOLE_MEM0_PORT:-8321}}"
 case "$PORT" in
   ''|*[!0-9]*) PORT=8321 ;;
   *) { [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; } || PORT=8321 ;;
@@ -197,8 +197,8 @@ def avant(before):
     return say(True, f"{len(flat(doc))} souvenirs relevés dans Qdrant ({counts}) → {before}")
 
 
-def mem0(method, path, token, body=None):
-    headers = {"X-Mem0-Token": token} if token else {}
+def memory(method, path, token, body=None):
+    headers = {"X-Memory-Token": token} if token else {}
     status, raw = request(method, f"http://127.0.0.1:{PORT}{path}", headers, body)
     if status != 200:
         return None, f"statut {status} — {raw[:200].decode(errors='replace')}"
@@ -219,9 +219,9 @@ def apres(before, switch, report, after):
         return False
     with open(before, encoding="utf-8") as f:
         doc = json.load(f)
-    token = env_file().get("MEM0_HTTP_TOKEN", "")
+    token = env_file().get("MEMORY_HTTP_TOKEN", "")
     from urllib.parse import quote
-    everything, err = mem0("GET", "/memory/all", token)
+    everything, err = memory("GET", "/memory/all", token)
     if err:
         return say(False, f"GET /memory/all sur 127.0.0.1:{PORT} / {err}")
     for agent in doc["agents"]:
@@ -231,7 +231,7 @@ def apres(before, switch, report, after):
             got = pairs([r for r in everything if r.get("agent_id") is None])
             name = "(sans agent_id)"
         else:
-            rows, err = mem0("GET", f"/memory/all?agent_id={quote(aid, safe='')}", token)
+            rows, err = memory("GET", f"/memory/all?agent_id={quote(aid, safe='')}", token)
             if err:
                 return say(False, f"GET /memory/all?agent_id={aid} / {err}")
             got = pairs(rows)
@@ -251,7 +251,7 @@ def apres(before, switch, report, after):
     body = {"query": query, "limit": 5}
     if richest["agent_id"] is not None:
         body["agent_id"] = richest["agent_id"]
-    results, err = mem0("POST", "/memory/search", token, body)
+    results, err = memory("POST", "/memory/search", token, body)
     if err:
         return say(False, f"POST /memory/search (oMLX joignable ?) / {err}")
     if not results:

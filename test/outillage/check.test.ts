@@ -16,7 +16,7 @@
 //  3. Les vérifications qui portent sur l'arbre réel (sections vertes, les deux
 //     extensions transpilées) ne s'exécutent qu'au premier niveau : lancées depuis
 //     la suite qu'elles déclenchent, elles se rappelleraient elles-mêmes.
-//     `MEM0_CHECK_DEPTH` compte ces niveaux.
+//     `MEMORY_CHECK_DEPTH` compte ces niveaux.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -36,26 +36,27 @@ import {
   writeXcodeDoubles,
 } from "../support/swift-app-doubles.ts";
 import type { AssemblageAppIntents } from "../support/swift-app-doubles.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
 
 /** Profondeur d'imbrication : 0 = `node --test test/outillage/check.test.ts` à la main. */
-const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
+const DEPTH = Number(renamedEnv(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
 
 /** Un `bash scripts/check.sh` dans une copie relance la suite : on le lui dit. */
-// `MEM0_OMP_SKIP_SWIFT_APP=1` évite qu'une copie jetable paie une compilation
+// `MEMORY_OMP_SKIP_SWIFT_APP=1` évite qu'une copie jetable paie une compilation
 // Swift complète (≈ 35 s) alors qu'elle vérifie une AUTRE section. Les deux tests
 // qui éprouvent la section « App Swift » neutralisent la variable (valeur vide).
-// `MEM0_OMP_SKIP_IOS=1` fait de même pour la section « App iOS » (BR-3) : sans
+// `MEMORY_OMP_SKIP_IOS=1` fait de même pour la section « App iOS » (BR-3) : sans
 // elle, chaque copie paierait un `xcodebuild` là où Xcode est utilisable.
 const NESTED_ENV = {
   ...process.env,
-  MEM0_CHECK_DEPTH: String(DEPTH + 1),
-  MEM0_OMP_SKIP_SWIFT_APP: "1",
-  MEM0_OMP_SKIP_IOS: "1",
-  // La section Rust (cargo, contrat boîte noire contre mem0-rs) démarre de vrais
+  MEMORY_CHECK_DEPTH: String(DEPTH + 1),
+  MEMORY_OMP_SKIP_SWIFT_APP: "1",
+  MEMORY_OMP_SKIP_IOS: "1",
+  // La section Rust (cargo, contrat boîte noire contre memory-rs) démarre de vrais
   // serveurs : aucune copie jetable ne la relance, la racine l'exécute.
-  MEM0_OMP_SKIP_RUST: "1",
+  MEMORY_OMP_SKIP_RUST: "1",
   // Le Biome épinglé de la racine : une copie n'emporte pas `.lint/`.
   ...LINT_TOOL_ENV,
 };
@@ -118,7 +119,7 @@ function entryOf(cat: Catalog, name: string): CatalogEntry {
 
 test("check/AC-10 : un import de valeur depuis @oh-my-pi fait échouer check.sh en nommant le fichier", () => {
   const dir = copyRepo();
-  const target = path.join(dir, "omp-mem0-req/extension.ts");
+  const target = path.join(dir, "omp-memory-req/extension.ts");
   const source = fs.readFileSync(target, "utf8");
   fs.writeFileSync(target, `import { x } from "@oh-my-pi/pi-coding-agent";\n${source}`);
 
@@ -128,7 +129,7 @@ test("check/AC-10 : un import de valeur depuis @oh-my-pi fait échouer check.sh 
   // (« aucun import de valeur… ») contiendrait le même motif sans le préfixe.
   assert.ok(
     output(bad).includes(
-      "✗ import de valeur depuis @oh-my-pi/* — omp-mem0-req/extension.ts:1 ; " +
+      "✗ import de valeur depuis @oh-my-pi/* — omp-memory-req/extension.ts:1 ; " +
         "préfère 'import type', effacé à la compilation",
     ),
     output(bad),
@@ -137,7 +138,7 @@ test("check/AC-10 : un import de valeur depuis @oh-my-pi fait échouer check.sh 
   // Le même import écrit en `import type` ne déclenche pas le contrôle : la
   // section reste verte sur ce point, sa ligne de `pass` le dit.
   const typed = copyRepo();
-  const typedTarget = path.join(typed, "omp-mem0-req/extension.ts");
+  const typedTarget = path.join(typed, "omp-memory-req/extension.ts");
   fs.writeFileSync(
     typedTarget,
     `import type { x } from "@oh-my-pi/pi-coding-agent";\n${fs.readFileSync(typedTarget, "utf8")}`,
@@ -150,7 +151,7 @@ test("check/AC-10 : un import de valeur depuis @oh-my-pi fait échouer check.sh 
 test("check/AC-14 : une commande déclarée au catalogue sans registerCommand fait échouer check.sh", () => {
   const dir = copyRepo();
   editCatalogs(dir, (cat) => {
-    const entry = entryOf(cat, "omp-mem0-req");
+    const entry = entryOf(cat, "omp-memory-req");
     entry.commands = [...(entry.commands ?? []), "commande-fantome"];
   });
   // Le SEUL check.sh sans option du fichier (règle 2 de l'en-tête) : une section
@@ -158,22 +159,22 @@ test("check/AC-14 : une commande déclarée au catalogue sans registerCommand fa
   const ghost = runCheck(dir, null);
   assert.notEqual(ghost.status, 0, output(ghost));
   assert.ok(
-    output(ghost).includes("omp-mem0-req : commande déclarée sans registerCommand : commande-fantome"),
+    output(ghost).includes("omp-memory-req : commande déclarée sans registerCommand : commande-fantome"),
     output(ghost),
   );
 
   // Sens inverse : la commande reste déclarée, mais cesse d'être enregistrée.
   const orphan = copyRepo();
-  const extension = path.join(orphan, "omp-mem0-req/extension.ts");
+  const extension = path.join(orphan, "omp-memory-req/extension.ts");
   const source = fs.readFileSync(extension, "utf8");
   const renamed = source.replace(/pi\.registerCommand\(\s*"pipelines"/, 'pi.registerCommand("panneau-detache"');
-  assert.notEqual(renamed, source, 'registerCommand("pipelines") introuvable dans omp-mem0-req');
+  assert.notEqual(renamed, source, 'registerCommand("pipelines") introuvable dans omp-memory-req');
   fs.writeFileSync(extension, renamed);
 
   const missing = runCheck(orphan, "plugins");
   assert.notEqual(missing.status, 0, output(missing));
   assert.ok(
-    output(missing).includes("omp-mem0-req : commande déclarée sans registerCommand : pipelines"),
+    output(missing).includes("omp-memory-req : commande déclarée sans registerCommand : pipelines"),
     output(missing),
   );
 });
@@ -181,7 +182,7 @@ test("check/AC-14 : une commande déclarée au catalogue sans registerCommand fa
 test("check/AC-15 : une version d'entrée ou de metadata divergente fait échouer check.sh", () => {
   // Les versions attendues sont LUES sur l'arbre, jamais écrites en dur : un bump
   // de version ne doit pas transformer ce test en test de régression du chiffre.
-  const pkgVersion = JSON.parse(fs.readFileSync(path.join(ROOT, "omp-mem0-memory", "package.json"), "utf8"))
+  const pkgVersion = JSON.parse(fs.readFileSync(path.join(ROOT, "omp-memory", "package.json"), "utf8"))
     .version as string;
   const catalogMeta = JSON.parse(fs.readFileSync(path.join(ROOT, ".omp-plugin", "marketplace.json"), "utf8")).metadata
     .version as string;
@@ -189,12 +190,12 @@ test("check/AC-15 : une version d'entrée ou de metadata divergente fait échoue
 
   const diverged = copyRepo();
   editCatalogs(diverged, (cat) => {
-    entryOf(cat, "omp-mem0-memory").version = bogus;
+    entryOf(cat, "omp-memory").version = bogus;
   });
   const entryOut = runCheck(diverged, "versions");
   assert.notEqual(entryOut.status, 0, output(entryOut));
   assert.ok(
-    output(entryOut).includes(`omp-mem0-memory : version d'entrée ${bogus} ≠ package.json ${pkgVersion}`),
+    output(entryOut).includes(`omp-memory : version d'entrée ${bogus} ≠ package.json ${pkgVersion}`),
     output(entryOut),
   );
 
@@ -215,7 +216,7 @@ test("check/AC-15 : une version d'entrée ou de metadata divergente fait échoue
   }
 });
 
-test("check/AC-16 : les deux extensions sont transpilées, omp-mem0-req comprise", (t) => {
+test("check/AC-16 : les deux extensions sont transpilées, omp-memory-req comprise", (t) => {
   const npx = spawnSync("bash", ["-c", "command -v npx"], { encoding: "utf8" });
   if (npx.status !== 0) {
     prerequisAbsent(t, "npx", "transpilation non vérifiée");
@@ -223,11 +224,11 @@ test("check/AC-16 : les deux extensions sont transpilées, omp-mem0-req comprise
   }
 
   const dir = copyRepo();
-  const target = path.join(dir, "omp-mem0-req/extension.ts");
+  const target = path.join(dir, "omp-memory-req/extension.ts");
   fs.writeFileSync(target, `const x = ;\n${fs.readFileSync(target, "utf8")}`);
   const broken = runCheck(dir, "extension");
   assert.notEqual(broken.status, 0, output(broken));
-  assert.ok(output(broken).includes("omp-mem0-req/extension.ts ne se transpile pas"), output(broken));
+  assert.ok(output(broken).includes("omp-memory-req/extension.ts ne se transpile pas"), output(broken));
 
   if (DEPTH === 0) {
     const real = runCheck(ROOT, "extension");
@@ -257,7 +258,7 @@ test("check/AC-17 : la CI exerce check.sh sur macOS et Ubuntu", () => {
   );
 });
 
-test("check/AC-18 : le type-check de omp-mem0-req contre les types de l'hôte est sans erreur", (t) => {
+test("check/AC-18 : le type-check de omp-memory-req contre les types de l'hôte est sans erreur", (t) => {
   if (outilEpingleAbsent(t, "typescript")) return;
   const script = path.join(ROOT, "scripts/typecheck.sh");
   if (!fs.existsSync(script)) {
@@ -296,10 +297,10 @@ const HOST_TYPES_ABSENT = "types de l'hôte absents";
 
 const hostTypesAbsent = (out: string): boolean => out.includes(HOST_TYPES_ABSENT);
 
-test("check/AC-1 : une erreur de type dans un module de omp-mem0-memory fait échouer check.sh en nommant le fichier", (t) => {
+test("check/AC-1 : une erreur de type dans un module de omp-memory fait échouer check.sh en nommant le fichier", (t) => {
   if (outilEpingleAbsent(t, "typescript")) return;
   const dir = copyRepo();
-  const target = path.join(dir, "omp-mem0-memory/brief.ts");
+  const target = path.join(dir, "omp-memory/brief.ts");
   fs.writeFileSync(target, `const q: number = "boom";\n${fs.readFileSync(target, "utf8")}`);
 
   const bad = runCheck(dir, "types");
@@ -309,7 +310,7 @@ test("check/AC-1 : une erreur de type dans un module de omp-mem0-memory fait éc
   }
   assert.notEqual(bad.status, 0, output(bad));
   assert.ok(output(bad).includes("✗ type-check : "), output(bad));
-  assert.ok(output(bad).includes("omp-mem0-memory/brief.ts("), output(bad));
+  assert.ok(output(bad).includes("omp-memory/brief.ts("), output(bad));
   assert.ok(output(bad).includes("error TS2322"), output(bad));
 });
 
@@ -332,7 +333,7 @@ test("check/AC-2 : une erreur de type dans un fichier de test fait échouer chec
 test("check/AC-3 : un .ts neuf des deux arbres est type-checké sans retouche de configuration", (t) => {
   if (outilEpingleAbsent(t, "typescript")) return;
   const dir = copyRepo();
-  fs.writeFileSync(path.join(dir, "omp-mem0-memory/zz-neuf.ts"), `export const q: number = "boom";\n`);
+  fs.writeFileSync(path.join(dir, "omp-memory/zz-neuf.ts"), `export const q: number = "boom";\n`);
   fs.writeFileSync(path.join(dir, "test/zz-neuf.ts"), `export const q: number = "boom";\n`);
 
   // Les deux chemins sont exigés : le second prouve que le programme des tests
@@ -343,14 +344,14 @@ test("check/AC-3 : un .ts neuf des deux arbres est type-checké sans retouche de
     return;
   }
   assert.notEqual(bad.status, 0, output(bad));
-  assert.ok(output(bad).includes("omp-mem0-memory/zz-neuf.ts("), output(bad));
+  assert.ok(output(bad).includes("omp-memory/zz-neuf.ts("), output(bad));
   assert.ok(output(bad).includes("test/zz-neuf.ts("), output(bad));
 });
 
 test("check/AC-4 : le type-check tourne en strict (valeur possiblement nulle refusée)", (t) => {
   if (outilEpingleAbsent(t, "typescript")) return;
   const dir = copyRepo();
-  const target = path.join(dir, "omp-mem0-memory/brief.ts");
+  const target = path.join(dir, "omp-memory/brief.ts");
   fs.writeFileSync(
     target,
     `const s: string | null = null;\nexport const n = s.length;\n${fs.readFileSync(target, "utf8")}`,
@@ -364,7 +365,7 @@ test("check/AC-4 : le type-check tourne en strict (valeur possiblement nulle ref
     return;
   }
   assert.notEqual(bad.status, 0, output(bad));
-  assert.ok(output(bad).includes("omp-mem0-memory/brief.ts("), output(bad));
+  assert.ok(output(bad).includes("omp-memory/brief.ts("), output(bad));
   assert.ok(output(bad).includes("error TS18047"), output(bad));
 });
 
@@ -372,7 +373,7 @@ test("check/AC-5 : la CI fournit les types de l'hôte et une racine déclarée i
   // (a) Les deux jobs de la matrice exportent les types et exécutent check.sh :
   // une erreur de type ne peut donc pas passer pour un « types absents ».
   const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/check.yml"), "utf8");
-  assert.ok(workflow.includes("MEM0_OMP_HOST_TYPES="), workflow);
+  assert.ok(workflow.includes("MEMORY_OMP_HOST_TYPES="), workflow);
   assert.ok(workflow.includes("./scripts/check.sh"), workflow);
 
   // Le volet (b) passe par le tsc épinglé : sans lui, typecheck.sh s'arrête avant les types.
@@ -384,11 +385,11 @@ test("check/AC-5 : la CI fournit les types de l'hôte et une racine déclarée i
   const run = spawnSync("bash", ["scripts/typecheck.sh"], {
     cwd: ROOT,
     encoding: "utf8",
-    env: { ...process.env, MEM0_OMP_HOST_TYPES: empty },
+    env: { ...process.env, MEMORY_OMP_HOST_TYPES: empty },
   });
   const out = output(run);
   assert.notEqual(run.status, 0, out);
-  assert.ok(out.includes("MEM0_OMP_HOST_TYPES"), out);
+  assert.ok(out.includes("MEMORY_OMP_HOST_TYPES"), out);
   assert.ok(!out.includes(HOST_TYPES_ABSENT), out);
 });
 
@@ -417,7 +418,7 @@ test("check/AC-6 : un fichier de test peut utiliser une API ES2024 (Promise.with
 test("check/AC-7 : une API ES2024 dans un module de plugin fait échouer check.sh", (t) => {
   if (outilEpingleAbsent(t, "typescript")) return;
   const dir = copyRepo();
-  for (const rel of ["omp-mem0-req/harness.ts", "omp-mem0-memory/dedupe.ts"]) {
+  for (const rel of ["omp-memory-req/harness.ts", "omp-memory/dedupe.ts"]) {
     const target = path.join(dir, rel);
     fs.writeFileSync(target, `export const pr = Promise.withResolvers<void>();\n${fs.readFileSync(target, "utf8")}`);
   }
@@ -430,8 +431,8 @@ test("check/AC-7 : une API ES2024 dans un module de plugin fait échouer check.s
     return;
   }
   assert.notEqual(bad.status, 0, output(bad));
-  assert.ok(output(bad).includes("omp-mem0-req/harness.ts("), output(bad));
-  assert.ok(output(bad).includes("omp-mem0-memory/dedupe.ts("), output(bad));
+  assert.ok(output(bad).includes("omp-memory-req/harness.ts("), output(bad));
+  assert.ok(output(bad).includes("omp-memory/dedupe.ts("), output(bad));
   assert.ok(output(bad).includes("error TS2550"), output(bad));
 });
 
@@ -448,7 +449,7 @@ function unusedChecksProbe(): { status: number | null; out: string } {
     const target = path.join(dir, rel);
     fs.writeFileSync(target, `${lines.join("\n")}\n${fs.readFileSync(target, "utf8")}`);
   };
-  prefix("omp-mem0-req/harness.ts", [
+  prefix("omp-memory-req/harness.ts", [
     "export function probeUnusedLocal(): void {",
     "  const unusedLocalProbe = 1;",
     "}",
@@ -464,7 +465,7 @@ function unusedChecksProbe(): { status: number | null; out: string } {
     "  return r;",
     "}",
   ]);
-  prefix("omp-mem0-memory/brief.ts", ["export function probeUnusedParam(unusedParamProbe: number): void {}"]);
+  prefix("omp-memory/brief.ts", ["export function probeUnusedParam(unusedParamProbe: number): void {}"]);
   prefix("test/memoire/dedupe.test.ts", [
     "export function probeTestLocal(): void {",
     "  const unusedTestLocalProbe = 1;",
@@ -484,7 +485,7 @@ test("tsconfig-missing-unused-checks/AC-1 : une variable locale jamais lue dans 
   }
   assert.ok(
     out.includes(
-      "omp-mem0-req/harness.ts(2,9): error TS6133: 'unusedLocalProbe' is declared but its value is never read.",
+      "omp-memory-req/harness.ts(2,9): error TS6133: 'unusedLocalProbe' is declared but its value is never read.",
     ),
     out,
   );
@@ -499,7 +500,7 @@ test("tsconfig-missing-unused-checks/AC-2 : un paramètre jamais lu dans un plug
   }
   assert.ok(
     out.includes(
-      "omp-mem0-memory/brief.ts(1,34): error TS6133: 'unusedParamProbe' is declared but its value is never read.",
+      "omp-memory/brief.ts(1,34): error TS6133: 'unusedParamProbe' is declared but its value is never read.",
     ),
     out,
   );
@@ -512,7 +513,7 @@ test("tsconfig-missing-unused-checks/AC-3 : un case non vide qui retombe dans le
     t.skip("types de l'hôte absents — type-check non vérifié");
     return;
   }
-  assert.ok(out.includes("omp-mem0-req/harness.ts(7,5): error TS7029: Fallthrough case in switch."), out);
+  assert.ok(out.includes("omp-memory-req/harness.ts(7,5): error TS7029: Fallthrough case in switch."), out);
 });
 
 test("tsconfig-missing-unused-checks/AC-4 : une variable locale jamais lue sous test/ fait échouer le type-check en la nommant", (t) => {
@@ -573,7 +574,7 @@ test("socle-app-swift/AC-1 : le paquet omp-console compile en debug (la release 
     t.skip("macOS seul — la coque SwiftUI ne compile pas ailleurs");
     return;
   }
-  if (process.env.MEM0_OMP_SKIP_SWIFT_APP === "1") {
+  if (renamedEnv(process.env, "MEMORY_OMP_SKIP_SWIFT_APP", "MEM0_OMP_SKIP_SWIFT_APP") === "1") {
     t.skip("copie jetable — la compilation réelle est vérifiée à la racine");
     return;
   }
@@ -605,7 +606,7 @@ test("socle-app-swift/AC-6 : hors macOS la section « App Swift » dit « non ex
 
   const run = runCheck(copyRepo(), "app-swift", {
     PATH: `${bin}:${process.env.PATH}`,
-    MEM0_OMP_SKIP_SWIFT_APP: "",
+    MEMORY_OMP_SKIP_SWIFT_APP: "",
   });
   const out = output(run);
   assert.equal(run.status, 0, out);
@@ -661,16 +662,16 @@ esac`,
     "otool",
     "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'",
   );
-  // Le bundle embarque le service mémoire mem0-rs (omp-console-sans-podman S-1) :
+  // Le bundle embarque le service mémoire memory-rs (omp-console-sans-podman S-1) :
   // la doublure cargo pose un exécutable là où le vrai l'écrit, la doublure lipo
   // le déclare arm64 — aucune compilation Rust réelle dans une copie jetable.
   stub(
     bin,
     "cargo",
-    `target="\${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}"
+    `target="\${CARGO_TARGET_DIR:-memory-stack/memory-rs/target}"
 mkdir -p "$target/release"
-printf '#!/usr/bin/env bash\\nexit 0\\n' > "$target/release/mem0-rs"
-chmod +x "$target/release/mem0-rs"`,
+printf '#!/usr/bin/env bash\\nexit 0\\n' > "$target/release/memory-rs"
+chmod +x "$target/release/memory-rs"`,
   );
   stub(bin, "lipo", "printf 'arm64\\n'");
   // L'outillage Xcode (processeur de métadonnées App Intents, version, SDK) :
@@ -680,7 +681,7 @@ chmod +x "$target/release/mem0-rs"`,
   const copy = copyRepo();
   const run = runCheck(copy, "app-swift", {
     PATH: `${bin}:${process.env.PATH}`,
-    MEM0_OMP_SKIP_SWIFT_APP: "",
+    MEMORY_OMP_SKIP_SWIFT_APP: "",
   });
   const out = output(run);
   assert.equal(run.status, 0, out);
@@ -890,25 +891,25 @@ test("bundle-mac-sans-metadonnees-app-intents/AC-6 : dans l'état livré, comple
 //
 // MESURÉ le 2026-10-14 : linkd refuse un bundle sans identifiant d'équipe
 // (« requiresValidatedBundle »), donc un bundle signé ad hoc n'exécute aucun intent
-// depuis Siri ni Raccourcis. Le script signe mem0-rs puis le bundle par l'identité
+// depuis Siri ni Raccourcis. Le script signe memory-rs puis le bundle par l'identité
 // d'équipe du trousseau (ou OMP_CODESIGN_IDENTITY), prouve le TeamIdentifier, et
 // n'avertit qu'en ad hoc.
-test("siri sur le Mac : le bundle est signé par l'identité d'équipe du trousseau (mem0-rs d'abord), l'avertissement ad hoc n'apparaît qu'à défaut, et une signature sans équipe fait échouer l'assemblage", () => {
+test("siri sur le Mac : le bundle est signé par l'identité d'équipe du trousseau (memory-rs d'abord), l'avertissement ad hoc n'apparaît qu'à défaut, et une signature sans équipe fait échouer l'assemblage", () => {
   const { bundle, lancer } = montageAppIntents();
   const identite = "Apple Development: Jeanne Test (ABCDE12345)";
-  const mem0rs = path.join(bundle, "Contents", "Resources", "mem0-rs");
+  const memoryrs = path.join(bundle, "Contents", "Resources", "memory-rs");
   const avertissement = "⚠ signature ad hoc : Siri et Raccourcis n'exécuteront aucun intent de ce bundle";
 
-  // Trousseau avec une identité : elle signe mem0-rs puis le bundle, et la ligne ✓ nomme l'équipe.
+  // Trousseau avec une identité : elle signe memory-rs puis le bundle, et la ligne ✓ nomme l'équipe.
   const equipe = lancer(["--no-tests"], { FAUX_IDENTITE: identite });
   assert.equal(equipe.status, 0, equipe.sortie);
-  const signatureBinaire = equipe.lignes.indexOf(`codesign --force --sign ${identite} ${mem0rs} meta=non`);
+  const signatureBinaire = equipe.lignes.indexOf(`codesign --force --sign ${identite} ${memoryrs} meta=non`);
   const signatureBundle = equipe.lignes.indexOf(`codesign --force --sign ${identite} ${bundle} meta=oui`);
-  assert.notEqual(signatureBinaire, -1, `mem0-rs non signé par l'identité : ${equipe.lignes.join(" | ")}`);
+  assert.notEqual(signatureBinaire, -1, `memory-rs non signé par l'identité : ${equipe.lignes.join(" | ")}`);
   assert.notEqual(signatureBundle, -1, `bundle non signé par l'identité : ${equipe.lignes.join(" | ")}`);
   assert.ok(
     signatureBinaire < signatureBundle,
-    `mem0-rs doit être signé avant le bundle : ${equipe.lignes.join(" | ")}`,
+    `memory-rs doit être signé avant le bundle : ${equipe.lignes.join(" | ")}`,
   );
   assert.ok(
     equipe.sortie.includes(

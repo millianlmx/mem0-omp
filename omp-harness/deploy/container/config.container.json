@@ -56,7 +56,7 @@
     "mergeRetries": 3,
     "mergeWaitSec": 7200
   },
-  "oracle": { "url": "http://mem0:8321", "token": null },
+  "oracle": { "url": "http://memory:8321", "token": null },
   "notify": {
     "url": null,
     "events": ["escalations", "specs_ready", "verdict", "run_failed", "project_done", "merged", "vigie_incident", "vigie_silent"]

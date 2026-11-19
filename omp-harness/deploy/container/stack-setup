@@ -20,6 +20,19 @@ RETRY="${OMP_HARNESS_REPOS_RETRY:-30}"
 
 die() { echo "✗ $*" >&2; exit 1; }
 setting() { [ ! -e "$2" ] || sed -n "s/^$1=//p" "$2" | tail -1; }
+# La valeur non vide de NOUVEAU dans le fichier .env, sinon celle de ANCIEN (noms d'avant le renommage).
+setting_renamed() {
+  value="$(setting "$1" "$3")"
+  [ -n "$value" ] || value="$(setting "$2" "$3")"
+  printf '%s\n' "$value"
+}
+# Le dossier `memory` sous $1 : déjà là (dossier ou lien) → rien ; sinon l'ancien dossier d'avant le renommage
+# → lien relatif `memory` vers lui (données et secrets restent où ils sont) ; sinon créé.
+link_memory_dir() {
+  if [ -e "$1/memory" ] || [ -L "$1/memory" ]; then return 0
+  elif [ -e "$1/mem0" ] || [ -L "$1/mem0" ]; then ln -s mem0 "$1/memory"
+  else mkdir "$1/memory"; fi
+}
 harness_main() {
   node --experimental-strip-types --disable-warning=ExperimentalWarning \
     --disable-warning=MODULE_TYPELESS_PACKAGE_JSON "$MAIN" --config "$ROOT/config.json" "$@"
@@ -78,13 +91,18 @@ moli_secrets() {
 cmd_init() {
   check_values
   umask 022
+  mkdir -p "$ROOT" "$SECRETS"
+  link_memory_dir "$ROOT"
+  link_memory_dir "$SECRETS"
   mkdir -p "$ROOT/state" "$ROOT/state/logs" "$ROOT/repos" "$ROOT/worktrees" "$ROOT/home/.ssh" "$ROOT/runner-home" \
-    "$ROOT/mem0" "$ROOT/ollama" "$ROOT/cache/cargo" "$ROOT/published" "$ROOT/vigie" \
-    "$SECRETS/harness" "$SECRETS/mem0" "$SECRETS/vigie"
-  chmod 0700 "$ROOT" "$SECRETS" "$SECRETS/harness" "$SECRETS/mem0" "$SECRETS/vigie" "$ROOT/home/.ssh"
+    "$ROOT/ollama" "$ROOT/cache/cargo" "$ROOT/published" "$ROOT/vigie" \
+    "$SECRETS/harness" "$SECRETS/vigie"
+  chmod 0700 "$ROOT" "$SECRETS" "$SECRETS/harness" "$SECRETS/memory" "$SECRETS/vigie" "$ROOT/home/.ssh"
 
-  # Le jeton de la mémoire, partagé par le service, mem0-rs et les runners : gardé.
-  token="$(setting MEM0_HTTP_TOKEN "$SECRETS/mem0/mem0.env")"
+  # Le jeton de la mémoire, partagé par le service, memory-rs et les runners : gardé, sous le
+  # nouveau nom de fichier ou, d'une installation d'avant, sous l'ancien.
+  token="$(setting_renamed MEMORY_HTTP_TOKEN MEM0_HTTP_TOKEN "$SECRETS/memory/memory.env")"
+  [ -n "$token" ] || token="$(setting_renamed MEMORY_HTTP_TOKEN MEM0_HTTP_TOKEN "$SECRETS/memory/mem0.env")"
   [ -n "$token" ] || token="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
 
   moli_secrets
@@ -94,22 +112,22 @@ cmd_init() {
   chat="${OMLX_CHAT_BASE_URL:-}"
   [ -n "$chat" ] || [ -n "${OMLX_BASE_URL:-}" ] || chat=off
   umask 077
-  # Le jeton de la mémoire, puis ceux des dépôts (`memory.tokenEnv` : MEM0_TOKEN_<NOM>,
+  # Le jeton de la mémoire, puis ceux des dépôts (`memory.tokenEnv` : MEMORY_TOKEN_<NOM>,
   # `gh.tokenEnv` : GH_TOKEN_<NOM>, `gitlab.tokenEnv` : GITLAB_TOKEN_<NOM>) : le service
   # les passe à SES runners, ou à gh et glab.
   {
-    printf 'MEM0_HTTP_TOKEN=%s\n' "$token"
+    printf 'MEMORY_HTTP_TOKEN=%s\n' "$token"
     printf 'MOLI_CDP_URL=http://moli:9222\n'
     printf 'MOLI_CDP_TOKEN=%s\n' "$moli_token"
     printf 'MOLI_POSTE_CDP_URL=http://moli-poste:9222\n'
     printf 'MOLI_POSTE_CDP_TOKEN=%s\n' "$poste_token"
     [ -z "${GH_TOKEN:-}" ] || printf 'GH_TOKEN=%s\n' "$GH_TOKEN"
-    secret_lines MEM0_TOKEN "${OMP_HARNESS_MEMORY_TOKENS:-}"
+    secret_lines MEMORY_TOKEN "${OMP_HARNESS_MEMORY_TOKENS:-}"
     secret_lines GH_TOKEN "${OMP_HARNESS_GITHUB_ACCOUNTS:-}"
     secret_lines GITLAB_TOKEN "${OMP_HARNESS_GITLAB_ACCOUNTS:-}"
   } > "$SECRETS/harness/harness.env"
   {
-    printf 'MEM0_HTTP_TOKEN=%s\n' "$token"
+    printf 'MEMORY_HTTP_TOKEN=%s\n' "$token"
     printf 'OMLX_BASE_URL=%s\n' "${OMLX_BASE_URL:-http://embeddings:11434/v1}"
     printf 'OMLX_API_TOKEN=%s\n' "${OMLX_API_TOKEN:-}"
     [ -z "$chat" ] || printf 'OMLX_CHAT_BASE_URL=%s\n' "$chat"
@@ -117,17 +135,17 @@ cmd_init() {
     printf 'OMLX_LLM_MODEL=%s\n' "${OMLX_LLM_MODEL:-qwen3-8b}"
     printf 'OMLX_EMBED_MODEL=%s\n' "${OMLX_EMBED_MODEL:-bge-m3}"
     printf 'EMBEDDING_DIMS=%s\n' "${EMBEDDING_DIMS:-1024}"
-    # Les jetons limités à leurs portées : un fichier (mem0.env est sourcé, `;` y couperait la ligne).
-    [ -z "${OMP_HARNESS_MEMORY_TOKENS:-}" ] || printf 'MEM0_HTTP_TOKENS_FILE=/run/secrets/mem0/tokens\n'
-  } > "$SECRETS/mem0/mem0.env"
+    # Les jetons limités à leurs portées : un fichier (memory.env est sourcé, `;` y couperait la ligne).
+    [ -z "${OMP_HARNESS_MEMORY_TOKENS:-}" ] || printf 'MEMORY_HTTP_TOKENS_FILE=/run/secrets/memory/tokens\n'
+  } > "$SECRETS/memory/memory.env"
   if [ -n "${OMP_HARNESS_MEMORY_TOKENS:-}" ]; then
-    printf '%s\n' "$OMP_HARNESS_MEMORY_TOKENS" | tr ';' '\n' > "$SECRETS/mem0/tokens"
+    printf '%s\n' "$OMP_HARNESS_MEMORY_TOKENS" | tr ';' '\n' > "$SECRETS/memory/tokens"
   else
-    rm -f "$SECRETS/mem0/tokens"
+    rm -f "$SECRETS/memory/tokens"
   fi
   # Les clés LLM ne vont qu'aux runners : le service ne les voit jamais.
   {
-    printf 'MEM0_HTTP_TOKEN=%s\n' "$token"
+    printf 'MEMORY_HTTP_TOKEN=%s\n' "$token"
     for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY; do
       eval "value=\${$name:-}"
       [ -z "$value" ] || printf '%s=%s\n' "$name" "$value"
@@ -169,7 +187,7 @@ vigie_secrets() {
   umask 077
   {
     printf 'VIGIE_TOKEN=%s\n' "$vigie"
-    printf 'MEM0_HTTP_TOKEN=%s\n' "$1"
+    printf 'MEMORY_HTTP_TOKEN=%s\n' "$1"
     for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY; do
       eval "value=\${$name:-}"
       [ -z "$value" ] || printf '%s=%s\n' "$name" "$value"
@@ -240,14 +258,14 @@ cmd_repos() {
 cmd_approver() {
   [ -s "$ROOT/state/token" ] || die "le harness n'a pas encore démarré : attends le service harness, puis relance"
   url="$(setting URL "$ROOT/published/published.env")"
-  mem0_url="$(setting MEM0_URL "$ROOT/published/published.env")"
-  [ -n "$url" ] && [ -n "$mem0_url" ] ||
+  memory_url="$(setting_renamed MEMORY_URL MEM0_URL "$ROOT/published/published.env")"
+  [ -n "$url" ] && [ -n "$memory_url" ] ||
     die "adresses du tailnet inconnues : attends que le service pairing affiche son code (Pull and redeploy s'il date d'avant cette version), puis relance"
-  mem0_token="$(setting MEM0_HTTP_TOKEN "${OMP_HARNESS_ENV_FILE:-$SECRETS/harness/harness.env}")"
-  [ -n "$mem0_token" ] || die "jeton de la mémoire introuvable : lance cette commande dans le conteneur harness"
+  memory_token="$(setting_renamed MEMORY_HTTP_TOKEN MEM0_HTTP_TOKEN "${OMP_HARNESS_ENV_FILE:-$SECRETS/harness/harness.env}")"
+  [ -n "$memory_token" ] || die "jeton de la mémoire introuvable : lance cette commande dans le conteneur harness"
   harness_main --revoke-client app-approbateur >/dev/null 2>&1 || true
   token="$(harness_main --add-client app-approbateur --approver)" || exit 1
-  code="$(printf '%s\n%s\n%s\n%s\n%s\n' "$url" "$(tr -d '\n' < "$ROOT/state/token")" "$mem0_url" "$mem0_token" "$token" |
+  code="$(printf '%s\n%s\n%s\n%s\n%s\n' "$url" "$(tr -d '\n' < "$ROOT/state/token")" "$memory_url" "$memory_token" "$token" |
     base64 | tr -d '\n=' | tr '+/' '-_')"
   echo "Code approbateur (secret : il approuve les envois du poste ; il ne sera plus affiché) :"
   echo
