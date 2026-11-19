@@ -1,6 +1,6 @@
 // Une escalade conforme à la carte de décision, pour les tests qui posent une escalade par l'outil `decision`.
 // Le serveur exige une `evidence` qui désigne un nœud du graphe du run : `readA()` joue la lecture de `src/a.ts`
-// (trames du direct) qui la fonde. Le titre des tests de la feature : test/session-graph/session-graph.test.ts.
+// (trames du direct) qui la fonde. Le titre des tests de la feature : test/harness/sessions/session-graph.test.ts.
 
 export const CARD_CONTEXT =
   "La feature exporte les factures en CSV. `src/a.ts` doit dater chaque export ; le modèle n'a pas encore de champ de date. Il faut choisir où le stocker.";

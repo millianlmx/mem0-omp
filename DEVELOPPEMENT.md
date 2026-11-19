@@ -117,14 +117,38 @@ une feature (son slug), et un id `<slug>/AC-<n>` ne vit que dans un test
 |---|---|
 | `test/memoire/` | le plugin `omp-mem0-memory` (rappel, brief, outils mem0) |
 | `test/req/` | le plugin `omp-mem0-req`, client du harness |
-| `test/harness/` | le harness du VPS : machine à états, orchestrateur, API, heavy, git, déploiement |
+| `test/harness/` | le serveur de pipelines `omp-harness/`, un sous-dossier par dossier du serveur ; à la racine, les seuls tests transverses : point d'entrée `cli.ts`, déploiement (installation, conteneur, Portainer, NixOS, déploiement continu), structure du serveur et rangement de ses tests |
+| `test/harness/api/` | l'API des clients : HTTP, SSE, MCP, appairage, idempotence, sécurité de l'API, premier chargement |
+| `test/harness/atlassian/` | le connecteur Atlassian et ses agents |
+| `test/harness/autonomy/` | l'autonomie par paliers et ses portes |
+| `test/harness/browser/` | les navigateurs du serveur : client CDP Moli, QA de `/review`, exécuteur du poste |
+| `test/harness/config/` | la configuration : `--check`, OAuth, politique par dépôt, fournisseurs, dépôts, modèle local |
+| `test/harness/corporate/` | le pont corpo ↔ usine |
+| `test/harness/db/` | la base SQLite : découpe en couches, store |
+| `test/harness/forge/` | git et les forges : worktrees, PR, issues par label |
+| `test/harness/heavy/` | les tests heavy : jobs, juge CI, rouge de base, preuves de revue |
+| `test/harness/human/` | la boucle humaine : gestes, pilote, propositions |
+| `test/harness/intake/` | les Demandes et leurs voies |
+| `test/harness/jobs/` | les jobs sans feature : audits, rêves, planifications, déclencheurs entrants |
+| `test/harness/memory/` | le lien avec le service mémoire : oracle du projet, mémoire d'un dépôt |
+| `test/harness/notify/` | les notifications : ntfy et webhooks, télécommande, alertes push |
+| `test/harness/operations/` | l'exploitation : sauvegardes, monitoring, observabilité, plafond de coût, étapes lentes |
+| `test/harness/reports/` | les rapports : accueil, rapport du matin, annulations mesurées |
+| `test/harness/runners/` | les runners OMP : process, RPC, session, scheduler, isolation, slots |
+| `test/harness/runs/` | la conduite d'un run : machine à états, orchestrateur, étapes, prompts, verdict, contradicteur, découpage, merge, voies |
+| `test/harness/sessions/` | les sessions vues des apps : direct, rendu, graphe, sessions locales |
+| `test/harness/spaces/` | les espaces clients et leur étanchéité |
+| `test/harness/vigie/` | la vigie et ses runners |
+| `test/harness/workstation/` | le poste de travail : agent, demandes, navigateurs, sécurité, serveur, visibilité |
 | `test/extension/` | l'extension Chrome `omp-chrome` : modules purs (appairage, observation, garde d'envoi, snapshot, STT) et construction |
 | `test/console/` | les sources d'OMP Console — gardes textuelles Mac et iOS (`ios-*`), noyau partagé, coque iOS |
 | `test/stack/` | `mem0-stack` : mem0-rs, contrat boîte noire, migration, `doctor.sh` |
 | `test/outillage/` | l'outillage du dépôt : `check.sh`, CI, release, smoke des plugins, documentation |
 | `test/support/` | les modules partagés, jamais lancés seuls (pas de `.test.ts`) : `repo.ts` (racine, liste des tests, dossiers jetables, copie du dépôt, environnement des enfants), `git.ts` (dépôts git jetables), `spawn.ts` (processus enfants en parallèle), `swift-source.ts` (sources Swift sans commentaires, lexer de littéraux), `harness-fixtures.ts` et `fake-omp-rpc.ts` (harness complet aux runners factices), `fake-zod.ts`, `doctor-banc.ts`, `prerequis.ts` (sauts « prérequis absent », outils épinglés), `workflows.ts` (lecture des workflows aux `uses:` épinglés) |
 
-Un test neuf va dans le dossier de ce qu'il éprouve, sans liste à tenir :
+Un test neuf va dans le dossier de ce qu'il éprouve, sans liste à tenir : un test
+du serveur dans `test/harness/<dossier du serveur>/`, jamais à la racine de
+`test/harness/` (réservée aux transverses nommés) ni dans un dossier à son nom ;
 `scripts/test-files.sh` les découvre récursivement. Un helper utile à plusieurs
 fichiers va dans `test/support/`, jamais recopié d'un fichier à l'autre.
 
@@ -266,8 +290,8 @@ Pour couper le relais Chrome de l'outil navigateur intégré d'omp, lance omp av
 **Fait**
 
 - tests d'intégration contre un vrai `moli serve` v1.1.22 épinglé derrière la porte CDP
-  (`test/harness/moli-socle.test.ts`) : client CDP, outils `browser_*`, garde réseau.
-- tests de la QA de `/review` (`test/harness/moli-qa.test.ts`, faux moteur de conteneurs et vrai
+  (`test/harness/browser/moli-socle.test.ts`) : client CDP, outils `browser_*`, garde réseau.
+- tests de la QA de `/review` (`test/harness/browser/moli-qa.test.ts`, faux moteur de conteneurs et vrai
   `moli serve` épinglé) : politique `preview` validée à la configuration ; construction exacte des
   commandes `docker` (prévisualisation `--network=none` et worktree en lecture seule, navigateur de l'image
   épinglée sur `--network=container:<prévisualisation>` et aucun autre réseau,
@@ -275,7 +299,7 @@ Pour couper le relais Chrome de l'outil navigateur intégré d'omp, lance omp av
   par `docker exec` de bout en bout ; capture d'office de la page d'accueil et preuves `screenshot` ; outils
   `qa_*` (refusés hors `/review` et sans `preview`, navigation limitée à la prévisualisation) ; repli en
   preuve `log` quand rien ne démarre.
-- tests de l'exécuteur du poste sur le VPS (`test/harness/moli-poste.test.ts`, vrai `moli serve`
+- tests de l'exécuteur du poste sur le VPS (`test/harness/browser/moli-poste.test.ts`, vrai `moli serve`
   épinglé, pages servies sous `app.slack.com` / `mail.google.com` par un proxy témoin) : `vps` en ligne
   ou hors ligne, `navigate`, geste impossible rendu `failed`, garde d'envoi (résumé, destinataires,
   aperçu, empreinte de l'extension) et rejeu approuvé, hôtes permis, arrêt d'urgence et pause, navigateur
