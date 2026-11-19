@@ -562,6 +562,7 @@ type NomMotif = keyof typeof MOTIFS;
 /** Fichier (ou famille de fichiers) → motifs : seuls les fichiers que le renommage désigne pour ce motif. */
 const MOTIFS_PAR_FICHIER: Record<string, NomMotif[]> = {
   ".claude-plugin/marketplace.json": ["CMD", "PLUGIN", "CATALOG", "REPO"],
+  ".github/dependabot.yml": ["STACK_DIR"],
   ".gitignore": ["BRIEF_FILE", "OLD_NAME_RS", "STACK_DIR"],
   ".omp-plugin/marketplace.json": ["CMD", "PLUGIN", "CATALOG", "REPO"],
   "AGENTS.md": ["BRIEF"],
@@ -2767,7 +2768,7 @@ function horsFileset(cloture: string[], fileset: string[]): string[] {
 
 const ANCIEN_CHEMIN = "/opt/omp-harness/omp-mem0-memory/extension.ts";
 
-test("renommage-memoire/AC-311 : le runner reçoit les variables MEMORY_* et le plugin omp-memory, un ancien chemin déclaré donne le même plugin, le jeton du dépôt n'est jamais le jeton global, le fileset NixOS couvre le code partagé", () => {
+test("renommage-memoire/AC-311 : le runner reçoit les variables MEMORY_* et le plugin omp-memory, un ancien chemin déclaré donne le même plugin, le jeton du dépôt n'est jamais le jeton global, le fileset NixOS couvre le code partagé", (t) => {
   // Le plugin de la pile, et les variables du runner.
   assert.ok(MEMORY_EXTENSION.endsWith(path.join("omp-memory", "extension.ts")), MEMORY_EXTENSION);
   assert.ok(fs.existsSync(MEMORY_EXTENSION), "omp-memory/extension.ts existe");
@@ -2856,7 +2857,21 @@ test("renommage-memoire/AC-311 : le runner reçoit les variables MEMORY_* et le 
   const dossier = tmpdir("renommage-memoire-lanceur-");
   fs.chmodSync(dossier, 0o755);
   fs.mkdirSync(path.join(dossier, "tokens"));
-  fs.writeFileSync(path.join(dossier, "tokens", "mon-produit.env"), `MEMORY_HTTP_TOKEN=${DEPOT}\n`, { mode: 0o600 });
+  const fichierJeton = path.join(dossier, "tokens", "mon-produit.env");
+  fs.writeFileSync(fichierJeton, `MEMORY_HTTP_TOKEN=${DEPOT}\n`, { mode: 0o600 });
+  // Le lanceur refuse un fichier de service qui appartient à root, et ignore sa configuration de remplacement
+  // lancé par root : sous root (slot heavy), le fichier passe à `nobody` et le lanceur tourne sous lui.
+  let lanceurEprouvable = true;
+  const root = process.getuid?.() === 0;
+  if (root) {
+    try {
+      fs.chownSync(fichierJeton, 65534, 65534);
+    } catch {
+      // Un root sans CAP_CHOWN (conteneur du slot heavy) ne peut ni rendre le fichier à `nobody` ni lancer sous lui.
+      lanceurEprouvable = false;
+      t.diagnostic("lanceur non éprouvé ici : root sans CAP_CHOWN ; éprouvé par la CI et par tout poste hors root");
+    }
+  }
   const configLanceur = loadConfig(path.join(DEPLOY, "config.example.json"));
   const ligne = runnerArgv(configLanceur, {
     unit: "omp-runner-r1-7",
@@ -2866,11 +2881,13 @@ test("renommage-memoire/AC-311 : le runner reçoit les variables MEMORY_* et le 
     scope: "mon-produit",
     localOnly: true,
   });
-  for (const [nom, runnerEnvContenu] of [
-    ["runner.env d'ancien nom", `${"MEM0"}_HTTP_TOKEN=${GLOBAL}\n`],
-    ["runner.env de nouveau nom", `MEMORY_HTTP_TOKEN=${GLOBAL}\n`],
-    ["runner.env des deux noms", `${"MEM0"}_HTTP_TOKEN=${GLOBAL}\nMEMORY_HTTP_TOKEN=${GLOBAL}\n`],
-  ] as const) {
+  for (const [nom, runnerEnvContenu] of lanceurEprouvable
+    ? ([
+        ["runner.env d'ancien nom", `${"MEM0"}_HTTP_TOKEN=${GLOBAL}\n`],
+        ["runner.env de nouveau nom", `MEMORY_HTTP_TOKEN=${GLOBAL}\n`],
+        ["runner.env des deux noms", `${"MEM0"}_HTTP_TOKEN=${GLOBAL}\nMEMORY_HTTP_TOKEN=${GLOBAL}\n`],
+      ] as const)
+    : []) {
     const fichierRunnerEnv = path.join(dossier, "runner.env");
     fs.writeFileSync(fichierRunnerEnv, runnerEnvContenu);
     const conf = path.join(dossier, "launcher.conf");
@@ -2882,7 +2899,11 @@ test("renommage-memoire/AC-311 : le runner reçoit les variables MEMORY_* et le 
     const r = spawnSync(
       "bash",
       [path.join(DEPLOY, "omp-harness-systemd-run"), ...ligne.args.slice(DEFAULT_LAUNCHER.length - 1)],
-      { encoding: "utf8", env: { PATH: "/usr/bin:/bin", OMP_HARNESS_LAUNCHER_DRY_RUN: "1", OMP_HARNESS_LAUNCHER_CONF: conf } },
+      {
+        encoding: "utf8",
+        env: { PATH: "/usr/bin:/bin", OMP_HARNESS_LAUNCHER_DRY_RUN: "1", OMP_HARNESS_LAUNCHER_CONF: conf },
+        ...(root ? { uid: 65534, gid: 65534 } : {}),
+      },
     );
     assert.equal(r.status, 0, `${nom} : ${r.stderr}`);
     const envfile = r.stdout

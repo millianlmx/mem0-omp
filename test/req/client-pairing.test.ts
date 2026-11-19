@@ -102,6 +102,9 @@ test("client-pairing/AC-3 : /pair vérifie le jeton auprès du serveur, puis éc
       path.join(home, ".omp", "harness.json"),
       JSON.stringify({ url: "http://ancien", token: "x", repos: { "/code/produit": "produit" } }),
     );
+    // Le réglage partagé existe déjà sous son nom actuel : l'appairage l'écrit là (sans lui, il écrit l'ancien
+    // nom pendant la transition, éprouvé par renommage-memoire/AC-305).
+    fs.writeFileSync(path.join(home, ".omp", "memory.json"), '{"url":"http://ancien-memoire","token":"x"}\n');
     const { run, notes } = pairCommand();
 
     await run("pas un code");

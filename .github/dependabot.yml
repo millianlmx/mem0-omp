@@ -60,6 +60,7 @@ updates:
     directories:
       - /
       - /memory-stack
+      - /mem0-stack
       - /omp-harness/deploy/container
     schedule:
       interval: weekly
