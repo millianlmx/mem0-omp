@@ -2705,9 +2705,11 @@ test("renommage-memoire/AC-310 : chaque installation existante se met à niveau 
   await t.test(
     "NixOS évalué : mem0.enable = false et memory.enable = true → l'unité de la mémoire est déclarée",
     (st) => {
+      // Saut de plateforme, pas « prérequis absent » : la CI n'installe pas Nix, et les
+      // specs ne demandent l'évaluation que là où `nix-instantiate` est présent.
       const nix = spawnSync("nix-instantiate", ["--version"], { encoding: "utf8" });
       if (nix.status !== 0) {
-        prerequisAbsent(st, "nix-instantiate", "module NixOS non évalué", null);
+        st.skip("Nix seul (nix-instantiate absent) — module NixOS lu, non évalué");
         return;
       }
       const nixos = `{ configuration }: (import <nixpkgs/nixos> { inherit configuration; }).config`;
@@ -2718,7 +2720,7 @@ test("renommage-memoire/AC-310 : chaque installation existante se met à niveau 
         { encoding: "utf8", timeout: 240_000 },
       );
       if (sonde.status !== 0) {
-        prerequisAbsent(st, "nixpkgs évaluable (<nixpkgs/nixos>)", "module NixOS non évalué", null);
+        st.skip("Nix seul (<nixpkgs/nixos> non évaluable) — module NixOS lu, non évalué");
         return;
       }
       const configuration = `{ imports = [ ${path.join(DEPLOY, "nixos", "module.nix")} ]; ${base.slice(2, -2)}; services.omp-harness = { enable = true; mem0.enable = false; memory.enable = true; }; }`;
