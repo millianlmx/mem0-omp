@@ -708,7 +708,7 @@ const MOTIFS_PAR_FICHIER: Record<string, NomMotif[]> = {
   "test/stack/memory-rs-extraction-llm.test.ts": ["ENV_V"],
   "test/stack/memory-rs-migration.test.ts": ["ENV_V", "PY"],
   "test/stack/memory-rs-noyau.test.ts": ["ENV_V"],
-  "test/stack/memory-stack-bascule-rust.test.ts": ["ENV_V", "ENV_PY", "PY"],
+  "test/stack/memory-stack-bascule-rust.test.ts": ["ENV_V", "ENV_PY", "PY", "STACK_DIR"],
   "test/stack/recherche-hybride-rrf.test.ts": ["ENV_V"],
   "test/stack/reorganisation-ranger-le-crate-du-servic.test.ts": ["GUARD"],
   "test/support/doctor-banc.ts": ["PY"],

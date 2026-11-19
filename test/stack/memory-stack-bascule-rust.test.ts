@@ -67,11 +67,11 @@ test("memory-stack-bascule-rust/AC-1 : le compose ne sert que memory-rs, en imag
   const corps = sousServices.map((ligne) => ligne.trim());
   assert.ok(corps.includes("build: ./memory-rs"), "memory-rs doit être construit depuis ./memory-rs");
   assert.ok(
-    corps.includes('- "127.0.0.1:${MEMORY_RS_PORT:-8321}:8321"'),
+    corps.includes('- "127.0.0.1:${MEMORY_RS_PORT:-${MEM0_RS_PORT:-8321}}:8321"'),
     "le port doit être publié sur 127.0.0.1, 8321 par défaut",
   );
   assert.ok(
-    corps.includes("- ${MEMORY_RS_DATA_DIR:-./memory-rs-data}:/data"),
+    corps.includes("- ${MEMORY_RS_DATA_DIR:-${MEM0_RS_DATA_DIR:-./memory-rs-data}}:/data"),
     "la base doit être un bind-mount du dossier MEMORY_RS_DATA_DIR sur /data",
   );
 
@@ -150,7 +150,7 @@ const REFERENCES_PYTHON = [
   "memory_config.py",
   "test_api.py",
   "mem0-http-test.sh",
-  "memory-stack/mem0-http",
+  "mem0-stack/mem0-http",
   "--start-python",
   "--capture-rang",
   "MEM0_OMP_REQUIRE_HTTP_API",
@@ -170,7 +170,9 @@ const REFERENCES_PYTHON = [
 const LISTE_BLANCHE = [
   "omp-console/",
   "test/outillage/ci-macos-jobs-paralleles.test.ts",
+  "test/outillage/renommage-memoire.test.ts",
   "test/stack/memory-stack-bascule-rust.test.ts",
+  "test/support/renommage-memoire/",
 ];
 
 test("memory-stack-bascule-rust/AC-4 : le Python mem0-http et son outillage ont disparu, plus rien ne les référence", (t) => {

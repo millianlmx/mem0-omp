@@ -13,7 +13,6 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 /** Préfixe du message de saut que `check.sh --strict` reconnaît. */
 export const PREREQUIS_ABSENT = "prérequis absent : ";
@@ -56,7 +55,8 @@ export type OutilEpingle = "biome" | "typescript";
 function outil(nom: OutilEpingle): { libelle: string; version: string; paquet: string; prepare: string } {
   if (nom === "biome") {
     const script = fs.readFileSync(path.join(RACINE, "scripts", "lint.sh"), "utf8");
-    const lintDir = renamedEnv(process.env, "MEMORY_OMP_LINT_DIR", "MEM0_OMP_LINT_DIR");
+    // Pas d'import de renamedEnv : ce module est copié seul dans des copies légères du dépôt.
+    const lintDir = process.env.MEMORY_OMP_LINT_DIR || process.env.MEM0_OMP_LINT_DIR;
     const dossier = path.resolve(RACINE, lintDir || ".lint");
     return {
       libelle: "Biome",
