@@ -301,7 +301,7 @@ services:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/prometheus:/prometheus
 
   grafana:
-    image: docker.io/grafana/grafana:11.4.0
+    image: docker.io/grafana/grafana:13.3.1
     profiles: ["monitoring"]
     restart: unless-stopped
     depends_on: [prometheus]
