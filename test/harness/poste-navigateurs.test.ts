@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { ClientRegistry } from "../../omp-harness/api/auth.ts";
 import type { Meeting, WorkstationAction, WorkstationRequest } from "../../omp-harness/db/db.ts";
 import { createHandler } from "../../omp-harness/api/http.ts";
-import type { BrowserView, WorkstationStatus } from "../../omp-harness/workstation/workstation.ts";
+import type { BrowserView, WorkstationStatus } from "../../omp-harness/workstation/workstation-input.ts";
 import { harnessCall } from "../../omp-chrome/src/lib/harness.ts";
 import { fakeWorld, waitFor } from "../support/harness-fixtures.ts";
 import type { FakeWorld } from "../support/harness-fixtures.ts";
