@@ -9,7 +9,7 @@ import { CANCEL_CAUSES, RUN_AUTONOMIES, STANDING_RULE_SOURCES } from "../db/db.t
 import type { CancelCause, RunAutonomy, StandingRulePatch } from "../db/db.ts";
 import { HarnessError } from "./errors.ts";
 import { ARTIFACTS_DIR, isArtifactPath } from "../forge/git.ts";
-import type { NewRunInput } from "../runs/orchestrator.ts";
+import type { NewRunInput } from "../runs/run-creation.ts";
 import type { StandingRuleInput } from "../human/standing-rules.ts";
 
 export function text(body: Record<string, unknown>, key: string, required = true): string {

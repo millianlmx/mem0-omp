@@ -24,7 +24,7 @@ import { LOCAL_SESSION_STATES } from "../db/db.ts";
 import { HarnessError } from "../api/errors.ts";
 import { instructionsInput, text } from "../api/input.ts";
 import { isTerminal } from "../runs/machine.ts";
-import type { NewRunInput } from "../runs/orchestrator.ts";
+import type { NewRunInput } from "../runs/run-creation.ts";
 import { repoName } from "../config/repos.ts";
 import { untrusted } from "../workstation/workstation-guards.ts";
 

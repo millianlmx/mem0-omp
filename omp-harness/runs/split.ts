@@ -18,7 +18,7 @@ import type { HarnessContext } from "./context.ts";
 import type { RunRow } from "../db/db.ts";
 import type { StepKind } from "./machine.ts";
 import { splitAbandoned } from "./machine.ts";
-import type { NewProjectInput } from "./orchestrator.ts";
+import type { NewProjectInput } from "./run-creation.ts";
 import type { SplitFeature } from "./steps.ts";
 import { SPECS_BASELINE, parseSplitSection } from "./steps.ts";
 
