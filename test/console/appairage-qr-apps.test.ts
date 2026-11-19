@@ -13,7 +13,8 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../omp-harness/api/route-table.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 

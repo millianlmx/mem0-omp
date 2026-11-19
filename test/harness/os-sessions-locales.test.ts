@@ -13,7 +13,8 @@ import { ClientRegistry } from "../../omp-harness/api/auth.ts";
 import { repoDefaults } from "../../omp-harness/config/config.ts";
 import type { EventRow, LocalSession, RunRow } from "../../omp-harness/db/db.ts";
 import { EPHEMERAL_EVENTS, EVENT_TYPES } from "../../omp-harness/api/events.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../omp-harness/api/route-table.ts";
 import {
   ENDED_AFTER_MS,
   IDLE_AFTER_MS,

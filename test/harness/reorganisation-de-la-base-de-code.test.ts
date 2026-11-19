@@ -404,7 +404,7 @@ const IMAGES: Image[] = [
     dockerfile: "Dockerfile.harness",
     entry: "omp-harness/main.ts",
     reads: [
-      "omp-harness/api/http.ts → omp-harness/package.json",
+      "omp-harness/api/http-io.ts → omp-harness/package.json",
       "omp-harness/runners/runner.ts → omp-mem0-memory/extension.ts",
     ],
     notRead: [],
