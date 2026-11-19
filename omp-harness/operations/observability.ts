@@ -64,11 +64,11 @@ function stringOrNull(value: unknown): string | null {
 
 /** La santé de memory-rs lue dans le corps de son `GET /health` (`null` : injoignable). */
 export function memoryStatusOf(configured: boolean, body: Record<string, unknown> | null, now: number): MemoryStatus {
-  const banner = stringOrNull(body?.memory);
+  const banner = stringOrNull(body?.memory) ?? stringOrNull(body?.mem0);
   return {
     configured,
     ok: configured && body?.ok === true,
-    version: stringOrNull(body?.version) ?? (banner ? banner.replace(/^memory-rs\s+/, "") : null),
+    version: stringOrNull(body?.version) ?? (banner ? banner.replace(/^(?:memory|mem0)-rs\s+/, "") : null),
     uptimeSec: numberOrNull(body?.uptime_s),
     memories: numberOrNull(body?.memories),
     dbBytes: numberOrNull(body?.db_bytes),

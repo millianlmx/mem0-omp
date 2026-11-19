@@ -58,7 +58,7 @@ done
 chown -R root:root "$DEST"
 
 echo "· oracle memory-rs"
-if [ ! -x /usr/local/bin/memory-rs ] || [ "${OMP_HARNESS_REBUILD_MEMORY:-0}" = "1" ]; then
+if [ ! -x /usr/local/bin/memory-rs ] || [ "${OMP_HARNESS_REBUILD_MEMORY:-${OMP_HARNESS_REBUILD_MEM0:-0}}" = "1" ]; then
   if command -v cargo >/dev/null; then
     cargo build --release --locked --manifest-path "$REPO/memory-stack/memory-rs/Cargo.toml"
     install -m 0755 "$REPO/memory-stack/memory-rs/target/release/memory-rs" /usr/local/bin/memory-rs
@@ -80,8 +80,10 @@ install -d -m 0755 /etc/omp-harness
 [ -e /etc/omp-harness/env ] || install -m 0640 -g omp-harness /dev/null /etc/omp-harness/env
 # Les clés des fournisseurs LLM des runners : root seul les lit, le lanceur les passe au runner.
 [ -e /etc/omp-harness/runner.env ] || install -m 0600 -o root -g root /dev/null /etc/omp-harness/runner.env
-# La mémoire du projet : un jeton partagé par memory-rs, le service et les runners.
-if [ ! -e /etc/omp-harness/memory.env ]; then
+# La mémoire du projet : un jeton partagé par memory-rs, le service et les runners. Une installation
+# d'avant le renommage garde son /etc/omp-harness/mem0.env (lu par l'unité, puis memory.env s'il existe) :
+# aucun de ces fichiers n'est alors écrit.
+if [ ! -e /etc/omp-harness/memory.env ] && [ ! -e /etc/omp-harness/mem0.env ]; then
   token="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
   sed "s/^MEMORY_HTTP_TOKEN=.*/MEMORY_HTTP_TOKEN=$token/" "$HERE/memory.env.example" > /etc/omp-harness/memory.env
   chmod 0600 /etc/omp-harness/memory.env
@@ -113,6 +115,13 @@ install -m 0755 "$HERE/omp-harness-client" /usr/local/bin/omp-harness-client
 echo "· tranches, service, zram, oomd"
 install -m 0644 "$HERE/omp-harness.slice" "$HERE/omp-harness-runners.slice" "$HERE/omp-harness-heavy.slice" \
   "$HERE/omp-harness.service" "$HERE/omp-harness-memory.service" /etc/systemd/system/
+# L'unité d'avant le renommage : arrêtée et retirée ; /var/lib/omp-mem0 et /etc/omp-harness/mem0.env
+# restent (l'unité d'aujourd'hui les lit).
+if [ -e /etc/systemd/system/omp-harness-mem0.service ]; then
+  echo "· unité omp-harness-mem0.service remplacée par omp-harness-memory.service"
+  systemctl disable --now omp-harness-mem0.service || echo "· omp-harness-mem0.service n'a pas pu être arrêtée : systemctl stop omp-harness-mem0.service"
+  rm -f /etc/systemd/system/omp-harness-mem0.service
+fi
 if [ ! -e /etc/systemd/zram-generator.conf ]; then
   install -m 0644 "$HERE/zram-generator.conf" /etc/systemd/zram-generator.conf
   [ -e /usr/lib/systemd/system-generators/zram-generator ] || echo "· installe systemd-zram-generator pour activer le swap zram (8 Go)"

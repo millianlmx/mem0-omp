@@ -96,7 +96,12 @@ function envEnfant(poses: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [cle, valeur] of Object.entries(process.env)) {
     if (valeur === undefined) continue;
-    if (cle === "NODE_TEST_CONTEXT" || cle === "NODE_TEST_WORKER_ID" || cle === "MEMORY_RS_BIN" || cle === "MEMORY_DB_PATH")
+    if (
+      cle === "NODE_TEST_CONTEXT" ||
+      cle === "NODE_TEST_WORKER_ID" ||
+      cle === "MEMORY_RS_BIN" ||
+      cle === "MEMORY_DB_PATH"
+    )
       continue;
     if (cle.startsWith("MEMORY_CONTRAT_") || cle.startsWith("QDRANT_")) continue;
     env[cle] = valeur;
@@ -295,7 +300,11 @@ async function demarrerQdrant(): Promise<QdrantJetable> {
   const serveur = await demarrerServeur(
     "bash",
     ["scripts/memory-http-contrat.sh", "--start-qdrant"],
-    envEnfant({ MEMORY_CONTRAT_PORT: String(port), MEMORY_CONTRAT_GRPC_PORT: String(grpc), MEMORY_CONTRAT_WORKDIR: workdir }),
+    envEnfant({
+      MEMORY_CONTRAT_PORT: String(port),
+      MEMORY_CONTRAT_GRPC_PORT: String(grpc),
+      MEMORY_CONTRAT_WORKDIR: workdir,
+    }),
     port,
     "/readyz",
   );
@@ -1074,12 +1083,15 @@ test("memory-rs-migration/AC-12 : la vraie mémoire du poste importée vers une 
   );
   const source: Source = {
     qdrant: {
-      url: renamedEnv(process.env, "MEMORY_RS_MIGRATION_QDRANT_URL", "MEM0_RS_MIGRATION_QDRANT_URL") || "http://127.0.0.1:6333",
+      url:
+        renamedEnv(process.env, "MEMORY_RS_MIGRATION_QDRANT_URL", "MEM0_RS_MIGRATION_QDRANT_URL") ||
+        "http://127.0.0.1:6333",
       cle: process.env.QDRANT_API_KEY || "memory-local-qdrant-key",
     },
     historyDb: path.resolve(copie),
   };
-  const python = renamedEnv(process.env, "MEMORY_RS_MIGRATION_HTTP_URL", "MEM0_RS_MIGRATION_HTTP_URL") || "http://127.0.0.1:8321";
+  const python =
+    renamedEnv(process.env, "MEMORY_RS_MIGRATION_HTTP_URL", "MEM0_RS_MIGRATION_HTTP_URL") || "http://127.0.0.1:8321";
   const baseEnService = path.join(os.homedir(), ".memory", "memory-rs.db");
   const omlx = omlxReel();
 

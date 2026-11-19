@@ -38,6 +38,12 @@ final class AgentDouble: @unchecked Sendable {
     /// Le corps rendu par `/health` quand le job est chargé ; nil ⇒ aucune réponse.
     var healthBody: (() -> Data?)?
 
+    /// L'ancien agent (label d'avant le renommage) est-il chargé ? Indépendant du job
+    /// courant : la doublure route par le label de la cible.
+    var legacyLoaded = false
+    /// Le programme qui tient le port tant que l'ancien agent est chargé (son `KeepAlive`).
+    var legacyHolder: (pid: Int32, command: String, commandLine: String)?
+
     private var unloading: Int?
 
     var runner: CommandRunner {
@@ -47,10 +53,10 @@ final class AgentDouble: @unchecked Sendable {
             case "/bin/launchctl":
                 return launchctl(arguments)
             case "/usr/sbin/lsof":
-                guard let holder = portHolder else { return ProcessRun(code: 1, stdout: "", stderr: "", timedOut: false) }
+                guard let holder = currentHolder else { return ProcessRun(code: 1, stdout: "", stderr: "", timedOut: false) }
                 return ProcessRun(code: 0, stdout: "p\(holder.pid)\nc\(holder.command)\nf3\nn127.0.0.1:8321\n", stderr: "", timedOut: false)
             case "/bin/ps":
-                return ProcessRun(code: 0, stdout: (portHolder?.commandLine ?? "") + "\n", stderr: "", timedOut: false)
+                return ProcessRun(code: 0, stdout: (currentHolder?.commandLine ?? "") + "\n", stderr: "", timedOut: false)
             default:
                 Issue.record("binaire inattendu : \(binary.path)")
                 return ProcessRun(code: 127, stdout: "", stderr: "", timedOut: false)
@@ -65,12 +71,62 @@ final class AgentDouble: @unchecked Sendable {
         }
     }
 
-    /// Les sous-commandes launchctl, dans l'ordre (`print`, `bootout`, `bootstrap`).
+    /// Les appels `launchctl` du job courant, dans l'ordre : ceux de l'ancien label
+    /// (`legacyCalls`) n'y figurent pas.
+    var launchctlCalls: [Call] {
+        calls.filter { $0.binary == "/bin/launchctl" && !Self.targetsLegacy($0.arguments) }
+    }
+
+    /// Les appels `launchctl` visant l'ancien label, dans l'ordre.
+    var legacyCalls: [Call] {
+        calls.filter { $0.binary == "/bin/launchctl" && Self.targetsLegacy($0.arguments) }
+    }
+
+    /// Les sous-commandes launchctl du job courant, dans l'ordre (`print`, `bootout`, `bootstrap`).
     var launchctlVerbs: [String] {
-        calls.filter { $0.binary == "/bin/launchctl" }.compactMap(\.arguments.first)
+        launchctlCalls.compactMap(\.arguments.first)
+    }
+
+    /// Les sous-commandes launchctl du job courant passées après le `index`-ième appel.
+    func launchctlVerbs(after index: Int) -> [String] {
+        calls.dropFirst(index)
+            .filter { $0.binary == "/bin/launchctl" && !Self.targetsLegacy($0.arguments) }
+            .compactMap(\.arguments.first)
+    }
+
+    private static func targetsLegacy(_ arguments: [String]) -> Bool {
+        arguments.contains { $0.contains(MemoryAgent.legacyDefaultLabel) }
+    }
+
+    /// Qui tient le port : l'ancien agent tant qu'il est chargé, sinon `portHolder`.
+    private var currentHolder: (pid: Int32, command: String, commandLine: String)? {
+        (legacyLoaded ? legacyHolder : nil) ?? portHolder
+    }
+
+    /// L'ancien agent ne répond qu'à `print` (chargé ⇒ 0) et `bootout` (déchargé d'un coup).
+    private func legacyLaunchctl(_ arguments: [String]) -> ProcessRun {
+        switch arguments.first {
+        case "print":
+            guard legacyLoaded else {
+                return ProcessRun(code: 113, stdout: "", stderr: "Could not find service", timedOut: false)
+            }
+            return ProcessRun(
+                code: 0,
+                stdout: "\(arguments[1]) = {\n\tstate = running\n\tpid = \(legacyHolder?.pid ?? 800)\n}\n",
+                stderr: "",
+                timedOut: false
+            )
+        case "bootout":
+            legacyLoaded = false
+            return ProcessRun(code: 0, stdout: "", stderr: "", timedOut: false)
+        default:
+            Issue.record("sous-commande inattendue pour l'ancien label : \(arguments)")
+            return ProcessRun(code: 64, stdout: "", stderr: "usage", timedOut: false)
+        }
     }
 
     private func launchctl(_ arguments: [String]) -> ProcessRun {
+        if Self.targetsLegacy(arguments) { return legacyLaunchctl(arguments) }
         switch arguments.first {
         case "print":
             if let remaining = unloading {
@@ -197,7 +253,8 @@ func ac2VirginRootWritesPlistAndBootstraps() async throws {
     #expect(steps == [.agent, .health])
     #expect(double.launchctlVerbs == ["print", "bootstrap"])
     let target = "gui/501/\(agent.label)"
-    #expect(double.calls.first?.arguments == ["print", target])
+    #expect(double.legacyCalls.first?.arguments == ["print", "gui/501/\(agent.legacyLabel)"])
+    #expect(double.launchctlCalls.first?.arguments == ["print", target])
     #expect(double.calls.last { $0.arguments.first == "bootstrap" }?.arguments == ["bootstrap", "gui/501", agent.plistURL.path])
 
     // Label et plist isolés sous la racine de test, jamais ~/Library/LaunchAgents.
@@ -257,7 +314,7 @@ func ac2SlowBootoutThenRetriedBootstrap() async throws {
 
     #expect(double.launchctlVerbs == ["print", "bootout", "print", "print", "print", "bootstrap", "bootstrap"])
     // Le premier bootstrap suit un print en échec (113), jamais un print qui montre le job.
-    let launchctlCalls = double.calls.filter { $0.binary == "/bin/launchctl" }
+    let launchctlCalls = double.launchctlCalls
     #expect(launchctlCalls.firstIndex { $0.arguments.first == "bootstrap" } == 5)
     #expect(double.loaded)
     #expect(double.jobPid == 901)
@@ -351,7 +408,7 @@ func ac4DifferentBinaryReloadsTheJob() async throws {
 
     try await agent.ensureRunning { _ in }
 
-    let verbs = double.calls.dropFirst(before).filter { $0.binary == "/bin/launchctl" }.compactMap(\.arguments.first)
+    let verbs = double.launchctlVerbs(after: before)
     #expect(verbs == ["print", "bootout", "print", "print", "bootstrap"])
     let newSha = try plistEnvironment(at: agent.plistURL)["OMP_CONSOLE_MEMORY_RS_SHA256"]
     #expect(newSha == (try sandbox.sha()))
@@ -373,7 +430,7 @@ func ac4UpToDateAgentIsLeftAlone() async throws {
 
     try await makeAgent(sandbox, double).ensureRunning { _ in }
 
-    let verbs = double.calls.dropFirst(before).filter { $0.binary == "/bin/launchctl" }.compactMap(\.arguments.first)
+    let verbs = double.launchctlVerbs(after: before)
     #expect(verbs == ["print"])
     #expect(!double.calls.dropFirst(before).contains { $0.binary == "/usr/sbin/lsof" })
     #expect(try FileManager.default.attributesOfItem(atPath: plistURL.path)[.modificationDate] as? Date == modified)
@@ -393,7 +450,7 @@ func ac4ChangedStackEnvReloads() async throws {
     let agent = makeAgent(sandbox, double)
     try await agent.ensureRunning { _ in }
 
-    let verbs = double.calls.dropFirst(before).filter { $0.binary == "/bin/launchctl" }.compactMap(\.arguments.first)
+    let verbs = double.launchctlVerbs(after: before)
     #expect(verbs == ["print", "bootout", "print", "bootstrap"])
     #expect(try plistEnvironment(at: agent.plistURL)["OMLX_EMBED_MODEL"] == "bge-m3-mlx-8bit")
 }

@@ -418,7 +418,7 @@ func ac6OMLXReachableShowsNoBanner() async {
 }
 
 @MainActor
-@Test("all-in-one-app/AC-6 : service memory indisponible → AUCUNE sonde oMLX et aucun bandeau")
+@Test("all-in-one-app/AC-6 : service mémoire indisponible → AUCUNE sonde oMLX et aucun bandeau")
 func ac6UnavailableServiceNeverProbesOMLX() async {
     // Une réponse joignable est ARMÉE : si la sonde partait, elle la consommerait.
     StubURLProtocol.reset()

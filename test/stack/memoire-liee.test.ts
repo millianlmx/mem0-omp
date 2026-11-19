@@ -146,7 +146,9 @@ test("memoire-liee/AC-3 : le README de memory-rs documente chaque route ajoutée
   const compose = fs.readFileSync(path.join(ROOT, "memory-stack", "docker-compose.yml"), "utf8");
   const exemple = fs.readFileSync(path.join(ROOT, "memory-stack", ".env.example"), "utf8");
   const pile = fs.readFileSync(path.join(ROOT, "memory-stack", "README.md"), "utf8");
-  const lus = [...config.matchAll(/"(MEMORY_DREAM_[A-Z_]+)"/g)].map((m) => m[1]!).filter((v, i, a) => a.indexOf(v) === i);
+  const lus = [...config.matchAll(/"(MEMORY_DREAM_[A-Z_]+)"/g)]
+    .map((m) => m[1]!)
+    .filter((v, i, a) => a.indexOf(v) === i);
   assert.deepEqual(lus, [
     "MEMORY_DREAM_INTERVAL_MINUTES",
     "MEMORY_DREAM_QUIET_MINUTES",

@@ -1,7 +1,7 @@
 //! Appels à l'API OpenAI-compatible (oMLX) : une seule politique, partagée par
 //! les embeddings et par chat/completions (D-3).
 //!
-//! Imite openai-python 3.24.0 tel que memory 2.2.1 l'utilise : 600 s par
+//! Imite openai-python 3.24.0 tel que la bibliothèque d'origine 2.2.1 l'utilise : 600 s par
 //! tentative dont 5 s de connexion, sans proxy ; 2 nouvelles tentatives (0,5 s
 //! puis 1 s) sur erreur de connexion, de délai ou de requête, et sur les statuts
 //! 408, 409, 429 et ≥ 500. `Retry-After`, `x-should-retry` et la gigue ne sont
@@ -17,7 +17,7 @@ use crate::modele::extraction;
 /// Délais avant chaque nouvelle tentative.
 const NOUVELLES_TENTATIVES: [Duration; 2] = [Duration::from_millis(500), Duration::from_millis(1000)];
 
-/// Paramètres d'échantillonnage : défauts d'`OpenAIConfig` de memory (D-2).
+/// Paramètres d'échantillonnage : défauts d'`OpenAIConfig` de la bibliothèque d'origine (D-2).
 const MAX_TOKENS: u32 = 2000;
 const TEMPERATURE: f64 = 0.1;
 const TOP_P: f64 = 0.1;

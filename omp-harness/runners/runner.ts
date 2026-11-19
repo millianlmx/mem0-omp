@@ -71,23 +71,41 @@ export function writePipelineOverlay(dataDir: string, scout: ModelChoice | null 
  */
 export const MEMORY_EXTENSION = fileURLToPath(new URL("../../omp-memory/extension.ts", import.meta.url));
 
-/** Un chemin d'extension qui désigne le plugin mémoire (`…/omp-memory/extension.ts`). */
-function isMemoryExtension(file: string): boolean {
-  return path.basename(file) === "extension.ts" && path.basename(path.dirname(file)) === "omp-memory";
+/** Le dossier d'un plugin mémoire déclaré sous son ancien nom : une configuration d'avant la version de transition. */
+const LEGACY_MEMORY_DIR = "omp-mem0-memory";
+
+function memoryExtensionDir(file: string): string | null {
+  return path.basename(file) === "extension.ts" ? path.basename(path.dirname(file)) : null;
 }
 
-/** Le plugin mémoire que chargent les runners : celui que la configuration déclare encore, sinon celui de la pile. */
+/** Un chemin d'extension qui désigne le plugin mémoire (`…/omp-memory/extension.ts`, ou son ancien nom). */
+function isMemoryExtension(file: string): boolean {
+  const dir = memoryExtensionDir(file);
+  return dir === "omp-memory" || dir === LEGACY_MEMORY_DIR;
+}
+
+/**
+ * Le plugin mémoire que chargent les runners : celui que la configuration déclare encore, sinon celui de la pile.
+ * Un chemin déclaré sous l'ancien nom du plugin donne celui de la pile.
+ */
 export function memoryExtension(config: HarnessConfig): string {
-  return config.runner.extensions.find(isMemoryExtension) ?? MEMORY_EXTENSION;
+  const declared = config.runner.extensions.find(isMemoryExtension);
+  if (!declared || memoryExtensionDir(declared) === LEGACY_MEMORY_DIR) return MEMORY_EXTENSION;
+  return declared;
 }
 
 /**
  * Les extensions d'un runner : le plugin mémoire d'abord, toujours, puis celles de la
- * configuration. Un plugin mémoire déclaré à un autre chemin est pris tel quel, jamais doublé.
+ * configuration. Un plugin mémoire déclaré à un autre chemin est pris tel quel, jamais doublé ;
+ * un chemin déclaré sous l'ancien nom du plugin devient celui de la pile, à sa place (aucun runner ne charge
+ * un ancien plugin resté sur le disque, qui ne lirait que les anciens noms de variables).
  */
 export function runnerExtensions(config: HarnessConfig): string[] {
-  const declared = config.runner.extensions;
-  return declared.some(isMemoryExtension) ? [...declared] : [MEMORY_EXTENSION, ...declared];
+  const declared = config.runner.extensions.map((file) =>
+    memoryExtensionDir(file) === LEGACY_MEMORY_DIR ? MEMORY_EXTENSION : file,
+  );
+  const unique = declared.filter((file, index) => declared.indexOf(file) === index);
+  return unique.some(isMemoryExtension) ? unique : [MEMORY_EXTENSION, ...unique];
 }
 
 /** Le nom d'unité d'un runner : retrouvable (et arrêtable) après un redémarrage du service. */
@@ -341,9 +359,18 @@ export function runnerEnv(
   };
   if (oracle) {
     env.MEMORY_HTTP_URL = oracle.url;
-    if (oracle.token) env.MEMORY_HTTP_TOKEN = oracle.token;
+    env.MEM0_HTTP_URL = oracle.url;
+    if (oracle.token) {
+      env.MEMORY_HTTP_TOKEN = oracle.token;
+      env.MEM0_HTTP_TOKEN = oracle.token;
+    }
   }
-  if (policy.memoryToken) env.MEMORY_HTTP_TOKEN = policy.memoryToken;
+  // Le jeton du dépôt remplace le jeton global sous les DEUX noms : un jeton global hérité de l'environnement du
+  // service sous l'ancien nom (`/etc/omp-harness/env` d'une installation d'avant) ne reste jamais visible.
+  if (policy.memoryToken) {
+    env.MEMORY_HTTP_TOKEN = policy.memoryToken;
+    env.MEM0_HTTP_TOKEN = policy.memoryToken;
+  }
   for (const key of [...SERVICE_SECRETS, ...(policy.hidden ?? [])]) delete env[key];
   if (policy.localOnly) {
     for (const key of Object.keys(env)) if (key.endsWith("_API_KEY")) delete env[key];

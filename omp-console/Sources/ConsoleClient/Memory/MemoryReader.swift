@@ -11,7 +11,7 @@
 import ConsoleCore
 import Foundation
 
-/// L'adresse de la mémoire et son jeton (`X-Memory-Token`).
+/// L'adresse de la mémoire et son jeton (`X-Memory-Token`, avec `X-Mem0-Token` pour un service d'avant).
 public struct MemoryServer: Equatable, Sendable {
     public var baseURL: URL
     public var token: String
@@ -206,7 +206,7 @@ public struct MemoryReader: Sendable {
     }
 
     /// L'échange avec la mémoire, partagé par la lecture et l'écriture : le jeton en
-    /// `X-Memory-Token`, chaque statut traduit en `MemoryReadError`.
+    /// `X-Memory-Token` ET `X-Mem0-Token` (même valeur, S-11), chaque statut traduit en `MemoryReadError`.
     static func send(
         server: MemoryServer, transport: any MemoryTransport, path: String, method: String, body: [String: Any]?, timeout: TimeInterval
     ) async throws -> Any {
@@ -220,7 +220,10 @@ public struct MemoryReader: Sendable {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
-        if !server.token.isEmpty { request.setValue(server.token, forHTTPHeaderField: "X-Memory-Token") }
+        if !server.token.isEmpty {
+            request.setValue(server.token, forHTTPHeaderField: "X-Memory-Token")
+            request.setValue(server.token, forHTTPHeaderField: "X-Mem0-Token")
+        }
 
         let reply: (status: Int, body: Data)
         do {

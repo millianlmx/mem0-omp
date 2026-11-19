@@ -7,6 +7,7 @@
 // `components/podman` n'y est créé, puis exécute `omp --version` sur le binaire
 // obtenu — c'est la preuve de bout en bout d'AC-2.
 
+import ConsoleCore
 import Foundation
 import Testing
 
@@ -15,7 +16,7 @@ import Testing
 @MainActor
 @Test(
     "all-in-one-app/AC-2 : recette réelle — télécharge omp dans une racine temporaire et exécute son --version",
-    .enabled(if: ProcessInfo.processInfo.environment["MEMORY_COMPONENTS_RECIPE"] != nil)
+    .enabled(if: RenamedEnvironment.value(ProcessInfo.processInfo.environment, "MEMORY_COMPONENTS_RECIPE", legacy: "MEM0_COMPONENTS_RECIPE") != nil)
 )
 func recetteReelleInstalleLesDeuxComposants() async throws {
     let root = FileManager.default.temporaryDirectory

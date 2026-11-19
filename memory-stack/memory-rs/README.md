@@ -1,8 +1,9 @@
 # memory-rs
 
-Service mémoire HTTP de memory-omp, en un seul binaire Rust. Il sert les 9 routes de
-l'ancien mem0-http Python (mem0ai 2.2.1) avec le même contrat : port
-8321 par défaut, en-tête `X-Memory-Token`, mêmes formes JSON, mêmes codes. Tout le
+Service mémoire HTTP, en un seul binaire Rust. Il sert les 9 routes de
+l'ancien service Python (bâti sur une bibliothèque tierce, voir THIRD_PARTY_NOTICES.md)
+avec le même contrat : port 8321 par défaut, en-tête `X-Memory-Token`, mêmes formes
+JSON, mêmes codes. Tout le
 stockage tient dans un seul fichier SQLite. Les embeddings et l'extraction viennent
 d'une API OpenAI-compatible (oMLX).
 
@@ -14,13 +15,13 @@ en mental models. Ces routes sont propres à memory-rs : un client de l'ancien c
 voit aucune différence.
 
 `add` avec `infer=true` (y compris quand `infer` est omis) reproduit le chemin
-additif de memory 2.2.1 : un seul appel `chat/completions` (invite d'extraction
-additive avec les `custom_instructions` de l'ancien mem0-http Python, réponse lue comme
-`{"memory":[{"text","attributed_to"?}]}`), embedding des faits extraits,
-dédoublonnage par hash md5 contre les 10 souvenirs existants les plus proches,
-événements `ADD` seuls. Un souvenir extrait n'a pas de `role` ; l'`attributed_to`
+additif de la bibliothèque d'origine 2.2.1 : un seul appel `chat/completions` (invite
+d'extraction additive avec les `custom_instructions` de l'ancien service Python,
+réponse lue comme `{"memory":[{"text","attributed_to"?}]}`), embedding des faits
+extraits, dédoublonnage par hash md5 contre les 10 souvenirs existants les plus
+proches, événements `ADD` seuls. Un souvenir extrait n'a pas de `role` ; l'`attributed_to`
 du fait est promu dans le souvenir. Le chemin de décision ADD/UPDATE/DELETE/NONE de
-memory 1.x n'est pas reproduit.
+la version 1.x de la bibliothèque d'origine n'est pas reproduit.
 
 ## Usage
 
@@ -44,9 +45,10 @@ et `cargo clippy --manifest-path memory-stack/memory-rs/Cargo.toml --locked --al
 
 ## Variables d'environnement
 
-Lues comme `_env` de l'ancien mem0-http Python : une variable absente ou faite seulement de
+Lues comme `_env` de l'ancien service Python : une variable absente ou faite seulement de
 blancs prend la valeur par défaut, et la valeur est trimée (sauf les deux jetons, lus
-bruts).
+bruts). Chaque variable `MEMORY_*` est aussi lue sous son ancien nom `MEM0_*` pendant la
+version de transition (§ Noms de transition).
 
 | Variable | Défaut | Usage |
 |---|---|---|
@@ -57,8 +59,8 @@ bruts).
 | `OMLX_CHAT_API_TOKEN` | `OMLX_API_TOKEN` | `Authorization: Bearer` du chat ; jamais imprimé |
 | `OMLX_LLM_MODEL` | `qwen3-8b` | modèle chat/completions de l'extraction (`add` infer=true) et du rêve |
 | `EMBEDDING_DIMS` | `1024` | dimension des vecteurs ; entier positif, sinon code 1 |
-| `MEMORY_DB_PATH` | `$HOME/.memory/memory-rs.db` | seul fichier de stockage ; dossier parent créé s'il manque |
-| `MEMORY_HTTP_TOKEN` | `""` | jeton exigé dans `X-Memory-Token` ; vide = aucun contrôle ; jamais imprimé |
+| `MEMORY_DB_PATH` | `$HOME/.memory/memory-rs.db` | seul fichier de stockage ; dossier parent créé s'il manque ; repli sur l'ancienne base (§ Noms de transition) |
+| `MEMORY_HTTP_TOKEN` | `""` | jeton exigé dans `X-Memory-Token` (ou, à défaut de cet en-tête, `X-Mem0-Token`) ; vide = aucun contrôle ; jamais imprimé |
 | `MEMORY_HTTP_TOKENS` | `""` | jetons limités à des portées, `nom:jeton:scope1,scope2;…` (16 à 512 caractères) : 403 hors de leurs portées ; `MEMORY_HTTP_TOKEN` reste le jeton total ; jamais imprimés |
 | `MEMORY_HTTP_TOKENS_FILE` | `""` | le même format dans un fichier, une entrée par ligne (`#` : commentaire) ; illisible = refus de démarrer |
 | `OMP_INSTALLATION_TOKEN` | `""` | ajouté à `GET /health` (`installation`) s'il est non vide |
@@ -68,7 +70,7 @@ bruts).
 | `MEMORY_BACKUP_REMOTE_TIMEOUT_SECONDS` | `600` | délai de la copie distante ; entier positif, sinon code 1 |
 | `MEMORY_LOG_DIR` | `logs/` à côté de la base | journal JSON `memory-AAAA-MM-JJ.jsonl` (`{"ts","level","src":"memory","msg","event"?,"err"?}`), aussi sur stderr |
 | `MEMORY_LOG_RETENTION_DAYS` | `14` | jours de journal gardés ; entier positif, sinon code 1 |
-| `MEMORY_SEARCH_FUSION` | `additive` | fusion de `POST /memory/search` quand la requête n'a pas de champ `fusion` : `additive` (memory 2.2.1), `rrf` ou `graphe` ; sinon code 1 (§ Recherche hybride) |
+| `MEMORY_SEARCH_FUSION` | `additive` | fusion de `POST /memory/search` quand la requête n'a pas de champ `fusion` : `additive` (bibliothèque d'origine 2.2.1), `rrf` ou `graphe` ; sinon code 1 (§ Recherche hybride) |
 | `MEMORY_RRF_K` | `60` | constante `k` de la RRF (et de la fusion `graphe`) ; entier positif, sinon code 1 |
 | `MEMORY_DREAM_INTERVAL_MINUTES` | `60` | période du rêve de fond, en minutes ; `0` le coupe (`POST /memory/dream` reste) ; entier positif ou nul, sinon code 1 (§ Rêve) |
 | `MEMORY_DREAM_QUIET_MINUTES` | `10` | une portée ne rêve que si aucun souvenir n'y a été écrit depuis ce délai ; entier positif ou nul |
@@ -79,6 +81,37 @@ Les variables `QDRANT_*` ne sont pas lues par le serveur. `memory-rs import` lit
 `QDRANT_API_KEY` (en-tête `api-key`, envoyé seulement si non vide ; jamais en
 argument, qui serait visible dans `ps`), plus `MEMORY_DB_PATH` et `EMBEDDING_DIMS` ;
 il n'utilise aucune variable `OMLX_*` et n'appelle jamais l'embedder.
+
+### Noms de transition
+
+Le service a changé de nom. Pendant la version de transition, il lit encore les anciens
+noms et émet les deux :
+
+- **Variables** : chaque `MEMORY_*` est lue sous son nom, puis, si elle est absente ou
+  blanche, sous l'ancien `MEM0_*` (`MEM0_DB_PATH`, `MEM0_HTTP_TOKEN`,
+  `MEM0_SEARCH_FUSION`…). Quand les deux sont posées, le nouveau nom l'emporte ; un
+  nouveau nom vide laisse lire l'ancien.
+- **Base de données** : `MEMORY_DB_PATH` (repli `MEM0_DB_PATH`) posée : ce chemin ;
+  sinon `$HOME/.memory/memory-rs.db`. Si ce chemin n'existe pas et se nomme
+  `memory-rs.db`, et que `mem0-rs.db` existe dans le même dossier, la base est ce
+  dernier ; sinon, quand le chemin vient du défaut, la base est
+  `$HOME/.mem0/mem0-rs.db` si elle existe. Verrou, `-wal`, instantanés (préfixe : le
+  nom de la base retenue sans extension) et dossier du journal par défaut suivent la
+  base retenue ; rien n'est déplacé, et la nouvelle base n'est pas créée tant que
+  l'ancienne existe. Un `MEMORY_DB_PATH` qui ne se nomme pas `memory-rs.db` n'a pas de
+  repli. `memory-rs import` suit la même résolution.
+- **En-tête** : `X-Memory-Token` ; l'ancien `X-Mem0-Token` n'est jugé que si le nouveau
+  manque (un `X-Memory-Token` présent, même vide, est seul jugé). Refus : 401
+  `{"detail": "bad or missing X-Memory-Token"}`. `GET /metrics` : `X-Memory-Token`,
+  sinon `X-Mem0-Token`, sinon `Authorization: Bearer`.
+- **`GET /health`** : les clés `memory` et `mem0` portent la même valeur,
+  `memory-rs <version>`.
+- **`GET /metrics`** : chaque famille est rendue sous `memory_<x>` puis sous
+  `mem0_<x>`, mêmes valeurs, mêmes lignes `# HELP` et `# TYPE` à leur nom.
+- **Journal** : `"src": "memory"` et fichiers `memory-AAAA-MM-JJ.jsonl` ; la rétention
+  retire aussi les anciens `mem0-AAAA-MM-JJ.jsonl` trop vieux.
+- **Copie distante** : `sh -c <commande> memory-backup <chemin>`, avec
+  `MEMORY_BACKUP_FILE` et `MEM0_BACKUP_FILE` posés au chemin de l'instantané.
 
 ## Stockage
 
@@ -104,10 +137,10 @@ et `<db>-journal` peuvent apparaître à côté, plus le verrou `<db>.lock`) :
 - `memory_vec` (sqlite-vec, `vec0`) : le vecteur dense normalisé L2 en float32.
 - `memory_terms` (FTS5) : les indices creux du souvenir en jetons `t<indice>` ;
   `memory_terms_vocab` (`fts5vocab`) en donne les fréquences documentaires.
-- `history` : le schéma de memory (`storage.py`), révisions ADD, UPDATE et DELETE.
+- `history` : le schéma de la bibliothèque d'origine, révisions ADD, UPDATE et DELETE.
 - `messages` : les textes des `add` infer=true rendus en 200, par portée (les 10
   plus récents sont gardés) ; ils alimentent la section `Last k Messages` de
-  l'invite d'extraction, comme la table `messages` de memory.
+  l'invite d'extraction, comme la table `messages` de la bibliothèque d'origine.
 - Graphe (schéma v4, § Graphe de liens) : `entites` et `souvenir_entites` (les
   entités de chaque souvenir), `liens` (`source`, `cible`, `type`, poids, origine,
   raison), `indexes` (le hash du texte indexé), `rappels` (combien de fois une
@@ -155,7 +188,7 @@ supprimer `<db>-wal` et `<db>-shm`), puis redémarrer.
 
 ## Écarts assumés au Python
 
-Trois comportements n'existaient pas dans mem0-http et ne changent rien pour un
+Trois comportements n'existaient pas dans l'ancien service Python et ne changent rien pour un
 client correct :
 
 - **Corps borné** : au-delà de 1 Mio (`CORPS_MAX`), toute route rend 413
@@ -184,7 +217,7 @@ QDRANT_API_KEY=<clé> MEMORY_DB_PATH=<base> memory-rs import --history-db <histo
 ```
 
 Lit toute la collection Qdrant (`POST /collections/<nom>/points/scroll`, pages de
-256, payload et vecteurs ; seule requête émise) puis le `history.db` de memory (ouvert
+256, payload et vecteurs ; seule requête émise) puis le `history.db` de mem0-http (ouvert
 en lecture seule), et écrit la base en UNE transaction. La source n'est jamais
 modifiée. Les vecteurs denses de la source sont repris tels quels (aucun appel à
 l'embedder) ; le vecteur creux `bm25` source fait foi pour la partie BM25 (un point
@@ -241,7 +274,7 @@ et la fin de la transaction peut rester créée avec un schéma vide (la supprim
 
 ## Recherche hybride
 
-`POST /memory/search` reproduit `Memory._search_vector_store` de mem0ai 2.2.1 avec
+`POST /memory/search` reproduit `_search_vector_store` de la bibliothèque d'origine 2.2.1 avec
 Qdrant 1.19 et fastembed 0.8.1 :
 
 1. 500 si la requête trimée est vide, si `threshold` est hors de [0, 1] ou si
@@ -278,7 +311,7 @@ anglaise, TF BM25 (k=1.2, b=0.75, avg_len=256), indice `|murmur3_x86_32|`.
   `{"detail":"filters avancés (opérateurs, AND/OR/NOT, listes, \"*\") non supportés par memory-rs"}` ;
 - des écarts de l'ordre de 1e-6 sur les scores (Qdrant calcule en float32).
 
-`GET /memory/graph` reproduit `graph_edges` de l'ancien mem0-http Python : seuil 0.75,
+`GET /memory/graph` reproduit `graph_edges` de l'ancien service Python : seuil 0.75,
 8 meilleurs voisins par souvenir, voisinages réunis, tri (score décroissant, source,
 target).
 
@@ -290,7 +323,7 @@ serveur avec `MEMORY_SEARCH_FUSION` (défaut `additive`). Une autre valeur du ch
 422 `literal_error` (`ctx.expected` : `'additive', 'rrf' or 'graphe'`), avant tout
 embedding. Le
 champ est propre à memory-rs : un client qui ne l'envoie pas — le plugin — garde
-exactement le classement de memory 2.2.1, et l'ancien Python l'ignorait comme tout
+exactement le classement de la bibliothèque d'origine 2.2.1, et l'ancien Python l'ignorait comme tout
 champ inconnu.
 
 - **`additive`** (défaut) : les étapes 3 à 5 ci-dessus. C'est la parité que prouve
@@ -302,7 +335,7 @@ champ inconnu.
      et des `max(limit*4, 60)` premiers hits BM25. Un souvenir que seul le BM25
      trouve (identifiant, nom de fichier, code d'erreur noyé dans un long texte)
      entre dans le classement avec son vrai cosinus : sqlite-vec calcule le cosinus
-     de tout le scope, aucun score ne manque. L'additive ne le fait pas : memory n'y
+     de tout le scope, aucun score ne manque. L'additive ne le fait pas : la bibliothèque d'origine n'y
      classe que les candidats sémantiques, et la parité l'interdit.
   2. Seuil : `threshold` juge le cosinus brut AVANT la fusion, comme pour
      l'additive. Un candidat sous le seuil sort des deux classements, et les rangs
@@ -560,22 +593,20 @@ même masquage des secrets que les écritures.
 
 ## entity_boost
 
-entity_boost est **inactif** dans la config actuelle de mem0-http : spaCy n'est pas
-installé (l'image n'installe pas `mem0ai[nlp]`, et son lemmatiseur anglais ne
-conviendrait pas au corpus français). Le chemin, dans mem0ai 2.2.1 :
+entity_boost est **inactif** dans la config actuelle de l'ancien service Python : spaCy
+n'est pas installé (l'image n'installe pas l'option NLP de la bibliothèque d'origine, et son
+lemmatiseur anglais ne conviendrait pas au corpus français). Le chemin, dans la
+bibliothèque d'origine 2.2.1 (voir THIRD_PARTY_NOTICES.md) :
 
-- `mem0/utils/entity_extraction.py:751` : `extract_entities` appelle `get_nlp_full()`
-  et rend `[]` quand il vaut `None` (l.756-757) ;
-- `mem0/utils/spacy_models.py:21` : `_ensure_model_available` lève `ImportError`
-  (« spaCy is not installed… ») ;
-- `mem0/utils/spacy_models.py:44` : `get_nlp_full` attrape l'exception, pose
-  `_load_failed_full = True` (l.64, définitif) et rend `None` ;
-- `mem0/memory/main.py:3336` : `query_entities = extract_entities(query)` vaut donc
-  `[]`, `if query_entities:` (l.3364) est faux et `entity_boosts` reste vide ;
-- `mem0/utils/scoring.py:57` : `ENTITY_BOOST_WEIGHT = 0.5` n'est jamais ajouté à
-  `max_possible` ;
-- `mem0/utils/lemmatization.py:31` : sans spaCy, `lemmatize_for_bm25` rend le texte
-  inchangé, donc `text_lemmatized` = le texte du souvenir.
+- son extracteur d'entités appelle `get_nlp_full()` et rend `[]` quand il vaut `None` ;
+- son chargeur de modèles spaCy lève `ImportError` (« spaCy is not installed… ») ;
+- `get_nlp_full` attrape l'exception, pose `_load_failed_full = True` (définitif) et rend
+  `None` ;
+- la recherche de la bibliothèque d'origine tire `query_entities = extract_entities(query)`,
+  qui vaut donc `[]` : `if query_entities:` est faux et `entity_boosts` reste vide ;
+- son module de score n'ajoute jamais `ENTITY_BOOST_WEIGHT = 0.5` à `max_possible` ;
+- son module de lemmatisation, sans spaCy, rend le texte inchangé avec `lemmatize_for_bm25`,
+  donc `text_lemmatized` = le texte du souvenir.
 
 memory-rs ne le reproduit donc pas : avec les fusions `additive` et `rrf`,
 `entity_boost` vaut toujours `0.0` et `max_possible_score` vaut 1 (aucun hit BM25) ou

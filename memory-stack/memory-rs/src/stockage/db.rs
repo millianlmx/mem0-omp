@@ -22,7 +22,7 @@ pub const SCHEMA_VERSION: &str = "4";
 /// souvenirs indexés), sans rien perdre ni réécrire de ce qu'elle contient.
 pub const VERSION_MIGRABLE: &str = "3";
 
-/// Nombre de messages gardés par scope de session dans `messages` (storage.py).
+/// Nombre de messages gardés par scope de session dans `messages` (comme la bibliothèque d'origine).
 pub const MESSAGES_PAR_PORTEE: usize = 10;
 
 /// Échec d'ouverture de la base (code 1 au démarrage).
@@ -810,7 +810,7 @@ pub struct LigneHistorique {
     pub role: Option<String>,
 }
 
-/// Les révisions de `memory_id`, dans l'ordre de memory (storage.py) puis d'insertion.
+/// Les révisions de `memory_id`, dans l'ordre de la bibliothèque d'origine puis d'insertion.
 pub fn historique(conn: &Connection, memory_id: &str) -> rusqlite::Result<Vec<LigneHistorique>> {
     let mut st = conn.prepare_cached(
         "SELECT id, memory_id, old_memory, new_memory, event, created_at, updated_at, is_deleted, actor_id, role

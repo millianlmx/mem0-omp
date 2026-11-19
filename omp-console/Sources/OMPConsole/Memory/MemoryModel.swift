@@ -57,7 +57,7 @@ final class MemoryModel: ObservableObject {
     @Published private(set) var serviceAvailable = false
     @Published private(set) var serviceError: String?
     /// L'état du prérequis oMLX (S-6, AC-6) : publié comme les autres, `unknown`
-    /// tant que le service memory n'a pas été trouvé disponible — la sonde ne part
+    /// tant que le service mémoire n'a pas été trouvé disponible — la sonde ne part
     /// jamais dans ce cas, et le bandeau non plus.
     @Published private(set) var omlx: OMLXStatus = .unknown
     @Published private(set) var isLoading = false
@@ -193,7 +193,7 @@ final class MemoryModel: ObservableObject {
 
     /// Le bandeau oMLX de la section, ou `nil` quand il n'y a rien à nommer.
     ///
-    /// Il n'apparaît QUE si le service memory est disponible (quand il est
+    /// Il n'apparaît QUE si le service mémoire est disponible (quand il est
     /// indisponible, son propre message suffit — S-6) ET qu'oMLX est en défaut :
     /// injoignable, ou jeton refusé. Joignable ou encore `unknown` ⇒ aucun bandeau.
     /// C'est une LECTURE seule : la phrase dit la conséquence et le geste ; l'URL

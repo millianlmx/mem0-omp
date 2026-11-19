@@ -1,7 +1,7 @@
 // Harnais des tests de la mémoire (BR-4) : une doublure ENREGISTREUSE du service, un
 // protocole d'URL stubé, et des fabriques de lignes.
 //
-// Aucune socket n'est ouverte et aucun service memory n'est requis : la doublure note
+// Aucune socket n'est ouverte et aucun service mémoire n'est requis : la doublure note
 // les requêtes et rend une page ou une erreur scriptée, et le stub `URLProtocol`
 // capture la requête HTTP réelle (URL, méthode, en-tête, corps) que
 // `HTTPMemoryService` produit — c'est ce qui prouve S-1, S-2 et S-7 sans réseau.

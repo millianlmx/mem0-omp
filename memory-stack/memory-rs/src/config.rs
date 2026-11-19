@@ -1,7 +1,7 @@
 //! Ligne de commande et variables d'environnement (S-1).
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::api::jetons::Jetons;
@@ -156,7 +156,14 @@ pub fn strip_python(s: &str) -> &str {
     s.trim_matches(blanc_python)
 }
 
-/// `_env` de l'ancien mem0-http Python : absente ou blanche → défaut ; sinon trimée.
+/// Valeur brute d'une variable renommée : celle de `nom` si elle n'est pas blanche (au sens de
+/// `strip_python`), sinon celle de `ancien` si elle n'est pas blanche, sinon rien. L'ancien nom
+/// n'est lu que pendant la version de transition.
+fn lire_renomme(lire: &impl Fn(&str) -> Option<String>, nom: &str, ancien: &str) -> Option<String> {
+    [nom, ancien].into_iter().find_map(|n| lire(n).filter(|v| !strip_python(v).is_empty()))
+}
+
+/// `_env` de l'ancien service Python : absente ou blanche → défaut ; sinon trimée.
 fn env_ou(lire: &impl Fn(&str) -> Option<String>, nom: &str, defaut: &str) -> String {
     match lire(nom) {
         Some(v) if !strip_python(&v).is_empty() => strip_python(&v).to_owned(),
@@ -164,10 +171,21 @@ fn env_ou(lire: &impl Fn(&str) -> Option<String>, nom: &str, defaut: &str) -> St
     }
 }
 
-/// Entier décimal sans signe d'une variable (défaut si absente ou blanche) ;
-/// `Err(message)` sinon, ou s'il est sous `min`.
-fn entier_env(lire: &impl Fn(&str) -> Option<String>, nom: &str, defaut: &str, min: u64) -> Result<u64, String> {
-    let brut = env_ou(lire, nom, defaut);
+/// `env_ou` d'une variable renommée : `nom`, sinon `ancien`, sinon `defaut`.
+fn env_renomme_ou(lire: &impl Fn(&str) -> Option<String>, nom: &str, ancien: &str, defaut: &str) -> String {
+    lire_renomme(lire, nom, ancien).map_or_else(|| defaut.to_owned(), |v| strip_python(&v).to_owned())
+}
+
+/// Entier décimal sans signe d'une variable renommée (défaut si absente ou blanche) ;
+/// `Err(message)` sinon, ou s'il est sous `min`. Le message nomme le nouveau nom.
+fn entier_env(
+    lire: &impl Fn(&str) -> Option<String>,
+    nom: &str,
+    ancien: &str,
+    defaut: &str,
+    min: u64,
+) -> Result<u64, String> {
+    let brut = env_renomme_ou(lire, nom, ancien, defaut);
     brut.parse::<u64>()
         .ok()
         .filter(|&v| v >= min && brut.bytes().all(|b| b.is_ascii_digit()))
@@ -177,60 +195,104 @@ fn entier_env(lire: &impl Fn(&str) -> Option<String>, nom: &str, defaut: &str, m
         })
 }
 
+/// Nom de la base par défaut, et de la base de la version qui l'a précédé.
+const BASE_PAR_DEFAUT: &str = "memory-rs.db";
+const ANCIENNE_BASE: &str = "mem0-rs.db";
+
+/// Chemin de la base (S-13). `P` : `MEMORY_DB_PATH` (repli `MEM0_DB_PATH`), sinon
+/// `$HOME/.memory/memory-rs.db`. Si `P` n'existe pas et se nomme `memory-rs.db`, l'ancienne base
+/// du même dossier (`mem0-rs.db`) la remplace quand elle existe ; sinon, si `P` vient du défaut
+/// et n'existe pas, `$HOME/.mem0/mem0-rs.db` la remplace quand elle existe ; sinon `P`.
+fn chemin_base(lire: &impl Fn(&str) -> Option<String>, existe: &impl Fn(&Path) -> bool) -> Result<PathBuf, String> {
+    // `home` n'est posé que si `P` vient du défaut.
+    let (p, home) = match lire_renomme(lire, "MEMORY_DB_PATH", "MEM0_DB_PATH") {
+        Some(v) => (PathBuf::from(strip_python(&v)), None),
+        None => {
+            let home = lire("HOME")
+                .filter(|h| !h.is_empty())
+                .ok_or_else(|| "MEMORY_DB_PATH absente et HOME non défini : impossible de placer la base".to_owned())?;
+            (PathBuf::from(&home).join(".memory").join(BASE_PAR_DEFAUT), Some(home))
+        }
+    };
+    if existe(&p) {
+        return Ok(p);
+    }
+    if p.file_name().is_some_and(|n| n == BASE_PAR_DEFAUT) {
+        let ancienne = p.with_file_name(ANCIENNE_BASE);
+        if existe(&ancienne) {
+            return Ok(ancienne);
+        }
+    }
+    if let Some(home) = home {
+        let ancienne = PathBuf::from(home).join(".mem0").join(ANCIENNE_BASE);
+        if existe(&ancienne) {
+            return Ok(ancienne);
+        }
+    }
+    Ok(p)
+}
+
 /// Valeur d'`OMLX_CHAT_BASE_URL` qui coupe le chat.
 pub const CHAT_COUPE: &str = "off";
 
 /// Lit la configuration ; `Err(message)` = erreur fatale (code 1).
 pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String> {
+    lire_env_avec(lire, &Path::exists)
+}
+
+/// [`lire_env`] avec la preuve d'existence d'un chemin injectée (la résolution de la base).
+fn lire_env_avec(lire: impl Fn(&str) -> Option<String>, existe: &impl Fn(&Path) -> bool) -> Result<Config, String> {
     let dims_brut = env_ou(&lire, "EMBEDDING_DIMS", "1024");
     let embedding_dims = dims_brut
         .parse::<usize>()
         .ok()
         .filter(|&d| d > 0)
         .ok_or_else(|| format!("EMBEDDING_DIMS doit être un entier positif (reçu « {dims_brut} »)"))?;
-    let db_path = match lire("MEMORY_DB_PATH") {
-        Some(v) if !strip_python(&v).is_empty() => PathBuf::from(strip_python(&v)),
-        _ => {
-            let home = lire("HOME")
-                .filter(|h| !h.is_empty())
-                .ok_or_else(|| "MEMORY_DB_PATH absente et HOME non défini : impossible de placer la base".to_owned())?;
-            PathBuf::from(home).join(".memory").join("memory-rs.db")
-        }
-    };
-    let heures = entier_env(&lire, "MEMORY_BACKUP_INTERVAL_HOURS", "24", 0)?;
-    let garder = entier_env(&lire, "MEMORY_BACKUP_KEEP", "7", 1)?;
+    let db_path = chemin_base(&lire, existe)?;
+    let heures = entier_env(&lire, "MEMORY_BACKUP_INTERVAL_HOURS", "MEM0_BACKUP_INTERVAL_HOURS", "24", 0)?;
+    let garder = entier_env(&lire, "MEMORY_BACKUP_KEEP", "MEM0_BACKUP_KEEP", "7", 1)?;
     let sauvegarde = Politique {
         intervalle: Duration::from_secs(heures.saturating_mul(3600)),
         garder: usize::try_from(garder).unwrap_or(usize::MAX),
     };
-    let commande_distante = env_ou(&lire, "MEMORY_BACKUP_REMOTE_CMD", "");
-    let delai_distant = entier_env(&lire, "MEMORY_BACKUP_REMOTE_TIMEOUT_SECONDS", "600", 1)?;
+    let commande_distante = env_renomme_ou(&lire, "MEMORY_BACKUP_REMOTE_CMD", "MEM0_BACKUP_REMOTE_CMD", "");
+    let delai_distant = entier_env(
+        &lire,
+        "MEMORY_BACKUP_REMOTE_TIMEOUT_SECONDS",
+        "MEM0_BACKUP_REMOTE_TIMEOUT_SECONDS",
+        "600",
+        1,
+    )?;
     let sauvegarde_distante = (!commande_distante.is_empty())
         .then(|| Distante { commande: commande_distante, delai: Duration::from_secs(delai_distant) });
-    let journal_dossier = match lire("MEMORY_LOG_DIR") {
-        Some(v) if !strip_python(&v).is_empty() => PathBuf::from(strip_python(&v)),
-        _ => crate::exploitation::journal::dossier_par_defaut(&db_path),
+    let journal_dossier = match lire_renomme(&lire, "MEMORY_LOG_DIR", "MEM0_LOG_DIR") {
+        Some(v) => PathBuf::from(strip_python(&v)),
+        None => crate::exploitation::journal::dossier_par_defaut(&db_path),
     };
-    let journal_retention_jours = entier_env(&lire, "MEMORY_LOG_RETENTION_DAYS", "14", 1)?;
-    let fusion_brute = env_ou(&lire, "MEMORY_SEARCH_FUSION", "additive");
+    let journal_retention_jours =
+        entier_env(&lire, "MEMORY_LOG_RETENTION_DAYS", "MEM0_LOG_RETENTION_DAYS", "14", 1)?;
+    let fusion_brute = env_renomme_ou(&lire, "MEMORY_SEARCH_FUSION", "MEM0_SEARCH_FUSION", "additive");
     let fusion = Fusion::lire(&fusion_brute)
         .ok_or_else(|| format!("MEMORY_SEARCH_FUSION doit valoir additive, rrf ou graphe (reçu « {fusion_brute} »)"))?;
-    let rrf_k = entier_env(&lire, "MEMORY_RRF_K", &RRF_K_PAR_DEFAUT.to_string(), 1)?;
+    let rrf_k = entier_env(&lire, "MEMORY_RRF_K", "MEM0_RRF_K", &RRF_K_PAR_DEFAUT.to_string(), 1)?;
     let rrf_k = u32::try_from(rrf_k)
         .map_err(|_| format!("MEMORY_RRF_K doit être un entier positif d'au plus {} (reçu « {rrf_k} »)", u32::MAX))?;
-    let minutes = |nom: &str, defaut: &str, min: u64| -> Result<std::time::Duration, String> {
-        Ok(Duration::from_secs(entier_env(&lire, nom, defaut, min)?.saturating_mul(60)))
+    let minutes = |nom: &str, ancien: &str, defaut: &str, min: u64| -> Result<std::time::Duration, String> {
+        Ok(Duration::from_secs(entier_env(&lire, nom, ancien, defaut, min)?.saturating_mul(60)))
     };
     let reve = reve::Reglage {
-        intervalle: minutes("MEMORY_DREAM_INTERVAL_MINUTES", "60", 0)?,
-        calme: minutes("MEMORY_DREAM_QUIET_MINUTES", "10", 0)?,
-        paires: usize::try_from(entier_env(&lire, "MEMORY_DREAM_PAIRS", "20", 0)?).unwrap_or(usize::MAX),
-        oubli_jours: entier_env(&lire, "MEMORY_DREAM_FORGET_DAYS", "180", 0)?,
+        intervalle: minutes("MEMORY_DREAM_INTERVAL_MINUTES", "MEM0_DREAM_INTERVAL_MINUTES", "60", 0)?,
+        calme: minutes("MEMORY_DREAM_QUIET_MINUTES", "MEM0_DREAM_QUIET_MINUTES", "10", 0)?,
+        paires: usize::try_from(entier_env(&lire, "MEMORY_DREAM_PAIRS", "MEM0_DREAM_PAIRS", "20", 0)?)
+            .unwrap_or(usize::MAX),
+        oubli_jours: entier_env(&lire, "MEMORY_DREAM_FORGET_DAYS", "MEM0_DREAM_FORGET_DAYS", "180", 0)?,
     };
     let base_url = env_ou(&lire, "OMLX_BASE_URL", "http://host.containers.internal:8000/v1");
     let api_token = env_ou(&lire, "OMLX_API_TOKEN", "not-needed");
     let chat_base_url = env_ou(&lire, "OMLX_CHAT_BASE_URL", &base_url);
-    let fichier = match lire("MEMORY_HTTP_TOKENS_FILE").map(|v| strip_python(&v).to_owned()).filter(|v| !v.is_empty()) {
+    let fichier = match lire_renomme(&lire, "MEMORY_HTTP_TOKENS_FILE", "MEM0_HTTP_TOKENS_FILE")
+        .map(|v| strip_python(&v).to_owned())
+    {
         Some(chemin) => {
             let contenu = std::fs::read_to_string(&chemin)
                 .map_err(|e| format!("MEMORY_HTTP_TOKENS_FILE={chemin} illisible : {e}"))?;
@@ -238,9 +300,10 @@ pub fn lire_env(lire: impl Fn(&str) -> Option<String>) -> Result<Config, String>
         }
         None => None,
     };
+    let liste = lire_renomme(&lire, "MEMORY_HTTP_TOKENS", "MEM0_HTTP_TOKENS");
     let jetons = Jetons::lire(
-        lire("MEMORY_HTTP_TOKEN").unwrap_or_default(),
-        lire("MEMORY_HTTP_TOKENS").as_deref(),
+        lire_renomme(&lire, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN").unwrap_or_default(),
+        liste.as_deref(),
         fichier.as_ref().map(|(chemin, contenu)| (chemin.as_str(), contenu.as_str())),
     )
     .map_err(|e| format!("jetons de l'API : {e}"))?;
@@ -492,5 +555,277 @@ mod tests {
     #[test]
     fn strip_comme_python() {
         assert_eq!(strip_python("\u{1c} a b\u{a0}\u{3000}"), "a b");
+    }
+
+    #[test]
+    fn lire_renomme_nouveau_puis_ancien() {
+        let n = "MEMORY_X";
+        let a = "MEM0_X";
+        assert_eq!(lire_renomme(&env(&[(a, "vieux")]), n, a).as_deref(), Some("vieux"));
+        assert_eq!(lire_renomme(&env(&[(n, "neuf")]), n, a).as_deref(), Some("neuf"));
+        assert_eq!(lire_renomme(&env(&[(n, "neuf"), (a, "vieux")]), n, a).as_deref(), Some("neuf"));
+        assert_eq!(lire_renomme(&env(&[(n, ""), (a, "vieux")]), n, a).as_deref(), Some("vieux"));
+        assert_eq!(lire_renomme(&env(&[(n, " \t"), (a, "vieux")]), n, a).as_deref(), Some("vieux"));
+        assert_eq!(lire_renomme(&env(&[(n, ""), (a, "")]), n, a), None);
+        assert_eq!(lire_renomme(&env(&[(a, "  ")]), n, a), None);
+        assert_eq!(lire_renomme(&env(&[]), n, a), None);
+        assert_eq!(lire_renomme(&env(&[(n, " t ")]), n, a).as_deref(), Some(" t "), "valeur brute");
+    }
+
+    /// S-6 : `MEMORY_HTTP_TOKEN` lu sous le nouveau nom, sinon sous l'ancien.
+    #[test]
+    fn jeton_total_nouveau_ancien_les_deux_et_nouveau_vide() {
+        use crate::api::jetons::Acces;
+        let jeton = |paires: &[(&str, &str)]| {
+            let mut tout = vec![("HOME", "/h")];
+            tout.extend_from_slice(paires);
+            lire_env(env(&tout)).unwrap().jetons
+        };
+        let j = jeton(&[("MEM0_HTTP_TOKEN", "ancien")]);
+        assert_eq!(j.identifier(Some(b"ancien")), Some(Acces::Total));
+        assert_eq!(j.identifier(Some(b"autre")), None);
+        let j = jeton(&[("MEMORY_HTTP_TOKEN", "nouveau")]);
+        assert_eq!(j.identifier(Some(b"nouveau")), Some(Acces::Total));
+        assert_eq!(j.identifier(Some(b"ancien")), None);
+        let j = jeton(&[("MEMORY_HTTP_TOKEN", "nouveau"), ("MEM0_HTTP_TOKEN", "ancien")]);
+        assert_eq!(j.identifier(Some(b"nouveau")), Some(Acces::Total));
+        assert_eq!(j.identifier(Some(b"ancien")), None, "le nouveau l'emporte");
+        let j = jeton(&[("MEMORY_HTTP_TOKEN", ""), ("MEM0_HTTP_TOKEN", "ancien")]);
+        assert_eq!(j.identifier(Some(b"ancien")), Some(Acces::Total));
+        assert_eq!(j.identifier(Some(b"")), None);
+        let j = jeton(&[("MEMORY_HTTP_TOKEN", ""), ("MEM0_HTTP_TOKEN", "")]);
+        assert!(!j.exige(), "les deux vides : aucun contrôle");
+    }
+
+    /// S-6 : jetons à portées, liste et fichier, sous l'un ou l'autre nom.
+    #[test]
+    fn jetons_a_portees_sous_l_ancien_nom() {
+        let secret = "0123456789abcdefghij";
+        let liste = format!("client:{secret}:p1,p2");
+        let liste = liste.as_str();
+        let c = lire_env(env(&[("HOME", "/h"), ("MEM0_HTTP_TOKENS", liste)])).unwrap();
+        assert_eq!(c.jetons.limites(), 1);
+        let c = lire_env(env(&[("HOME", "/h"), ("MEMORY_HTTP_TOKENS", liste)])).unwrap();
+        assert_eq!(c.jetons.limites(), 1);
+        let c = lire_env(env(&[("HOME", "/h"), ("MEMORY_HTTP_TOKENS", ""), ("MEM0_HTTP_TOKENS", liste)])).unwrap();
+        assert_eq!(c.jetons.limites(), 1);
+        let d = Dossier::new();
+        let fichier = d.fichier("jetons.txt");
+        std::fs::write(&fichier, format!("# commentaire\nautre:{secret}:p3\n")).unwrap();
+        let chemin = fichier.to_str().unwrap();
+        let c = lire_env(env(&[("HOME", "/h"), ("MEM0_HTTP_TOKENS_FILE", chemin)])).unwrap();
+        assert_eq!(c.jetons.limites(), 1);
+        let c = lire_env(env(&[("HOME", "/h"), ("MEMORY_HTTP_TOKENS_FILE", chemin)])).unwrap();
+        assert_eq!(c.jetons.limites(), 1);
+        let e = lire_env(env(&[("HOME", "/h"), ("MEMORY_HTTP_TOKENS_FILE", "/absent/jetons")])).unwrap_err();
+        assert!(e.starts_with("MEMORY_HTTP_TOKENS_FILE=/absent/jetons illisible"), "{e}");
+    }
+
+    /// S-6 : `MEMORY_SEARCH_FUSION` lu sous le nouveau nom, sinon sous l'ancien.
+    #[test]
+    fn fusion_nouveau_ancien_les_deux_et_nouveau_vide() {
+        let fusion = |paires: &[(&str, &str)]| {
+            let mut tout = vec![("HOME", "/h")];
+            tout.extend_from_slice(paires);
+            lire_env(env(&tout)).unwrap().recherche.fusion
+        };
+        assert_eq!(fusion(&[("MEM0_SEARCH_FUSION", "rrf")]), Fusion::Rrf);
+        assert_eq!(fusion(&[("MEMORY_SEARCH_FUSION", "graphe")]), Fusion::Graphe);
+        assert_eq!(fusion(&[("MEMORY_SEARCH_FUSION", "graphe"), ("MEM0_SEARCH_FUSION", "rrf")]), Fusion::Graphe);
+        assert_eq!(fusion(&[("MEMORY_SEARCH_FUSION", ""), ("MEM0_SEARCH_FUSION", "rrf")]), Fusion::Rrf);
+        assert_eq!(fusion(&[("MEMORY_SEARCH_FUSION", " "), ("MEM0_SEARCH_FUSION", " ")]), Fusion::Additive);
+        let e = lire_env(env(&[("HOME", "/h"), ("MEM0_SEARCH_FUSION", "RRF")])).unwrap_err();
+        assert_eq!(e, "MEMORY_SEARCH_FUSION doit valoir additive, rrf ou graphe (reçu « RRF »)");
+    }
+
+    /// S-6 : chaque autre variable de la classe V du service, sous l'ancien nom seul, puis les deux.
+    #[test]
+    fn autres_variables_sous_l_ancien_nom() {
+        let c = lire_env(env(&[
+            ("HOME", "/h"),
+            ("MEM0_BACKUP_INTERVAL_HOURS", "5"),
+            ("MEM0_BACKUP_KEEP", "2"),
+            ("MEM0_BACKUP_REMOTE_CMD", "cp \"$1\" /x"),
+            ("MEM0_BACKUP_REMOTE_TIMEOUT_SECONDS", "9"),
+            ("MEM0_LOG_DIR", "/var/log/ancien"),
+            ("MEM0_LOG_RETENTION_DAYS", "3"),
+            ("MEM0_RRF_K", "10"),
+            ("MEM0_DREAM_INTERVAL_MINUTES", "1"),
+            ("MEM0_DREAM_QUIET_MINUTES", "2"),
+            ("MEM0_DREAM_PAIRS", "3"),
+            ("MEM0_DREAM_FORGET_DAYS", "4"),
+        ]))
+        .unwrap();
+        assert_eq!(c.sauvegarde, Politique { intervalle: Duration::from_secs(5 * 3600), garder: 2 });
+        assert_eq!(
+            c.sauvegarde_distante,
+            Some(Distante { commande: "cp \"$1\" /x".into(), delai: Duration::from_secs(9) })
+        );
+        assert_eq!((c.journal_dossier.clone(), c.journal_retention_jours), (PathBuf::from("/var/log/ancien"), 3));
+        assert_eq!(c.recherche.rrf_k, 10);
+        assert_eq!(
+            c.reve,
+            reve::Reglage {
+                intervalle: Duration::from_secs(60),
+                calme: Duration::from_secs(120),
+                paires: 3,
+                oubli_jours: 4
+            }
+        );
+        let c = lire_env(env(&[
+            ("HOME", "/h"),
+            ("MEMORY_BACKUP_KEEP", "8"),
+            ("MEM0_BACKUP_KEEP", "2"),
+            ("MEMORY_DREAM_PAIRS", "7"),
+            ("MEM0_DREAM_PAIRS", "3"),
+            ("MEMORY_LOG_DIR", "/var/log/nouveau"),
+            ("MEM0_LOG_DIR", "/var/log/ancien"),
+        ]))
+        .unwrap();
+        assert_eq!((c.sauvegarde.garder, c.reve.paires), (8, 7));
+        assert_eq!(c.journal_dossier, PathBuf::from("/var/log/nouveau"));
+        let e = lire_env(env(&[("HOME", "/h"), ("MEM0_DREAM_PAIRS", "-1")])).unwrap_err();
+        assert_eq!(e, "MEMORY_DREAM_PAIRS doit être un entier positif ou nul (reçu « -1 »)");
+        let c = lire_env(env(&[("HOME", "/h"), ("MEMORY_BACKUP_KEEP", ""), ("MEM0_BACKUP_KEEP", "4")])).unwrap();
+        assert_eq!(c.sauvegarde.garder, 4, "nouveau vide : l'ancien");
+    }
+
+    /// S-6 : `MEMORY_DB_PATH` lu sous le nouveau nom, sinon sous l'ancien.
+    #[test]
+    fn chemin_explicite_nouveau_ancien_les_deux_et_nouveau_vide() {
+        let chemin = |paires: &[(&str, &str)]| lire_env(env(paires)).unwrap().db_path;
+        assert_eq!(chemin(&[("MEM0_DB_PATH", "/d/ancien.db")]), PathBuf::from("/d/ancien.db"));
+        assert_eq!(chemin(&[("MEMORY_DB_PATH", "/d/nouveau.db")]), PathBuf::from("/d/nouveau.db"));
+        assert_eq!(
+            chemin(&[("MEMORY_DB_PATH", "/d/nouveau.db"), ("MEM0_DB_PATH", "/d/ancien.db")]),
+            PathBuf::from("/d/nouveau.db")
+        );
+        assert_eq!(
+            chemin(&[("MEMORY_DB_PATH", ""), ("MEM0_DB_PATH", " /d/ancien.db ")]),
+            PathBuf::from("/d/ancien.db")
+        );
+        let e = lire_env(env(&[("MEMORY_DB_PATH", " "), ("MEM0_DB_PATH", "")])).unwrap_err();
+        assert_eq!(e, "MEMORY_DB_PATH absente et HOME non défini : impossible de placer la base");
+    }
+
+    /// Dossier temporaire unique, supprimé à la fin du test.
+    struct Dossier(PathBuf);
+
+    impl Dossier {
+        fn new() -> Self {
+            Dossier(std::env::temp_dir().join(format!("memory-rs-config-{}", uuid::Uuid::new_v4())))
+        }
+
+        /// Crée le fichier `rel` (et ses dossiers) sous ce dossier ; rend son chemin.
+        fn fichier(&self, rel: &str) -> PathBuf {
+            let chemin = self.0.join(rel);
+            std::fs::create_dir_all(chemin.parent().unwrap()).unwrap();
+            std::fs::write(&chemin, b"").unwrap();
+            chemin
+        }
+
+        fn home(&self) -> String {
+            self.0.to_str().unwrap().to_owned()
+        }
+    }
+
+    impl Drop for Dossier {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// S-13 : les quatre règles, sur de vrais dossiers.
+    #[test]
+    fn base_par_defaut_et_repli_sur_l_ancienne() {
+        // Rien n'existe : la base par défaut, journal à côté.
+        let d = Dossier::new();
+        let home = d.home();
+        let c = lire_env(env(&[("HOME", home.as_str())])).unwrap();
+        assert_eq!(c.db_path, d.0.join(".memory/memory-rs.db"));
+        assert_eq!(c.journal_dossier, d.0.join(".memory/logs"));
+
+        // Seul `~/.mem0/mem0-rs.db` existe : c'est lui, et le journal le suit.
+        let d = Dossier::new();
+        let home = d.home();
+        let ancienne = d.fichier(".mem0/mem0-rs.db");
+        let c = lire_env(env(&[("HOME", home.as_str())])).unwrap();
+        assert_eq!(c.db_path, ancienne);
+        assert_eq!(c.journal_dossier, d.0.join(".mem0/logs"));
+        assert!(!d.0.join(".memory").exists(), "rien n'est créé ni déplacé");
+
+        // Les deux existent : la nouvelle l'emporte.
+        let nouvelle = d.fichier(".memory/memory-rs.db");
+        let c = lire_env(env(&[("HOME", home.as_str())])).unwrap();
+        assert_eq!(c.db_path, nouvelle);
+        assert_eq!(c.journal_dossier, d.0.join(".memory/logs"));
+
+        // `~/.memory/mem0-rs.db` (même dossier que le défaut) : prise avant `~/.mem0/`.
+        let d = Dossier::new();
+        let home = d.home();
+        d.fichier(".mem0/mem0-rs.db");
+        let voisine = d.fichier(".memory/mem0-rs.db");
+        let c = lire_env(env(&[("HOME", home.as_str())])).unwrap();
+        assert_eq!(c.db_path, voisine);
+        assert_eq!(c.journal_dossier, d.0.join(".memory/logs"));
+    }
+
+    /// S-13 : `MEMORY_DB_PATH` nommé `memory-rs.db` retombe sur `mem0-rs.db` de son dossier,
+    /// jamais sur `~/.mem0/` ; un autre nom n'a pas de repli.
+    #[test]
+    fn base_explicite_repli_dans_son_dossier() {
+        let d = Dossier::new();
+        let home = d.home();
+        let home = home.as_str();
+        d.fichier(".mem0/mem0-rs.db");
+        let voisine = d.fichier("data/mem0-rs.db");
+        let demandee = d.0.join("data/memory-rs.db");
+        let c = lire_env(env(&[("HOME", home), ("MEMORY_DB_PATH", demandee.to_str().unwrap())])).unwrap();
+        assert_eq!(c.db_path, voisine);
+        assert_eq!(c.journal_dossier, d.0.join("data/logs"));
+        let c = lire_env(env(&[("HOME", home), ("MEM0_DB_PATH", demandee.to_str().unwrap())])).unwrap();
+        assert_eq!(c.db_path, voisine, "le repli vaut aussi sous l'ancien nom de la variable");
+
+        // La demandée existe : elle l'emporte.
+        let demandee = d.fichier("data/memory-rs.db");
+        let c = lire_env(env(&[("HOME", home), ("MEMORY_DB_PATH", demandee.to_str().unwrap())])).unwrap();
+        assert_eq!(c.db_path, demandee);
+
+        // Ni la demandée ni sa voisine : `~/.mem0/mem0-rs.db` n'est pas consulté (P ne vient pas du défaut).
+        let autre = d.0.join("ailleurs/memory-rs.db");
+        let c = lire_env(env(&[("HOME", home), ("MEMORY_DB_PATH", autre.to_str().unwrap())])).unwrap();
+        assert_eq!(c.db_path, autre);
+
+        // Un autre nom de fichier n'a pas de repli, même si une `mem0-rs.db` est à côté.
+        let nommee = d.0.join("data/souvenirs.db");
+        let c = lire_env(env(&[("HOME", home), ("MEMORY_DB_PATH", nommee.to_str().unwrap())])).unwrap();
+        assert_eq!(c.db_path, nommee);
+        assert_eq!(c.journal_dossier, d.0.join("data/logs"));
+    }
+
+    /// S-13, existence injectée : ordre des règles, sans toucher au disque.
+    #[test]
+    fn chemin_base_existence_injectee() {
+        let present = |ps: &'static [&'static str]| move |p: &Path| ps.iter().any(|q| p == Path::new(q));
+        let lire = env(&[("HOME", "/h")]);
+        assert_eq!(chemin_base(&lire, &present(&[])).unwrap(), PathBuf::from("/h/.memory/memory-rs.db"));
+        assert_eq!(
+            chemin_base(&lire, &present(&["/h/.mem0/mem0-rs.db"])).unwrap(),
+            PathBuf::from("/h/.mem0/mem0-rs.db")
+        );
+        assert_eq!(
+            chemin_base(&lire, &present(&["/h/.mem0/mem0-rs.db", "/h/.memory/mem0-rs.db"])).unwrap(),
+            PathBuf::from("/h/.memory/mem0-rs.db")
+        );
+        assert_eq!(
+            chemin_base(&lire, &present(&["/h/.mem0/mem0-rs.db", "/h/.memory/memory-rs.db"])).unwrap(),
+            PathBuf::from("/h/.memory/memory-rs.db")
+        );
+        let lire = env(&[("HOME", "/h"), ("MEMORY_DB_PATH", "/d/memory-rs.db")]);
+        assert_eq!(
+            chemin_base(&lire, &present(&["/h/.mem0/mem0-rs.db"])).unwrap(),
+            PathBuf::from("/d/memory-rs.db")
+        );
+        assert_eq!(chemin_base(&lire, &present(&["/d/mem0-rs.db"])).unwrap(), PathBuf::from("/d/mem0-rs.db"));
     }
 }

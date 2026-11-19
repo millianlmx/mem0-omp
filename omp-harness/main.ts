@@ -118,8 +118,8 @@ export async function startHarness(
   const git = new Git(execProcess, repoIdentity(config), { log });
   const heavy = new HeavyRunner({ config, store, scheduler, git, exec: execProcess });
   // Le jeton de memory-rs peut venir de l'environnement (/etc/omp-harness/env), comme pour le plugin mémoire.
-  if (config.oracle && !config.oracle.token && renamedEnv(process.env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN"))
-    config.oracle.token = renamedEnv(process.env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN");
+  const memoryToken = renamedEnv(process.env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN");
+  if (config.oracle && !config.oracle.token && memoryToken) config.oracle.token = memoryToken;
   // L'URL et le jeton du navigateur Moli des outils `browser_*`, posés par `setup` dans l'environnement.
   browserFromEnv(config);
   const oracle = config.oracle ? new HttpOracle(config.oracle, { log }) : NO_ORACLE;
@@ -331,8 +331,8 @@ if (isMain) {
     process.exit(output.status);
   }
   if (process.argv.includes("--check")) {
-    if (config.oracle && !config.oracle.token && renamedEnv(process.env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN"))
-      config.oracle.token = renamedEnv(process.env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN");
+    const memoryToken = renamedEnv(process.env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN");
+    if (config.oracle && !config.oracle.token && memoryToken) config.oracle.token = memoryToken;
     const oracle = config.oracle ? new HttpOracle(config.oracle) : null;
     const lines = await runChecks(config, {
       exec: execProcess,

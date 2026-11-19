@@ -1,8 +1,8 @@
-<!-- memory:brief v6 -->
+<!-- memory:brief v7 -->
 # Brief mémoire — règles complètes
 
 Généré par le plugin `omp-memory`. Tu peux éditer ce fichier : il ne sera pas
-réécrit tant que le marqueur de version en tête reste `v6`.
+réécrit tant que le marqueur de version en tête reste `v7`.
 
 ## Quand chercher
 

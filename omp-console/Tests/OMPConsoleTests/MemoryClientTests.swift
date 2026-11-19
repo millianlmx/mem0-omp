@@ -1,4 +1,4 @@
-// Le client mem0-http (S-1, S-2, S-3, S-6, S-7, BR-2) : la requête RÉELLE que
+// Le client HTTP du service mémoire (S-1, S-2, S-3, S-6, S-7, BR-2) : la requête RÉELLE que
 // l'app émet, la sélection de pertinence portée du plugin, la portée des routes et
 // les messages d'erreur.
 //
@@ -199,7 +199,7 @@ func ac12AddBodyIsExact() async throws {
     #expect(body["text"] as? String == "souvenir neuf")
     #expect(body["agent_id"] as? String == "projet-a")
     #expect(body["tags"] as? String == "t1,t2")
-    // REQUIS : sans lui, memory ferait résumer le texte par le LLM.
+    // REQUIS : sans lui, le service ferait résumer le texte par le LLM.
     #expect(body["infer"] as? Bool == false)
 
     StubURLProtocol.reset()
@@ -434,11 +434,13 @@ func ac8ConfigAndToken() async throws {
     StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true])))
     _ = await stubbedHTTPMemoryService(token: "secret").health()
     #expect(StubURLProtocol.requests.first?.value(forHTTPHeaderField: "X-Memory-Token") == "secret")
+    #expect(StubURLProtocol.requests.first?.value(forHTTPHeaderField: "X-Mem0-Token") == "secret")
 
     StubURLProtocol.reset()
     StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true])))
     _ = await stubbedHTTPMemoryService(token: "").health()
     #expect(StubURLProtocol.requests.first?.value(forHTTPHeaderField: "X-Memory-Token") == nil)
+    #expect(StubURLProtocol.requests.first?.value(forHTTPHeaderField: "X-Mem0-Token") == nil)
 }
 
 // MARK: - S-4 : identité d'installation de la pile

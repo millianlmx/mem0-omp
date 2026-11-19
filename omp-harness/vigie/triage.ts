@@ -27,6 +27,7 @@ const WITHHELD_ENV = [
   "GH_ENTERPRISE_TOKEN",
   "GITHUB_ENTERPRISE_TOKEN",
   "MEMORY_HTTP_TOKEN",
+  "MEM0_HTTP_TOKEN",
 ] as const;
 
 const STRINGS = { type: "array", items: { type: "string" } } as const;

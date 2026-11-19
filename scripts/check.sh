@@ -140,13 +140,15 @@ section_on() {
 }
 
 # Vrai si l'absence d'un prérequis du domaine <X> (SMOKE, RUST, IOS) est un
-# échec : MEMORY_OMP_REQUIRE_<X>=1 (posée par la CI) ou --strict. Pose
+# échec : MEMORY_OMP_REQUIRE_<X>=1 (posée par la CI), son ancien nom
+# MEM0_OMP_REQUIRE_<X> lu en repli pendant la transition, ou --strict. Pose
 # `strict_note` : vide sous la variable, dont les messages historiques restent
 # inchangés, ` (--strict)` quand seul le mode strict durcit.
 required() {
   local var="MEMORY_OMP_REQUIRE_$1"
+  local legacy="MEM0_OMP_REQUIRE_$1"
   strict_note=""
-  [ "${!var:-}" = "1" ] && return 0
+  [ "${!var:-${!legacy:-}}" = "1" ] && return 0
   strict_note=" (--strict)"
   [ "$strict" -eq 1 ]
 }
@@ -259,6 +261,10 @@ PY
 # Le balayage est RÉCURSIF sur les .ts du plugin : depuis le découpage en
 # modules, les commandes peuvent vivre dans n'importe lequel (extension.ts n'est
 # plus qu'une entrée de câblage).
+#
+# Une entrée alias (ancien nom d'un plugin, gardé pendant la transition) a la même
+# source que son plugin : elle passe donc ici, comme dans la section Versions, par
+# les mêmes contrôles sur le même dossier, et doit déclarer les mêmes commandes.
 python3 - <<'PY'
 import json, os, re, sys
 from pathlib import Path

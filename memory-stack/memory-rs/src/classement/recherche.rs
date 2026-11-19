@@ -1,8 +1,8 @@
-//! Recherche hybride (S-5) : reproduction de `Memory._search_vector_store`
-//! (mem0/memory/main.py:3330-3431) et de `mem0/utils/scoring.py` de mem0ai
-//! 2.2.1 (D-1). entity_boost y est inactif (spaCy absent) : il vaut toujours 0.
+//! Recherche hybride (S-5) : reproduction de `_search_vector_store` et du calcul de score
+//! de la bibliothèque d'origine, version 2.2.1 (D-1 ; voir THIRD_PARTY_NOTICES.md).
+//! entity_boost y est inactif (spaCy absent) : il vaut toujours 0.
 //!
-//! Deux fusions des classements sémantique et BM25 : l'additive de memory (défaut,
+//! Deux fusions des classements sémantique et BM25 : l'additive de la bibliothèque d'origine (défaut,
 //! parité de `scripts/memory-http-contrat/rang.json`) et la Reciprocal Rank Fusion
 //! ([`classer_rrf`]), choisie par `MEMORY_SEARCH_FUSION` ou par le champ `fusion`
 //! d'une requête. Le banc de mesure ([`crate::classement::banc`]) éprouve aussi les deux
@@ -26,7 +26,7 @@ use crate::stockage::entites;
 use crate::stockage::liens::{self, SEMANTIQUE};
 use crate::api::validation::SearchRequest;
 
-/// `threshold=None` de memory (main.py:3331-3332).
+/// `threshold=None` de la bibliothèque d'origine (main.py:3331-3332).
 const SEUIL_PAR_DEFAUT: f64 = 0.1;
 /// Plancher du sur-échantillonnage `max(limit*4, 60)`.
 const CANDIDATS_MIN: usize = 60;
@@ -37,7 +37,7 @@ pub const RRF_K_PAR_DEFAUT: u32 = 60;
 /// Fusion demandée au serveur (`MEMORY_SEARCH_FUSION`) ou par une requête (`fusion`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fusion {
-    /// memory 2.2.1 : `min((cosinus + BM25 sigmoïde)/max_possible, 1)` sur les
+    /// Bibliothèque d'origine 2.2.1 : `min((cosinus + BM25 sigmoïde)/max_possible, 1)` sur les
     /// candidats sémantiques. Défaut.
     Additive,
     /// Reciprocal Rank Fusion : `Σ 1/(k + rang)` sur l'union des candidats
@@ -91,7 +91,7 @@ pub enum Strategie {
     Semantique,
     /// BM25 seul : les hits, score brut décroissant.
     Bm25,
-    /// Fusion additive de memory.
+    /// Fusion additive de la bibliothèque d'origine.
     Additive,
     /// Reciprocal Rank Fusion de constante `k`.
     Rrf { k: u32 },
@@ -114,7 +114,7 @@ impl std::fmt::Display for Strategie {
 /// Refus d'une recherche avant tout embedding et toute lecture.
 #[derive(Debug, PartialEq)]
 pub enum Refus {
-    /// 500 : `ValueError` de memory (requête vide, seuil hors [0, 1], limite
+    /// 500 : `ValueError` de la bibliothèque d'origine (requête vide, seuil hors [0, 1], limite
     /// négative) ou valeur de filtre que `MatchValue` de qdrant_client refuse.
     Interne,
     /// 501 : opérateurs de `filters` (non-objectif de S-5).
@@ -186,7 +186,7 @@ pub fn preparer(
     })
 }
 
-/// Valeur d'un champ du payload Qdrant de memory : `None` = clé absente,
+/// Valeur d'un champ du payload Qdrant de la bibliothèque d'origine : `None` = clé absente,
 /// `Some(None)` = `null`.
 fn champ<'a>(s: &'a Souvenir, cle: &str) -> Option<Option<&'a str>> {
     match cle {
@@ -239,7 +239,7 @@ fn score_bm25(requete: &[(u32, f32)], document: &VecteurCreux, idf: &HashMap<u32
         .sum()
 }
 
-/// `score_details` de memory, dans l'ordre de ses clés.
+/// `score_details` de la bibliothèque d'origine, dans l'ordre de ses clés.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Details {
     pub semantic_score: f64,
@@ -566,7 +566,7 @@ fn hits_bm25(conn: &Connection, r: &Requete, interne: usize) -> rusqlite::Result
 /// Étapes 4-8 de S-5, sur l'embedding `vecteur` de la requête, avec la
 /// stratégie de la requête.
 ///
-/// Candidats : l'additive (parité memory) et le sémantique seul ne classent que
+/// Candidats : l'additive (parité avec la bibliothèque d'origine) et le sémantique seul ne classent que
 /// les `max(limit*4, 60)` premiers du classement sémantique. La RRF classe
 /// l'UNION de ces candidats et des hits BM25 retenus : un souvenir que seul le
 /// BM25 trouve (identifiant, nom de fichier) entre dans le classement avec son

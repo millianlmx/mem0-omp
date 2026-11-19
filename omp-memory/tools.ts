@@ -46,7 +46,46 @@ function wrote(st: SessionState): void {
   noted(st);
 }
 
+// Noms des outils : les `memory_*`, puis, pendant la version de transition, les anciens noms, enregistrés avec la
+// même définition.
+type ToolNames = {
+  search: string;
+  add: string;
+  update: string;
+  link: string;
+  forget: string;
+  legacy: boolean;
+};
+
+const CURRENT_NAMES: ToolNames = {
+  search: "memory_search",
+  add: "memory_add",
+  update: "memory_update",
+  link: "memory_link",
+  forget: "memory_forget",
+  legacy: false,
+};
+
+const LEGACY_NAMES: ToolNames = {
+  search: "mem0_search",
+  add: "mem0_add",
+  update: "mem0_update",
+  link: "mem0_link",
+  forget: "mem0_forget",
+  legacy: true,
+};
+
+/** Début de la description d'un alias : il nomme le nouvel outil, puis reprend sa description. */
+function legacyNote(names: ToolNames, current: string): string {
+  return names.legacy ? `Ancien nom de \`${current}\`, gardé pendant la transition : ` : "";
+}
+
 export function registerMemoryTools(pi: ExtensionAPI, rt: MemoryRuntime): void {
+  defineTools(pi, rt, CURRENT_NAMES);
+  defineTools(pi, rt, LEGACY_NAMES);
+}
+
+function defineTools(pi: ExtensionAPI, rt: MemoryRuntime, names: ToolNames): void {
   const { z } = pi.zod;
 
   // `loadMode: "essential"` sur les cinq tools. Sans ça, OMP les monte en
@@ -56,10 +95,11 @@ export function registerMemoryTools(pi: ExtensionAPI, rt: MemoryRuntime): void {
   // `Invalid args for xd://memory_search`. En essential, le schéma part sur le fil
   // à chaque requête et l'appel est direct.
   pi.registerTool({
-    name: "memory_search",
+    name: names.search,
     label: "memory · search",
     loadMode: "essential",
     description:
+      legacyNote(names, "memory_search") +
       "Cherche dans la mémoire du projet : stack, conventions, décisions d'archi, bugs déjà " +
       "corrigés, exigences incontournables. À appeler dès que le sujet se déplace hors du " +
       "rappel automatique : avant de débugger un symptôme qui ressemble à du déjà-vu, avant " +
@@ -140,10 +180,11 @@ export function registerMemoryTools(pi: ExtensionAPI, rt: MemoryRuntime): void {
   });
 
   pi.registerTool({
-    name: "memory_add",
+    name: names.add,
     label: "memory · add",
     loadMode: "essential",
     description:
+      legacyNote(names, "memory_add") +
       "Enregistre un point durable : stack ou choix technique du projet, convention, décision " +
       "d'architecture, bug + cause racine + correctif, exigence incontournable d'une feature, " +
       "préférence de travail. Une seule idée par appel, formulée pour être comprise dans six " +
@@ -266,10 +307,11 @@ export function registerMemoryTools(pi: ExtensionAPI, rt: MemoryRuntime): void {
   });
 
   pi.registerTool({
-    name: "memory_link",
+    name: names.link,
     label: "memory · link",
     loadMode: "essential",
     description:
+      legacyNote(names, "memory_link") +
       "Relie deux souvenirs par leurs ids, pour que le rappel et la recherche ramènent l'un avec " +
       "l'autre. À appeler quand tu viens d'écrire (ou de lire) un souvenir qui en touche un autre : " +
       "`cause` (source explique target : un bug et la décision qui l'a provoqué, un correctif et son " +
@@ -307,10 +349,11 @@ export function registerMemoryTools(pi: ExtensionAPI, rt: MemoryRuntime): void {
   });
 
   pi.registerTool({
-    name: "memory_update",
+    name: names.update,
     label: "memory · update",
     loadMode: "essential",
     description:
+      legacyNote(names, "memory_update") +
       "Réécrit intégralement un souvenir existant, par son id (renvoyé par memory_search, " +
       "memory_add ou le rappel automatique). À utiliser quand un souvenir est devenu partiellement " +
       "faux, ou quand la fusion automatique de memory_add a produit un texte bancal. Le nouveau " +
@@ -335,10 +378,11 @@ export function registerMemoryTools(pi: ExtensionAPI, rt: MemoryRuntime): void {
   });
 
   pi.registerTool({
-    name: "memory_forget",
+    name: names.forget,
     label: "memory · forget",
     loadMode: "essential",
     description:
+      legacyNote(names, "memory_forget") +
       "Supprime un souvenir par son id (retourné par memory_search). À utiliser quand un souvenir " +
       "est devenu faux — pas quand il est simplement incomplet ou partiellement périmé : dans ce " +
       "cas, réécris-le avec memory_update.",

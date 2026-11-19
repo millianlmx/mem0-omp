@@ -23,6 +23,12 @@ TS_MEMORY_PORT="${OMP_HARNESS_TAILNET_MEMORY_PORT:-${OMP_HARNESS_TAILNET_MEM0_PO
 PUBLISHED="${OMP_HARNESS_PUBLISHED:-/published/published.env}"
 
 ts() { tailscale --socket="$SOCKET" "$@"; }
+# La valeur non vide de NOUVEAU dans le fichier .env, sinon celle de ANCIEN (noms d'avant le renommage).
+setting_renamed() {
+  value="$(sed -n "s/^$1=//p" "$3" | tail -1)"
+  [ -n "$value" ] || value="$(sed -n "s/^$2=//p" "$3" | tail -1)"
+  printf '%s\n' "$value"
+}
 
 said=""
 say_once() {
@@ -72,7 +78,7 @@ printf 'URL=%s\nMEMORY_URL=%s\n' "$harness_url" "$memory_url" > "$PUBLISHED"
 
 code="$(printf '%s\n%s\n%s\n%s\n' \
   "$harness_url" "$(tr -d '\n' < "$TOKEN_FILE")" \
-  "$memory_url" "$(sed -n 's/^MEMORY_HTTP_TOKEN=//p' "$MEMORY_ENV" | tail -1)" |
+  "$memory_url" "$(setting_renamed MEMORY_HTTP_TOKEN MEM0_HTTP_TOKEN "$MEMORY_ENV")" |
   base64 | tr -d '\n=' | tr '+/' '-_')"
 echo "Code d'appairage (secret : il donne accès au harness et à la mémoire) :"
 echo

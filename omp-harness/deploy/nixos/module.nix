@@ -22,10 +22,11 @@ let
   cfg = config.services.omp-harness;
   repo = ../../..;
 
-  # Le service et le plugin mémoire, côte à côte (scope.ts importe ../omp-memory).
+  # Le service, le plugin mémoire et la bibliothèque du navigateur que le service atteint
+  # (browser/vps.ts importe omp-chrome/src/lib), côte à côte (scope.ts importe ../omp-memory).
   src = lib.fileset.toSource {
     root = repo;
-    fileset = lib.fileset.unions [ (repo + "/omp-harness") (repo + "/omp-memory") ];
+    fileset = lib.fileset.unions [ (repo + "/omp-harness") (repo + "/omp-memory") (repo + "/omp-chrome/src/lib") ];
   };
 
   memoryDir = repo + "/memory-stack/memory-rs";
@@ -136,11 +137,11 @@ let
     OMP_BIN=${cfg.ompBin}
     RUNNER_ENV_FILE=/etc/omp-harness/runner.env
     RUNNER_ENV_DIR=/run/omp-harness-launcher
-    RUNNER_HIDDEN=/var/lib/omp-harness/state /var/lib/omp-heavy /var/lib/omp-memory /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private
+    RUNNER_HIDDEN=/var/lib/omp-harness/state /var/lib/omp-heavy /var/lib/omp-mem0 /var/lib/omp-memory /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private
     PROVIDERS_ENV_FILE=/var/lib/omp-harness/state/providers.env
     PROVIDERS_MODELS_FILE=/var/lib/omp-harness/state/providers.models.yml
     MEMORY_TOKENS_DIR=/var/lib/omp-harness/state/memory-tokens
-    HEAVY_HIDDEN=/var/lib/omp-runner /var/lib/omp-harness/state /var/lib/omp-memory /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private
+    HEAVY_HIDDEN=/var/lib/omp-runner /var/lib/omp-harness/state /var/lib/omp-mem0 /var/lib/omp-memory /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private
     HEAVY_SHELL=${shell}
   '';
 
@@ -218,6 +219,24 @@ in
       };
     };
 
+    # Les noms d'avant le renommage, lus pendant une version de transition : posés, ils donnent
+    # leur valeur aux nouvelles options (priorité par défaut : une nouvelle posée l'emporte) et
+    # un avertissement les nomme.
+    mem0 = {
+      enable = lib.mkOption {
+        type = lib.types.nullOr lib.types.bool;
+        default = null;
+        visible = false;
+        description = "Ancien nom de services.omp-harness.memory.enable.";
+      };
+      environment = lib.mkOption {
+        type = lib.types.nullOr (lib.types.attrsOf lib.types.str);
+        default = null;
+        visible = false;
+        description = "Ancien nom de services.omp-harness.memory.environment.";
+      };
+    };
+
     embeddings = {
       enable = lib.mkOption {
         type = lib.types.bool;
@@ -274,6 +293,12 @@ in
         default = 8443;
         description = "Le port HTTPS de la mémoire sur le tailnet (partagée avec le Mac) ; null : non publiée.";
       };
+      mem0HttpsPort = lib.mkOption {
+        type = lib.types.nullOr lib.types.port;
+        default = null;
+        visible = false;
+        description = "Ancien nom de services.omp-harness.tailscale.memoryHttpsPort (null : non posée).";
+      };
     };
 
     zram = lib.mkOption {
@@ -292,6 +317,14 @@ in
       }
     ];
 
+    services.omp-harness.memory.enable = lib.mkIf (cfg.mem0.enable != null) (lib.mkDefault cfg.mem0.enable);
+    services.omp-harness.memory.environment = lib.mkIf (cfg.mem0.environment != null) (lib.mkDefault cfg.mem0.environment);
+    services.omp-harness.tailscale.memoryHttpsPort = lib.mkIf (cfg.tailscale.mem0HttpsPort != null) (lib.mkDefault cfg.tailscale.mem0HttpsPort);
+    warnings =
+      lib.optional (cfg.mem0.enable != null) "services.omp-harness.mem0.enable est renommée services.omp-harness.memory.enable : l'ancien nom est encore lu, renomme-le."
+      ++ lib.optional (cfg.mem0.environment != null) "services.omp-harness.mem0.environment est renommée services.omp-harness.memory.environment : l'ancien nom est encore lu, renomme-le."
+      ++ lib.optional (cfg.tailscale.mem0HttpsPort != null) "services.omp-harness.tailscale.mem0HttpsPort est renommée services.omp-harness.tailscale.memoryHttpsPort : l'ancien nom est encore lu, renomme-le.";
+
     # Les embeddings de la mémoire, sur la machine : jamais exposés hors de la boucle locale.
     services.ollama = lib.mkIf cfg.embeddings.enable {
       enable = true;
@@ -302,12 +335,12 @@ in
       environmentVariables.OLLAMA_KEEP_ALIVE = "-1";
     };
 
-    users.groups = { omp-work = { }; omp-harness = { }; omp-runner = { }; omp-heavy = { }; omp-memory = { }; };
+    users.groups = { omp-work = { }; omp-harness = { }; omp-runner = { }; omp-heavy = { }; omp-mem0 = { }; };
     users.users = {
       omp-harness = { isSystemUser = true; group = "omp-harness"; extraGroups = [ "omp-work" ]; home = homes.omp-harness; description = "OMP harness - service"; };
       omp-runner = { isSystemUser = true; group = "omp-runner"; extraGroups = [ "omp-work" ]; home = homes.omp-runner; description = "OMP harness - runners"; };
       omp-heavy = { isSystemUser = true; group = "omp-heavy"; extraGroups = [ "omp-work" ]; home = homes.omp-heavy; description = "OMP harness - jobs heavy"; };
-      omp-memory = { isSystemUser = true; group = "omp-memory"; home = "/var/lib/omp-memory"; description = "OMP harness - oracle memory-rs"; };
+      omp-mem0 = { isSystemUser = true; group = "omp-mem0"; home = "/var/lib/omp-mem0"; description = "OMP harness - oracle memory-rs"; };
     };
 
     # deploy/tmpfiles.conf, plus le safe.directory git de chaque user.
@@ -322,7 +355,7 @@ in
       "d /var/cache/omp-harness/pnpm-store   2770 omp-harness omp-work -"
       "d /var/lib/omp-runner                 0700 omp-runner omp-runner -"
       "d /var/lib/omp-heavy                  0700 omp-heavy omp-heavy -"
-      "d /var/lib/omp-memory                   0700 omp-memory omp-memory -"
+      "d /var/lib/omp-mem0                     0700 omp-mem0 omp-mem0 -"
       "d /etc/omp-harness                    0755 root root -"
     ] ++ lib.mapAttrsToList (_: home: "L+ ${home}/.gitconfig - - - - ${gitconfig}") homes;
 
@@ -359,7 +392,8 @@ in
         cd /etc/omp-harness
         [ -e env ] || install -m 0640 -g omp-harness /dev/null env
         [ -e runner.env ] || install -m 0600 /dev/null runner.env
-        if [ ! -e memory.env ]; then
+        # Une installation d'avant le renommage garde son mem0.env : rien n'est alors écrit.
+        if [ ! -e memory.env ] && [ ! -e mem0.env ]; then
           token="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
           install -m 0600 /dev/null memory.env
           printf 'MEMORY_HTTP_TOKEN=%s\n# OMLX_API_TOKEN=\n' "$token" > memory.env
@@ -387,11 +421,11 @@ in
       requires = [ "omp-harness-secrets.service" ];
       before = [ "omp-harness.service" ];
       wantedBy = [ "multi-user.target" ];
-      environment = memoryEnvironment // { MEMORY_DB_PATH = "/var/lib/omp-memory/memory-rs.db"; };
+      environment = memoryEnvironment // { MEMORY_DB_PATH = "/var/lib/omp-mem0/mem0-rs.db"; };
       serviceConfig = {
-        User = "omp-memory";
-        Group = "omp-memory";
-        EnvironmentFile = "/etc/omp-harness/memory.env";
+        User = "omp-mem0";
+        Group = "omp-mem0";
+        EnvironmentFile = [ "-/etc/omp-harness/mem0.env" "-/etc/omp-harness/memory.env" ];
         ExecStart = "${memory-rs}/bin/memory-rs --host 127.0.0.1 --port 8321";
         Restart = "on-failure";
         RestartSec = 5;
@@ -403,7 +437,7 @@ in
         ProtectHome = true;
         PrivateTmp = true;
         PrivateDevices = true;
-        ReadWritePaths = [ "/var/lib/omp-memory" ];
+        ReadWritePaths = [ "/var/lib/omp-mem0" "-/var/lib/omp-memory" ];
         RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
       };
     };

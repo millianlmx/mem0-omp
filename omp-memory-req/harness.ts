@@ -91,8 +91,10 @@ export function encodePairing(pairing: Pairing): string {
 
 /**
  * Écrit l'appairage là où le lisent le plugin, le plugin mémoire et l'app OMP Console :
- * `~/.omp/harness.json` (ses correspondances `repos` sont gardées) et
- * `~/.omp/memory.json`, en 0600.
+ * `~/.omp/harness.json` (ses correspondances `repos` sont gardées) et le fichier de la
+ * mémoire partagée, en 0600. Ce dernier est `~/.omp/memory.json` quand il existe, sinon
+ * `~/.omp/mem0.json` (le nom d'avant, que lisent encore les plugins non mis à jour) :
+ * ce code ne crée jamais `memory.json`. La liste rendue nomme les fichiers écrits.
  */
 export function writePairing(pairing: Pairing, home = os.homedir()): string[] {
   const dir = path.join(home, ".omp");
@@ -110,11 +112,12 @@ export function writePairing(pairing: Pairing, home = os.homedir()): string[] {
     { mode: 0o600 },
   );
   if (pairing.memoryUrl !== "") {
-    const memory = path.join(dir, "memory.json");
-    fs.writeFileSync(memory, `${JSON.stringify({ url: pairing.memoryUrl, token: pairing.memoryToken }, null, 2)}\n`, {
+    const current = path.join(dir, "memory.json");
+    const shared = fs.existsSync(current) ? current : path.join(dir, "mem0.json");
+    fs.writeFileSync(shared, `${JSON.stringify({ url: pairing.memoryUrl, token: pairing.memoryToken }, null, 2)}\n`, {
       mode: 0o600,
     });
-    written.push(memory);
+    written.push(shared);
   }
   for (const file of written) fs.chmodSync(file, 0o600);
   return written;

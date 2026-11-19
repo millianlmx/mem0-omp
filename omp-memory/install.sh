@@ -35,7 +35,7 @@ son chemin dans la config à la place :
 Attention : les tableaux de configuration remplacent, ils ne s'ajoutent pas. Si
 tu as déjà une clé extensions, complète-la au lieu de l'écraser.
 
-Le service memory reste à lancer séparément :
+Le service mémoire reste à lancer séparément :
   cd ../memory-stack && docker compose up -d
   curl http://localhost:8321/health
 

@@ -159,6 +159,8 @@ test("dedup-discriminants/AC-8 : memory_add réécrit le souvenir contredit et r
         if (def.name === "memory_add") execute = def.execute;
       },
     };
+    // L'extension se garde d'un second chargement dans le même process : chaque test repart d'une session neuve.
+    delete (globalThis as Record<symbol, unknown>)[Symbol.for("omp-memory.extension")];
     memoryPluginExtension(pi as unknown as Parameters<typeof memoryPluginExtension>[0]);
     const nouveau = "Timeout de recherche du rappel : 20 s.";
     const res = await execute!("c1", { text: nouveau }, undefined, undefined, { cwd: tmpdir("dedup-ac8-") });

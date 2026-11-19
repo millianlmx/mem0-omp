@@ -97,7 +97,7 @@ services:
       setup: { condition: service_completed_successfully }
       runner-image: { condition: service_completed_successfully }
       test-image: { condition: service_completed_successfully }
-      memory: { condition: service_started }
+      mem0: { condition: service_started }
     ports:
       # La boucle locale seulement : le Tailscale de l'hôte l'ouvre au tailnet.
       - "127.0.0.1:${OMP_HARNESS_PORT:-8790}:8790"
@@ -170,7 +170,12 @@ services:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/repos:/repos:ro
       - ${OMP_HARNESS_SECRETS:-/var/lib/omp-harness-secrets}/vigie:/run/secrets/omp-vigie:ro
 
-  memory:
+  # La clé de service reste `mem0` pendant la version de transition : une configuration d'avant (`oracle.url` =
+  # http://mem0:8321) joint toujours le service. Le nom à jour, `memory`, en est l'alias réseau.
+  mem0:
+    networks:
+      default:
+        aliases: [memory]
     build: memory-stack/memory-rs
     image: memory-rs:local
     pull_policy: build

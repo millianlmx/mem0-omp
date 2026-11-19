@@ -17,12 +17,13 @@
 //     --filter sessionComponent -Xswiftc -plugin-path \
 //     -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 
+import ConsoleCore
 import Foundation
 import Testing
 @testable import OMPConsole
 
 private var recipeEnabled: Bool {
-    ProcessInfo.processInfo.environment["MEMORY_SESSION_COMPONENT_RECIPE"] != nil
+    RenamedEnvironment.value(ProcessInfo.processInfo.environment, "MEMORY_SESSION_COMPONENT_RECIPE", legacy: "MEM0_SESSION_COMPONENT_RECIPE") != nil
 }
 
 /// Un dépôt git neuf, dans un dossier temporaire.

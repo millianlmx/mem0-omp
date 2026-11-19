@@ -33,7 +33,11 @@ function bareEnv(cache: string): NodeJS.ProcessEnv {
 
 /** Le node_modules d'un vrai hôte de cette machine (CI ou cache préparé), ou null. */
 function realHost(): string | null {
-  for (const candidate of [renamedEnv(process.env, "MEMORY_OMP_HOST_TYPES", "MEM0_OMP_HOST_TYPES"), renamedEnv(process.env, "MEMORY_OMP_HOST_MODULES", "MEM0_OMP_HOST_MODULES")]) {
+  const candidates = [
+    renamedEnv(process.env, "MEMORY_OMP_HOST_TYPES", "MEM0_OMP_HOST_TYPES"),
+    renamedEnv(process.env, "MEMORY_OMP_HOST_MODULES", "MEM0_OMP_HOST_MODULES"),
+  ];
+  for (const candidate of candidates) {
     if (candidate && fs.existsSync(path.join(candidate, "@oh-my-pi", "pi-coding-agent", "src", "index.ts"))) {
       return candidate;
     }

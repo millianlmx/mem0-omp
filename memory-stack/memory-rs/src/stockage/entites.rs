@@ -4,8 +4,8 @@
 //!
 //! Extraction déterministe, sans modèle ni bibliothèque NLP : les entités d'un
 //! dépôt de code ont une forme typographique (`recall.ts`, `SQLITE_BUSY`,
-//! `RunnerSession`, `memory-rs`, `/memory/search`), que l'embedding dilue dans un
-//! long texte et que le BM25 découpe (`memory-rs` → `memory`, `rs`). La clé d'une
+//! `RunnerSession`, `blake3-rs`, `/memory/search`), que l'embedding dilue dans un
+//! long texte et que le BM25 découpe (`blake3-rs` → `blake3`, `rs`). La clé d'une
 //! entité est sa forme normalisée : deux souvenirs qui écrivent
 //! `src/recherche.rs` et `recherche.rs` partagent l'entité `recherche.rs`.
 
@@ -134,8 +134,8 @@ fn genre(jeton: &str, debut_de_phrase: bool) -> Option<Genre> {
     if jeton.contains('_') && !jeton.starts_with('_') && !jeton.ends_with('_') {
         return Some(Genre::Identifiant);
     }
-    // kebab-case : au moins un tiret interne, et un chiffre ou deux tirets (memory-rs,
-    // omp-memory, sqlite-vec) ; un mot composé français (peut-être, c'est-à-dire)
+    // kebab-case : au moins un tiret interne, et un chiffre ou deux tirets (blake3-rs,
+    // omp-harness-vigie, sqlite-vec) ; un mot composé français (peut-être, c'est-à-dire)
     // n'a ni chiffre ni minuscules seules de part et d'autre d'un trait d'union court.
     if jeton.contains('-') && !jeton.starts_with('-') && !jeton.ends_with('-') && !jeton.contains("--") {
         let parties: Vec<&str> = jeton.split('-').collect();
@@ -255,7 +255,7 @@ mod tests {
                 c("sqlite", Genre::Identifiant),
             ]
         );
-        assert_eq!(cles("on garde memory-rs et sqlite-vec"), [c("memory-rs", Genre::Identifiant), c("sqlite-vec", Genre::Identifiant)]);
+        assert_eq!(cles("on garde blake3-rs et sqlite-vec"), [c("blake3-rs", Genre::Identifiant), c("sqlite-vec", Genre::Identifiant)]);
         // Mots composés et sigles seuls : rien.
         assert!(cles("peut-être, c'est-à-dire, au-delà ; HTTP et SQL").is_empty());
     }

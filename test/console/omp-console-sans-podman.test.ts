@@ -252,7 +252,9 @@ async function fauxService(
       res.writeHead(statut, { "Content-Type": "application/json" });
       res.end(JSON.stringify(corps));
     };
-    if (req.headers["x-memory-token"] !== jetonAttendu) return repondre(401, { detail: "bad or missing X-Memory-Token" });
+    if (req.headers["x-memory-token"] !== jetonAttendu) {
+      return repondre(401, { detail: "bad or missing X-Memory-Token" });
+    }
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     if (req.method === "GET" && url.pathname === "/memory/all") {
       const agent = url.searchParams.get("agent_id");

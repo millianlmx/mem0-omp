@@ -76,7 +76,8 @@ test("memory-rs-extraction-llm/AC-7 : la section rust joue le groupe infer contr
     return;
   }
   if (!cargoPresent()) {
-    manque(t, "cargo", "section rust non exécutée", renamedEnv(process.env, "MEMORY_OMP_REQUIRE_RUST", "MEM0_OMP_REQUIRE_RUST") === "1");
+    const requireRust = renamedEnv(process.env, "MEMORY_OMP_REQUIRE_RUST", "MEM0_OMP_REQUIRE_RUST") === "1";
+    manque(t, "cargo", "section rust non exécutée", requireRust);
     return;
   }
 

@@ -65,10 +65,11 @@ if (token === "") {
   process.exit(2);
 }
 const stateDir = env.VIGIE_STATE_DIR ?? path.join(env.HOME ?? ".", ".omp-vigie");
-const memory = renamedEnv(env, "MEMORY_HTTP_URL", "MEM0_HTTP_URL")?.trim();
+const memoryUrl = renamedEnv(env, "MEMORY_HTTP_URL", "MEM0_HTTP_URL")?.trim();
+const memoryToken = renamedEnv(env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN")?.trim();
 const vigie = new Vigie({
   api: new HarnessApi(env.VIGIE_HARNESS_URL ?? "http://127.0.0.1:8790", token),
-  oracle: memory ? new HttpOracle({ url: memory, token: renamedEnv(env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN")?.trim() || null }) : null,
+  oracle: memoryUrl ? new HttpOracle({ url: memoryUrl, token: memoryToken || null }) : null,
   spawn: (command, args, options) =>
     spawn(command, args, { cwd: options.cwd, env: options.env as NodeJS.ProcessEnv, stdio: ["pipe", "pipe", "pipe"] }),
   exec: execProcess,

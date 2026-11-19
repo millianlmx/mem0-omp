@@ -23,7 +23,7 @@ export type Root = { dir: string; isRepo: boolean };
  * Un worktree lié porte un `.git` FICHIER (« gitfile ») qui pointe vers
  * `<principal>/.git/worktrees/<nom>` : la racine de projet est alors celle du
  * dépôt principal. Sans ça, une feature menée dans un worktree ouvrirait un second
- * scope memory (souvenirs irretrouvables depuis le dépôt) et poserait son brief dans
+ * scope mémoire (souvenirs irretrouvables depuis le dépôt) et poserait son brief dans
  * l'arbre de la feature — qui doit rester propre pour être nettoyé après le push.
  * Un `.git` de sous-module pointe vers `…/.git/modules/<nom>` : pas un worktree.
  */

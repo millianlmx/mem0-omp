@@ -392,16 +392,16 @@ if ! cargo build --release --locked --manifest-path memory-stack/memory-rs/Cargo
   exit 1
 fi
 MEMORY_RS_TARGET="${CARGO_TARGET_DIR:-memory-stack/memory-rs/target}"
-case "${MEMORY_RS_TARGET:-$MEM0_RS_TARGET}" in
+case "$MEMORY_RS_TARGET" in
   /*) ;;
-  *) MEMORY_RS_TARGET="$ROOT/${MEMORY_RS_TARGET:-$MEM0_RS_TARGET}" ;;
+  *) MEMORY_RS_TARGET="$ROOT/$MEMORY_RS_TARGET" ;;
 esac
-MEMORY_RS_BIN="${MEMORY_RS_TARGET:-$MEM0_RS_TARGET}/release/memory-rs"
-if [ ! -x "${MEMORY_RS_BIN:-$MEM0_RS_BIN}" ]; then
-  echo "✗ binaire memory-rs introuvable après compilation : ${MEMORY_RS_BIN:-$MEM0_RS_BIN}" >&2
+MEMORY_RS_BIN="$MEMORY_RS_TARGET/release/memory-rs"
+if [ ! -x "$MEMORY_RS_BIN" ]; then
+  echo "✗ binaire memory-rs introuvable après compilation : $MEMORY_RS_BIN" >&2
   exit 1
 fi
-memory_rs_archs="$(lipo -archs "${MEMORY_RS_BIN:-$MEM0_RS_BIN}" 2>&1)"
+memory_rs_archs="$(lipo -archs "$MEMORY_RS_BIN" 2>&1)"
 case " $memory_rs_archs " in
   *" arm64 "*) ;;
   *)
@@ -508,7 +508,7 @@ if [ -z "$IDENTITY" ]; then
     | sed -n '1p')"
   [ -n "$IDENTITY" ] || IDENTITY="-"
 fi
-cp "${MEMORY_RS_BIN:-$MEM0_RS_BIN}" "$BUNDLE/Contents/Resources/memory-rs"
+cp "$MEMORY_RS_BIN" "$BUNDLE/Contents/Resources/memory-rs"
 chmod 0755 "$BUNDLE/Contents/Resources/memory-rs"
 if ! codesign --force --sign "$IDENTITY" "$BUNDLE/Contents/Resources/memory-rs" >/dev/null 2>&1; then
   echo "✗ signature de memory-rs échouée (identité « $IDENTITY » ; relance : codesign --force --sign \"$IDENTITY\" \"$BUNDLE/Contents/Resources/memory-rs\")"

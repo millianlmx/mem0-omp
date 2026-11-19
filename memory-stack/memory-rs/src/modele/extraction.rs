@@ -1,19 +1,21 @@
-//! Extraction additive de memory 2.2.1 (`add(infer=True)`), logique pure (S-2, S-3).
+//! Extraction additive de la bibliothèque d'origine 2.2.1 (`add(infer=True)`), logique pure
+//! (S-2, S-3 ; voir THIRD_PARTY_NOTICES.md).
 //!
-//! L'invite reproduit `generate_additive_extraction_prompt` (mem0/configs/prompts.py)
-//! et la lecture de la réponse reproduit `remove_code_blocks`, `extract_json` et
-//! `json.loads(…, strict=False)` (mem0/memory/utils.py, main.py), sans `regex` :
-//! les motifs sont écrits à la main.
+//! L'invite reproduit la construction de l'invite d'extraction additive du script
+//! d'extraction de la bibliothèque d'origine, et la lecture de la réponse reproduit
+//! `remove_code_blocks`, `extract_json` et `json.loads(…, strict=False)` de ses utilitaires,
+//! sans `regex` : les motifs sont écrits à la main.
 
 use serde_json::ser::{CompactFormatter, Formatter, Serializer};
 use serde_json::{Map, Value, json};
 
 use crate::config::{blanc_python, strip_python};
 
-/// Invite système : `ADDITIVE_EXTRACTION_PROMPT` de memory 2.2.1, octet pour octet.
+/// Invite système : `ADDITIVE_EXTRACTION_PROMPT` de la bibliothèque d'origine 2.2.1, octet pour
+/// octet (voir THIRD_PARTY_NOTICES.md).
 pub const ADDITIVE_EXTRACTION_PROMPT: &str = include_str!("prompts/additive_extraction.txt");
 
-/// `CUSTOM_INSTRUCTIONS` de l'ancien mem0-http Python, octet pour octet.
+/// `CUSTOM_INSTRUCTIONS` de l'ancien service Python, octet pour octet.
 pub const CUSTOM_INSTRUCTIONS: &str = include_str!("prompts/custom_instructions.txt");
 
 /// Nombre de souvenirs existants montrés au LLM et vus par le dédoublonnage.
@@ -208,7 +210,7 @@ pub enum Lecture {
     /// Liste falsy : 200 `{"results":[]}`, message sauvé.
     Vide,
     /// Réponse illisible (JSON invalide ou non objet) : traitée comme [`Lecture::Vide`],
-    /// avec la raison à journaliser (`logger.error` de memory).
+    /// avec la raison à journaliser (`logger.error` de la bibliothèque d'origine).
     Illisible(&'static str),
     /// `memory` truthy qui n'est pas une liste d'objets : 500, rien d'écrit.
     Invalide,

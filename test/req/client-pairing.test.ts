@@ -50,7 +50,10 @@ test("client-pairing/AC-2 : le code qu'affiche `harness.sh pair` est celui que l
   fs.mkdirSync(path.join(root, "state"));
   fs.writeFileSync(path.join(root, "state", "token"), `${SAMPLE.token}\n`);
   fs.writeFileSync(path.join(root, "published.env"), `URL=${SAMPLE.url}\nMEMORY_URL=${SAMPLE.memoryUrl}\n`);
-  fs.writeFileSync(path.join(secrets, "memory.env"), `MEMORY_HTTP_TOKEN=${SAMPLE.memoryToken}\nOMLX_EMBED_MODEL=bge-m3\n`);
+  fs.writeFileSync(
+    path.join(secrets, "memory.env"),
+    `MEMORY_HTTP_TOKEN=${SAMPLE.memoryToken}\nOMLX_EMBED_MODEL=bge-m3\n`,
+  );
   const run = spawnSync("bash", [SCRIPT, "pair"], {
     encoding: "utf8",
     env: { ...process.env, OMP_HARNESS_ENGINE: "sh", OMP_HARNESS_ROOT: root, OMP_HARNESS_SECRETS: secrets },
@@ -142,7 +145,10 @@ test("client-pairing/AC-5 : /pair refuse un code approbateur (5 lignes) sans rie
   assert.deepEqual(decodePairing(code), { refusal: APPROVER_CODE_REFUSAL });
   assert.equal(APPROVER_CODE_REFUSAL, "code des apps : utilisez `harness.sh pair`");
   // La 5e ligne vide (la fin du printf de `harness.sh pair`) : un code ordinaire.
-  assert.deepEqual(decodePairing(approverCode([SAMPLE.url, SAMPLE.token, SAMPLE.memoryUrl, SAMPLE.memoryToken])), SAMPLE);
+  assert.deepEqual(
+    decodePairing(approverCode([SAMPLE.url, SAMPLE.token, SAMPLE.memoryUrl, SAMPLE.memoryToken])),
+    SAMPLE,
+  );
   assert.deepEqual(decodePairing(encodePairing(SAMPLE)), SAMPLE);
   const home = tmpdir("client-pairing-approbateur-");
   const previousHome = process.env.HOME;

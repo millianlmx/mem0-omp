@@ -4,6 +4,14 @@ memory-stack/.env
 memory-stack/memory-rs/target/
 memory-stack/memory-rs-data/
 memory-stack/migration/
+# Anciens chemins du stack (avant le renommage) : un clone qui n'a pas migré ses données locales ne les commite pas
+mem0-stack/qdrant_storage/
+mem0-stack/.env
+mem0-stack/mem0-rs/target/
+mem0-stack/mem0-rs-data/
+mem0-stack/migration/
+# Fichier de référence du brief d'avant le renommage : un plugin pas à jour le recrée
+.omp/mem0-brief.md
 
 node_modules/
 # scripts/typecheck.sh : TypeScript épinglé (typescript/, par --prepare) et lien vers les types de l'hôte (node_modules)

@@ -5,7 +5,7 @@
 // `scripts/swift-app.sh` ne pose `MEMORY_RECIPE`, donc la CI le rapporte
 // « skipped » et ne l'exécute jamais.
 //
-// Il ne juge rien : il relève, sur le VRAI service mem0-http et le VRAI projet
+// Il ne juge rien : il relève, sur le VRAI service mémoire et le VRAI projet
 // désigné par `MEMORY_RECIPE_PROJECT`, ce que la section afficherait — la
 // portée calculée, l'état du service, le compte du sommaire, ses trois premières
 // lignes, puis les résultats d'une recherche — pour que la revue confronte le rendu
@@ -20,13 +20,14 @@ import ConsoleCore
 @MainActor
 @Test(
     "memoire-memory/AC-1 : recette manuelle — portée, état du service, sommaire et recherche d'un vrai projet",
-    .enabled(if: ProcessInfo.processInfo.environment["MEMORY_RECIPE"] != nil)
+    .enabled(if: RenamedEnvironment.value(ProcessInfo.processInfo.environment, "MEMORY_RECIPE", legacy: "MEM0_MEMORY_RECIPE") != nil)
 )
 /// Le nom de la FONCTION doit porter « recette » : `swift test --filter` filtre sur
 /// l'identifiant du test (module et nom de fonction), pas sur son titre affiché.
 func recetteManuelleRendLaMemoireDuProjet() async throws {
     let environment = ProcessInfo.processInfo.environment
-    let project = environment["MEMORY_RECIPE_PROJECT"] ?? FileManager.default.currentDirectoryPath
+    let project = RenamedEnvironment.value(environment, "MEMORY_RECIPE_PROJECT", legacy: "MEM0_MEMORY_RECIPE_PROJECT")
+        ?? FileManager.default.currentDirectoryPath
     let config = MemoryServiceConfig.fromEnvironment(environment)
     print("[recette] service     : \(config.baseURL.absoluteString) (jeton \(config.token.isEmpty ? "absent" : "posé"))")
     print("[recette] projet      : \(project)")
@@ -80,7 +81,7 @@ func recetteManuelleRendLaMemoireDuProjet() async throws {
 @MainActor
 @Test(
     "graph-based-memeries-view/AC-12 : recette manuelle — cycle d'écriture complet sur le vrai service",
-    .enabled(if: ProcessInfo.processInfo.environment["MEMORY_RECIPE"] != nil)
+    .enabled(if: RenamedEnvironment.value(ProcessInfo.processInfo.environment, "MEMORY_RECIPE", legacy: "MEM0_MEMORY_RECIPE") != nil)
 )
 /// Le nom de la FONCTION doit porter « recette » : `swift test --filter` filtre sur
 /// l'identifiant du test, pas sur son titre affiché.

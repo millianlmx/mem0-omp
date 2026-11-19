@@ -1,6 +1,6 @@
 //! Encodeur BM25 creux (S-6) : reproduction de fastembed 0.8.1, modèle
-//! `Qdrant/bm25`, tel que mem0ai 2.2.1 l'appelle (`embed()` pour les souvenirs
-//! ET pour la requête ; D-2).
+//! `Qdrant/bm25`, tel que la bibliothèque d'origine 2.2.1 l'appelle (`embed()` pour les souvenirs
+//! ET pour la requête ; D-2 ; voir THIRD_PARTY_NOTICES.md).
 //!
 //! Pipeline : `\w` au sens de Python, minuscules, découpe ; jetons écartés
 //! (`_` seul, mots vides anglais, plus de 40 points de code) ; racine Snowball

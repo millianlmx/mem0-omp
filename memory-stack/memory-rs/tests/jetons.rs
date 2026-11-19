@@ -140,7 +140,9 @@ async fn jetons_illisibles_refusent_le_demarrage() {
     let faux = FauxOpenAI::demarrer().await;
     let dossier = Dossier::nouveau("jetons-illisibles");
     // La configuration est lue avant l'écoute : le port n'est jamais ouvert.
-    let sortie = std::process::Command::new(env!("CARGO_BIN_EXE_memory-rs"))
+    let mut commande = std::process::Command::new(env!("CARGO_BIN_EXE_memory-rs"));
+    common::sans_anciens_noms(&mut commande);
+    let sortie = commande
         .args(["--host", "127.0.0.1", "--port", "65000"])
         .env("OMLX_BASE_URL", &faux.base_url)
         .env("MEMORY_DB_PATH", dossier.base())

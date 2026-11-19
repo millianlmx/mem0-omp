@@ -112,6 +112,7 @@ async fn health_sans_jeton_et_installation() {
         [
             "ok",
             "memory",
+            "mem0",
             "user",
             "dream",
             "version",
@@ -124,8 +125,15 @@ async fn health_sans_jeton_et_installation() {
         ]
     );
     assert_eq!(
-        [&corps["ok"], &corps["memory"], &corps["user"], &corps["dream"], &corps["installation"]],
-        [&json!(true), &json!(concat!("memory-rs ", env!("CARGO_PKG_VERSION"))), &json!("moi"), &reve, &json!("inst-42")]
+        [&corps["ok"], &corps["memory"], &corps["mem0"], &corps["user"], &corps["dream"], &corps["installation"]],
+        [
+            &json!(true),
+            &json!(concat!("memory-rs ", env!("CARGO_PKG_VERSION"))),
+            &json!(concat!("memory-rs ", env!("CARGO_PKG_VERSION"))),
+            &json!("moi"),
+            &reve,
+            &json!("inst-42")
+        ]
     );
     let b = banc("health-vide", "").await;
     let vide = ok(&b.serveur.envoyer("GET", "/health", None, &[]).await);
@@ -181,10 +189,18 @@ async fn sante_enrichie_metriques_et_journal_json() {
         "memory_http_requests_total{route=\"/memory/add\",method=\"POST\",status=\"200\"} 1",
         "memory_http_requests_total{route=\"/metrics\",method=\"GET\",status=\"401\"} 2",
         "memory_http_request_duration_seconds_count{route=\"/health\",method=\"GET\"} 2",
+        "mem0_memories 1",
+        "mem0_backup_failing 0",
+        "mem0_backup_failures_total 0",
+        "# TYPE mem0_http_requests_total counter",
+        "mem0_http_requests_total{route=\"/memory/add\",method=\"POST\",status=\"200\"} 1",
+        "mem0_http_requests_total{route=\"/metrics\",method=\"GET\",status=\"401\"} 2",
+        "mem0_http_request_duration_seconds_count{route=\"/health\",method=\"GET\"} 2",
     ] {
         assert!(lignes.contains(&attendu), "{attendu} absent de :\n{}", r.texte);
     }
     assert!(lignes.iter().any(|l| l.starts_with("memory_backup_last_success_timestamp_seconds ")), "{}", r.texte);
+    assert!(lignes.iter().any(|l| l.starts_with("mem0_backup_last_success_timestamp_seconds ")), "{}", r.texte);
     for ligne in lignes.iter().filter(|l| !l.starts_with('#')) {
         let (_, valeur) = ligne.rsplit_once(' ').unwrap();
         assert!(valeur.parse::<f64>().is_ok(), "valeur illisible : {ligne}");
@@ -242,6 +258,78 @@ async fn ac2_jeton_401_sans_embedding_ni_ecriture() {
     // Nom d'en-tête insensible à la casse.
     let r = s.envoyer("GET", "/memory/all", None, &[("x-memory-token", "jeton-ac2")]).await;
     assert_eq!(ok(&r)["total"], 1);
+}
+
+/// S-11 : `X-Mem0-Token` reste accepté quand `X-Memory-Token` manque ; si les deux sont posés,
+/// seul le nouveau est jugé (même vide). Même règle sur `/metrics`, puis `Authorization: Bearer`.
+#[tokio::test(flavor = "multi_thread")]
+async fn ac304_ancien_en_tete_nouvel_en_tete_et_les_deux() {
+    let b = banc("ac304", "jeton-ac304").await;
+    let s = &b.serveur;
+    let get = move |entetes: &'static [(&'static str, &'static str)]| s.envoyer("GET", "/memory/all", None, entetes);
+    // Ancien seul, nouveau seul : acceptés.
+    assert_eq!(ok(&get(&[("X-Mem0-Token", "jeton-ac304")]).await)["total"], 0);
+    assert_eq!(ok(&get(&[("X-Memory-Token", "jeton-ac304")]).await)["total"], 0);
+    // Les deux : bon nouveau et mauvais ancien, accepté.
+    assert_eq!(ok(&get(&[("X-Memory-Token", "jeton-ac304"), ("X-Mem0-Token", "mauvais")]).await)["total"], 0);
+    // Les deux : mauvais nouveau et bon ancien, refusé.
+    let r = get(&[("X-Memory-Token", "mauvais"), ("X-Mem0-Token", "jeton-ac304")]).await;
+    assert_eq!((r.statut, r.texte.as_str()), (401, CORPS_401));
+    // Nouveau présent mais vide : jugé (refusé), l'ancien n'est pas consulté.
+    let r = get(&[("X-Memory-Token", ""), ("X-Mem0-Token", "jeton-ac304")]).await;
+    assert_eq!((r.statut, r.texte.as_str()), (401, CORPS_401));
+    // Ancien seul, mauvais.
+    assert_eq!(get(&[("X-Mem0-Token", "mauvais")]).await.statut, 401);
+
+    let metriques = move |entetes: &'static [(&'static str, &'static str)]| s.envoyer("GET", "/metrics", None, entetes);
+    assert_eq!(metriques(&[("X-Mem0-Token", "jeton-ac304")]).await.statut, 200);
+    assert_eq!(metriques(&[("X-Memory-Token", "jeton-ac304")]).await.statut, 200);
+    assert_eq!(metriques(&[("X-Memory-Token", "jeton-ac304"), ("X-Mem0-Token", "mauvais")]).await.statut, 200);
+    let r = metriques(&[("X-Memory-Token", "mauvais"), ("X-Mem0-Token", "jeton-ac304")]).await;
+    assert_eq!((r.statut, r.texte.as_str()), (401, CORPS_401));
+    // Un en-tête de jeton présent l'emporte sur `Authorization`.
+    let r = metriques(&[("X-Mem0-Token", "mauvais"), ("Authorization", "Bearer jeton-ac304")]).await;
+    assert_eq!(r.statut, 401);
+    assert_eq!(metriques(&[("Authorization", "Bearer jeton-ac304")]).await.statut, 200);
+}
+
+/// S-6 et S-11 : un service lancé avec les anciens noms de variables (jeton, fusion de
+/// recherche) les lit quand les nouveaux sont absents ou vides.
+#[tokio::test(flavor = "multi_thread")]
+async fn anciens_noms_de_variables_lus_par_le_binaire() {
+    let faux = FauxOpenAI::demarrer().await;
+    let dossier = Dossier::nouveau("anciens-noms");
+    let lancement = Lancement { base: &dossier.base(), embedder_url: &faux.base_url, jeton: "", installation: "" };
+    let s = Serveur::demarrer_avec(
+        &lancement,
+        &[("MEM0_HTTP_TOKEN", "jeton-ancien"), ("MEM0_SEARCH_FUSION", "rrf"), ("MEM0_RRF_K", "10")],
+    )
+    .await;
+    assert!(s.journal_contient("recherche rrf-k10").await, "{}", s.journal());
+    assert_eq!(s.envoyer("GET", "/memory/all", None, &[]).await.statut, 401);
+    assert_eq!(s.envoyer("GET", "/memory/all", None, &[("X-Memory-Token", "jeton-ancien")]).await.statut, 200);
+}
+
+/// S-13 : sans `MEMORY_DB_PATH`, une installation qui n'a que `~/.mem0/mem0-rs.db` retrouve ses
+/// souvenirs sur place, sans rien créer sous `~/.memory/`.
+#[tokio::test(flavor = "multi_thread")]
+async fn base_de_l_ancienne_version_lue_sur_place() {
+    let faux = FauxOpenAI::demarrer().await;
+    let dossier = Dossier::nouveau("ancienne-base");
+    let ancienne = dossier.chemin.join(".mem0/mem0-rs.db");
+    std::fs::create_dir_all(ancienne.parent().unwrap()).unwrap();
+    let lancement = Lancement { base: &ancienne, embedder_url: &faux.base_url, jeton: "", installation: "" };
+    let s = Serveur::demarrer(&lancement).await;
+    let id = ajouter(&s, json!({"text":"souvenir d'avant le renommage","agent_id":AGENT})).await;
+    assert_eq!(s.arreter().await.code(), Some(0));
+
+    let home = dossier.chemin.to_str().unwrap();
+    let lancement = Lancement { base: &dossier.base(), embedder_url: &faux.base_url, jeton: "", installation: "" };
+    let s = Serveur::demarrer_avec(&lancement, &[("MEMORY_DB_PATH", ""), ("HOME", home)]).await;
+    assert_eq!(ligne(&tous(&s, "").await, &id)["memory"], "souvenir d'avant le renommage");
+    assert!(s.journal().contains(&ancienne.display().to_string()), "{}", s.journal());
+    assert!(!dossier.chemin.join(".memory").exists(), "la nouvelle base n'est pas créée tant que l'ancienne existe");
+    assert!(!dossier.base().exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -487,7 +575,9 @@ async fn ac11_second_serveur_refuse_par_le_verrou() {
     let avant = (dossier.entrees(), octets("memory-rs.db"), octets("memory-rs.db-wal"));
 
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let mut second = std::process::Command::new(env!("CARGO_BIN_EXE_memory-rs"))
+    let mut commande = std::process::Command::new(env!("CARGO_BIN_EXE_memory-rs"));
+    common::sans_anciens_noms(&mut commande);
+    let mut second = commande
         .args(["--host", "127.0.0.1", "--port", &port.to_string()])
         .env("OMLX_BASE_URL", &faux.base_url)
         .env("EMBEDDING_DIMS", common::DIMENSIONS.to_string())
@@ -816,7 +906,9 @@ async fn rrf_par_configuration_du_serveur() {
         ("MEMORY_SEARCH_FUSION", "hybride", "MEMORY_SEARCH_FUSION doit valoir additive, rrf ou graphe (reçu « hybride »)"),
         ("MEMORY_RRF_K", "0", "MEMORY_RRF_K doit être un entier positif (reçu « 0 »)"),
     ] {
-        let sortie = std::process::Command::new(env!("CARGO_BIN_EXE_memory-rs"))
+        let mut commande = std::process::Command::new(env!("CARGO_BIN_EXE_memory-rs"));
+        common::sans_anciens_noms(&mut commande);
+        let sortie = commande
             .args(["--port", "1"])
             .env_remove("MEMORY_SEARCH_FUSION")
             .env_remove("MEMORY_RRF_K")

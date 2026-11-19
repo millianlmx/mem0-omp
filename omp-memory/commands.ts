@@ -1,5 +1,5 @@
-// Les 10 commandes de l'extension : état et amorçage mémoire, brief, dédup, purge des
-// procédures, relance d'écriture, rêve de la mémoire, phases.
+// Les 17 commandes de l'extension (7 memory-*, leurs 7 alias de la transition, 3 de phase) : état et
+// amorçage mémoire, brief, dédup, purge des procédures, relance d'écriture, rêve de la mémoire, phases.
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { initPrompt, scanStack } from "./bootstrap.ts";
 import { BRIEF_REF_PATH, BRIEF_VERSION, checkBrief } from "./brief.ts";
@@ -23,12 +23,17 @@ import { projectId, rootOf, stateOf } from "./state.ts";
 import type { MemoryRuntime } from "./state.ts";
 
 /**
- * Les 10 commandes, chacune avec sa description — recopiée dans le tableau
+ * Les 17 commandes, chacune avec sa description — recopiée dans le tableau
  * `commands` du catalogue marketplace, que scripts/check.sh compare à ces
  * appels. `pi` sert à memory-init et memory-save, qui démarrent un tour.
+ * Les alias `mem0-*` portent le même gestionnaire, le temps de la transition.
  */
+function legacyCommand<T extends { description: string }>(command: T, current: string): T {
+  return { ...command, description: `Ancien nom de /${current}, gardé pendant la transition.` };
+}
+
 export function registerMemoryCommands(pi: ExtensionAPI, rt: MemoryRuntime): void {
-  pi.registerCommand("memory-status", {
+  const memoryStatus = {
     description: "Connexion memory, projet résolu, état du brief, nombre de souvenirs",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
       const st = stateOf(rt, ctx);
@@ -57,9 +62,10 @@ export function registerMemoryCommands(pi: ExtensionAPI, rt: MemoryRuntime): voi
         );
       }
     },
-  });
+  };
+  pi.registerCommand("memory-status", memoryStatus);
 
-  pi.registerCommand("memory-init", {
+  const memoryInit = {
     description:
       "Amorce la mémoire d'un projet déjà existant : empreinte technique du dépôt + relecture guidée. " +
       "--scan-only pour l'empreinte seule, --force pour réamorcer un projet déjà en mémoire",
@@ -160,9 +166,10 @@ export function registerMemoryCommands(pi: ExtensionAPI, rt: MemoryRuntime): voi
         ctx.ui.notify(`[memory] relecture non lancée : ${(err as Error).message}`, "warning");
       }
     },
-  });
+  };
+  pi.registerCommand("memory-init", memoryInit);
 
-  pi.registerCommand("memory-brief", {
+  const memoryBrief = {
     description: "État du brief mémoire du projet ; --update pour réécrire la version courante",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       const force = String(args ?? "").includes("--update");
@@ -173,9 +180,10 @@ export function registerMemoryCommands(pi: ExtensionAPI, rt: MemoryRuntime): voi
         st.ref === "failed" || st.agents === "failed" ? "warning" : "info",
       );
     },
-  });
+  };
+  pi.registerCommand("memory-brief", memoryBrief);
 
-  pi.registerCommand("memory-dedupe", {
+  const memoryDedupe = {
     description:
       "Repère les souvenirs redondants du projet et supprime les moins informatifs. Simulation " +
       "par défaut : chaque paire est affichée avec son score de recouvrement, le texte intégral " +
@@ -241,15 +249,17 @@ export function registerMemoryCommands(pi: ExtensionAPI, rt: MemoryRuntime): voi
       // Les ids supprimés partent dans le rapport : après coup, c'est la seule
       // trace qui permet de dire ce qui a disparu.
       ctx.ui.notify(
-        `[memory] "${scope}" : ${deleted.length} doublon(s) supprimé(s), ${entries.length - deleted.length} restant(s)` +
+        `[memory] "${scope}" : ${deleted.length} doublon(s) supprimé(s), ` +
+          `${entries.length - deleted.length} restant(s)` +
           (deleted.length ? `\n  supprimés : ${deleted.join(", ")}` : "") +
           (failures.length ? `\n  ${failures.length} échec(s) : ${failures.join(" · ")}` : ""),
         failures.length ? "warning" : "info",
       );
     },
-  });
+  };
+  pi.registerCommand("memory-dedupe", memoryDedupe);
 
-  pi.registerCommand("memory-purge-procedures", {
+  const memoryPurgeProcedures = {
     description:
       "Liste les souvenirs procéduraux du projet (metadata.memory_type = \"procedural_memory\") " +
       "avec leur id et leur texte intégral. Simulation par défaut, rien n'est supprimé : " +
@@ -327,9 +337,10 @@ export function registerMemoryCommands(pi: ExtensionAPI, rt: MemoryRuntime): voi
         failures.length || anonymous ? "warning" : "info",
       );
     },
-  });
+  };
+  pi.registerCommand("memory-purge-procedures", memoryPurgeProcedures);
 
-  pi.registerCommand("memory-save", {
+  const memorySave = {
     description: "Demande à l'agent d'écrire maintenant ce que cette session a produit de durable",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
       const st = stateOf(rt, ctx);
@@ -337,9 +348,10 @@ export function registerMemoryCommands(pi: ExtensionAPI, rt: MemoryRuntime): voi
       await ctx.waitForIdle?.();
       pi.sendUserMessage(st.mutations > 0 ? nudgeText(st.mutations) : discussionNudgeText(st.substantiveTurns));
     },
-  });
+  };
+  pi.registerCommand("memory-save", memorySave);
 
-  pi.registerCommand("memory-dream", {
+  const memoryDream = {
     description:
       "Rêve de la mémoire : derniers rêves et propositions en attente (doublons, remplacements, " +
       "contradictions, oublis). accept <id> ou reject <id> pour trancher, now pour rêver tout de suite",
@@ -374,7 +386,8 @@ export function registerMemoryCommands(pi: ExtensionAPI, rt: MemoryRuntime): voi
           const d = (rows(r?.dreams)[0] ?? {}) as Record<string, unknown>;
           const errors = Array.isArray(d.errors) ? (d.errors as string[]) : [];
           ctx.ui.notify(
-            `[memory] Rêve de "${scope}" : ${d.reindexed ?? 0} réindexé(s), ${d.pairs_judged ?? 0} paire(s) jugée(s), ` +
+            `[memory] Rêve de "${scope}" : ${d.reindexed ?? 0} réindexé(s), ` +
+              `${d.pairs_judged ?? 0} paire(s) jugée(s), ` +
               `${d.links ?? 0} lien(s), ${d.proposals ?? 0} proposition(s), ${d.orphans_removed ?? 0} observation(s) orpheline(s) retirée(s)` +
               (errors.length ? ` · ${errors.join(" ; ")}` : ""),
             errors.length ? "warning" : "info",
@@ -388,7 +401,8 @@ export function registerMemoryCommands(pi: ExtensionAPI, rt: MemoryRuntime): voi
         ctx.ui.notify(`[memory] rêve indisponible : ${absent(err)}`, "error");
       }
     },
-  });
+  };
+  pi.registerCommand("memory-dream", memoryDream);
 
   pi.registerCommand("add-phase", {
     description: "Enregistre une phase et le brief de rôle de l'agent : /add-phase NOM BRIEF",
@@ -473,4 +487,12 @@ export function registerMemoryCommands(pi: ExtensionAPI, rt: MemoryRuntime): voi
       ctx.ui.notify(`[memory] phase "${name}" désenregistrée.`, "info");
     },
   });
+
+  pi.registerCommand("mem0-status", legacyCommand(memoryStatus, "memory-status"));
+  pi.registerCommand("mem0-init", legacyCommand(memoryInit, "memory-init"));
+  pi.registerCommand("mem0-brief", legacyCommand(memoryBrief, "memory-brief"));
+  pi.registerCommand("mem0-dedupe", legacyCommand(memoryDedupe, "memory-dedupe"));
+  pi.registerCommand("mem0-purge-procedures", legacyCommand(memoryPurgeProcedures, "memory-purge-procedures"));
+  pi.registerCommand("mem0-save", legacyCommand(memorySave, "memory-save"));
+  pi.registerCommand("mem0-dream", legacyCommand(memoryDream, "memory-dream"));
 }

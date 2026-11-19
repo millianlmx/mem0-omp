@@ -14,7 +14,8 @@ export async function memoryFetch(route: string, init: RequestInit = {}, budgetM
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
-        ...(MEMORY_HTTP_TOKEN ? { "X-Memory-Token": MEMORY_HTTP_TOKEN } : {}),
+        // Les deux en-têtes portent le même jeton pendant la transition : un service d'avant ne lit que l'ancien.
+        ...(MEMORY_HTTP_TOKEN ? { "X-Memory-Token": MEMORY_HTTP_TOKEN, "X-Mem0-Token": MEMORY_HTTP_TOKEN } : {}),
         ...(init.headers || {}),
       },
     });

@@ -210,7 +210,8 @@ export class HttpOracle implements Oracle {
         method: body ? "POST" : "GET",
         headers: {
           ...(body ? { "Content-Type": "application/json" } : {}),
-          ...(this.#config.token ? { "X-Memory-Token": this.#config.token } : {}),
+          // Les deux en-têtes pendant la version de transition : un service pas encore à jour n'entend que l'ancien.
+          ...(this.#config.token ? { "X-Memory-Token": this.#config.token, "X-Mem0-Token": this.#config.token } : {}),
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
         signal: controller.signal,

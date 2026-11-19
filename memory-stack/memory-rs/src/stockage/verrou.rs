@@ -79,6 +79,8 @@ mod tests {
     #[test]
     fn chemin_ajoute_lock() {
         assert_eq!(chemin(Path::new("/a/b/memory-rs.db")), PathBuf::from("/a/b/memory-rs.db.lock"));
+        // Une base gardée sous son ancien nom garde son verrou à côté d'elle.
+        assert_eq!(chemin(Path::new("/a/b/mem0-rs.db")), PathBuf::from("/a/b/mem0-rs.db.lock"));
     }
 
     /// AC-11 (memory-rs-migration, S-10) : `flock` vaut par ouverture du fichier,

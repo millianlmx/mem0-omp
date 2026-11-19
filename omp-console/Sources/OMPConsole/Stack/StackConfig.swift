@@ -7,7 +7,8 @@
 // la pile manuelle.
 //
 // Défauts (mesurés sur `memory-stack/.env.example` le 2026-10-04) : la clé Qdrant
-// locale `memory-local-qdrant-key`, les modèles `qwen3-8b`/`bge-m3`, 1024
+// locale `mem0-local-qdrant-key` (la valeur que portait l'ancien conteneur Qdrant :
+// la migration unique en a besoin telle quelle), les modèles `qwen3-8b`/`bge-m3`, 1024
 // dimensions, jetons vides. `OMLX_BASE_URL` par défaut vise oMLX sur le Mac
 // lui-même (`127.0.0.1:8000/v1`) : l'agent memory-rs tourne en natif, hors de tout
 // conteneur (S-2) ; une valeur `host.containers.internal` héritée d'un `stack/env`
@@ -28,7 +29,7 @@ struct StackConfig: Equatable, Sendable {
     /// choix d'utilisateur est la clé Qdrant locale (défense en profondeur, pas un
     /// secret de production).
     static let defaults = StackConfig(
-        qdrantApiKey: "memory-local-qdrant-key",
+        qdrantApiKey: "mem0-local-qdrant-key",
         memoryHttpToken: "",
         omlxBaseURL: "http://127.0.0.1:8000/v1",
         omlxApiToken: "",
@@ -68,11 +69,13 @@ struct StackConfig: Equatable, Sendable {
 
     /// Applique des valeurs lues d'un `.env` aux défauts : une clé connue écrase
     /// son défaut (une valeur VIDE reste une valeur — un jeton vide est un choix),
-    /// une clé inconnue est ignorée, une clé absente garde son défaut.
+    /// une clé inconnue est ignorée, une clé absente garde son défaut. Le jeton se lit
+    /// sous `MEMORY_HTTP_TOKEN`, sinon sous l'ancien `MEM0_HTTP_TOKEN` (un `stack/env`
+    /// d'avant garde son jeton) ; `serialized` n'écrit que le nouveau nom.
     init(values: [String: String]) {
         self = .defaults
         if let value = values["QDRANT_API_KEY"] { qdrantApiKey = value }
-        if let value = values["MEMORY_HTTP_TOKEN"] { memoryHttpToken = value }
+        if let value = values["MEMORY_HTTP_TOKEN"] ?? values["MEM0_HTTP_TOKEN"] { memoryHttpToken = value }
         if let value = values["OMLX_BASE_URL"] { omlxBaseURL = value }
         if let value = values["OMLX_API_TOKEN"] { omlxApiToken = value }
         if let value = values["OMLX_LLM_MODEL"] { omlxLLMModel = value }

@@ -230,6 +230,10 @@ function mkApp(): App {
     },
   };
 
+  // L'extension se garde d'un second chargement dans le même process : chaque test repart d'une session neuve.
+
+  delete (globalThis as Record<symbol, unknown>)[Symbol.for("omp-memory.extension")];
+
   memoryPluginExtension(pi as unknown as Parameters<typeof memoryPluginExtension>[0]);
   return { commands, hooks, tools, defs, sent };
 }

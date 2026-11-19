@@ -1,6 +1,6 @@
 //! Tests boîte noire de `memory-rs import` (BR-2 de memory-rs-migration) : chaque test
-//! lance le vrai binaire contre une fausse Qdrant et un history.db au schéma de
-//! memory 2.2.1, puis inspecte le rapport, les codes et la base écrite.
+//! lance le vrai binaire contre une fausse Qdrant et un history.db au schéma de la
+//! bibliothèque d'origine 2.2.1, puis inspecte le rapport, les codes et la base écrite.
 
 #[allow(dead_code, reason = "module partagé : chaque fichier de tests n'en utilise qu'une partie")]
 mod common;

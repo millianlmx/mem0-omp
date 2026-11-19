@@ -1,7 +1,7 @@
 //! Banc d'essai des tests d'intégration : faux serveur OpenAI-compatible
 //! (embeddings et chat/completions scriptées), lanceur du binaire `memory-rs` sur un
 //! port libre avec une base dans un dossier jetable, et, pour `memory-rs import`,
-//! fausse Qdrant (scroll), history.db au schéma de memory et lanceur de commande.
+//! fausse Qdrant (scroll), history.db au schéma de la bibliothèque d'origine et lanceur de commande.
 
 use std::collections::VecDeque;
 use std::io::Read;
@@ -31,6 +31,35 @@ pub const DIMENSIONS: usize = 1024;
 /// `OMLX_API_TOKEN` et `OMLX_LLM_MODEL` des instances lancées par les tests.
 pub const JETON_OMLX: &str = "jeton-omlx";
 pub const MODELE_CHAT: &str = "modele-chat-test";
+
+/// Les anciens noms (version de transition) des réglages du service : un poste qui les porte ne
+/// doit pas fausser un test, le nouveau nom absent ou vide laissant lire l'ancien.
+const ANCIENS_NOMS: [&str; 16] = [
+    "MEM0_DB_PATH",
+    "MEM0_BACKUP_INTERVAL_HOURS",
+    "MEM0_BACKUP_KEEP",
+    "MEM0_BACKUP_REMOTE_CMD",
+    "MEM0_BACKUP_REMOTE_TIMEOUT_SECONDS",
+    "MEM0_LOG_DIR",
+    "MEM0_LOG_RETENTION_DAYS",
+    "MEM0_SEARCH_FUSION",
+    "MEM0_RRF_K",
+    "MEM0_DREAM_INTERVAL_MINUTES",
+    "MEM0_DREAM_QUIET_MINUTES",
+    "MEM0_DREAM_PAIRS",
+    "MEM0_DREAM_FORGET_DAYS",
+    "MEM0_HTTP_TOKEN",
+    "MEM0_HTTP_TOKENS",
+    "MEM0_HTTP_TOKENS_FILE",
+];
+
+/// Retire de l'environnement d'une commande les anciens noms des réglages du service.
+pub fn sans_anciens_noms(commande: &mut Command) -> &mut Command {
+    for nom in ANCIENS_NOMS {
+        commande.env_remove(nom);
+    }
+    commande
+}
 
 /// `plonger` de scripts/memory-http-contrat/faux-openai.ts : sac de mots haché par
 /// sha256, normalisé en L2 ; sans jeton, le vecteur unitaire e0.
@@ -249,13 +278,15 @@ impl Serveur {
         Serveur::demarrer_avec(l, &[]).await
     }
 
-    /// [`Serveur::demarrer`] avec des variables d'environnement en plus. La
-    /// fusion de recherche héritée du poste (`MEMORY_SEARCH_FUSION`, `MEMORY_RRF_K`)
-    /// est retirée : seules celles de `env` comptent.
+    /// [`Serveur::demarrer`] avec des variables d'environnement en plus. Les réglages hérités
+    /// du poste (`MEMORY_SEARCH_FUSION`, `MEMORY_RRF_K`, rêve et leurs anciens noms) sont
+    /// retirés : seules celles de `env` comptent.
     pub async fn demarrer_avec(l: &Lancement<'_>, env: &[(&str, &str)]) -> Serveur {
         for _ in 0..5 {
             let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-            let mut enfant = Command::new(env!("CARGO_BIN_EXE_memory-rs"))
+            let mut commande = Command::new(env!("CARGO_BIN_EXE_memory-rs"));
+            sans_anciens_noms(&mut commande);
+            let mut enfant = commande
                 .args(["--host", "127.0.0.1", "--port", &port.to_string()])
                 .env_remove("MEMORY_SEARCH_FUSION")
                 .env_remove("MEMORY_RRF_K")
@@ -414,7 +445,7 @@ pub const COLLECTION: &str = "omp_memory";
 /// Forme du champ `vector` d'un point Qdrant (DOC-1 de memory-rs-migration).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Forme {
-    /// `{"": dense, "bm25": {"indices": […], "values": […]}}` (memory 2.x hybride).
+    /// `{"": dense, "bm25": {"indices": […], "values": […]}}` (bibliothèque d'origine 2.x, hybride).
     Nommee,
     /// `[dense]` : point antérieur à l'hybridation, sans vecteur creux.
     Nue,
@@ -449,7 +480,7 @@ pub fn empreinte(dossier: &Path) -> Vec<(String, String)> {
     entrees
 }
 
-/// n-ième instant de test au format de memory 2.2.1 (`isoformat()` UTC, microsecondes).
+/// n-ième instant de test au format de la bibliothèque d'origine 2.2.1 (`isoformat()` UTC, microsecondes).
 pub fn date_memory(n: usize) -> String {
     format!("2026-10-12T{:02}:{:02}:{:02}.123456+00:00", 10 + n / 3600, (n / 60) % 60, n % 60)
 }
@@ -473,7 +504,7 @@ pub fn creux(texte: &str) -> Value {
     json!({ "indices": indices, "values": values })
 }
 
-/// Payload d'un souvenir écrit par memory 2.2.1 (`add infer=false` avec tags) :
+/// Payload d'un souvenir écrit par la bibliothèque d'origine 2.2.1 (`add infer=false` avec tags) :
 /// created_at = updated_at = `date_memory(n)`.
 pub fn payload_memory(data: &str, agent_id: Option<&str>, n: usize) -> Value {
     let mut p = json!({ "tags": "import", "user_id": "moi" });
@@ -723,7 +754,7 @@ impl AsyncWrite for FluxCoupable {
     }
 }
 
-/// Ligne de la table `history` de memory 2.2.1 ; `None` = NULL.
+/// Ligne de la table `history` de la bibliothèque d'origine 2.2.1 ; `None` = NULL.
 #[derive(Debug, Clone, Default)]
 pub struct Revision {
     pub id: Option<String>,
@@ -739,7 +770,7 @@ pub struct Revision {
 }
 
 impl Revision {
-    /// Ligne écrite par memory 2.2.1 pour `event` (ADD, UPDATE, DELETE) : created_at
+    /// Ligne écrite par la bibliothèque d'origine 2.2.1 pour `event` (ADD, UPDATE, DELETE) : created_at
     /// = `date_memory(n)`, updated_at NULL pour ADD et `date_memory(n + 1)` sinon,
     /// is_deleted 1 pour DELETE, role "user".
     pub fn memory(id: &str, memory_id: &str, event: &str, ancien: Option<&str>, nouveau: Option<&str>, n: usize) -> Revision {
@@ -758,7 +789,7 @@ impl Revision {
     }
 }
 
-/// history.db au schéma exact de memory 2.2.1 (`SQLiteManager`), journal rollback.
+/// history.db au schéma exact de la bibliothèque d'origine 2.2.1 (`SQLiteManager`), journal rollback.
 pub struct HistoryDb {
     pub chemin: PathBuf,
 }

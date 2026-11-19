@@ -1,10 +1,10 @@
-// L'identité de PORTÉE memory du projet ouvert (S-4) : le même algorithme que
+// L'identité de PORTÉE du projet ouvert dans le service mémoire (S-4) : le même algorithme que
 // `projectId` du plugin mémoire, pour que l'app voie exactement les souvenirs
 // qu'une session voit (AC-1, AC-4, AC-5).
 //
 // Miroir assumé de `omp-memory/state.ts` :
 //  - `MANIFESTS` (state.ts:13-18) — la table des manifestes et leurs extracteurs ;
-//  - `projectId` (state.ts:73-89) — override `MEMORY_PROJECT_ID`, racine PRINCIPALE,
+//  - `projectId` (state.ts:73-89) — override `MEMORY_PROJECT_ID` (repli `MEM0_PROJECT_ID`), racine PRINCIPALE,
 //    manifestes dans l'ordre, premier `*.xcodeproj`, puis `basename`.
 //
 // La racine principale n'est PAS recalculée ici : `GitCLI.primaryRoot`
@@ -30,7 +30,7 @@ enum MemoryScope {
         git: GitCLI
     ) async -> String? {
         // `||` du plugin : une variable posée mais VIDE est traitée comme absente.
-        if let override = environment["MEMORY_PROJECT_ID"], !override.isEmpty {
+        if let override = RenamedEnvironment.value(environment, "MEMORY_PROJECT_ID", legacy: "MEM0_PROJECT_ID") {
             return override
         }
         guard let primary = try? await git.primaryRoot(of: projectRoot) else {

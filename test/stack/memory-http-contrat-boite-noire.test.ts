@@ -240,12 +240,8 @@ async function runLourd(muter?: Mutation): Promise<RunLourd> {
 
 /** Pièce manquante : échec sous MEMORY_OMP_REQUIRE_RUST=1 (CI), saut annoncé sinon. */
 function manque(t: TestContext, prerequis: string, consequence: string): void {
-  prerequisAbsent(
-    t,
-    prerequis,
-    consequence,
-    renamedEnv(process.env, "MEMORY_OMP_REQUIRE_RUST", "MEM0_OMP_REQUIRE_RUST") === "1" ? "MEMORY_OMP_REQUIRE_RUST=1" : null,
-  );
+  const requireRust = renamedEnv(process.env, "MEMORY_OMP_REQUIRE_RUST", "MEM0_OMP_REQUIRE_RUST") === "1";
+  prerequisAbsent(t, prerequis, consequence, requireRust ? "MEMORY_OMP_REQUIRE_RUST=1" : null);
 }
 
 /** Pièce manquante au run : `false` = sauté. */
@@ -315,7 +311,10 @@ test("memory-http-contrat-boite-noire/AC-14 : MEMORY_CONTRAT_INFER=0 annonce le 
   if (!(await binairePret(t))) return;
   const run = await partage();
   if (!piecesPresentes(t, run)) return;
-  assert.ok(run.sortie.includes("SKIP  ouvert/infer · groupe infer=true désactivé (MEMORY_CONTRAT_INFER=0)"), run.sortie);
+  assert.ok(
+    run.sortie.includes("SKIP  ouvert/infer · groupe infer=true désactivé (MEMORY_CONTRAT_INFER=0)"),
+    run.sortie,
+  );
   assert.ok(!run.sortie.split("\n").some((ligne) => /^(PASS|FAIL) {2}ouvert\/infer · /.test(ligne)), run.sortie);
   assert.ok(run.sortie.includes("0 requête(s) chat"), run.sortie);
   assert.equal(run.code, CODES_SORTIE.conforme, run.sortie);

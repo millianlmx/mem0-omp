@@ -32,7 +32,7 @@ use crate::classement::recherche::{self, Details, Refus};
 use crate::api::redaction::masquer;
 use crate::api::validation::{self, Rejet};
 
-/// Utilisateur fixe (repris de l'ancien mem0-http Python).
+/// Utilisateur fixe (repris de l'ancien service Python).
 pub const USER: &str = "moi";
 
 /// Taille maximale d'un corps de requête : 1 Mio. Écart assumé au Python (sans
@@ -168,11 +168,17 @@ fn rejet(r: Rejet) -> Response {
     }
 }
 
+/// Le jeton présenté : `X-Memory-Token` s'il est présent (même vide), sinon, pendant la
+/// transition, l'ancien `X-Mem0-Token`. Si les deux sont posés, seul le nouveau est jugé.
+fn jeton_present(entetes: &HeaderMap) -> Option<&[u8]> {
+    entetes.get("x-memory-token").or_else(|| entetes.get("x-mem0-token")).map(HeaderValue::as_bytes)
+}
+
 /// Ce qu'ouvre le jeton de la requête (tout, sans contrôle), sinon la réponse 401.
 #[expect(clippy::result_large_err, reason = "la réponse d'erreur part telle quelle, une fois par requête")]
 pub(crate) fn controle_jeton<'a>(etat: &'a Etat, entetes: &HeaderMap) -> Result<Acces<'a>, Response> {
     etat.jetons
-        .identifier(entetes.get("x-memory-token").map(HeaderValue::as_bytes))
+        .identifier(jeton_present(entetes))
         .ok_or_else(|| json(StatusCode::UNAUTHORIZED, &json!({ "detail": "bad or missing X-Memory-Token" })))
 }
 
@@ -245,6 +251,9 @@ fn octets_base(chemin: &std::path::Path) -> Option<u64> {
     Some(base + std::fs::metadata(PathBuf::from(wal)).map_or(0, |m| m.len()))
 }
 
+/// Identité du service dans `GET /health` : clés `memory` et, pendant la transition, `mem0`.
+const IDENTITE: &str = concat!("memory-rs ", env!("CARGO_PKG_VERSION"));
+
 async fn health(State(etat): Partage) -> Response {
     let (last_run_at, last_error) = etat.suivi_reve.etat();
     let sauvegarde = etat.suivi_sauvegarde.etat();
@@ -252,7 +261,8 @@ async fn health(State(etat): Partage) -> Response {
         avec_base(&etat, |conn| conn.query_row("SELECT count(*) FROM memories", [], |r| r.get::<_, i64>(0))).await.ok();
     let mut corps = json!({
         "ok": true,
-        "memory": concat!("memory-rs ", env!("CARGO_PKG_VERSION")),
+        "memory": IDENTITE,
+        "mem0": IDENTITE,
         "user": USER,
         "dream": {
             "enabled": !etat.reve.intervalle.is_zero(),
@@ -273,13 +283,11 @@ async fn health(State(etat): Partage) -> Response {
     json(StatusCode::OK, &corps)
 }
 
-/// `GET /metrics` : le jeton TOTAL du service en `X-Memory-Token` ou en `Authorization: Bearer`
-/// (ce que Prometheus sait envoyer) ; un jeton à portées n'y lit rien (403), les compteurs
-/// couvrant toutes les portées.
+/// `GET /metrics` : le jeton TOTAL du service en `X-Memory-Token` (sinon `X-Mem0-Token`) ou en
+/// `Authorization: Bearer` (ce que Prometheus sait envoyer) ; un jeton à portées n'y lit rien
+/// (403), les compteurs couvrant toutes les portées.
 async fn metriques(State(etat): Partage, entetes: HeaderMap) -> Response {
-    let presente = entetes
-        .get("x-memory-token")
-        .map(HeaderValue::as_bytes)
+    let presente = jeton_present(&entetes)
         .or_else(|| entetes.get(header::AUTHORIZATION).and_then(|v| v.as_bytes().strip_prefix(b"Bearer ")));
     match etat.jetons.identifier(presente) {
         Some(Acces::Total) => {}
@@ -399,7 +407,7 @@ async fn ajouter(
     }
 }
 
-/// add infer=true (S-2 à S-4) : chemin additif de memory 2.2.1. Aucune écriture
+/// add infer=true (S-2 à S-4) : chemin additif de la bibliothèque d'origine 2.2.1. Aucune écriture
 /// avant la dernière étape, atomique ; le verrou de la base n'est jamais tenu
 /// pendant un appel sortant.
 async fn ajouter_infere(
@@ -838,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    /// Vecteurs connus (RFC 1321, et `hashlib.md5(...).hexdigest()` de memory Python) :
+    /// Vecteurs connus (RFC 1321, et `hashlib.md5(...).hexdigest()` de Python) :
     /// l'empreinte stockée en base ne change pas d'une version de `md-5` à l'autre.
     fn md5_minuscule() {
         assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");

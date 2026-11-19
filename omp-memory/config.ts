@@ -1,5 +1,5 @@
 // Config du dispositif : URL et jeton memory, budgets, seuils de rappel, d'agrafage et de recherche.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { renamedEnv } from "./env.ts";
@@ -7,19 +7,27 @@ import { renamedEnv } from "./env.ts";
 /**
  * L'adresse et le jeton du service : `MEMORY_HTTP_URL` / `MEMORY_HTTP_TOKEN`, sinon
  * `~/.omp/memory.json` (`{ "url", "token" }`, lu aussi par l'app OMP Console : la mémoire
- * partagée avec le serveur de pipelines), sinon le service local. Le jeton du fichier
- * ne vaut que pour l'adresse du fichier.
+ * partagée avec le serveur de pipelines), sinon le service local. Pendant la version de
+ * transition, `~/.omp/mem0.json` est lu quand `memory.json` n'existe pas ; un `memory.json`
+ * présent l'emporte, même illisible (service local). Le jeton du fichier ne vaut que pour
+ * l'adresse du fichier.
  */
-export function resolveMemoryTarget(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): { url: string; token: string } {
-  if (renamedEnv(env, "MEMORY_HTTP_URL", "MEM0_HTTP_URL")) return { url: renamedEnv(env, "MEMORY_HTTP_URL", "MEM0_HTTP_URL"), token: renamedEnv(env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN") || "" };
+export function resolveMemoryTarget(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+): { url: string; token: string } {
+  const envToken = renamedEnv(env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN") || "";
+  const envUrl = renamedEnv(env, "MEMORY_HTTP_URL", "MEM0_HTTP_URL");
+  if (envUrl) return { url: envUrl, token: envToken };
+  const current = join(home, ".omp", "memory.json");
   let file: { url?: unknown; token?: unknown } = {};
   try {
-    file = JSON.parse(readFileSync(join(home, ".omp", "memory.json"), "utf8"));
+    file = JSON.parse(readFileSync(existsSync(current) ? current : join(home, ".omp", "mem0.json"), "utf8"));
   } catch {
     // Pas de fichier, ou illisible : le service local.
   }
-  if (typeof file.url !== "string" || file.url === "") return { url: "http://localhost:8321", token: renamedEnv(env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN") || "" };
-  const token = renamedEnv(env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN") || (typeof file.token === "string" ? file.token : "");
+  if (typeof file.url !== "string" || file.url === "") return { url: "http://localhost:8321", token: envToken };
+  const token = envToken || (typeof file.token === "string" ? file.token : "");
   return { url: file.url.replace(/\/+$/, ""), token };
 }
 

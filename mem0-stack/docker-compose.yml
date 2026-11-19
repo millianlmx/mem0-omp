@@ -1,0 +1,69 @@
+# Compose de repli de la pile manuelle, gardé pendant la version de transition : il lit `./.env` et
+# `./mem0-rs-data` de ce dossier sous leurs anciens noms, donc la commande habituelle (`podman compose up -d --build`)
+# continue de démarrer le service sur les mêmes souvenirs et le même jeton. Il disparaît avec les replis.
+# Le service vit maintenant dans memory-stack/ : pour y passer, depuis memory-stack/ (`.env` et `mem0-rs-data/`
+# ne sont pas suivis par git, donc git les laisse ici) :
+#   mv ../mem0-stack/.env ../mem0-stack/mem0-rs-data .
+# Ne lance pas les deux piles ensemble : elles se disputent le port 8321 et le verrou de la base.
+services:
+  mem0-rs:
+    build: ../memory-stack/memory-rs
+    image: memory-rs:local
+    container_name: ${MEM0_RS_CONTAINER:-mem0-rs}
+    # En cas de crash au démarrage, `restart: unless-stopped` relance en boucle
+    # et le port reste tenu par le proxy : le client obtient une connexion
+    # acceptée puis fermée, pas un "connection refused". C'est trompeur.
+    # Mets `no` le temps de diagnostiquer, tu verras l'erreur au lieu du symptôme.
+    restart: unless-stopped
+    ports:
+      # HTTP direct pour le plugin OMP natif (omp-memory).
+      # Bindé en 127.0.0.1 : accessible depuis l'hôte, pas depuis le réseau.
+      - "127.0.0.1:${MEM0_RS_PORT:-8321}:8321"
+    volumes:
+      # Bind-mount d'un dossier de l'hôte, jamais un volume nommé : un
+      # `compose down -v` ne peut donc pas effacer la mémoire. Crée le dossier
+      # (`mkdir -p`) avant `up` : tous les moteurs ne le créent pas.
+      # Il doit rester sur un disque local : le mode WAL de SQLite ne tient pas
+      # sur un système de fichiers réseau.
+      - ${MEM0_RS_DATA_DIR:-./mem0-rs-data}:/data
+    environment:
+      # oMLX tourne EN NATIF sur le Mac, pas dans un conteneur.
+      #   Docker Desktop : http://host.docker.internal:8000/v1
+      #   Podman         : http://host.containers.internal:8000/v1
+      # Podman récent fournit aussi l'alias host.docker.internal, mais pas
+      # toutes les versions ni toutes les configs de machine — d'où la variable.
+      OMLX_BASE_URL: ${OMLX_BASE_URL:-http://host.containers.internal:8000/v1}
+      # Si ton oMLX exige une clé, mets-la dans .env : sans elle, tous les
+      # appels LLM et embedding repartent en 401.
+      OMLX_API_TOKEN: ${OMLX_API_TOKEN:-}
+      OMLX_LLM_MODEL: ${OMLX_LLM_MODEL:-qwen3-8b}
+      # Le chat (rêve, add infer=true) sur un autre serveur ; vide : OMLX_BASE_URL
+      # et OMLX_API_TOKEN ; OMLX_CHAT_BASE_URL=off le coupe.
+      OMLX_CHAT_BASE_URL: ${OMLX_CHAT_BASE_URL:-}
+      OMLX_CHAT_API_TOKEN: ${OMLX_CHAT_API_TOKEN:-}
+      OMLX_EMBED_MODEL: ${OMLX_EMBED_MODEL:-bge-m3}
+      EMBEDDING_DIMS: ${EMBEDDING_DIMS:-1024}
+      # Optionnel : si définie, le plugin doit l'envoyer dans X-Mem0-Token.
+      MEM0_HTTP_TOKEN: ${MEM0_HTTP_TOKEN:-}
+      # Optionnel : des jetons limités à des portées, `nom:jeton:scope1,scope2;…` (voir README).
+      MEM0_HTTP_TOKENS: ${MEM0_HTTP_TOKENS:-}
+      # Instantanés de la base dans /data/backups (voir memory-stack/README.md).
+      MEM0_BACKUP_INTERVAL_HOURS: ${MEM0_BACKUP_INTERVAL_HOURS:-24}
+      MEM0_BACKUP_KEEP: ${MEM0_BACKUP_KEEP:-7}
+      # Fusion de la recherche hybride : additive (défaut, classement d'origine),
+      # rrf ou graphe (voir memory-stack/memory-rs/README.md § Recherche hybride).
+      MEM0_SEARCH_FUSION: ${MEM0_SEARCH_FUSION:-additive}
+      MEM0_RRF_K: ${MEM0_RRF_K:-60}
+      # Rêve de la mémoire (voir memory-stack/memory-rs/README.md § Rêve).
+      MEM0_DREAM_INTERVAL_MINUTES: ${MEM0_DREAM_INTERVAL_MINUTES:-60}
+      MEM0_DREAM_QUIET_MINUTES: ${MEM0_DREAM_QUIET_MINUTES:-10}
+      MEM0_DREAM_PAIRS: ${MEM0_DREAM_PAIRS:-20}
+      MEM0_DREAM_FORGET_DAYS: ${MEM0_DREAM_FORGET_DAYS:-180}
+    healthcheck:
+      # curl est installé dans l'image pour ça : le binaire n'a pas de
+      # sous-commande santé.
+      test: ["CMD", "curl", "-fsS", "-m", "3", "http://127.0.0.1:8321/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

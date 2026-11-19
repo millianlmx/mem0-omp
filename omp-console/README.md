@@ -1097,6 +1097,23 @@ clés de `stack/env` (oMLX, `EMBEDDING_DIMS`, `MEMORY_HTTP_TOKEN`), le jeton
 d'installation (`OMP_INSTALLATION_TOKEN`) et le SHA-256 du binaire
 (`OMP_CONSOLE_MEMORY_RS_SHA256`).
 
+**Installation d'avant le renommage** (version de transition : les anciens noms restent
+LUS, jamais écrits). Le dossier de travail de l'agent est `…/memory-rs/` s'il existe,
+sinon `…/mem0-rs/` s'il existe — gardé tel quel avec sa base, que `memory-rs` retrouve
+dans le même dossier —, sinon `…/memory-rs/` est créé (0700) : l'app ne crée jamais un
+`memory-rs/` vide à côté d'un `mem0-rs/`. À chaque préparation (et à chaque arrêt), AVANT
+toute sonde de port, l'app décharge l'ancien agent `com.omp.console.mem0-rs` (même
+variante hexadécimale pour une racine déplacée) s'il est chargé, puis retire son plist,
+sans toucher aux données : sans cela son job tiendrait le port avec l'ancien binaire. Les
+réglages se lisent sous leur nouveau nom, puis sous l'ancien quand le nouveau est absent
+ou vide : `OMP_CONSOLE_MEMORY_PORT` / `OMP_CONSOLE_MEM0_PORT`, `MEMORY_HTTP_URL` /
+`MEM0_HTTP_URL`, `MEMORY_HTTP_TOKEN` / `MEM0_HTTP_TOKEN`, `MEMORY_PROJECT_ID` /
+`MEM0_PROJECT_ID`, `~/.omp/memory.json` / `~/.omp/mem0.json` (l'ancien seulement tant que
+le nouveau n'existe pas ; l'appairage n'écrit jamais `memory.json` s'il n'existe pas) et
+la clé `MEMORY_HTTP_TOKEN` / `MEM0_HTTP_TOKEN` de `stack/env`, réécrite sous le seul nom
+`MEMORY_HTTP_TOKEN` à l'enregistrement suivant. Les requêtes portent le jeton sous les
+deux en-têtes. Ces replis sont retirés à la version qui suit la version de transition.
+
 - **Démarrage** (ligne « Service mémoire » : « Démarrage du service mémoire… »,
   puis « Attente de la mémoire… ») — l'état voulu EST le plist : à chaque
   préparation, l'app recalcule le plist attendu et le compare (en dictionnaire) à
@@ -1408,8 +1425,8 @@ graphe, qui couvre alors toutes les portées), `POST /memory/search` (avec
 **Le service.** L'adresse vient de `MEMORY_HTTP_URL`, sinon de `~/.omp/memory.json`
 (`{ "url", "token" }`, le fichier que lit aussi le plugin mémoire), sinon du service
 de l'app (`http://localhost:8321`). Le jeton vient de `MEMORY_HTTP_TOKEN`, sinon du
-fichier quand l'adresse en vient aussi (vide par défaut, envoyé en en-tête
-`X-Memory-Token` seulement s'il est non vide). Une adresse hors de ce Mac (la mémoire
+fichier quand l'adresse en vient aussi (vide par défaut, envoyé en en-têtes
+`X-Memory-Token` et `X-Mem0-Token`, même valeur, seulement s'il est non vide). Une adresse hors de ce Mac (la mémoire
 partagée du serveur de pipelines) est acceptée sans le jeton d'installation, et la
 sonde oMLX de ce Mac ne s'y applique pas : ses vecteurs sont calculés sur le serveur. La
 préparation n'y démarre pas l'agent memory-rs de l'app : elle le décharge et retire son
@@ -1496,7 +1513,7 @@ facultatives, projet choisi) et les liens manuels (« Relier à… », « Détac
 écriture réussie recharge le graphe ET la liste. Les liens manuels sont un artefact
 de la VUE : ils vivent dans `<racine de support>/memory-links.json`
 (`{"version":1,"links":[{"a":…,"b":…}]}`, `a < b`, écriture atomique), ne sont
-jamais écrits dans memory, et un lien dont un souvenir disparaît est élagué au
+jamais écrits dans le service mémoire, et un lien dont un souvenir disparaît est élagué au
 rechargement suivant.
 
 **Les états**, chacun avec son texte (tous dans `MemoryText`) :

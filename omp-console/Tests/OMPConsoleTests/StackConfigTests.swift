@@ -12,7 +12,7 @@ import Testing
 @Test("all-in-one-app/AC-1 : les défauts sont exactement ceux de `.env.example`")
 func defaultsMatchTheExampleFile() {
     let defaults = StackConfig.defaults
-    #expect(defaults.qdrantApiKey == "memory-local-qdrant-key")
+    #expect(defaults.qdrantApiKey == "mem0-local-qdrant-key")
     #expect(defaults.memoryHttpToken == "")
     #expect(defaults.omlxBaseURL == "http://127.0.0.1:8000/v1")
     #expect(defaults.omlxApiToken == "")

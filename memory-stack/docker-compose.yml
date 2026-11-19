@@ -5,6 +5,10 @@ services:
   memory-rs:
     build: ./memory-rs
     image: memory-rs:local
+    labels:
+      # Garde : sans `.env` (ni MEMORY_HTTP_TOKEN, ni MEM0_HTTP_TOKEN), `compose up` refuse de démarrer — jamais de
+      # service sur une base vide et sans jeton. Une `.env` déplacée de mem0-stack/ garde ses anciennes clés.
+      omp.memory.garde: "${MEMORY_HTTP_TOKEN-${MEM0_HTTP_TOKEN?pas de .env ici : installation neuve, cp .env.example .env ; venant de mem0-stack/, déplace d'abord : mv ../mem0-stack/.env ../mem0-stack/mem0-rs-data . }}"
     container_name: ${MEMORY_RS_CONTAINER:-${MEM0_RS_CONTAINER:-memory-rs}}
     # En cas de crash au démarrage, `restart: unless-stopped` relance en boucle
     # et le port reste tenu par le proxy : le client obtient une connexion

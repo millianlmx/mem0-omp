@@ -19,7 +19,7 @@ services:
     user: "${OMP_HARNESS_USER}"
     group_add: ["${OMP_HARNESS_ENGINE_GID:-0}"]
     restart: unless-stopped
-    depends_on: [memory]
+    depends_on: [mem0]
     ports:
       # Publié sur la boucle locale seulement ; Tailscale (ou un proxy TLS) l'ouvre.
       - "127.0.0.1:${OMP_HARNESS_PORT:-8790}:8790"
@@ -66,21 +66,26 @@ services:
       - ${OMP_HARNESS_ROOT}/repos:/repos:ro
       - ${OMP_HARNESS_SECRETS}/vigie:/run/secrets/omp-vigie:ro
 
-  memory:
+  # Sous la clé `mem0` pendant la transition (une configuration copiée avant garde
+  # http://mem0:8321) ; l'alias `memory` est le nom d'aujourd'hui.
+  mem0:
     build: ../../../memory-stack/memory-rs
     image: memory-rs:local
     restart: unless-stopped
+    networks:
+      default:
+        aliases: [memory]
     env_file:
-      - ${OMP_HARNESS_SECRETS}/memory.env
+      - ${OMP_HARNESS_MEMORY_ENV}
     extra_hosts:
       # L'hôte (oMLX natif sur le Mac, ou un relais local) sous ses deux noms usuels.
       - "host.docker.internal:host-gateway"
       - "host.containers.internal:host-gateway"
     ports:
       # Pour la mémoire partagée avec le Mac (tailscale serve --https=8443).
-      - "127.0.0.1:${OMP_HARNESS_MEMORY_PORT:-${OMP_HARNESS_MEM0_PORT:-8321}}:8321"
+      - "127.0.0.1:${OMP_HARNESS_MEMORY_PORT:-8321}:8321"
     volumes:
-      - ${OMP_HARNESS_ROOT}/memory:/data
+      - ${OMP_HARNESS_MEMORY_DATA}:/data
     healthcheck:
       test: ["CMD", "curl", "-fsS", "-m", "3", "http://127.0.0.1:8321/health"]
       interval: 10s

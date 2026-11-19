@@ -18,6 +18,10 @@ en mémoire, et les tests tournent sans réseau ni clé.
 - **Avec systemd** (Debian, Ubuntu, NixOS) : installé dans le système, sans moteur de
   conteneurs.
 
+Les noms de la mémoire ont changé (`mem0` devient `memory`) : une installation d'avant
+continue de marcher sans geste, et la section « Passer aux noms memory (mise à niveau) »
+du `README.md` à la racine dit quoi renommer et quand.
+
 ### En conteneurs (Docker ou podman)
 
 Il ne faut que le moteur et git. Sous Linux : Docker Engine, ou podman rootless
@@ -136,9 +140,10 @@ bash omp-harness/deploy/container/harness.sh connect      # plugins et app visen
 bash omp-harness/deploy/container/harness.sh disconnect   # retour au réglage précédent (le VPS)
 ```
 
-`connect` réécrit `~/.omp/harness.json` et `~/.omp/memory.json` en gardant tes
-correspondances dossier → dépôt, et met les anciens fichiers de côté. Relance omp et
-l'app ensuite.
+`connect` réécrit `~/.omp/harness.json` et le fichier de la mémoire (`~/.omp/memory.json`,
+ou `~/.omp/mem0.json` quand c'est le seul qui existe : il ne crée jamais `memory.json`) en
+gardant tes correspondances dossier → dépôt, et met les anciens fichiers de côté. Relance
+omp et l'app ensuite.
 
 ### Avec Portainer
 
@@ -309,7 +314,7 @@ connexion des runners à un compte OMP (`harness.sh login`) restent propres à
 
 Trois users se partagent la machine : `omp-harness` (le service, sa base, son
 jeton), `omp-runner` (les agents et leurs comptes LLM) et `omp-heavy` (les tests,
-sans réseau ni clé). Une quatrième, `omp-memory`, tient la mémoire du projet
+sans réseau ni clé). Une quatrième, `omp-mem0`, tient la mémoire du projet
 (`memory-rs`, sur `127.0.0.1:8321`).
 
 #### Debian ou Ubuntu
@@ -502,6 +507,10 @@ s'ajoute à la main dans `memory.env`.
 ### Mettre à jour
 
 Les runs en cours reprennent à leur dernier point de reprise après le redémarrage.
+
+Une installation d'avant le renommage `mem0` → `memory` reste lue sous ses anciens noms : le
+détail de la mise à niveau est dans la section « Passer aux noms memory (mise à niveau) » du
+`README.md` à la racine.
 
 - **Debian** : `git pull`, puis `sudo bash omp-harness/deploy/install.sh`. Pour
   recompiler `memory-rs`, refais les deux commandes `cargo build` et `install` de
@@ -1068,7 +1077,7 @@ sessions du Mac une fois appairé (`/pair`, README racine § « Installation »)
   les besoins, chaque feature mergée et chaque correction humaine **avec sa
   raison**.
 - **Isolée.** `memory-rs` tourne dans son conteneur (base en `~/.omp-harness/memory`), ou
-  sous `omp-memory` avec systemd (base en `/var/lib/omp-memory`, 0700), hors du budget
+  sous `omp-mem0` avec systemd (base en `/var/lib/omp-mem0`, 0700), hors du budget
   des runs. Un jeton commun le relie au service et aux agents ; les jobs de tests ne
   voient ni la base ni le jeton. Injoignable, la mémoire dégrade sans bloquer.
 - **Lente n'est pas injoignable.** Une lecture (rappel, santé, dossier) abandonne à
@@ -1110,15 +1119,15 @@ Puis sur le VPS :
 
 ```bash
 # en conteneurs (docker, ou podman)
-docker compose -p omp-harness stop memory
+docker compose -p omp-harness stop mem0   # la clé du service compose ; `memory` en est l'alias réseau
 rm -f ~/.omp-harness/memory/memory-rs.db-wal ~/.omp-harness/memory/memory-rs.db-shm
 cp /tmp/memory-rs.db ~/.omp-harness/memory/memory-rs.db
-docker compose -p omp-harness start memory
+docker compose -p omp-harness start mem0
 
 # avec systemd
 sudo systemctl stop omp-harness-memory
-sudo rm -f /var/lib/omp-memory/memory-rs.db-wal /var/lib/omp-memory/memory-rs.db-shm
-sudo install -o omp-memory -g omp-memory -m 0600 /tmp/memory-rs.db /var/lib/omp-memory/memory-rs.db
+sudo rm -f /var/lib/omp-mem0/mem0-rs.db-wal /var/lib/omp-mem0/mem0-rs.db-shm
+sudo install -o omp-mem0 -g omp-mem0 -m 0600 /tmp/memory-rs.db /var/lib/omp-mem0/mem0-rs.db
 sudo systemctl start omp-harness-memory
 ```
 
@@ -2410,7 +2419,8 @@ au dépôt (`omp-harness-client add ci-demo operator demo`).
   mkdir -p -m 0700 /var/lib/omp-harness-secrets/monitoring && cd /var/lib/omp-harness-secrets/monitoring
   docker compose exec harness node --experimental-strip-types /opt/omp-harness/omp-harness/main.ts \
     --config /etc/omp-harness/config.json --add-client prometheus --role viewer > harness.token
-  sed -n 's/^MEMORY_HTTP_TOKEN=//p' ../memory/memory.env > memory.token && chmod 0600 *.token
+  # mem0.token : le nom du fichier que lit prometheus.yml, gardé pendant la transition
+  sed -n 's/^MEMORY_HTTP_TOKEN=//p' ../memory/memory.env > mem0.token && chmod 0600 *.token
   docker compose --profile monitoring up -d   # Grafana : http://127.0.0.1:3000 (GRAFANA_ADMIN_PASSWORD)
   ```
 

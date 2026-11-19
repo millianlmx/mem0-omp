@@ -15,7 +15,8 @@ mémoire, sans swap. Au-delà, le noyau le tue (code 137) et l'étape est perdue
 - Les échecs de la suite complète liés au conteneur Linux (pas de macOS ni de
   Swift, outils absents) sont connus : ne les corrige pas, nomme-les.
 
-<!-- memory:brief v6 -->
+<!-- memory:brief v7 -->
+<!-- mem0:brief v6 --><!-- /mem0:brief -->
 ## Mémoire du projet
 
 Une mémoire persistante (memory) est branchée sur ce projet. Un rappel automatique

@@ -27,15 +27,27 @@ FAIL=0
 fail() { echo "  ✗ $1"; [ $# -gt 1 ] && echo "    → $2"; FAIL=1; }
 pass() { echo "  ✓ $1"; }
 
-# Réglage : variable d'environnement, sinon ligne `CLE=` de ./.env (celui que
-# compose applique), sinon le défaut — les mêmes défauts que docker-compose.yml.
-reglage() { # reglage <CLE> <défaut>
+# Valeur d'une clé `CLE=` du fichier $3 : la valeur non vide du nouveau nom, sinon celle de l'ancien (pendant la
+# version de transition, une `.env` déplacée de mem0-stack/ garde ses anciennes clés).
+setting_renamed() { # setting_renamed <NOUVEAU> <ANCIEN> <fichier>
   local val
-  val=$(printenv "$1" 2>/dev/null || true)
-  if [ -z "$val" ] && [ -f .env ]; then
-    val=$(sed -n "s/^$1=//p" .env | tail -1)
+  [ -f "$3" ] || return 0
+  val=$(sed -n "s/^$1=//p" "$3" | tail -1)
+  val="${val%%[[:space:]]*}"
+  if [ -z "$val" ]; then
+    val=$(sed -n "s/^$2=//p" "$3" | tail -1)
     val="${val%%[[:space:]]*}"
   fi
+  printf '%s' "$val"
+}
+
+# Réglage : variable d'environnement (nouveau nom, puis ancien), sinon ligne `CLE=` de ./.env (celui que compose
+# applique), sinon le défaut — les mêmes défauts que docker-compose.yml.
+reglage() { # reglage <CLE> <défaut>
+  local val ancien="${1/MEMORY/MEM0}"
+  val=$(printenv "$1" 2>/dev/null || true)
+  [ -n "$val" ] || val=$(printenv "$ancien" 2>/dev/null || true)
+  [ -n "$val" ] || val=$(setting_renamed "$1" "$ancien" .env)
   printf '%s' "${val:-$2}"
 }
 
@@ -50,6 +62,20 @@ esac
 BASE=$(reglage MEMORY_HTTP_URL "")
 [ -n "$BASE" ] || BASE="http://localhost:$(reglage MEMORY_RS_PORT 8321)"
 ANCIEN=$(reglage MEMORY_ANCIEN_STOCKAGE_QDRANT ./qdrant_storage)
+
+# Restes de mem0-stack/ : `.env` (jeton) et `mem0-rs-data/` (la base) ne sont pas suivis par git, donc un `git pull`
+# les laisse à l'ancien emplacement. Démarrer ici sans eux ouvrirait un service sur une base vide et sans jeton.
+echo "── Restes de mem0-stack/"
+RESTES=0
+if [ -f ../mem0-stack/.env ] && [ ! -f .env ]; then RESTES=1; fi
+if [ -d ../mem0-stack/mem0-rs-data ] && [ ! -d "$DATA_ABS" ]; then RESTES=1; fi
+if [ "$RESTES" -eq 1 ]; then
+  fail "des fichiers de mem0-stack/ n'ont pas suivi (.env ou mem0-rs-data/)" \
+       "mv ../mem0-stack/.env ../mem0-stack/mem0-rs-data ."
+else
+  pass "rien à déplacer depuis mem0-stack/"
+fi
+echo
 
 # Le conteneur EXISTE-t-il ? Les sections oMLX et aller-retour l'interrogent
 # (exec) : sans lui elles ne pourraient que décrire son absence — et inventeraient

@@ -4,7 +4,7 @@
 // - `GET /v1/health` (servie hors de la table des routes, sans jeton) : la base, le
 //   tour du scheduling, le disque — 503 au moindre échec, corps lisible quand même ;
 // - `GET /v1/status` : la mémoire du projet vue par le serveur (`oracle`, écritures
-//   perdues), le scheduling, et — serveurs récents — le service memory (`memory`) et
+//   perdues), le scheduling, et — serveurs récents — le service mémoire (`memory`) et
 //   les sauvegardes (`backups`), tous décodés en optionnels ;
 // - `GET /v1/digest` : ce qui s'est fait seul depuis 24 h.
 //
@@ -76,7 +76,7 @@ public struct HarnessStatus: Decodable, Equatable, Sendable {
     public var repos: [HarnessRepo]
     public var oracle: HarnessOracleStatus?
     public var scheduler: HarnessStats.Scheduler?
-    /// Le service memory (serveurs récents) : absent d'un serveur plus ancien.
+    /// Le service mémoire (serveurs récents) : absent d'un serveur plus ancien.
     public var memory: HarnessMemoryStatus?
     /// Les sauvegardes (serveurs récents) : absentes d'un serveur plus ancien.
     public var backups: HarnessBackupsStatus?
@@ -142,7 +142,7 @@ public struct HarnessLostWrites: Decodable, Equatable, Sendable {
     }
 }
 
-/// Le service memory : `configured` faux ⇒ `ok` faux et le reste `nil`.
+/// Le service mémoire : `configured` faux ⇒ `ok` faux et le reste `nil`.
 public struct HarnessMemoryStatus: Decodable, Equatable, Sendable {
     public var configured: Bool
     public var ok: Bool
@@ -248,7 +248,7 @@ public struct HarnessServiceLine: Equatable, Sendable, Identifiable {
 
     public var kind: Kind
     public var level: Level
-    /// Selon le service : version du serveur ou de memory, âge du dernier tour (s), espace
+    /// Selon le service : version du serveur ou du service mémoire, âge du dernier tour (s), espace
     /// libre (Mio), écritures perdues, souvenirs, instant (ms) de la dernière
     /// sauvegarde ou du dernier passage de l'extension, dernière erreur.
     public var version: String?

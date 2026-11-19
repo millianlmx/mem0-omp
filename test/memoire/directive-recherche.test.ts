@@ -41,6 +41,8 @@ async function directive(): Promise<string> {
     registerTool: () => {},
     registerCommand: () => {},
   };
+  // L'extension se garde d'un second chargement dans le même process : chaque test repart d'une session neuve.
+  delete (globalThis as Record<symbol, unknown>)[Symbol.for("omp-memory.extension")];
   memoryPluginExtension(pi as unknown as Parameters<typeof memoryPluginExtension>[0]);
   const r = (await before!(
     { prompt: "Quelle est la convention de nommage ?", systemPrompt: ["base"] } as never,
@@ -48,7 +50,7 @@ async function directive(): Promise<string> {
       cwd: tmpdir("directive-"),
     } as never,
   )) as { systemPrompt: string[] };
-  const d = r.systemPrompt.find((s) => s.startsWith("Mémoire memory :"));
+  const d = r.systemPrompt.find((s) => s.startsWith("Mémoire :"));
   assert.ok(d, "directive absente du prompt système");
   return d;
 }

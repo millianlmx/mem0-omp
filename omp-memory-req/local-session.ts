@@ -160,7 +160,10 @@ export function registerLocalSession(
   /** L'environnement fait foi au moment du hook, pas au chargement du module. */
   function reports(ctx: ExtensionContext | undefined): ctx is ExtensionContext {
     return (
-      !refused && env.OMP_HARNESS_LOCAL_SESSIONS !== "0" && renamedEnv(env, "MEMORY_MODE", "MEM0_MODE") !== "runner" && ctx?.agent?.kind === "main"
+      !refused &&
+      env.OMP_HARNESS_LOCAL_SESSIONS !== "0" &&
+      renamedEnv(env, "MEMORY_MODE", "MEM0_MODE") !== "runner" &&
+      ctx?.agent?.kind === "main"
     );
   }
 

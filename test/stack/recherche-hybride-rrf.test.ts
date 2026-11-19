@@ -102,7 +102,11 @@ function contrat(env: Record<string, string>): Promise<Resultat> {
   return lancer(
     "bash",
     ["scripts/memory-http-contrat.sh", "--run"],
-    envEnfant({ MEMORY_CONTRAT_START: "bash scripts/memory-http-contrat.sh --start-rs", MEMORY_CONTRAT_INFER: "0", ...env }),
+    envEnfant({
+      MEMORY_CONTRAT_START: "bash scripts/memory-http-contrat.sh --start-rs",
+      MEMORY_CONTRAT_INFER: "0",
+      ...env,
+    }),
   );
 }
 

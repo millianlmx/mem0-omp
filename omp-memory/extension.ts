@@ -1,6 +1,6 @@
 // Entrée de l'extension : câblage des hooks, état de l'instance ; réexporte les modules.
 //
-// omp-memory — mémoire memory (Qdrant + oMLX) intégrée nativement dans OMP.
+// omp-memory — mémoire persistante par projet intégrée nativement dans OMP.
 //
 // Ce que ça fait, et rien de plus :
 //   1. Au premier contact avec un projet : pose le brief mémoire tout seul —
@@ -16,7 +16,7 @@
 //   4. Aucune écriture automatique : c'est l'agent qui écrit. Une relance
 //      unique en fin de session le rappelle quand il a modifié des fichiers
 //      sans rien mémoriser.
-//   5. Quatre tools explicites : memory_search / memory_add / memory_update / memory_forget.
+//   5. Cinq tools explicites : memory_search / memory_add / memory_update / memory_link / memory_forget.
 //
 // La mémoire est scopée PAR PROJET (agent_id = nom du projet), avec un scope
 // "global" séparé pour les préférences transverses. Les deux sont interrogés en
@@ -36,20 +36,26 @@ import { handleRecall, registerRecallRenderer, requestModels } from "./recall.ts
 import { createRuntime, forgetInjected, projectId, stateOf } from "./state.ts";
 import { registerMemoryTools } from "./tools.ts";
 
+// Marque de process : deux copies du plugin chargées dans un même process (installées sous l'ancien et le nouveau
+// nom) n'enregistrent qu'une fois chaque outil, chaque commande et chaque hook.
 export default function memoryPluginExtension(pi: ExtensionAPI) {
+  const mark = globalThis as Record<symbol, unknown>;
+  if (mark[Symbol.for("omp-memory.extension")]) return;
+  mark[Symbol.for("omp-memory.extension")] = true;
+
   // L'état vivant (sessions, brief déjà provisionné) appartient à CETTE instance :
   // créé ici, puis passé aux modules, comme l'était la fermeture d'avant le
   // découpage. Au niveau du module, deux instances d'un même process
   // partageraient compteurs et cache de session.
   const rt = createRuntime();
 
-  pi.setLabel("memory memory");
+  pi.setLabel("memory");
 
   registerRecallRenderer(pi);
   registerMemoryTools(pi, rt);
 
-  // Les 10 commandes : la surface (nom + description, recopiée dans le
-  // catalogue marketplace) et le corps vivent ensemble dans commands.ts.
+  // Les 17 commandes (7 memory-*, leurs 7 alias de la transition, 3 de phase) : la surface (nom + description,
+  // recopiée dans le catalogue marketplace) et le corps vivent ensemble dans commands.ts.
   registerMemoryCommands(pi, rt);
 
   // --- Mode runner (MEMORY_MODE=runner) ---------------------------------------

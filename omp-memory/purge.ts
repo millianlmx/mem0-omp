@@ -2,8 +2,8 @@
 //
 // Le discriminant est un CHAMP DE MÉTADONNÉE, jamais une heuristique de texte :
 // `metadata.memory_type = "procedural_memory"` n'est posé que par le chemin
-// `AsyncMemory.add(..., memory_type="procedural_memory")` (prompt procédural de
-// memory). Mesure du 2026-09-27 sur la scope `memory-omp` : 34 lignes sur 525 portent
+// `AsyncMemory.add(..., memory_type="procedural_memory")` (prompt procédural de l'ancienne
+// pile). Mesure du 2026-09-27 sur la scope `memory-omp` : 34 lignes sur 525 portent
 // ce champ, aucune n'en porte une autre valeur. Le chemin `infer=False` — celui
 // de `/memory/add` et de l'actuel `/memory/add_procedure`, qui stocke mot pour
 // mot — n'en pose aucun : `metadata` vaut alors `null`. Repérer une procédure à

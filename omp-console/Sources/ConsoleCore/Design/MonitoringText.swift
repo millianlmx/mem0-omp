@@ -392,7 +392,7 @@ public enum MonitoringText {
         case "scheduler": L10n.text("Ordonnancement")
         case "disk": L10n.text("Disque")
         case "oracle": L10n.text("Mémoire du projet")
-        case "memory": L10n.text("Service memory")
+        case "memory": L10n.text("Service mémoire")
         case "backups": L10n.text("Sauvegardes")
         default: L10n.text("Extension Chrome")
         }

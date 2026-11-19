@@ -68,6 +68,7 @@ struct MemoryReaderTests {
         #expect(second.rows.count == 50)
         #expect(second.nextOffset == nil)
         #expect(transport.requests.first?.value(forHTTPHeaderField: "X-Memory-Token") == "jeton")
+        #expect(transport.requests.first?.value(forHTTPHeaderField: "X-Mem0-Token") == "jeton")
         #expect(transport.requests.first?.url?.absoluteString == "https://vps.tailnet.ts.net:8443/memory/all?agent_id=produit")
     }
 

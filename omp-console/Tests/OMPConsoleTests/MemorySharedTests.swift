@@ -59,6 +59,7 @@ func remoteMemoryIsAcceptedWithoutInstallationToken() async {
     #expect(remote.isAvailable)
     #expect(!remote.isForeign)
     #expect(StubURLProtocol.requests.first?.value(forHTTPHeaderField: "X-Memory-Token") == "jeton-vps")
+    #expect(StubURLProtocol.requests.first?.value(forHTTPHeaderField: "X-Mem0-Token") == "jeton-vps")
 
     StubURLProtocol.reset()
     StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true, "memory": "memory-rs 0.1.0"])))

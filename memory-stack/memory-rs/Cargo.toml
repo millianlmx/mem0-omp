@@ -3,7 +3,7 @@ name = "memory-rs"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
-description = "Service mémoire HTTP de memory-omp : même contrat que mem0-http, stockage SQLite unique"
+description = "Service mémoire HTTP : même contrat que l'ancien service Python, stockage SQLite unique"
 publish = false
 
 [[bin]]

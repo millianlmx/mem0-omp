@@ -69,7 +69,7 @@ const LEXIQUE: &[(&str, &str)] = &[
     ("conteneur", "conteneur container docker podman image compose engine rootless"),
     ("recherche", "recherche search chercher query requete retrieval meilisearch"),
     ("rappel", "rappel recall injecte injecter contexte context"),
-    ("souvenir", "souvenir memoire memory memory memorise memoriser remember"),
+    ("souvenir", "souvenir memoire memory memorise memoriser remember"),
     ("vecteur", "vecteur vector embedding plongement dense cosinus cosine similarite semantique semantic"),
     ("lexical", "bm25 lexical lexicalement keyword mot terme sparse creux idf fts5"),
     ("fusion", "fusion combinaison combination combine additionne hybride hybrid rerank reranking score"),

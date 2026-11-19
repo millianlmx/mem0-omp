@@ -231,7 +231,8 @@ test("memory-rs-noyau/AC-16 : un avertissement clippy ou un cargo test en échec
     return;
   }
   if (!cargoPresent()) {
-    manque(t, "cargo", "section rust non exécutée", renamedEnv(process.env, "MEMORY_OMP_REQUIRE_RUST", "MEM0_OMP_REQUIRE_RUST") === "1");
+    const requireRust = renamedEnv(process.env, "MEMORY_OMP_REQUIRE_RUST", "MEM0_OMP_REQUIRE_RUST") === "1";
+    manque(t, "cargo", "section rust non exécutée", requireRust);
     return;
   }
   // Le contrat que la section joue ensuite dans la copie n'est pas l'objet

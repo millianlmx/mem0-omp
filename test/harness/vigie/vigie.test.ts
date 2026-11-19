@@ -785,7 +785,12 @@ function makeVigie(
     reposDir,
     ci: async () => [],
     version: "test",
-    env: { PATH: process.env.PATH, HARNESS_TOKEN: "jeton-secret", MEMORY_HTTP_TOKEN: "memory-secret", VIGIE_TOKEN: "x" },
+    env: {
+      PATH: process.env.PATH,
+      HARNESS_TOKEN: "jeton-secret",
+      MEMORY_HTTP_TOKEN: "memory-secret",
+      VIGIE_TOKEN: "x",
+    },
     log: () => {},
   });
 }
@@ -866,7 +871,9 @@ test("vigie/AC-9 : la vigie suit le flux, trie une empreinte nouvelle par une se
     assert.match(String(prompt?.message), /init/, "git log de main");
     assert.match(String(prompt?.message), /worktree retiré trop tôt/, "la mémoire des bugs connus");
     const argv = omp.log().find((entry) => entry.kind === "argv") as { env: Record<string, unknown>; argv: string[] };
-    assert.deepEqual([argv.env.HARNESS_TOKEN, renamedEnv(argv.env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN")], [null, null]);
+    const sessionEnv = argv.env as Record<string, string | undefined>;
+    const memoryToken = renamedEnv(sessionEnv, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN");
+    assert.deepEqual([argv.env.HARNESS_TOKEN, memoryToken], [null, null]);
     assert.ok(argv.argv.includes("--model") && argv.argv.includes("anthropic/test"));
 
     // En fix, la correction part dans la foulée d'un bug nouveau.

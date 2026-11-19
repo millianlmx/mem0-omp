@@ -1,6 +1,6 @@
 //! Client embeddings OpenAI-compatible (D-1 « Embedder OpenAI », D-8).
 //!
-//! Imite memory 2.2.1 sur openai-python 3.24.0 : `\n` remplacé par une espace,
+//! Imite la bibliothèque d'origine 2.2.1 sur openai-python 3.24.0 : `\n` remplacé par une espace,
 //! `{"input":[texte…],"model":…,"encoding_format":"float"}` sans `dimensions`.
 //! Délais et nouvelles tentatives : [`crate::modele::openai::poster`].
 

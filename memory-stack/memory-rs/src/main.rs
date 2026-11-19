@@ -1,4 +1,4 @@
-//! memory-rs : service mémoire HTTP au contrat de mem0-http, stockage SQLite unique.
+//! memory-rs : service mémoire HTTP au contrat de l'ancien service Python, stockage SQLite unique.
 //!
 //! `memory-rs [--host <adresse>] [--port <port>]` ; configuration par variables
 //! d'environnement (S-1). Codes de sortie : 0 arrêt propre, 1 erreur, 2 usage.

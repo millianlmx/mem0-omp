@@ -121,7 +121,12 @@ test("memory-stack-bascule-rust/AC-6 : le contrat boîte noire n'a plus de cible
       cwd: ROOT,
       encoding: "utf8",
       timeout: 60_000,
-      env: { ...process.env, MEMORY_CONTRAT_START: "", MEMORY_CONTRAT_URL: "", MEMORY_RS_BIN: path.join(tmp, "absent") },
+      env: {
+        ...process.env,
+        MEMORY_CONTRAT_START: "",
+        MEMORY_CONTRAT_URL: "",
+        MEMORY_RS_BIN: path.join(tmp, "absent"),
+      },
     });
     const sortie = `${r.stdout}${r.stderr}`;
     assert.equal(r.status, 2, `--run doit sortir en 2 (sortie : ${sortie})`);

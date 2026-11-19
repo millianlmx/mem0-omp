@@ -56,7 +56,8 @@ export type OutilEpingle = "biome" | "typescript";
 function outil(nom: OutilEpingle): { libelle: string; version: string; paquet: string; prepare: string } {
   if (nom === "biome") {
     const script = fs.readFileSync(path.join(RACINE, "scripts", "lint.sh"), "utf8");
-    const dossier = path.resolve(RACINE, renamedEnv(process.env, "MEMORY_OMP_LINT_DIR", "MEM0_OMP_LINT_DIR") || ".lint");
+    const lintDir = renamedEnv(process.env, "MEMORY_OMP_LINT_DIR", "MEM0_OMP_LINT_DIR");
+    const dossier = path.resolve(RACINE, lintDir || ".lint");
     return {
       libelle: "Biome",
       version: /^BIOME_VERSION="([^"]+)"$/m.exec(script)?.[1] ?? "",

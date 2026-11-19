@@ -1,7 +1,7 @@
 //! Routes propres à memory-rs (memoire-liee, reve-memoire) : liens entre
 //! souvenirs, entités, mental models, rêve local et consolidation.
 //!
-//! Hors du contrat de l'ancien mem0-http : les erreurs y sont plus simples —
+//! Hors du contrat de l'ancien service Python : les erreurs y sont plus simples —
 //! 422 `{"detail": "<raison>"}` pour un corps invalide, 404 pour un id inconnu,
 //! 409 pour une proposition déjà décidée. Le jeton `X-Memory-Token` est exigé
 //! comme partout, après la lecture du corps ; un jeton à portées n'ouvre que les

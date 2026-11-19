@@ -17,10 +17,17 @@
 // un `portConflict` nommé, et le job chargé est alors DÉCHARGÉ plutôt que laissé
 // boucler sur un bind impossible.
 //
+// L'agent d'AVANT le renommage (`com.omp.console.mem0-rs`, même variante hexadécimale
+// pour une racine déplacée) tient le port avec l'ancien binaire, que la garde de port
+// classerait « étranger » : `ensureRunning` et `ensureStopped` le déchargent d'abord
+// (`bootout` attendu par `print`) et retirent son plist, AVANT toute sonde de port. Le
+// dossier de données de l'app et sa base ne sont jamais touchés.
+//
 // Ce que ce fichier ne connaît PAS : la feuille de préparation et ses textes, la
 // migration podman. Toute commande passe par `CommandRunner` (binaires ABSOLUS),
 // la sonde HTTP est injectée : aucun test non gaté ne touche launchd ni un port.
 
+import ConsoleCore
 import CryptoKit
 import Foundation
 
@@ -45,17 +52,22 @@ enum MemoryAgentError: Error, Equatable {
 @MainActor
 final class MemoryAgent {
     nonisolated static let defaultLabel = "com.omp.console.memory-rs"
+    /// Le label d'avant le renommage : un agent chargé sous ce nom est déchargé, son
+    /// plist retiré (S-33).
+    nonisolated static let legacyDefaultLabel = "com.omp.console.mem0-rs"
     nonisolated static let defaultPort = 8321
     /// Réglage de recette (non documenté pour l'utilisateur final).
     nonisolated static let portEnvironmentKey = "OMP_CONSOLE_MEMORY_PORT"
+    /// Son nom d'avant le renommage, lu quand le nouveau est absent ou vide (S-7).
+    nonisolated static let legacyPortEnvironmentKey = "OMP_CONSOLE_MEM0_PORT"
     nonisolated static let launchctl = URL(fileURLWithPath: "/bin/launchctl")
     /// Budget d'UNE invocation `launchctl`.
     nonisolated static let commandTimeout: Double = 10
 
-    /// Le port servi : `OMP_CONSOLE_MEMORY_PORT` si entier décimal 1–65535, sinon 8321.
+    /// Le port servi : `OMP_CONSOLE_MEMORY_PORT` (sinon `OMP_CONSOLE_MEM0_PORT`) si entier
+    /// décimal 1–65535, sinon 8321.
     nonisolated static func port(environment: [String: String]) -> Int {
-        guard let raw = environment[portEnvironmentKey],
-              !raw.isEmpty,
+        guard let raw = RenamedEnvironment.value(environment, portEnvironmentKey, legacy: legacyPortEnvironmentKey),
               raw.allSatisfy({ $0.isASCII && $0.isNumber }),
               let value = Int(raw),
               (1...65535).contains(value)
@@ -66,10 +78,19 @@ final class MemoryAgent {
     /// `defaultLabel` pour la racine réelle ; une racine déplacée a son propre
     /// label (12 premiers hex du SHA-256 de son chemin), donc son propre job.
     nonisolated static func label(paths: AppPaths) -> String {
-        guard paths.isOverridden else { return defaultLabel }
+        variant(of: defaultLabel, paths: paths)
+    }
+
+    /// Le label d'avant le renommage de la même installation (même variante hexadécimale).
+    nonisolated static func legacyLabel(paths: AppPaths) -> String {
+        variant(of: legacyDefaultLabel, paths: paths)
+    }
+
+    nonisolated private static func variant(of base: String, paths: AppPaths) -> String {
+        guard paths.isOverridden else { return base }
         let digest = SHA256.hash(data: Data(paths.supportRoot.path.utf8))
         let hex = digest.map { String(format: "%02x", $0) }.joined()
-        return defaultLabel + "." + String(hex.prefix(12))
+        return base + "." + String(hex.prefix(12))
     }
 
     /// `<bundle>/Contents/Resources/memory-rs` (copié par scripts/swift-app.sh).
@@ -113,6 +134,8 @@ final class MemoryAgent {
     let executable: URL
     let port: Int
     let label: String
+    /// Le label d'avant le renommage (S-33).
+    let legacyLabel: String
 
     /// Budget d'attente de `/health` après (re)chargement — 30 s en production.
     var healthBudget: Double = 30
@@ -144,6 +167,7 @@ final class MemoryAgent {
         self.executable = executable
         self.port = port
         self.label = Self.label(paths: paths)
+        self.legacyLabel = Self.legacyLabel(paths: paths)
         self.environment = environment
         self.run = run
         self.uid = uid
@@ -152,10 +176,10 @@ final class MemoryAgent {
 
     /// `<launchAgentsDir>/<label>.plist`.
     var plistURL: URL { paths.launchAgentPlist(label: label) }
+    var legacyPlistURL: URL { paths.launchAgentPlist(label: legacyLabel) }
 
-    /// `gui/<uid>` et `gui/<uid>/<label>`.
+    /// `gui/<uid>` ; la cible d'un job est `gui/<uid>/<label>`.
     var domain: String { "gui/\(uid)" }
-    var serviceTarget: String { "\(domain)/\(label)" }
 
     /// `http://127.0.0.1:<port>/health`.
     var healthURL: URL {
@@ -172,6 +196,11 @@ final class MemoryAgent {
             throw MemoryAgentError.binaryMissing(path: executable.path)
         }
 
+        // 1 bis. L'agent d'avant le renommage : déchargé et son plist retiré AVANT toute
+        // sonde de port, sans quoi son job (`KeepAlive`) tiendrait le port avec l'ancien
+        // binaire et `guardPort` y verrait un programme étranger.
+        try await retireLegacyAgent()
+
         // 2. Le jeton d'installation (jamais régénéré s'il existe).
         let token: String
         do {
@@ -182,7 +211,7 @@ final class MemoryAgent {
 
         // 3. Le plist attendu et l'état du job.
         let expected = try expectedPlist(installationToken: token)
-        let status = await printService()
+        let status = await printService(label: label)
 
         // 4-5. Chargé et identique : il ne reste qu'à attendre la santé.
         if status.loaded, plistOnDisk() == NSDictionary(dictionary: expected) {
@@ -196,7 +225,7 @@ final class MemoryAgent {
         // 7. Écriture atomique, déchargement attendu, chargement repris.
         try writePlist(expected)
         if status.loaded {
-            try await bootoutAndWait()
+            try await bootoutAndWait(label: label)
         }
         try await bootstrap()
 
@@ -206,28 +235,47 @@ final class MemoryAgent {
 
     // MARK: - L'arrêt
 
-    /// Décharge le job s'il est chargé, puis retire son plist (memoire-du-serveur) :
+    /// Décharge l'agent d'avant le renommage s'il est chargé, puis le job s'il est
+    /// chargé, puis retire leurs plists (memoire-du-serveur) :
     /// quand la mémoire est celle d'un serveur, l'agent de l'app n'a rien à servir,
     /// et un plist laissé sur le disque le ferait relancer par launchd à la session
     /// suivante (`RunAtLoad`). La base reste sur le disque : repasser à la mémoire
-    /// de l'app la retrouve. Rend vrai si un job était chargé.
+    /// de l'app la retrouve. Rend vrai si un job (ancien ou nouveau) était chargé.
     @discardableResult
     func ensureStopped() async throws -> Bool {
-        let status = await printService()
+        let legacyWasLoaded = try await retireLegacyAgent()
+        let status = await printService(label: label)
         if status.loaded {
-            try await bootoutAndWait()
+            try await bootoutAndWait(label: label)
         }
-        if fileManager.fileExists(atPath: plistURL.path) {
-            do {
-                try fileManager.removeItem(at: plistURL)
-            } catch {
-                throw MemoryAgentError.plistWriteFailed(
-                    path: plistURL.path,
-                    detail: Self.bounded(error.localizedDescription)
-                )
-            }
+        try removePlist(at: plistURL)
+        return status.loaded || legacyWasLoaded
+    }
+
+    /// Décharge l'agent d'avant le renommage (`print` rend 0 ⇒ `bootout` attendu), puis
+    /// retire son plist. Rend vrai s'il était chargé. Le dossier de données et sa base
+    /// ne sont jamais touchés.
+    @discardableResult
+    private func retireLegacyAgent() async throws -> Bool {
+        let wasLoaded = await printService(label: legacyLabel).loaded
+        if wasLoaded {
+            try await bootoutAndWait(label: legacyLabel)
         }
-        return status.loaded
+        try removePlist(at: legacyPlistURL)
+        return wasLoaded
+    }
+
+    /// Retire le plist s'il existe.
+    private func removePlist(at url: URL) throws {
+        guard fileManager.fileExists(atPath: url.path) else { return }
+        do {
+            try fileManager.removeItem(at: url)
+        } catch {
+            throw MemoryAgentError.plistWriteFailed(
+                path: url.path,
+                detail: Self.bounded(error.localizedDescription)
+            )
+        }
     }
 
     // MARK: - Le plist
@@ -274,13 +322,15 @@ final class MemoryAgent {
         return NSDictionary(dictionary: dictionary)
     }
 
-    /// Écrit le plist (0600 : il porte des jetons), après avoir créé
-    /// `launchAgentsDir` et `memoryRoot` (0700).
+    /// Écrit le plist (0600 : il porte des jetons), après avoir créé `launchAgentsDir` et
+    /// le SEUL dossier de données choisi (`memoryRoot`, 0700) : jamais un `memory-rs/` vide
+    /// à côté d'un `mem0-rs/` d'avant le renommage.
     private func writePlist(_ plist: [String: Any]) throws {
         do {
+            let root = paths.memoryRoot
             try fileManager.createDirectory(at: paths.launchAgentsDir, withIntermediateDirectories: true)
-            try fileManager.createDirectory(at: paths.memoryRoot, withIntermediateDirectories: true)
-            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.memoryRoot.path)
+            try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
             let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
             try data.write(to: plistURL, options: [.atomic])
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: plistURL.path)
@@ -296,8 +346,8 @@ final class MemoryAgent {
 
     /// `launchctl print gui/<uid>/<label>` : exit 0 ⇒ chargé ; le pid vient de la
     /// ligne `\tpid = <n>` (UNE tabulation), absent ⇒ nil.
-    private func printService() async -> (loaded: Bool, pid: Int32?) {
-        guard let result = try? await launchctl(["print", serviceTarget]), result.code == 0 else {
+    private func printService(label: String) async -> (loaded: Bool, pid: Int32?) {
+        guard let result = try? await launchctl(["print", "\(domain)/\(label)"]), result.code == 0 else {
             return (false, nil)
         }
         return (true, Self.jobPid(in: result.stdout))
@@ -312,16 +362,16 @@ final class MemoryAgent {
         return nil
     }
 
-    /// `bootout` puis `print` jusqu'à exit ≠ 0 dans `unloadBudget` (DOC-2).
-    private func bootoutAndWait() async throws {
+    /// `bootout` du label puis `print` jusqu'à exit ≠ 0 dans `unloadBudget` (DOC-2).
+    private func bootoutAndWait(label: String) async throws {
         do {
-            _ = try await launchctl(["bootout", serviceTarget])
+            _ = try await launchctl(["bootout", "\(domain)/\(label)"])
         } catch {
             throw MemoryAgentError.launchctlFailed(command: "bootout", detail: Self.bounded(error.localizedDescription))
         }
         let deadline = ContinuousClock.now + .seconds(unloadBudget)
         while true {
-            if await !printService().loaded { return }
+            if await !printService(label: label).loaded { return }
             if ContinuousClock.now >= deadline {
                 throw MemoryAgentError.launchctlFailed(command: "bootout", detail: "le service est toujours chargé")
             }
@@ -374,7 +424,7 @@ final class MemoryAgent {
             let owner = await holder()
             if Self.portAllows(owner, jobPid: jobPid) { return }
             if ContinuousClock.now >= deadline {
-                if loaded { try? await bootoutAndWait() }
+                if loaded { try? await bootoutAndWait(label: label) }
                 throw MemoryAgentError.portConflict(port: port, owner: owner)
             }
             await pause()
@@ -395,7 +445,7 @@ final class MemoryAgent {
         }
         let owner = await holder()
         if case .foreign(_, let pid) = owner, pid != jobPid {
-            try? await bootoutAndWait()
+            try? await bootoutAndWait(label: label)
             throw MemoryAgentError.portConflict(port: port, owner: owner)
         }
         throw MemoryAgentError.healthTimeout(

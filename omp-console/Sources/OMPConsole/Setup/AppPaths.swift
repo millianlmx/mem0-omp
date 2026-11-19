@@ -44,17 +44,24 @@ struct AppPaths: Equatable, Sendable {
         return AppPaths(supportRoot: root, isOverridden: false)
     }
 
-    /// `<racine>/memory-rs` : le dossier de travail de l'agent memory-rs (0700).
+    /// Le dossier de travail de l'agent memory-rs (0700) : `<racine>/memory-rs` s'il
+    /// existe, sinon `<racine>/mem0-rs` (le dossier d'une installation d'avant le
+    /// renommage, gardé tel quel avec sa base), sinon `<racine>/memory-rs`. Le choix est
+    /// refait à chaque accès ; quand les deux existent, le nouveau l'emporte.
     var memoryRoot: URL {
-        supportRoot.appendingPathComponent("memory-rs", isDirectory: true)
+        let current = supportRoot.appendingPathComponent("memory-rs", isDirectory: true)
+        if FileManager.default.fileExists(atPath: current.path) { return current }
+        let legacy = supportRoot.appendingPathComponent("mem0-rs", isDirectory: true)
+        return FileManager.default.fileExists(atPath: legacy.path) ? legacy : current
     }
 
-    /// `<racine>/memory-rs/memory-rs.db` : la base SQLite servie par l'agent.
+    /// `<memoryRoot>/memory-rs.db` : la base SQLite servie par l'agent. Dans un dossier
+    /// d'avant le renommage, le service retrouve son `mem0-rs.db` voisin.
     var memoryDatabase: URL {
         memoryRoot.appendingPathComponent("memory-rs.db")
     }
 
-    /// `<racine>/memory-rs/memory-rs.log` : stdout et stderr de l'agent.
+    /// `<memoryRoot>/memory-rs.log` : stdout et stderr de l'agent.
     var memoryLog: URL {
         memoryRoot.appendingPathComponent("memory-rs.log")
     }
@@ -122,7 +129,7 @@ struct AppPaths: Equatable, Sendable {
     }
 
     /// `<racine>/memory-links.json` : les liens MANUELS du graphe de la mémoire
-    /// (S-11). C'est un artefact de la vue, pas une donnée memory — il vit donc sous
+    /// (S-11). C'est un artefact de la vue, pas une donnée du service mémoire — il vit donc sous
     /// la racine de l'app, comme le reste de son état.
     var memoryLinks: URL {
         supportRoot.appendingPathComponent(MemoryLinkStore.fileName)

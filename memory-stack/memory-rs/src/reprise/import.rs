@@ -1,5 +1,5 @@
 //! Sous-commande `memory-rs import` (S-1 à S-10 de memory-rs-migration) : lit une
-//! collection Qdrant (scroll REST, vecteurs compris) et le history.db de memory,
+//! collection Qdrant (scroll REST, vecteurs compris) et le history.db de mem0-http,
 //! puis écrit la base memory-rs en UNE transaction, sans aucun appel à l'embedder.
 //!
 //! Ordre (S-7) : arguments, environnement, contrôle du verrou sans création,

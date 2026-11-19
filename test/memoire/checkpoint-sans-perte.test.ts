@@ -62,6 +62,8 @@ function mkApp() {
     registerTool: (def: { name: string; execute: ToolExecute }) => tools.set(def.name, def.execute),
     registerCommand: () => {},
   };
+  // L'extension se garde d'un second chargement dans le même process : chaque test repart d'une session neuve.
+  delete (globalThis as Record<symbol, unknown>)[Symbol.for("omp-memory.extension")];
   memoryPluginExtension(pi as unknown as Parameters<typeof memoryPluginExtension>[0]);
   const repo = tmpdir("checkpoint-repo-");
   fs.mkdirSync(path.join(repo, ".git"));
@@ -88,7 +90,8 @@ function mkApp() {
     }
     return results;
   };
-  const checkpoints = (results: Result[]) => results.filter((r) => r?.content[0]?.text.startsWith("[memory checkpoint]"));
+  const checkpoints = (results: Result[]) =>
+    results.filter((r) => r?.content[0]?.text.startsWith("[memory checkpoint]"));
   return { tools, ctx, recall, explore, checkpoints };
 }
 

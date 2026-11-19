@@ -60,7 +60,8 @@ const HOME_INITIAL = process.env.HOME ?? os.homedir();
 
 function hostCandidates(): string[] {
   const out: string[] = [];
-  if (renamedEnv(process.env, "MEMORY_OMP_HOST_MODULES", "MEM0_OMP_HOST_MODULES")) out.push(renamedEnv(process.env, "MEMORY_OMP_HOST_MODULES", "MEM0_OMP_HOST_MODULES"));
+  const hostModules = renamedEnv(process.env, "MEMORY_OMP_HOST_MODULES", "MEM0_OMP_HOST_MODULES");
+  if (hostModules) out.push(hostModules);
   const pinned = spawnSync("bash", [path.join(ROOT, "scripts", "omp-host.sh"), "--path"], { encoding: "utf8" });
   if (pinned.status === 0 && pinned.stdout.trim()) out.push(pinned.stdout.trim());
   out.push(path.join(ROOT, "node_modules"));

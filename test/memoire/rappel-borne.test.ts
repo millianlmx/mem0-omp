@@ -100,6 +100,8 @@ test("rappel-borne/AC-4 : de bout en bout, le message de rappel d'un tour sur de
     registerTool: () => {},
     registerCommand: () => {},
   };
+  // L'extension se garde d'un second chargement dans le même process : chaque test repart d'une session neuve.
+  delete (globalThis as Record<symbol, unknown>)[Symbol.for("omp-memory.extension")];
   memoryPluginExtension(pi as unknown as Parameters<typeof memoryPluginExtension>[0]);
   const ctx = { cwd: tmpdir("rappel-borne-"), sessionManager: { getSessionId: () => "rappel-borne" } };
   const tour = (await before!(

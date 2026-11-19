@@ -28,7 +28,10 @@ import { renamedEnv } from "../../omp-harness/config/env.ts";
 const DEPTH = Number(renamedEnv(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
 
 /** Hors de l'arbre réel (copie jetable ou suite relancée par `check.sh`). */
-const IN_COPY = DEPTH > 0 || renamedEnv(process.env, "MEMORY_OMP_SKIP_SWIFT_APP", "MEM0_OMP_SKIP_SWIFT_APP") === "1" || renamedEnv(process.env, "MEMORY_OMP_SKIP_IOS", "MEM0_OMP_SKIP_IOS") === "1";
+const IN_COPY =
+  DEPTH > 0 ||
+  renamedEnv(process.env, "MEMORY_OMP_SKIP_SWIFT_APP", "MEM0_OMP_SKIP_SWIFT_APP") === "1" ||
+  renamedEnv(process.env, "MEMORY_OMP_SKIP_IOS", "MEM0_OMP_SKIP_IOS") === "1";
 
 /** La copie du dépôt où l'on plante les fautes, remise à neuf à chaque `fresh()` (../support/repo.ts). */
 const shared = sharedRepo("coque-copie-");

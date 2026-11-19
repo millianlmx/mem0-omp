@@ -239,6 +239,17 @@ export function glabEnv(
 }
 
 /**
+ * Les deux noms d'une variable de jeton mémoire pendant la version de transition : `[nouveau, ancien]`. Un nom qui
+ * contient `MEM0` (déclaré avant le renommage) a pour nouveau nom le même avec `MEMORY` ; un nom qui contient
+ * `MEMORY` a pour ancien nom le même avec `MEM0` ; tout autre nom est seul.
+ */
+function renamedPair(name: string): string[] {
+  if (name.includes("MEM0")) return [name.replaceAll("MEM0", "MEMORY"), name];
+  if (name.includes("MEMORY")) return [name, name.replaceAll("MEMORY", "MEM0")];
+  return [name];
+}
+
+/**
  * Le jeton mémoire propre au dépôt, ou `null` (le jeton global). Déclaré mais absent ou
  * illisible : refus — le jeton global ouvrirait la mémoire de tous les projets.
  */
@@ -248,7 +259,8 @@ export function repoMemoryToken(
 ): string | null {
   const name = repo.memory?.tokenEnv;
   if (name === undefined) return null;
-  const token = env[name]?.trim() ?? "";
+  const [current, legacy] = renamedPair(name);
+  const token = (env[current] || (legacy === undefined ? undefined : env[legacy]) || "").trim();
   if (token === "")
     throw new PolicyRefusal(
       `dépôt ${repo.name} : ${name} (son jeton mémoire) est absente de l'environnement du service — aucun runner avec le jeton global`,
@@ -287,9 +299,10 @@ export function syncMemoryTokenFile(config: HarnessConfig, repoName: string, tok
 export function policySecretVars(config: HarnessConfig): string[] {
   return [
     ...new Set(
-      config.repos.flatMap((repo) =>
-        [repo.gh?.tokenEnv, repo.gitlab?.tokenEnv, repo.memory?.tokenEnv].filter((name) => name !== undefined),
-      ),
+      config.repos.flatMap((repo) => [
+        ...[repo.gh?.tokenEnv, repo.gitlab?.tokenEnv].filter((name) => name !== undefined),
+        ...(repo.memory?.tokenEnv === undefined ? [] : renamedPair(repo.memory.tokenEnv)),
+      ]),
     ),
   ];
 }

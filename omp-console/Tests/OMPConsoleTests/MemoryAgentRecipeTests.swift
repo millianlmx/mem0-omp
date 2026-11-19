@@ -15,6 +15,7 @@
 // Le nom de chaque FONCTION porte « recette » : `swift test --filter` filtre sur
 // l'identifiant du test, pas sur son titre affiché.
 
+import ConsoleCore
 import CryptoKit
 import Darwin
 import Foundation
@@ -22,7 +23,7 @@ import Testing
 
 @testable import OMPConsole
 
-private let recipeEnabled = ProcessInfo.processInfo.environment["MEMORY_AGENT_RECIPE"] != nil
+private let recipeEnabled = RenamedEnvironment.value(ProcessInfo.processInfo.environment, "MEMORY_AGENT_RECIPE", legacy: "MEM0_AGENT_RECIPE") != nil
 
 /// La racine du dépôt, depuis ce fichier (Tests/OMPConsoleTests/<fichier>).
 private let repositoryRoot = URL(fileURLWithPath: #filePath)
@@ -52,7 +53,7 @@ private final class RecipeRoot {
     let uid = getuid()
 
     init(httpToken: String = "recette", environment: [String: String] = [:]) throws {
-        let source = ProcessInfo.processInfo.environment["MEMORY_RS_BIN"].flatMap { $0.isEmpty ? nil : $0 }
+        let source = RenamedEnvironment.value(ProcessInfo.processInfo.environment, "MEMORY_RS_BIN", legacy: "MEM0_RS_BIN")
             .map { URL(fileURLWithPath: $0) }
             ?? repositoryRoot.appendingPathComponent("memory-stack/memory-rs/target/release/memory-rs")
         guard FileManager.default.isExecutableFile(atPath: source.path) else {
