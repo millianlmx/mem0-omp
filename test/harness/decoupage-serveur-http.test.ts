@@ -258,7 +258,10 @@ test("decoupage-serveur-http/AC-5 : aucune réexportation ne vise un morceau, et
   const pieces = new Set(chunks().map((chunk) => `omp-harness/${chunk.path}`));
   const resolves = (from: string, specifier: string): string | null => {
     if (!specifier.startsWith(".")) return null;
-    const target = path.normalize(path.join(path.dirname(from), specifier)).split(path.sep).join("/");
+    const target = path
+      .normalize(path.join(path.dirname(from), specifier))
+      .split(path.sep)
+      .join("/");
     return pieces.has(target) ? target : null;
   };
   const declares = (piece: string, name: string): boolean => {
@@ -294,7 +297,12 @@ test("decoupage-serveur-http/AC-5 : aucune réexportation ne vise un morceau, et
     }
     for (const match of text.matchAll(LOCAL_EXPORT)) {
       for (const spec of (match[1] ?? "").split(",")) {
-        const name = (spec.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0] ?? "").trim();
+        const name = (
+          spec
+            .trim()
+            .replace(/^type\s+/, "")
+            .split(/\s+as\s+/)[0] ?? ""
+        ).trim();
         if (importedFromPieces.has(name)) {
           problems.push(`${file}:${lineOf(text, match.index)} → ${name} : façade`);
         }
