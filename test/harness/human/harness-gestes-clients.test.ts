@@ -11,16 +11,16 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { Git } from "../../omp-harness/forge/git.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
-import { execProcess, type Exec } from "../../omp-harness/runners/proc.ts";
-import { ConfigAdmin, type KeyGen } from "../../omp-harness/config/repos.ts";
-import reqExtension from "../../omp-mem0-req/extension.ts";
-import { fakeSchema } from "../support/fake-zod.ts";
-import { OK, fakeWorld, git, harnessRepo, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
+import { Git } from "../../../omp-harness/forge/git.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { execProcess, type Exec } from "../../../omp-harness/runners/proc.ts";
+import { ConfigAdmin, type KeyGen } from "../../../omp-harness/config/repos.ts";
+import reqExtension from "../../../omp-mem0-req/extension.ts";
+import { fakeSchema } from "../../support/fake-zod.ts";
+import { OK, fakeWorld, git, harnessRepo, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 const ADMIN = "a".repeat(64);
 

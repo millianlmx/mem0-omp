@@ -2,10 +2,10 @@
 // sur sa branche, une seule fois, au lieu d'ouvrir un run de suite mergé à part.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { OK, fakeWorld, git, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { nextAfter } from "../../omp-harness/runs/machine.ts";
-import type { Limits } from "../../omp-harness/runs/machine.ts";
+import { OK, fakeWorld, git, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { nextAfter } from "../../../omp-harness/runs/machine.ts";
+import type { Limits } from "../../../omp-harness/runs/machine.ts";
 
 const REMAINING = "- la pagination de l'export";
 

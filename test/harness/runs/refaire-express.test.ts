@@ -5,8 +5,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fakeWorld } from "../support/harness-fixtures.ts";
-import { ROOT } from "../support/repo.ts";
+import { fakeWorld } from "../../support/harness-fixtures.ts";
+import { ROOT } from "../../support/repo.ts";
 
 test('refaire-express/AC-1 : le gabarit d\'un run né en voie express porte `lane: "express"` ; refait, il renaît en express ; un express refusé (complet) reste `full`, une voie directe reste sans voie', () => {
   const world = fakeWorld({});

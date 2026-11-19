@@ -3,15 +3,15 @@
 // rouge, décisions déjà tranchées par l'humain, modules posés en cours d'étape.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { escalationArgs, readFrames } from "../support/card-fixtures.ts";
-import { OK, fakeWorld, git, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
+import { escalationArgs, readFrames } from "../../support/card-fixtures.ts";
+import { OK, fakeWorld, git, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import {
   matchingHumanDecision,
   memoryCategory,
   memoryChoice,
   parseSplitFeatures,
-} from "../../omp-harness/runs/host-tools.ts";
+} from "../../../omp-harness/runs/host-tools.ts";
 import {
   failCauseOf,
   gateNeeded,
@@ -19,7 +19,7 @@ import {
   parseSplitSection,
   sectionBody,
   specsCoverageGap,
-} from "../../omp-harness/runs/steps.ts";
+} from "../../../omp-harness/runs/steps.ts";
 
 function stateOf(world: FakeWorld, runId: string): string {
   const run = world.store.getRun(runId);

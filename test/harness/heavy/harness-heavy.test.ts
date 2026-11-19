@@ -13,16 +13,16 @@ import {
   heavyReport,
   matchesGlob,
   testCommand,
-} from "../../omp-harness/heavy/heavy.ts";
-import type { HeavyJob, TestScope } from "../../omp-harness/heavy/heavy.ts";
-import { Git } from "../../omp-harness/forge/git.ts";
-import { Scheduler } from "../../omp-harness/runners/scheduler.ts";
-import { Store } from "../../omp-harness/db/db.ts";
-import { execProcess } from "../../omp-harness/runners/proc.ts";
-import type { Exec, ProcResult } from "../../omp-harness/runners/proc.ts";
-import { harnessRepo, testConfig } from "../support/harness-fixtures.ts";
-import { DEFAULT_LAUNCHER } from "../../omp-harness/config/config.ts";
-import type { HarnessConfig } from "../../omp-harness/config/config.ts";
+} from "../../../omp-harness/heavy/heavy.ts";
+import type { HeavyJob, TestScope } from "../../../omp-harness/heavy/heavy.ts";
+import { Git } from "../../../omp-harness/forge/git.ts";
+import { Scheduler } from "../../../omp-harness/runners/scheduler.ts";
+import { Store } from "../../../omp-harness/db/db.ts";
+import { execProcess } from "../../../omp-harness/runners/proc.ts";
+import type { Exec, ProcResult } from "../../../omp-harness/runners/proc.ts";
+import { harnessRepo, testConfig } from "../../support/harness-fixtures.ts";
+import { DEFAULT_LAUNCHER } from "../../../omp-harness/config/config.ts";
+import type { HarnessConfig } from "../../../omp-harness/config/config.ts";
 
 /** Laisse passer les micro-tâches et les callbacks en attente, sans horloge. */
 async function tick(): Promise<void> {

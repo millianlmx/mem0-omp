@@ -7,13 +7,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Baseline } from "../../omp-harness/heavy/baseline.ts";
-import type { HeavyResult } from "../../omp-harness/heavy/heavy.ts";
-import type { RunRow } from "../../omp-harness/db/db.ts";
-import { tapTally } from "../../omp-harness/heavy/tap.ts";
-import { OK, commitOnMain, fakeWorld, git, harnessRepo, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+import { Baseline } from "../../../omp-harness/heavy/baseline.ts";
+import type { HeavyResult } from "../../../omp-harness/heavy/heavy.ts";
+import type { RunRow } from "../../../omp-harness/db/db.ts";
+import { tapTally } from "../../../omp-harness/heavy/tap.ts";
+import { OK, commitOnMain, fakeWorld, git, harnessRepo, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 type Baselined = { failing: number; preexisting: number; new: number; newTests: string[] };
 

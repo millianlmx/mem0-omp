@@ -8,7 +8,7 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHandler } from "../../omp-harness/api/http.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
 import {
   HttpOracle,
   briefOfReq,
@@ -16,12 +16,12 @@ import {
   isDecisionMemory,
   memoriesOf,
   renderMemories,
-} from "../../omp-harness/memory/oracle.ts";
-import type { FetchLike, FetchResponse, Memory } from "../../omp-harness/memory/oracle.ts";
-import { Orchestrator } from "../../omp-harness/runs/orchestrator.ts";
-import { fakeWorld } from "../support/harness-fixtures.ts";
+} from "../../../omp-harness/memory/oracle.ts";
+import type { FetchLike, FetchResponse, Memory } from "../../../omp-harness/memory/oracle.ts";
+import { Orchestrator } from "../../../omp-harness/runs/orchestrator.ts";
+import { fakeWorld } from "../../support/harness-fixtures.ts";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 /** Une réponse de mem0-rs. */
 function reply(status: number, body: unknown): FetchResponse {

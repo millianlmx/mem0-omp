@@ -7,10 +7,10 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { loadConfig } from "../../omp-harness/config/config.ts";
-import { ANTHROPIC_MODELS, LOCAL_SLOTS, runnerModelsFile, setModels } from "../../omp-harness/config/local-model.ts";
-import { runnerArgv } from "../../omp-harness/runners/runner.ts";
-import { ROOT, tmpdir } from "../support/repo.ts";
+import { loadConfig } from "../../../omp-harness/config/config.ts";
+import { ANTHROPIC_MODELS, LOCAL_SLOTS, runnerModelsFile, setModels } from "../../../omp-harness/config/local-model.ts";
+import { runnerArgv } from "../../../omp-harness/runners/runner.ts";
+import { ROOT, tmpdir } from "../../support/repo.ts";
 
 const BOX = path.join(ROOT, "omp-harness", "deploy", "container");
 const SCRIPT = path.join(BOX, "harness.sh");

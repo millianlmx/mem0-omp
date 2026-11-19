@@ -10,15 +10,15 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import type { ApnsConfig } from "../../omp-harness/config/config.ts";
-import { repoDefaults } from "../../omp-harness/config/config.ts";
-import { Store } from "../../omp-harness/db/db.ts";
-import type { EventRow } from "../../omp-harness/db/db.ts";
-import { OUTPUT_TAIL } from "../../omp-harness/heavy/heavy.ts";
-import type { HeavyResult } from "../../omp-harness/heavy/heavy.ts";
-import { apiRoutes, createHandler } from "../../omp-harness/api/http.ts";
-import { notificationFor } from "../../omp-harness/notify/notify.ts";
+import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
+import type { ApnsConfig } from "../../../omp-harness/config/config.ts";
+import { repoDefaults } from "../../../omp-harness/config/config.ts";
+import { Store } from "../../../omp-harness/db/db.ts";
+import type { EventRow } from "../../../omp-harness/db/db.ts";
+import { OUTPUT_TAIL } from "../../../omp-harness/heavy/heavy.ts";
+import type { HeavyResult } from "../../../omp-harness/heavy/heavy.ts";
+import { apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { notificationFor } from "../../../omp-harness/notify/notify.ts";
 import {
   MAX_PROOFS,
   MAX_PROOF_BYTES,
@@ -27,17 +27,17 @@ import {
   ProofStore,
   currentRound,
   proofCountText,
-} from "../../omp-harness/heavy/proofs.ts";
-import type { Proof } from "../../omp-harness/heavy/proofs.ts";
-import type { ApnsTransport } from "../../omp-harness/notify/push.ts";
-import { ApnsClient } from "../../omp-harness/notify/push.ts";
-import { AlertPusher } from "../../omp-harness/notify/push-alerts.ts";
-import { TapCounter, tapTally, testIdOf } from "../../omp-harness/heavy/tap.ts";
-import { reportSlugs, testReport } from "../../omp-harness/heavy/test-report.ts";
-import { OK, fakeWorld, git, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { ROOT, tmpdir } from "../support/repo.ts";
-import { covers, swiftFields } from "../support/swift-contract.ts";
+} from "../../../omp-harness/heavy/proofs.ts";
+import type { Proof } from "../../../omp-harness/heavy/proofs.ts";
+import type { ApnsTransport } from "../../../omp-harness/notify/push.ts";
+import { ApnsClient } from "../../../omp-harness/notify/push.ts";
+import { AlertPusher } from "../../../omp-harness/notify/push-alerts.ts";
+import { TapCounter, tapTally, testIdOf } from "../../../omp-harness/heavy/tap.ts";
+import { reportSlugs, testReport } from "../../../omp-harness/heavy/test-report.ts";
+import { OK, fakeWorld, git, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { ROOT, tmpdir } from "../../support/repo.ts";
+import { covers, swiftFields } from "../../support/swift-contract.ts";
 
 const TOKEN = "t".repeat(64);
 const PNG = Buffer.concat([Buffer.from("\x89PNG\r\n\x1a\n", "latin1"), Buffer.from([0, 1, 2, 254, 255, 10, 13])]);

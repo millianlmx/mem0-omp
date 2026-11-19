@@ -6,9 +6,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { Store } from "../../omp-harness/db/db.ts";
-import { StoreCore } from "../../omp-harness/db/core.ts";
-import { ROOT } from "../support/repo.ts";
+import { Store } from "../../../omp-harness/db/db.ts";
+import { StoreCore } from "../../../omp-harness/db/core.ts";
+import { ROOT } from "../../support/repo.ts";
 
 const DB_DIR = path.join(ROOT, "omp-harness", "db");
 const MAX_LINES = 400;

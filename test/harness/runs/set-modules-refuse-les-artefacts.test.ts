@@ -3,13 +3,13 @@
 // `modules` d'un `split_feature` l'ignorent ; le prompt dit à l'agent de n'y mettre que des chemins du dépôt.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { parseModulesSection } from "../../omp-harness/runs/planner.ts";
-import { parseSplitFeatures } from "../../omp-harness/runs/host-tools.ts";
-import { parseSplitSection } from "../../omp-harness/runs/steps.ts";
-import { stepPrompt } from "../../omp-harness/runs/prompts.ts";
-import type { PromptContext } from "../../omp-harness/runs/prompts.ts";
+import { OK, fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { parseModulesSection } from "../../../omp-harness/runs/planner.ts";
+import { parseSplitFeatures } from "../../../omp-harness/runs/host-tools.ts";
+import { parseSplitSection } from "../../../omp-harness/runs/steps.ts";
+import { stepPrompt } from "../../../omp-harness/runs/prompts.ts";
+import type { PromptContext } from "../../../omp-harness/runs/prompts.ts";
 
 const SEEDED = ["docs"];
 

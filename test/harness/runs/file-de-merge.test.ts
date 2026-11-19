@@ -6,13 +6,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { validateConfig } from "../../omp-harness/config/config.ts";
-import { execProcess } from "../../omp-harness/runners/proc.ts";
-import type { Exec, ProcResult } from "../../omp-harness/runners/proc.ts";
-import type { RunRow } from "../../omp-harness/db/db.ts";
-import { fakeWorld, git, harnessRepo, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+import { validateConfig } from "../../../omp-harness/config/config.ts";
+import { execProcess } from "../../../omp-harness/runners/proc.ts";
+import type { Exec, ProcResult } from "../../../omp-harness/runners/proc.ts";
+import type { RunRow } from "../../../omp-harness/db/db.ts";
+import { fakeWorld, git, harnessRepo, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 function bareRemote(repo: string): void {
   const bare = path.join(tmpdir("harness-remote-"), "origin.git");

@@ -8,22 +8,22 @@ import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { defaultConfig, validateConfig } from "../../omp-harness/config/config.ts";
-import type { WorkstationAction } from "../../omp-harness/db/db.ts";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import type { WorkstationStatus } from "../../omp-harness/workstation/workstation.ts";
+import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
+import { defaultConfig, validateConfig } from "../../../omp-harness/config/config.ts";
+import type { WorkstationAction } from "../../../omp-harness/db/db.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import type { WorkstationStatus } from "../../../omp-harness/workstation/workstation.ts";
 import {
   UNTRUSTED_END,
   hostListed,
   opaqueQueryParam,
   parseAgentTabs,
   untrusted,
-} from "../../omp-harness/workstation/workstation-guards.ts";
-import { UNTRUSTED_END as PLUGIN_UNTRUSTED_END, renderActOutcome } from "../../omp-mem0-req/workstation.ts";
-import { fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+} from "../../../omp-harness/workstation/workstation-guards.ts";
+import { UNTRUSTED_END as PLUGIN_UNTRUSTED_END, renderActOutcome } from "../../../omp-mem0-req/workstation.ts";
+import { fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 type Reply<T> = { status: number; json: T };
 type Call = <T = Record<string, unknown>>(

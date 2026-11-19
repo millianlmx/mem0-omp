@@ -7,10 +7,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import { Orchestrator } from "../../omp-harness/runs/orchestrator.ts";
-import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import { Orchestrator } from "../../../omp-harness/runs/orchestrator.ts";
+import { OK, fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
 
 const TOKEN = "t".repeat(64);
 

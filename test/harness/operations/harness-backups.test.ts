@@ -6,13 +6,13 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Backups, backupDir, listBackups, pruneBackups, snapshot } from "../../omp-harness/operations/backup.ts";
-import { defaultConfig, loadConfig } from "../../omp-harness/config/config.ts";
-import type { HarnessConfig } from "../../omp-harness/config/config.ts";
-import { MIGRATIONS, Store } from "../../omp-harness/db/db.ts";
-import { startHarness } from "../../omp-harness/main.ts";
-import { waitFor } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+import { Backups, backupDir, listBackups, pruneBackups, snapshot } from "../../../omp-harness/operations/backup.ts";
+import { defaultConfig, loadConfig } from "../../../omp-harness/config/config.ts";
+import type { HarnessConfig } from "../../../omp-harness/config/config.ts";
+import { MIGRATIONS, Store } from "../../../omp-harness/db/db.ts";
+import { startHarness } from "../../../omp-harness/main.ts";
+import { waitFor } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 /** Une base du harness avec un run : ce qu'une sauvegarde doit rendre. */
 function storeWithRun(dir: string): Store {

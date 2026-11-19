@@ -10,10 +10,10 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { EPHEMERAL_EVENTS } from "../../omp-harness/api/events.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
-import type { SessionEntry } from "../../omp-harness/sessions/session-feed.ts";
+import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
+import { EPHEMERAL_EVENTS } from "../../../omp-harness/api/events.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import type { SessionEntry } from "../../../omp-harness/sessions/session-feed.ts";
 import {
   SESSION_ARGS_MAX,
   SESSION_DETAIL_MAX,
@@ -24,9 +24,9 @@ import {
   SESSION_THROTTLE_MS,
   SessionFeeds,
   redact,
-} from "../../omp-harness/sessions/session-feed.ts";
-import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import { ROOT, tmpdir } from "../support/repo.ts";
+} from "../../../omp-harness/sessions/session-feed.ts";
+import { OK, fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
+import { ROOT, tmpdir } from "../../support/repo.ts";
 
 /** Un tampon dont l'horloge est pilotée, et la liste de ce qu'il pousse. */
 function feeds(secrets: string[] = []) {

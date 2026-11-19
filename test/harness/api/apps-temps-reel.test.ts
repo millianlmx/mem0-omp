@@ -13,11 +13,11 @@ import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as zlib from "node:zlib";
-import { GZIP_MIN_BYTES, PULSE_TEXT, StatsCache, createHandler, pulseFrame } from "../../omp-harness/api/http.ts";
-import type { EventRow } from "../../omp-harness/db/db.ts";
-import { INBOX_DECISIONS } from "../../omp-harness/api/queries.ts";
-import { fakeWorld } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
+import { GZIP_MIN_BYTES, PULSE_TEXT, StatsCache, createHandler, pulseFrame } from "../../../omp-harness/api/http.ts";
+import type { EventRow } from "../../../omp-harness/db/db.ts";
+import { INBOX_DECISIONS } from "../../../omp-harness/api/queries.ts";
+import { fakeWorld } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
 
 const ADMIN = "t".repeat(64);
 

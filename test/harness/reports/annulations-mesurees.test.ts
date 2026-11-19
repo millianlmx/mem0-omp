@@ -3,8 +3,8 @@
 // les heures de leurs étapes, jetées avec eux. Constaté le 16/11 : 103 annulés pour 105 mergés, sans savoir pourquoi.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cancelSource, computeStats } from "../../omp-harness/reports/stats.ts";
-import { fakeWorld } from "../support/harness-fixtures.ts";
+import { cancelSource, computeStats } from "../../../omp-harness/reports/stats.ts";
+import { fakeWorld } from "../../support/harness-fixtures.ts";
 
 test("annulations-mesurees/AC-1 : les annulés se ventilent par source et par motif humain, avec les heures d'étapes perdues et ceux qui n'avaient rien fait", () => {
   const world = fakeWorld({});

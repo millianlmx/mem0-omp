@@ -7,16 +7,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CONTEXT_MIN, planDecision } from "../../omp-harness/runs/decisions.ts";
-import { Store } from "../../omp-harness/db/db.ts";
-import { notificationFor } from "../../omp-harness/notify/notify.ts";
-import type { PromptContext } from "../../omp-harness/runs/prompts.ts";
-import { stepPrompt } from "../../omp-harness/runs/prompts.ts";
-import { inboxOf } from "../../omp-harness/api/queries.ts";
-import { CARD_CONTEXT, CARD_FIELDS, escalationArgs, readFrames } from "../support/card-fixtures.ts";
-import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { ROOT } from "../support/repo.ts";
+import { CONTEXT_MIN, planDecision } from "../../../omp-harness/runs/decisions.ts";
+import { Store } from "../../../omp-harness/db/db.ts";
+import { notificationFor } from "../../../omp-harness/notify/notify.ts";
+import type { PromptContext } from "../../../omp-harness/runs/prompts.ts";
+import { stepPrompt } from "../../../omp-harness/runs/prompts.ts";
+import { inboxOf } from "../../../omp-harness/api/queries.ts";
+import { CARD_CONTEXT, CARD_FIELDS, escalationArgs, readFrames } from "../../support/card-fixtures.ts";
+import { OK, fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { ROOT } from "../../support/repo.ts";
 
 const CONTEXT =
   "La feature exporte les factures en CSV. `src/export.ts` doit dater chaque export ; le modèle `Invoice` n'a pas encore de champ de date.";

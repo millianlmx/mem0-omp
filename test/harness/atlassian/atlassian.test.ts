@@ -10,31 +10,31 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { AtlassianAuth } from "../../omp-harness/atlassian/oauth.ts";
-import { ATLASSIAN_SCOPES } from "../../omp-harness/atlassian/oauth.ts";
-import { replyOf } from "../../omp-harness/atlassian/mcp.ts";
-import { listsIssue } from "../../omp-harness/atlassian/tools.ts";
+import { AtlassianAuth } from "../../../omp-harness/atlassian/oauth.ts";
+import { ATLASSIAN_SCOPES } from "../../../omp-harness/atlassian/oauth.ts";
+import { replyOf } from "../../../omp-harness/atlassian/mcp.ts";
+import { listsIssue } from "../../../omp-harness/atlassian/tools.ts";
 import {
   ATLASSIAN_READ_TOOLS,
   ATLASSIAN_WRITE_TOOLS,
   CORPO_SCOPE,
   isAtlassianTool,
-} from "../../omp-harness/atlassian/desk.ts";
-import type { AtlassianDesk } from "../../omp-harness/atlassian/desk.ts";
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import type { HarnessConfig } from "../../omp-harness/config/config.ts";
+} from "../../../omp-harness/atlassian/desk.ts";
+import type { AtlassianDesk } from "../../../omp-harness/atlassian/desk.ts";
+import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
+import type { HarnessConfig } from "../../../omp-harness/config/config.ts";
 import {
   LOOPBACK_REDIRECT,
   defaultConfig,
   loadConfig,
   repoDefaults,
   validateConfig,
-} from "../../omp-harness/config/config.ts";
-import type { AtlassianWrite } from "../../omp-harness/db/db.ts";
-import { EVENT_TYPES } from "../../omp-harness/api/events.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
-import { alertFor } from "../../omp-harness/notify/push-alerts.ts";
-import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../omp-harness/workstation/workstation-guards.ts";
+} from "../../../omp-harness/config/config.ts";
+import type { AtlassianWrite } from "../../../omp-harness/db/db.ts";
+import { EVENT_TYPES } from "../../../omp-harness/api/events.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { alertFor } from "../../../omp-harness/notify/push-alerts.ts";
+import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../../omp-harness/workstation/workstation-guards.ts";
 import {
   FAKE_ACCESS_TOKEN,
   FAKE_ACCOUNT,
@@ -44,11 +44,11 @@ import {
   FAKE_SITE,
   connectAtlassian,
   fakeAtlassian,
-} from "../support/atlassian-double.ts";
-import type { AtlassianDouble } from "../support/atlassian-double.ts";
-import { fakeWorld } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+} from "../../support/atlassian-double.ts";
+import type { AtlassianDouble } from "../../support/atlassian-double.ts";
+import { fakeWorld } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 type Setup = { fake: AtlassianDouble; world: FakeWorld; desk: AtlassianDesk };
 

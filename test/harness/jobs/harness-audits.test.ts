@@ -3,10 +3,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
-import { launchOrder, parseProposals } from "../../omp-harness/jobs/audits.ts";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import { fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
+import { launchOrder, parseProposals } from "../../../omp-harness/jobs/audits.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import { fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
 
 const TOKEN = "t".repeat(64);
 

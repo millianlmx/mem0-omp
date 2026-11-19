@@ -4,12 +4,12 @@
 // restent à l'humain.
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { HarnessConfig } from "../../omp-harness/config/config.ts";
-import type { EventRow } from "../../omp-harness/db/db.ts";
-import { humanWaitOf } from "../../omp-harness/runs/machine.ts";
-import { notificationFor } from "../../omp-harness/notify/notify.ts";
-import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
+import type { HarnessConfig } from "../../../omp-harness/config/config.ts";
+import type { EventRow } from "../../../omp-harness/db/db.ts";
+import { humanWaitOf } from "../../../omp-harness/runs/machine.ts";
+import { notificationFor } from "../../../omp-harness/notify/notify.ts";
+import { OK, fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
 
 const PROPOSAL = {
   title: "Exporter en CSV",

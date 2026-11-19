@@ -6,11 +6,11 @@ import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../omp-harness/workstation/workstation-guards.ts";
-import { fakeWorld } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../../omp-harness/workstation/workstation-guards.ts";
+import { fakeWorld } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 /** Ce que ces routes rendent : une planification et l'issue d'un déclenchement, ou une erreur. */
 type Body = { schedule: { id: string }; outcome: { runIds: string[] }; error?: string };

@@ -8,12 +8,12 @@ import * as http from "node:http";
 import * as net from "node:net";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import type { HttpOptions } from "../../omp-harness/api/http.ts";
-import { fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import type { HttpOptions } from "../../../omp-harness/api/http.ts";
+import { fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 const ADMIN = "t".repeat(64);
 

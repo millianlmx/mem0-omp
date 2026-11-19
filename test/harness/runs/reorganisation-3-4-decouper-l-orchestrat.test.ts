@@ -8,8 +8,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fakeWorld } from "../support/harness-fixtures.ts";
-import { ROOT } from "../support/repo.ts";
+import { fakeWorld } from "../../support/harness-fixtures.ts";
+import { ROOT } from "../../support/repo.ts";
 
 const LABELS = {
   service: "assemblage, cycle de vie du service et conduite des runs",

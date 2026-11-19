@@ -3,14 +3,14 @@
 // reprend au retour de l'outil. Les process d'agents restent bornés à `runner.slots + runner.lendMax`.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { defaultConfig, loadConfig } from "../../omp-harness/config/config.ts";
-import { Scheduler } from "../../omp-harness/runners/scheduler.ts";
-import type { Slot } from "../../omp-harness/runners/scheduler.ts";
-import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
+import { defaultConfig, loadConfig } from "../../../omp-harness/config/config.ts";
+import { Scheduler } from "../../../omp-harness/runners/scheduler.ts";
+import type { Slot } from "../../../omp-harness/runners/scheduler.ts";
+import { OK, fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { tmpdir } from "../support/repo.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 function scheduler(options: { runnerSlots?: number; lendMax?: number; lendAfterMs?: number } = {}): Scheduler {
   const config = defaultConfig("/tmp/harness-unused");

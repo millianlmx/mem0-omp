@@ -5,9 +5,9 @@ import assert from "node:assert/strict";
 import * as http from "node:http";
 import * as net from "node:net";
 import type { AddressInfo } from "node:net";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import { fakeWorld } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import { fakeWorld } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
 
 const TOKEN = "t".repeat(64);
 

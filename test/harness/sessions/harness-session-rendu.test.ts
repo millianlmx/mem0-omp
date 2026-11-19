@@ -10,13 +10,13 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import type { SessionEntry } from "../../omp-harness/sessions/session-feed.ts";
-import { SESSION_THROTTLE_MS, SessionFeeds } from "../../omp-harness/sessions/session-feed.ts";
-import type { ToolBlock } from "../../omp-harness/sessions/tool-view.ts";
-import { AGENTS_MAX, jsonBlocks, toolView } from "../../omp-harness/sessions/tool-view.ts";
-import { fakeWorld } from "../support/harness-fixtures.ts";
-import { ROOT } from "../support/repo.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import type { SessionEntry } from "../../../omp-harness/sessions/session-feed.ts";
+import { SESSION_THROTTLE_MS, SessionFeeds } from "../../../omp-harness/sessions/session-feed.ts";
+import type { ToolBlock } from "../../../omp-harness/sessions/tool-view.ts";
+import { AGENTS_MAX, jsonBlocks, toolView } from "../../../omp-harness/sessions/tool-view.ts";
+import { fakeWorld } from "../../support/harness-fixtures.ts";
+import { ROOT } from "../../support/repo.ts";
 
 function feeds(secrets: string[] = []) {
   let now = 1_000;

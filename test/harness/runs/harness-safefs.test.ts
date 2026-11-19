@@ -4,8 +4,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ensureArtifactsDir, readArtifact, writeArtifact } from "../../omp-harness/runs/safefs.ts";
-import { tmpdir } from "../support/repo.ts";
+import { ensureArtifactsDir, readArtifact, writeArtifact } from "../../../omp-harness/runs/safefs.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 test("harness-safefs/AC-1 : un artefact qui est un lien (vers le jeton du service) n'est jamais lu", () => {
   const worktree = tmpdir("harness-safefs-");

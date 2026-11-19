@@ -9,12 +9,12 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { briefOf } from "../../omp-harness/reports/brief.ts";
-import type { HarnessConfig, RepoConfig } from "../../omp-harness/config/config.ts";
-import { Store } from "../../omp-harness/db/db.ts";
-import type { NewRun, RunPatch } from "../../omp-harness/db/db.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
-import { interpretClassification } from "../../omp-harness/intake/intake.ts";
+import { briefOf } from "../../../omp-harness/reports/brief.ts";
+import type { HarnessConfig, RepoConfig } from "../../../omp-harness/config/config.ts";
+import { Store } from "../../../omp-harness/db/db.ts";
+import type { NewRun, RunPatch } from "../../../omp-harness/db/db.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { interpretClassification } from "../../../omp-harness/intake/intake.ts";
 import {
   afterMergeFailed,
   afterMergeStopped,
@@ -25,20 +25,20 @@ import {
   pausedForBudget,
   specsBackToHuman,
   splitAbandoned,
-} from "../../omp-harness/runs/machine.ts";
-import type { Limits, Transition } from "../../omp-harness/runs/machine.ts";
-import type { Exec, ProcResult } from "../../omp-harness/runners/proc.ts";
-import { execProcess } from "../../omp-harness/runners/proc.ts";
-import { INTAKE_TITLE_MAX, intakePrompt } from "../../omp-harness/runs/prompts.ts";
-import { shortTitle } from "../../omp-harness/human/proposals.ts";
-import type { Proposal } from "../../omp-harness/human/proposals.ts";
-import { scoreboardOf } from "../../omp-harness/reports/scoreboard.ts";
-import { REVIEW_EVIDENCE, gateReasons } from "../../omp-harness/runs/steps.ts";
-import { mergeDecision, mergeFacts } from "../../omp-harness/runs/verdict.ts";
-import type { MergeEvidence, Verdict } from "../../omp-harness/runs/verdict.ts";
-import { OK, fakeWorld, git, testConfig, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { ROOT, tmpdir } from "../support/repo.ts";
+} from "../../../omp-harness/runs/machine.ts";
+import type { Limits, Transition } from "../../../omp-harness/runs/machine.ts";
+import type { Exec, ProcResult } from "../../../omp-harness/runners/proc.ts";
+import { execProcess } from "../../../omp-harness/runners/proc.ts";
+import { INTAKE_TITLE_MAX, intakePrompt } from "../../../omp-harness/runs/prompts.ts";
+import { shortTitle } from "../../../omp-harness/human/proposals.ts";
+import type { Proposal } from "../../../omp-harness/human/proposals.ts";
+import { scoreboardOf } from "../../../omp-harness/reports/scoreboard.ts";
+import { REVIEW_EVIDENCE, gateReasons } from "../../../omp-harness/runs/steps.ts";
+import { mergeDecision, mergeFacts } from "../../../omp-harness/runs/verdict.ts";
+import type { MergeEvidence, Verdict } from "../../../omp-harness/runs/verdict.ts";
+import { OK, fakeWorld, git, testConfig, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { ROOT, tmpdir } from "../../support/repo.ts";
 
 const TOKEN = "t".repeat(64);
 const HOUR = 3_600_000;

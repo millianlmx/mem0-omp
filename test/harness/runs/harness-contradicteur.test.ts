@@ -7,8 +7,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
+import { OK, fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import {
   CHALLENGE_ARTIFACT,
   MAX_FINDINGS,
@@ -16,12 +16,12 @@ import {
   parseAnswers,
   parseFindings,
   unanswered,
-} from "../../omp-harness/runs/challenge.ts";
-import type { Finding } from "../../omp-harness/runs/challenge.ts";
-import { defaultConfig, validateConfig } from "../../omp-harness/config/config.ts";
-import { nextAfter } from "../../omp-harness/runs/machine.ts";
-import { chainStart, providerOfLabel } from "../../omp-harness/runners/runner-session.ts";
-import { challengeUnit, gateReasons } from "../../omp-harness/runs/steps.ts";
+} from "../../../omp-harness/runs/challenge.ts";
+import type { Finding } from "../../../omp-harness/runs/challenge.ts";
+import { defaultConfig, validateConfig } from "../../../omp-harness/config/config.ts";
+import { nextAfter } from "../../../omp-harness/runs/machine.ts";
+import { chainStart, providerOfLabel } from "../../../omp-harness/runners/runner-session.ts";
+import { challengeUnit, gateReasons } from "../../../omp-harness/runs/steps.ts";
 
 const SPECS = OK.specs[0]?.content ?? "";
 

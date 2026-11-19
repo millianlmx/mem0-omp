@@ -1,8 +1,8 @@
 // Feature harness-verdict : le verdict structuré de /review et la règle d'auto-merge.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mergeDecision, parseAcIds, parseVerdict } from "../../omp-harness/runs/verdict.ts";
-import type { MergeEvidence, Verdict } from "../../omp-harness/runs/verdict.ts";
+import { mergeDecision, parseAcIds, parseVerdict } from "../../../omp-harness/runs/verdict.ts";
+import type { MergeEvidence, Verdict } from "../../../omp-harness/runs/verdict.ts";
 
 const verdict: Verdict = {
   risk: "low",

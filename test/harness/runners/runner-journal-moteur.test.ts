@@ -4,13 +4,13 @@
 // sous `run -i` se vérifient à la main sur un hôte avec moteur (AC-109, aucun test).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { defaultConfig, repoDefaults } from "../../omp-harness/config/config.ts";
-import type { HarnessConfig } from "../../omp-harness/config/config.ts";
-import { browserArgv, previewArgv } from "../../omp-harness/browser/qa.ts";
-import { heavyArgv, heavyEnv } from "../../omp-harness/heavy/heavy.ts";
-import { loginArgv } from "../../omp-harness/config/oauth.ts";
-import { runnerArgv } from "../../omp-harness/runners/runner.ts";
-import type { RunnerSpec } from "../../omp-harness/runners/runner.ts";
+import { defaultConfig, repoDefaults } from "../../../omp-harness/config/config.ts";
+import type { HarnessConfig } from "../../../omp-harness/config/config.ts";
+import { browserArgv, previewArgv } from "../../../omp-harness/browser/qa.ts";
+import { heavyArgv, heavyEnv } from "../../../omp-harness/heavy/heavy.ts";
+import { loginArgv } from "../../../omp-harness/config/oauth.ts";
+import { runnerArgv } from "../../../omp-harness/runners/runner.ts";
+import type { RunnerSpec } from "../../../omp-harness/runners/runner.ts";
 
 const NO_LOG = "--log-driver=none";
 const WT = "/srv/omp/worktrees/demo/export";

@@ -6,21 +6,21 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import test from "node:test";
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import type { Client } from "../../omp-harness/api/auth.ts";
-import { autonomyProposals } from "../../omp-harness/autonomy/autonomy-learning.ts";
-import type { AutonomyProposal } from "../../omp-harness/autonomy/autonomy-learning.ts";
-import type { AutonomyProof, AutonomyRule, WorkKind } from "../../omp-harness/autonomy/autonomy-rules.ts";
-import { repoDefaults, validateConfig } from "../../omp-harness/config/config.ts";
-import type { HarnessConfig, RepoConfig } from "../../omp-harness/config/config.ts";
-import { Store } from "../../omp-harness/db/db.ts";
-import { digestOf } from "../../omp-harness/reports/digest.ts";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import { newRunInput } from "../../omp-harness/api/input.ts";
-import { WAIT_REASON, humanWaitOf } from "../../omp-harness/runs/machine.ts";
-import { REVIEW_EVIDENCE, SPECS_BASELINE } from "../../omp-harness/runs/steps.ts";
-import { mergeDecision } from "../../omp-harness/runs/verdict.ts";
-import type { ReviewEvidence, Verdict } from "../../omp-harness/runs/verdict.ts";
+import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
+import type { Client } from "../../../omp-harness/api/auth.ts";
+import { autonomyProposals } from "../../../omp-harness/autonomy/autonomy-learning.ts";
+import type { AutonomyProposal } from "../../../omp-harness/autonomy/autonomy-learning.ts";
+import type { AutonomyProof, AutonomyRule, WorkKind } from "../../../omp-harness/autonomy/autonomy-rules.ts";
+import { repoDefaults, validateConfig } from "../../../omp-harness/config/config.ts";
+import type { HarnessConfig, RepoConfig } from "../../../omp-harness/config/config.ts";
+import { Store } from "../../../omp-harness/db/db.ts";
+import { digestOf } from "../../../omp-harness/reports/digest.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import { newRunInput } from "../../../omp-harness/api/input.ts";
+import { WAIT_REASON, humanWaitOf } from "../../../omp-harness/runs/machine.ts";
+import { REVIEW_EVIDENCE, SPECS_BASELINE } from "../../../omp-harness/runs/steps.ts";
+import { mergeDecision } from "../../../omp-harness/runs/verdict.ts";
+import type { ReviewEvidence, Verdict } from "../../../omp-harness/runs/verdict.ts";
 import {
   BUG_REVIEW_RULE,
   autonomyDecisions,
@@ -32,10 +32,10 @@ import {
   reviewOf,
   stateOf,
   until,
-} from "../support/autonomie-fixtures.ts";
-import { OK, fakeWorld, git, harnessRepo, testConfig, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+} from "../../support/autonomie-fixtures.ts";
+import { OK, fakeWorld, git, harnessRepo, testConfig, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 const HOUR_L = 60 * 60 * 1000;
 const DAY_L = 24 * HOUR_L;

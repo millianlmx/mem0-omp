@@ -3,13 +3,13 @@
 // aurait retirés ou réécrits dans specs.md.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { stepPrompt } from "../../omp-harness/runs/prompts.ts";
-import type { PromptContext } from "../../omp-harness/runs/prompts.ts";
-import { SPECS_BASELINE } from "../../omp-harness/runs/steps.ts";
-import { criteriaDrift, driftLabel, mergeDecision, parseAcLines } from "../../omp-harness/runs/verdict.ts";
-import type { MergeEvidence, Verdict } from "../../omp-harness/runs/verdict.ts";
+import { OK, fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { stepPrompt } from "../../../omp-harness/runs/prompts.ts";
+import type { PromptContext } from "../../../omp-harness/runs/prompts.ts";
+import { SPECS_BASELINE } from "../../../omp-harness/runs/steps.ts";
+import { criteriaDrift, driftLabel, mergeDecision, parseAcLines } from "../../../omp-harness/runs/verdict.ts";
+import type { MergeEvidence, Verdict } from "../../../omp-harness/runs/verdict.ts";
 
 const AC1 = "AC-1 (B-1) : Given des données, When l'export est demandé, Then un CSV est produit";
 const AC2 =

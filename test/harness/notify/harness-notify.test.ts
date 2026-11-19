@@ -5,11 +5,11 @@ import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { Store } from "../../omp-harness/db/db.ts";
-import type { EventRow } from "../../omp-harness/db/db.ts";
-import { Notifier, headerValue, notificationFor } from "../../omp-harness/notify/notify.ts";
-import { harnessRepo, testConfig } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+import { Store } from "../../../omp-harness/db/db.ts";
+import type { EventRow } from "../../../omp-harness/db/db.ts";
+import { Notifier, headerValue, notificationFor } from "../../../omp-harness/notify/notify.ts";
+import { harnessRepo, testConfig } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 type Received = { headers: http.IncomingHttpHeaders; body: string };
 

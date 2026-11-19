@@ -2,13 +2,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
-import { defaultConfig } from "../../omp-harness/config/config.ts";
-import { Store } from "../../omp-harness/db/db.ts";
-import { Monitor } from "../../omp-harness/operations/monitor.ts";
-import type { WatchedRun } from "../../omp-harness/operations/monitor.ts";
-import { notificationFor } from "../../omp-harness/notify/notify.ts";
-import { SessionFeeds } from "../../omp-harness/sessions/session-feed.ts";
-import { tmpdir } from "../support/repo.ts";
+import { defaultConfig } from "../../../omp-harness/config/config.ts";
+import { Store } from "../../../omp-harness/db/db.ts";
+import { Monitor } from "../../../omp-harness/operations/monitor.ts";
+import type { WatchedRun } from "../../../omp-harness/operations/monitor.ts";
+import { notificationFor } from "../../../omp-harness/notify/notify.ts";
+import { SessionFeeds } from "../../../omp-harness/sessions/session-feed.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 const MIN = 60_000;
 

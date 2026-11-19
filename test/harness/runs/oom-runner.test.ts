@@ -3,12 +3,12 @@
 // seconde mort de suite nomme la cause à l'humain.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { OOM_CAUSE, isRunnerOom, nextAfter } from "../../omp-harness/runs/machine.ts";
-import type { Limits } from "../../omp-harness/runs/machine.ts";
-import { RUNNER_MEMORY_RULES, stepPrompt } from "../../omp-harness/runs/prompts.ts";
-import type { PromptContext } from "../../omp-harness/runs/prompts.ts";
+import { OK, fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { OOM_CAUSE, isRunnerOom, nextAfter } from "../../../omp-harness/runs/machine.ts";
+import type { Limits } from "../../../omp-harness/runs/machine.ts";
+import { RUNNER_MEMORY_RULES, stepPrompt } from "../../../omp-harness/runs/prompts.ts";
+import type { PromptContext } from "../../../omp-harness/runs/prompts.ts";
 
 function stateOf(world: FakeWorld, runId: string): string {
   const run = world.store.getRun(runId);

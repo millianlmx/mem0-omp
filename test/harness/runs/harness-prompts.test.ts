@@ -3,8 +3,8 @@
 // outils hôtes à appeler, revue incrémentale, verdict complet transmis au correcteur.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { auditPrompt, stepPrompt } from "../../omp-harness/runs/prompts.ts";
-import type { PromptContext } from "../../omp-harness/runs/prompts.ts";
+import { auditPrompt, stepPrompt } from "../../../omp-harness/runs/prompts.ts";
+import type { PromptContext } from "../../../omp-harness/runs/prompts.ts";
 
 function ctx(patch: Partial<PromptContext>): PromptContext {
   return {

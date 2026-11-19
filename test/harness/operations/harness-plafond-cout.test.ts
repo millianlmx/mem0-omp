@@ -6,13 +6,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
-import { defaultConfig, validateConfig } from "../../omp-harness/config/config.ts";
-import { Store } from "../../omp-harness/db/db.ts";
-import { Monitor } from "../../omp-harness/operations/monitor.ts";
-import { notificationFor } from "../../omp-harness/notify/notify.ts";
-import type { SessionFeeds } from "../../omp-harness/sessions/session-feed.ts";
-import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+import { defaultConfig, validateConfig } from "../../../omp-harness/config/config.ts";
+import { Store } from "../../../omp-harness/db/db.ts";
+import { Monitor } from "../../../omp-harness/operations/monitor.ts";
+import { notificationFor } from "../../../omp-harness/notify/notify.ts";
+import type { SessionFeeds } from "../../../omp-harness/sessions/session-feed.ts";
+import { OK, fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 const assistant = (cost: number) => ({
   role: "assistant",

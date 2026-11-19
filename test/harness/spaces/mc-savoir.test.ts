@@ -16,32 +16,32 @@ import {
   CORPO_SCOPE,
   isAtlassianTool,
   spaceAtlassian,
-} from "../../omp-harness/atlassian/desk.ts";
-import type { AtlassianDesk, AtlassianStatus } from "../../omp-harness/atlassian/desk.ts";
-import { spaceOfState, spaceTokenFile } from "../../omp-harness/atlassian/oauth.ts";
-import type { AtlassianFetch } from "../../omp-harness/atlassian/oauth.ts";
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import type { Client } from "../../omp-harness/api/auth.ts";
-import type { HarnessConfig, RepoConfig } from "../../omp-harness/config/config.ts";
-import { repoByName, repoDefaults } from "../../omp-harness/config/config.ts";
-import type { Actor } from "../../omp-harness/runs/context.ts";
-import type { PlanItem, SignalRow, Space, StandingRule } from "../../omp-harness/db/db.ts";
-import { HarnessError } from "../../omp-harness/api/errors.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
-import type { Exec } from "../../omp-harness/runners/proc.ts";
-import { execProcess } from "../../omp-harness/runners/proc.ts";
-import { workstationPlanPrompt } from "../../omp-harness/runs/prompts.ts";
-import { hostToolsFor } from "../../omp-harness/runners/runner.ts";
-import { spaceInput } from "../../omp-harness/spaces/spaces.ts";
-import { MAX_ACTIVE_RULES } from "../../omp-harness/human/standing-rules.ts";
-import { Vigie } from "../../omp-harness/vigie/agent.ts";
-import { HarnessApi } from "../../omp-harness/vigie/api.ts";
-import type { SpawnOmp } from "../../omp-harness/vigie/triage.ts";
-import { FAKE_CODE, FAKE_SITE, connectAtlassian, fakeAtlassian } from "../support/atlassian-double.ts";
-import type { AtlassianDouble } from "../support/atlassian-double.ts";
-import { FAKE_RUNNER, fakeWorld, git, harnessRepo, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { ROOT, tmpdir } from "../support/repo.ts";
+} from "../../../omp-harness/atlassian/desk.ts";
+import type { AtlassianDesk, AtlassianStatus } from "../../../omp-harness/atlassian/desk.ts";
+import { spaceOfState, spaceTokenFile } from "../../../omp-harness/atlassian/oauth.ts";
+import type { AtlassianFetch } from "../../../omp-harness/atlassian/oauth.ts";
+import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
+import type { Client } from "../../../omp-harness/api/auth.ts";
+import type { HarnessConfig, RepoConfig } from "../../../omp-harness/config/config.ts";
+import { repoByName, repoDefaults } from "../../../omp-harness/config/config.ts";
+import type { Actor } from "../../../omp-harness/runs/context.ts";
+import type { PlanItem, SignalRow, Space, StandingRule } from "../../../omp-harness/db/db.ts";
+import { HarnessError } from "../../../omp-harness/api/errors.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import type { Exec } from "../../../omp-harness/runners/proc.ts";
+import { execProcess } from "../../../omp-harness/runners/proc.ts";
+import { workstationPlanPrompt } from "../../../omp-harness/runs/prompts.ts";
+import { hostToolsFor } from "../../../omp-harness/runners/runner.ts";
+import { spaceInput } from "../../../omp-harness/spaces/spaces.ts";
+import { MAX_ACTIVE_RULES } from "../../../omp-harness/human/standing-rules.ts";
+import { Vigie } from "../../../omp-harness/vigie/agent.ts";
+import { HarnessApi } from "../../../omp-harness/vigie/api.ts";
+import type { SpawnOmp } from "../../../omp-harness/vigie/triage.ts";
+import { FAKE_CODE, FAKE_SITE, connectAtlassian, fakeAtlassian } from "../../support/atlassian-double.ts";
+import type { AtlassianDouble } from "../../support/atlassian-double.ts";
+import { FAKE_RUNNER, fakeWorld, git, harnessRepo, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { ROOT, tmpdir } from "../../support/repo.ts";
 
 const ACTOR: Actor = { by: "test" };
 const ACME_SITE = "https://acme.atlassian.net";

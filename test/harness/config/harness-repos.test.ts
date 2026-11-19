@@ -8,14 +8,14 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { loadConfig } from "../../omp-harness/config/config.ts";
-import { Git, remoteEnv } from "../../omp-harness/forge/git.ts";
-import { execProcess, type Exec } from "../../omp-harness/runners/proc.ts";
-import { addRepo, detectTests, repoName, type KeyGen } from "../../omp-harness/config/repos.ts";
-import { git, harnessRepo } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+import { loadConfig } from "../../../omp-harness/config/config.ts";
+import { Git, remoteEnv } from "../../../omp-harness/forge/git.ts";
+import { execProcess, type Exec } from "../../../omp-harness/runners/proc.ts";
+import { addRepo, detectTests, repoName, type KeyGen } from "../../../omp-harness/config/repos.ts";
+import { git, harnessRepo } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
-const MAIN = path.join(import.meta.dirname, "..", "..", "omp-harness", "main.ts");
+const MAIN = path.join(import.meta.dirname, "..", "..", "..", "omp-harness", "main.ts");
 
 /** Une installation vide (le gabarit du conteneur) et un distant nu avec un package.json. */
 function install(): { root: string; file: string; remote: string } {

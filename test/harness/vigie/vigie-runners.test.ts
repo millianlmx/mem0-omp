@@ -8,15 +8,15 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import { broadModules } from "../../omp-harness/runs/planner.ts";
-import type { Exec, ProcResult } from "../../omp-harness/runners/proc.ts";
-import { execProcess } from "../../omp-harness/runners/proc.ts";
-import { namedFiles, runnerTraceOf, runnerUnitOf } from "../../omp-harness/vigie/attribution.ts";
-import { OK, fakeWorld, git, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import { broadModules } from "../../../omp-harness/runs/planner.ts";
+import type { Exec, ProcResult } from "../../../omp-harness/runners/proc.ts";
+import { execProcess } from "../../../omp-harness/runners/proc.ts";
+import { namedFiles, runnerTraceOf, runnerUnitOf } from "../../../omp-harness/vigie/attribution.ts";
+import { OK, fakeWorld, git, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 const done = (stdout: string, code = 0, stderr = ""): ProcResult => ({
   code,

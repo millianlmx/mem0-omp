@@ -10,11 +10,11 @@ import {
   runnerEnv,
   runnerMemoryEnv,
   writePipelineOverlay,
-} from "../../omp-harness/runners/runner.ts";
-import { clientEnv } from "../../omp-harness/heavy/heavy.ts";
-import { loginEnv } from "../../omp-harness/config/oauth.ts";
-import { testConfig } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+} from "../../../omp-harness/runners/runner.ts";
+import { clientEnv } from "../../../omp-harness/heavy/heavy.ts";
+import { loginEnv } from "../../../omp-harness/config/oauth.ts";
+import { testConfig } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 /** Lit un chemin dans le schéma JSON d'un outil hôte, sans en figer le type. */
 function at(step: Parameters<typeof hostToolsFor>[0], name: string, ...keys: string[]): unknown {

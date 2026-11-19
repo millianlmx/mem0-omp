@@ -11,33 +11,33 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as net from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { BrowserDesk, browserError } from "../../omp-harness/browser/desk.ts";
+import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
+import { BrowserDesk, browserError } from "../../../omp-harness/browser/desk.ts";
 import {
   CdpClosedError,
   CdpConnectError,
   CdpConnection,
   CdpError,
   CdpTimeoutError,
-} from "../../omp-harness/browser/cdp.ts";
-import { GuardRefusal, addressCategory, checkUrl } from "../../omp-harness/browser/guard.ts";
-import type { Lookup } from "../../omp-harness/browser/guard.ts";
-import { BrowserSession, BrowserUsageError, UnknownRef } from "../../omp-harness/browser/session.ts";
-import type { SessionTarget } from "../../omp-harness/browser/session.ts";
-import { RefBook, buildSnapshot, renderPage } from "../../omp-harness/browser/snapshot.ts";
-import type { AxNode } from "../../omp-harness/browser/snapshot.ts";
-import { runBrowserTask } from "../../omp-harness/browser/task.ts";
-import { browserFromEnv, loadConfig, validateConfig } from "../../omp-harness/config/config.ts";
-import type { HarnessConfig } from "../../omp-harness/config/config.ts";
-import { HarnessError } from "../../omp-harness/api/errors.ts";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import { Orchestrator } from "../../omp-harness/runs/orchestrator.ts";
-import { SERVICE_SECRETS, runnerEnv } from "../../omp-harness/runners/runner.ts";
-import { loginEnv } from "../../omp-harness/config/oauth.ts";
-import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../omp-harness/workstation/workstation-guards.ts";
-import { fakeWorld } from "../support/harness-fixtures.ts";
-import { countingProxy, moliBin, muteCdpServer, pageServer, startMoli } from "../support/moli.ts";
-import { ROOT, tmpdir } from "../support/repo.ts";
+} from "../../../omp-harness/browser/cdp.ts";
+import { GuardRefusal, addressCategory, checkUrl } from "../../../omp-harness/browser/guard.ts";
+import type { Lookup } from "../../../omp-harness/browser/guard.ts";
+import { BrowserSession, BrowserUsageError, UnknownRef } from "../../../omp-harness/browser/session.ts";
+import type { SessionTarget } from "../../../omp-harness/browser/session.ts";
+import { RefBook, buildSnapshot, renderPage } from "../../../omp-harness/browser/snapshot.ts";
+import type { AxNode } from "../../../omp-harness/browser/snapshot.ts";
+import { runBrowserTask } from "../../../omp-harness/browser/task.ts";
+import { browserFromEnv, loadConfig, validateConfig } from "../../../omp-harness/config/config.ts";
+import type { HarnessConfig } from "../../../omp-harness/config/config.ts";
+import { HarnessError } from "../../../omp-harness/api/errors.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import { Orchestrator } from "../../../omp-harness/runs/orchestrator.ts";
+import { SERVICE_SECRETS, runnerEnv } from "../../../omp-harness/runners/runner.ts";
+import { loginEnv } from "../../../omp-harness/config/oauth.ts";
+import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../../omp-harness/workstation/workstation-guards.ts";
+import { fakeWorld } from "../../support/harness-fixtures.ts";
+import { countingProxy, moliBin, muteCdpServer, pageServer, startMoli } from "../../support/moli.ts";
+import { ROOT, tmpdir } from "../../support/repo.ts";
 
 const BOX = path.join(ROOT, "omp-harness", "deploy", "container");
 const compose = fs.readFileSync(path.join(ROOT, "docker-compose.yml"), "utf8");

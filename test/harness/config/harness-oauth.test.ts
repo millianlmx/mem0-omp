@@ -9,14 +9,14 @@ import { PassThrough } from "node:stream";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import { loginArgv } from "../../omp-harness/config/oauth.ts";
-import { RpcRunner, RunnerExited } from "../../omp-harness/runners/rpc.ts";
-import type { RunnerProcess } from "../../omp-harness/runners/rpc.ts";
-import { fakeWorld, harnessRepo, testConfig, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
+import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import { loginArgv } from "../../../omp-harness/config/oauth.ts";
+import { RpcRunner, RunnerExited } from "../../../omp-harness/runners/rpc.ts";
+import type { RunnerProcess } from "../../../omp-harness/runners/rpc.ts";
+import { fakeWorld, harnessRepo, testConfig, waitFor } from "../../support/harness-fixtures.ts";
+import type { FakeWorld } from "../../support/harness-fixtures.ts";
+import { tmpdir } from "../../support/repo.ts";
 
 const ADMIN = "a".repeat(64);
 const PROVIDERS = [

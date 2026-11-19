@@ -1,7 +1,7 @@
 // Feature appairage-qr-apps : les apps Mac et iOS appairent un iPhone par QR code. Le Mac crée un ticket à
 // usage unique (`POST /v1/pair/tickets`) et l'affiche en QR code `ompconsole://pair?u=<adresse>&t=<ticket>` ;
 // l'iPhone l'ouvre, CONFIRME en nommant le serveur, puis l'échange SANS jeton (`POST /v1/pair/redeem`) contre
-// le jeton d'un client nommé. Le serveur est gardé par test/harness/appairage-qr.test.ts ; ce fichier garde le
+// le jeton d'un client nommé. Le serveur est gardé par test/harness/api/appairage-qr.test.ts ; ce fichier garde le
 // client Swift : ses champs sont ceux du JSON réel, ses routes sont servies, l'échange est public, et aucun lien
 // ne relie l'appareil sans que l'humain ait vu l'adresse.
 //
