@@ -2828,8 +2828,10 @@ test("renommage-memoire/AC-310 : chaque installation existante se met à niveau 
       fs.copyFileSync(path.join(FIXTURES, "pile-manuelle-ancien.env"), path.join(dossier, ".env"));
       const avec = rendre();
       assert.equal(avec.status, 0, avec.sortie);
-      assert.match(avec.sortie, /mem0-rs-data:\/data/, "le montage de l'ancien dossier de données");
-      assert.match(avec.sortie, /MEMORY_HTTP_TOKEN: jeton-ancien-T/, "le jeton de l'ancienne clé est transmis");
+      // `docker compose config` rend les volumes en forme longue (`source:` absolu, puis `target:`) et
+      // `environment:` en map (`CLÉ: valeur`).
+      assert.match(avec.sortie, /source: [^\n]*\/mem0-rs-data\n\s+target: \/data$/m, "le montage de l'ancien dossier");
+      assert.match(avec.sortie, /^\s+MEMORY_HTTP_TOKEN: jeton-ancien-T$/m, "le jeton de l'ancienne clé est transmis");
     },
   );
 });

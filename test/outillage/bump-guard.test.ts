@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { RENAMED_PLUGINS } from "../../scripts/release.ts";
 import { GIT_ENV } from "../support/git.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
@@ -26,9 +27,11 @@ function readJson<T>(dir: string, rel: string): T {
   return JSON.parse(fs.readFileSync(path.join(dir, rel), "utf8")) as T;
 }
 
-/** Les plugins LOCAUX du catalogue : les porteurs de version du dépôt. */
+/** Les plugins LOCAUX du catalogue, hors anciens noms (alias) : les porteurs de version du dépôt. */
+const estAncienNom = (name: string): boolean => Object.values(RENAMED_PLUGINS).some((renamed) => renamed.name === name);
 const PLUGINS = readJson<Catalog>(ROOT, CATALOGS[0])
   .plugins.filter((entry) => typeof entry.source === "string" && entry.source.startsWith("./"))
+  .filter((entry) => !estAncienNom(entry.name))
   .map((entry) => ({ name: entry.name, dir: String(entry.source).slice(2) }));
 
 function git(args: string[], cwd: string): string {

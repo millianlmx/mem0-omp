@@ -42,6 +42,7 @@ import {
   maxVersion,
   parseCommits,
   planOf,
+  RENAMED_PLUGINS,
   renderChangelogEntry,
   renderReleaseBody,
   repoFromRemote,
@@ -85,9 +86,11 @@ function readJson<T>(dir: string, rel: string): T {
 }
 
 const CATALOG = readJson<Catalog>(ROOT, CATALOGS[0]);
-/** Les plugins LOCAUX du catalogue, dans son ordre : c'est l'ordre du moteur. */
+/** Les plugins LOCAUX du catalogue, dans son ordre, hors anciens noms (alias) : c'est l'ordre du moteur. */
+const estAncienNom = (name: string): boolean => Object.values(RENAMED_PLUGINS).some((renamed) => renamed.name === name);
 const PLUGINS = CATALOG.plugins
   .filter((entry) => typeof entry.source === "string" && entry.source.startsWith("./"))
+  .filter((entry) => !estAncienNom(entry.name))
   .map((entry) => ({ name: entry.name, dir: String(entry.source).slice(2) }));
 
 const MEMORY = PLUGINS[0] as { name: string; dir: string };

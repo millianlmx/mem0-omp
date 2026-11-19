@@ -22,7 +22,15 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { SERVICES, bumpVersion, insertChangelog, maxVersion, utcDate, versionTag } from "../../scripts/release.ts";
+import {
+  RENAMED_PLUGINS,
+  SERVICES,
+  bumpVersion,
+  insertChangelog,
+  maxVersion,
+  utcDate,
+  versionTag,
+} from "../../scripts/release.ts";
 import { GIT_ENV } from "../support/git.ts";
 import { outilEpingleAbsent } from "../support/prerequis.ts";
 import { LINT_TOOL_ENV, ROOT, childEnv, linkPinnedTypescript, tmpdir } from "../support/repo.ts";
@@ -48,9 +56,11 @@ function readJson<T>(dir: string, rel: string): T {
 }
 
 const CATALOG = readJson<Catalog>(ROOT, CATALOGS[0]);
-/** Les plugins LOCAUX du catalogue, dans son ordre : c'est l'ordre du moteur. */
+/** Les plugins LOCAUX du catalogue, dans son ordre, hors anciens noms (alias) : c'est l'ordre du moteur. */
+const estAncienNom = (name: string): boolean => Object.values(RENAMED_PLUGINS).some((renamed) => renamed.name === name);
 const PLUGINS = CATALOG.plugins
   .filter((entry) => typeof entry.source === "string" && String(entry.source).startsWith("./"))
+  .filter((entry) => !estAncienNom(entry.name))
   .map((entry) => ({ name: entry.name, dir: String(entry.source).slice(2) }));
 
 const MEMORY = PLUGINS[0] as { name: string; dir: string };

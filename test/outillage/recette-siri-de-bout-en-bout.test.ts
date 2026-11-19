@@ -258,11 +258,12 @@ test("recette-siri-de-bout-en-bout/AC-5 : une phrase du bundle sans ${applicatio
 test("recette-siri-de-bout-en-bout/AC-6 : la liste attendue n'existe qu'à un seul endroit, lu par les deux scripts, et un intent qui en sort fait rougir les deux assemblages", () => {
   const attendus = readAttendus();
   const support = path.join(ROOT, "test", "support");
+  const entrees = fs.readdirSync(support, { withFileTypes: true }).filter((entree) => entree.isFile());
   const fichiers = [
     "scripts/swift-app.sh",
     "scripts/ios-build.sh",
     "scripts/app-intents/controle.py",
-    ...fs.readdirSync(support).map((nom) => path.join("test", "support", nom)),
+    ...entrees.map((entree) => path.join("test", "support", entree.name)),
   ];
   for (const script of ["scripts/swift-app.sh", "scripts/ios-build.sh"]) {
     assert.ok(
