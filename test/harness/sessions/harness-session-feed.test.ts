@@ -298,7 +298,7 @@ function entriesOf(world: ReturnType<typeof fakeWorld>, runId: string): SessionE
 /** Les propriétés stockées d'une struct Swift du client : nom → optionnelle ? */
 function swiftFields(struct: string): Map<string, boolean> {
   const source = fs.readFileSync(
-    path.join(ROOT, "omp-console", "Sources", "ConsoleClient", "HarnessSession.swift"),
+    path.join(ROOT, "omp-console", "Sources", "ConsoleClient", "Runs", "HarnessSession.swift"),
     "utf8",
   );
   const start = source.indexOf(`public struct ${struct}:`);
@@ -340,7 +340,10 @@ test("harness-session-feed/AC-7 : chaque champ que le client Swift décode exist
     covers(entry, "HarnessSessionEntry");
     // Le détail d'une entrée, au chemin que le client construit (`entryPath` : `<tampon>/<seq>`).
     assert.match(
-      fs.readFileSync(path.join(ROOT, "omp-console", "Sources", "ConsoleClient", "HarnessSession.swift"), "utf8"),
+      fs.readFileSync(
+        path.join(ROOT, "omp-console", "Sources", "ConsoleClient", "Runs", "HarnessSession.swift"),
+        "utf8",
+      ),
       /"\\\(sessionPath\(encoded\)\)\/\\\(seq\)"/,
     );
     const detail = (await (

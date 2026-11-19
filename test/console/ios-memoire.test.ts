@@ -86,11 +86,11 @@ function contractFaults(...ids: string[]): string[] {
 /** Les manques de la lecture du sommaire (AC-1). Vide quand tout est là. */
 function relayFaults(root: string): string[] {
   const faults: string[] = [];
-  const payloads = clientCode(root, "MemoryPayloads.swift");
+  const payloads = clientCode(root, "Memory/MemoryPayloads.swift");
   const page = structBlock(payloads, "RemoteMemoryPagePayload");
   if (!page.includes("scope: String?")) faults.push("MemoryPayloads.swift : RemoteMemoryPagePayload sans scope");
   if (!page.includes("nextOffset: Int?")) faults.push("MemoryPayloads.swift : RemoteMemoryPagePayload sans nextOffset");
-  const reader = clientCode(root, "MemoryReader.swift");
+  const reader = clientCode(root, "Memory/MemoryReader.swift");
   if (!/public static let pageSize = 100/.test(reader)) faults.push("MemoryReader.pageSize n'est pas figé à 100");
   if (!reader.includes("Self.pageSize")) faults.push("MemoryReader.page ne borne pas par MemoryReader.pageSize");
   const screen = appFile(root, "IOSMemoryScreen.swift");
@@ -119,7 +119,7 @@ test("ios-memoire/AC-1 : le sommaire est lu par pages bornées sur la mémoire d
   assert.deepEqual(relayFaults(ROOT), []);
 
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "Sources", "ConsoleClient", "MemoryReader.swift");
+  const target = path.join(copy, "omp-console", "Sources", "ConsoleClient", "Memory", "MemoryReader.swift");
   fs.writeFileSync(target, code(target).replaceAll("Self.pageSize", "Int.max"));
   assert.ok(relayFaults(copy).length > 0, "une borne de sommaire retirée doit faire rougir la garde");
 });
@@ -245,11 +245,11 @@ function searchParityFaults(root: string): string[] {
   if (!search.includes(`static let poolMax = ${poolMax}`)) faults.push("MemorySearch.poolMax ≠ SEARCH_POOL_MAX");
   if (!search.includes(`static let defaultLimit = ${defaultLimit}`))
     faults.push("MemorySearch.defaultLimit ≠ le défaut de tools.ts");
-  const reader = clientCode(root, "MemoryReader.swift");
+  const reader = clientCode(root, "Memory/MemoryReader.swift");
   if (!reader.includes("MemorySearch.select(")) faults.push("le lecteur n'emploie pas MemorySearch.select");
   if (!reader.includes("MemorySearch.pool(requested:"))
     faults.push("le lecteur n'emploie pas MemorySearch.pool(requested:)");
-  const access = clientCode(root, "MemoryAccess.swift");
+  const access = clientCode(root, "Memory/MemoryAccess.swift");
   if (!access.includes("public func memorySearch(query: String, scope: String?, limit: Int?)")) {
     faults.push("l'accès n'expose pas memorySearch(query:scope:limit:)");
   }
@@ -309,7 +309,7 @@ test("ios-memoire/AC-5 : trois « rien trouvé » distincts, jamais le sommaire 
 /** Les manques de la panne de la mémoire (AC-6). */
 function unavailableFaults(root: string): string[] {
   const faults: string[] = [];
-  const reader = clientCode(root, "MemoryReader.swift");
+  const reader = clientCode(root, "Memory/MemoryReader.swift");
   if (!/case 503: throw MemoryReadError\.unavailable/.test(reader)) {
     faults.push("le lecteur ne distingue pas le service indisponible (503)");
   }
@@ -341,7 +341,7 @@ test("ios-memoire/AC-6 : « Mémoire indisponible » se dit sans adresse ni dét
 /** Les manques du cas « aucun projet » (AC-7). */
 function noProjectFaults(root: string): string[] {
   const faults: string[] = [];
-  const reads = clientCode(root, "MemoryReader.swift");
+  const reads = clientCode(root, "Memory/MemoryReader.swift");
   const early = reads.indexOf("scope: nil, total: 0, offset: 0, rows: [], nextOffset: nil");
   const firstAll = reads.indexOf("try await all(scope: scope)");
   if (early === -1) faults.push("MemoryReader.page ne rend pas la page vide sans portée");
@@ -368,7 +368,7 @@ test("ios-memoire/AC-7 : sans projet, la page est vide et le service n'est pas a
   assert.deepEqual(noProjectFaults(ROOT), []);
 
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-console", "Sources", "ConsoleClient", "MemoryReader.swift");
+  const target = path.join(copy, "omp-console", "Sources", "ConsoleClient", "Memory", "MemoryReader.swift");
   fs.writeFileSync(
     target,
     code(target).replace(
@@ -464,7 +464,7 @@ function readOnlyFaults(root: string): string[] {
     for (const token of WRITE_TOKENS) if (text.includes(token)) faults.push(`${name} porte l'écriture ${token}`);
   }
   // Le lecteur reste un lecteur : les écritures vivent dans `MemoryWriter`, seul.
-  const client = clientCode(root, "MemoryReader.swift") + clientCode(root, "MemoryAccess.swift");
+  const client = clientCode(root, "Memory/MemoryReader.swift") + clientCode(root, "Memory/MemoryAccess.swift");
   for (const token of [
     "func memoryAdd",
     "func memoryUpdate",
@@ -476,7 +476,7 @@ function readOnlyFaults(root: string): string[] {
   ]) {
     if (client.includes(token)) faults.push(`le lecteur de la mémoire expose ${token}`);
   }
-  const writer = clientCode(root, "MemoryWriter.swift");
+  const writer = clientCode(root, "Memory/MemoryWriter.swift");
   const writes = [...writer.matchAll(/public func (\w+)\(/g)].map((m) => m[1]).sort();
   if (writes.join(",") !== "delete,update")
     faults.push(`MemoryWriter expose ${writes.join(",") || "rien"} (attendu delete,update)`);

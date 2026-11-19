@@ -694,7 +694,7 @@ test("os-telecommande/AC-12 : les routes sont servies par apiRoutes() et décrit
 
   // Les noms de la charge push-to-start sont ceux des types Swift : un écart, et iOS ignore le démarrage.
   const swift = fs.readFileSync(
-    path.join(ROOT, "omp-console", "Sources", "ConsoleClient", "HarnessLiveActivity.swift"),
+    path.join(ROOT, "omp-console", "Sources", "ConsoleClient", "Notifications", "HarnessLiveActivity.swift"),
     "utf8",
   );
   /** Les propriétés stockées d'une `struct` Swift publique. */

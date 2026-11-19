@@ -418,7 +418,7 @@ test("push-alertes/AC-7 : sans clé APNs ou sans registre de clients, rien ne pa
 
 test("push-alertes/AC-8 : l'app lit les sortes et les catégories que le serveur pousse, sans en oublier ni en inventer", () => {
   const swift = fs.readFileSync(
-    path.join(ROOT, "omp-console", "Sources", "ConsoleClient", "HarnessNotifications.swift"),
+    path.join(ROOT, "omp-console", "Sources", "ConsoleClient", "Notifications", "HarnessNotifications.swift"),
     "utf8",
   );
   /** Les valeurs brutes d'un `enum` Swift à `String` : `case a = "x"` ou `case a, b`. */

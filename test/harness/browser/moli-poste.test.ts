@@ -23,7 +23,7 @@ import { validateConfig, browserFromEnv, defaultConfig } from "../../../omp-harn
 import type { WorkstationAction } from "../../../omp-harness/db/db.ts";
 import { createHandler } from "../../../omp-harness/api/http.ts";
 import { notificationFor } from "../../../omp-harness/notify/notify.ts";
-import type { WorkstationStatus } from "../../../omp-harness/workstation/workstation.ts";
+import type { WorkstationStatus } from "../../../omp-harness/workstation/workstation-input.ts";
 import { CookieMirror } from "../../../omp-chrome/src/lib/cookie-mirror.ts";
 import type { MirrorState } from "../../../omp-chrome/src/lib/cookie-mirror.ts";
 import { classifyOutbound, sendFingerprint } from "../../../omp-chrome/src/lib/outbound.ts";

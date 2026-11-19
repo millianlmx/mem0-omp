@@ -14,6 +14,7 @@ import { ClientRegistry } from "../../omp-harness/api/auth.ts";
 import { apiRoutes, createHandler } from "../../omp-harness/api/http.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT } from "../support/repo.ts";
+import { swiftFiles } from "../support/swift-source.ts";
 
 const CONSOLE = path.join(ROOT, "omp-console");
 const CLIENT = path.join(CONSOLE, "Sources", "ConsoleClient");
@@ -44,9 +45,8 @@ function covers(object: unknown, fields: Map<string, boolean>, label: string): v
 
 test("tour-de-controle/AC-1 : chaque route de la tour de contrôle appelée par le client Swift est servie, au rôle du contrat", () => {
   const routes = apiRoutes({ store: {} } as never, new ClientRegistry(null, "t".repeat(64)));
-  const sources = fs
-    .readdirSync(CLIENT)
-    .map((file) => client(file))
+  const sources = swiftFiles(CLIENT)
+    .map((file) => fs.readFileSync(file, "utf8"))
     .join("\n");
   const calls: [string, string, string, string][] = [
     ['path: "/instructions"', "POST", "/v1/runs/r1/instructions", "operator"],
@@ -100,7 +100,7 @@ test("tour-de-controle/AC-1 : chaque route de la tour de contrôle appelée par 
   // Les issues n'ont d'autre surface que le MCP : les deux outils appelés existent.
   const mcp = fs.readFileSync(path.join(ROOT, "omp-harness", "api", "mcp.ts"), "utf8");
   for (const tool of ["issues_list", "issue_fix"]) {
-    assert.ok(client("HarnessControlModels.swift").includes(`"${tool}"`), `le client n'appelle plus ${tool}`);
+    assert.ok(client("Control/HarnessControlModels.swift").includes(`"${tool}"`), `le client n'appelle plus ${tool}`);
     assert.match(mcp, new RegExp(`name: "${tool}"`), `le MCP ne sert plus ${tool}`);
   }
 });
@@ -122,7 +122,7 @@ test("tour-de-controle/AC-2 : chaque champ de la vigie, des planifications, des 
       assert.ok(response.status < 300, `${method} ${route} : ${response.status} ${JSON.stringify(json)}`);
       return json;
     };
-    const wire = client("HarnessControlWire.swift");
+    const wire = client("Control/HarnessControlWire.swift");
 
     const vigie = await call("GET", "/v1/vigie");
     covers(vigie, swiftFields(wire, "VigieView"), "VigieView");
@@ -163,7 +163,7 @@ test("tour-de-controle/AC-2 : chaque champ de la vigie, des planifications, des 
     assert.equal(run.waitCause, "unknown_repo", JSON.stringify(run));
     assert.equal(typeof run.reason, "string");
     const budget = held.budget as Record<string, unknown>;
-    covers(budget, swiftFields(client("HarnessMonitoring.swift"), "HarnessBudget"), "HarnessBudget");
+    covers(budget, swiftFields(client("Runs/HarnessMonitoring.swift"), "HarnessBudget"), "HarnessBudget");
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -206,12 +206,12 @@ test("tour-de-controle/AC-3 : Vigie, Planifications, Issues et Administration so
       );
   // La palette ⌘K (partagée) ne propose l'Administration qu'à un admin.
   assert.match(
-    read("Sources", "ConsoleUI", "CommandPalette.swift"),
+    read("Sources", "ConsoleUI", "Palette", "CommandPalette.swift"),
     /systemPages: SystemPage\.visible\(isAdmin: server\.isAdmin, autonomy: server\.autonomy\.isServed\)/,
   );
   // La consigne s'envoie du menu d'une feature dans la liste des fils (vue partagée), par sa feuille.
   assert.match(
-    read("Sources", "ConsoleUI", "RunMenuItems.swift"),
+    read("Sources", "ConsoleUI", "Runs", "RunMenuItems.swift"),
     /if run\.acceptsInstructions \{\s*Button\(ControlText\.instructionsAction, systemImage: ControlText\.instructionsSymbol\) \{ drafts\.instructionsRequest = run \}/,
   );
   assert.match(
@@ -219,21 +219,21 @@ test("tour-de-controle/AC-3 : Vigie, Planifications, Issues et Administration so
     /RunMenuItems\(server: server, drafts: drafts, run: run\)/,
   );
   assert.match(
-    read("Sources", "ConsoleUI", "RunControlViews.swift"),
+    read("Sources", "ConsoleUI", "Runs", "RunControlViews.swift"),
     /\.sheet\(item: \$drafts\.instructionsRequest\)[\s\S]*?RunInstructionsComposer\(server: server, drafts: drafts, runId: run\.id\)/,
   );
 });
 
 test("tour-de-controle/AC-4 : l'arrêt d'urgence n'est jamais grisé par le rôle et passe par une confirmation", () => {
-  const header = read("Sources", "ConsoleUI", "WorkstationSections.swift");
+  const header = read("Sources", "ConsoleUI", "Workstation", "WorkstationSections.swift");
   const start = header.indexOf("struct WorkstationHeaderSection");
   assert.ok(start >= 0, "l'en-tête du Poste (état et arrêt d'urgence) est introuvable");
   const stop = header.slice(start, header.indexOf("// MARK: -", start));
   assert.match(stop, /drafts\.workstationStopAsked = true/, "le bouton ne fait que demander confirmation");
   assert.doesNotMatch(stop, /canAct/, "l'arrêt ne dépend pas du rôle du jeton");
   assert.doesNotMatch(stop, /workstation\.stop\(\)/, "le bouton n'arrête pas sans confirmation");
-  const ui = read("Sources", "ConsoleUI", "WorkstationControlSections.swift");
+  const ui = read("Sources", "ConsoleUI", "Workstation", "WorkstationControlSections.swift");
   assert.match(ui, /Button\(ControlText\.stop, role: \.destructive\) \{\s*Task \{ await workstation\.stop\(\) \}/);
-  const palette = read("Sources", "ConsoleUI", "CommandPalette.swift");
+  const palette = read("Sources", "ConsoleUI", "Palette", "CommandPalette.swift");
   assert.match(palette, /case \.stopWorkstation:\s*select\(\.workstation\)\s*drafts\.workstationStopAsked = true/);
 });

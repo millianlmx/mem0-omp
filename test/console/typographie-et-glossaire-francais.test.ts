@@ -151,12 +151,12 @@ const EXCEPTIONS: readonly Exception[] = [
     reason: "expression régulière (chaîne brute) des liens Markdown",
   },
   {
-    file: "omp-console/Sources/ConsoleClient/HarnessFailureText.swift",
+    file: "omp-console/Sources/ConsoleClient/Connection/HarnessFailureText.swift",
     literal: "impl",
     reason: "valeur de fil `step` du serveur de pipelines, jamais affichée",
   },
   {
-    file: "omp-console/Sources/ConsoleClient/HarnessFailureText.swift",
+    file: "omp-console/Sources/ConsoleClient/Connection/HarnessFailureText.swift",
     literal: "review",
     reason: "valeur de fil `step` du serveur de pipelines, jamais affichée",
   },

@@ -16,8 +16,10 @@ import type { Meeting, Segment, StoredObservation, WorkstationAction } from "../
 import { apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
 import { clientCommand } from "../../../omp-harness/main.ts";
 import { Orchestrator } from "../../../omp-harness/runs/orchestrator.ts";
-import { APPROVER_ONLY, profileStats } from "../../../omp-harness/workstation/workstation.ts";
-import type { ProfileStats, WorkstationStatus } from "../../../omp-harness/workstation/workstation.ts";
+import { APPROVER_ONLY } from "../../../omp-harness/workstation/workstation.ts";
+import { profileStats } from "../../../omp-harness/workstation/workstation-profile.ts";
+import type { ProfileStats } from "../../../omp-harness/workstation/workstation-profile.ts";
+import type { WorkstationStatus } from "../../../omp-harness/workstation/workstation-input.ts";
 import { fakeWorld } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import { tmpdir } from "../../support/repo.ts";

@@ -50,9 +50,9 @@ test('refaire-express/AC-1 : le gabarit d\'un run né en voie express porte `lan
 
 test("refaire-express/AC-2 : l'app relit toute voie connue du gabarit (`HarnessLane(rawValue:)`), express compris, et la remet dans la saisie du lancement", () => {
   const read = (rel: string): string => fs.readFileSync(path.join(ROOT, "omp-console/Sources", rel), "utf8");
-  const proposals = read("ConsoleClient/HarnessProposals.swift");
+  const proposals = read("ConsoleClient/OS/HarnessProposals.swift");
   assert.match(proposals, /lane: lane\.flatMap\(HarnessLane\.init\(rawValue:\)\) \?\? \.auto/);
   assert.doesNotMatch(proposals, /lane == HarnessLane\.full\.rawValue \? \.full : \.auto/);
-  assert.match(read("ConsoleClient/HarnessLaunch.swift"), /case express/);
+  assert.match(read("ConsoleClient/Runs/HarnessLaunch.swift"), /case express/);
   assert.match(read("ConsoleUI/OS/OSDecideLogic.swift"), /lane: template\.options\.lane/);
 });

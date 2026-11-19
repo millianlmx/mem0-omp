@@ -41,7 +41,8 @@ import { DEMANDE_STEP } from "../reports/space-usage.ts";
 import { NO_SPACE_HOLDS } from "../spaces/spaces.ts";
 import type { SpaceHolds } from "../spaces/spaces.ts";
 import { NAME_MAX } from "../jobs/schedules.ts";
-import { MAX_INSTRUCTION, stripUrl } from "../workstation/workstation.ts";
+import { MAX_INSTRUCTION } from "../workstation/workstation-errands.ts";
+import { stripUrl } from "../workstation/workstation-input.ts";
 import { untrusted } from "../workstation/workstation-guards.ts";
 
 export const INTAKE_SOURCES = ["console", "ios", "voice", "slack", "cli", "chrome"] as const;

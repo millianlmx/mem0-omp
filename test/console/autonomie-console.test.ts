@@ -17,6 +17,7 @@ import { API_FEATURES, apiRoutes, createHandler } from "../../omp-harness/api/ht
 import type { HarnessConfig } from "../../omp-harness/config/config.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";
 import { ROOT } from "../support/repo.ts";
+import { swiftFiles } from "../support/swift-source.ts";
 
 const CONSOLE = path.join(ROOT, "omp-console");
 const read = (...parts: string[]) => fs.readFileSync(path.join(CONSOLE, ...parts), "utf8");
@@ -100,7 +101,7 @@ const REVIEW_PROOF: AutonomyProof = {
 };
 
 test("autonomie-console/AC-1 : la feuille de création propose le type de travail et les labels, que POST /v1/runs du serveur réel rend sur le run", async () => {
-  const wire = client("HarnessAutonomy.swift");
+  const wire = client("Autonomy/HarnessAutonomy.swift");
   const kinds = /public enum HarnessWorkKind[^{]*\{([^}]*)\}/.exec(wire)?.[1] ?? "";
   assert.deepEqual(
     [...kinds.matchAll(/case (\w+)/g)].map(([, kind]) => kind),
@@ -108,7 +109,7 @@ test("autonomie-console/AC-1 : la feuille de création propose le type de travai
     "les types de l'app sont ceux du serveur, dans son ordre",
   );
   // La feuille, partagée par le Mac et l'iPhone/iPad, et le corps envoyé.
-  const sheet = read("Sources", "ConsoleUI", "LaunchViews.swift");
+  const sheet = read("Sources", "ConsoleUI", "Runs", "LaunchViews.swift");
   assert.match(sheet, /Picker\(AutonomyText\.kindLabel, selection: \$drafts\.runOptions\.kind\)/);
   assert.match(sheet, /ForEach\(HarnessWorkKind\.allCases\)/);
   assert.match(sheet, /TextField\(AutonomyText\.labelsLabel, text: \$drafts\.runOptions\.labels/);
@@ -159,7 +160,7 @@ test("autonomie-console/AC-2 : la carte d'une décision prise seule montre la po
     });
     const inbox = await call("GET", "/v1/inbox");
     const wire = client("HarnessWire.swift");
-    const autonomyWire = client("HarnessAutonomy.swift");
+    const autonomyWire = client("Autonomy/HarnessAutonomy.swift");
     const decision = covers((inbox.decisions as unknown[])[0], swiftFields(wire, "HarnessDecision"), "HarnessDecision");
     const proof = covers(decision.autonomy, swiftFields(autonomyWire, "HarnessAutonomyProof"), "HarnessAutonomyProof");
     const rule = covers(
@@ -178,9 +179,9 @@ test("autonomie-console/AC-2 : la carte d'une décision prise seule montre la po
     await close();
   }
   // La carte d'À traiter (et de la page d'une feature) pose la preuve à la place du contexte.
-  const card = read("Sources", "ConsoleUI", "InboxFeed.swift");
+  const card = read("Sources", "ConsoleUI", "Inbox", "InboxFeed.swift");
   assert.match(card, /if let autonomy = decision\.autonomy \{\s*AutonomyProofView\(proof: autonomy\)/);
-  const view = read("Sources", "ConsoleUI", "AutonomyViews.swift");
+  const view = read("Sources", "ConsoleUI", "Autonomy", "AutonomyViews.swift");
   for (const part of ["proof.gateLine", "proof.ruleLine", "proof.proofLines"]) assert.ok(view.includes(part), part);
 });
 
@@ -190,20 +191,21 @@ test("autonomie-console/AC-3 : tout lecteur lit GET /v1/autonomy dans les deux a
   const served = routes.find((route) => route.method === "GET" && route.pattern.test("/v1/autonomy"));
   assert.equal(served?.role, "viewer");
   assert.ok(API_FEATURES.includes("autonomy"));
-  const model = client("HarnessAutonomy.swift");
+  const model = client("Autonomy/HarnessAutonomy.swift");
   assert.match(model, /readIfServed\("\/v1\/autonomy"\) else \{\s*availability = \.absent/);
   // L'écriture : une seule route, celle d'une règle de palier, que le serveur réserve à l'admin ;
   // seul le modèle de l'autonomie l'appelle.
   const written = routes.find((route) => route.method === "POST" && route.pattern.test("/v1/autonomy/rules"));
   assert.equal(written?.role, "admin", "POST /v1/autonomy/rules est réservée à l'admin");
   assert.ok(API_FEATURES.includes("os-autonomy"));
-  for (const file of fs.readdirSync(path.join(CONSOLE, "Sources", "ConsoleClient"))) {
+  const clientDir = path.join(CONSOLE, "Sources", "ConsoleClient");
+  for (const file of swiftFiles(clientDir).map((full) => path.relative(clientDir, full))) {
     const writes = [...client(file).matchAll(/"(POST|PUT|DELETE)",\s*"(\/v1\/autonomy[^"]*)"/g)].map(
       ([, method, route]) => `${method} ${route}`,
     );
     assert.deepEqual(
       writes,
-      file === "HarnessAutonomy.swift" ? ["POST /v1/autonomy/rules"] : [],
+      file === "Autonomy/HarnessAutonomy.swift" ? ["POST /v1/autonomy/rules"] : [],
       `${file} : écritures de l'autonomie`,
     );
   }
@@ -258,7 +260,7 @@ test("autonomie-console/AC-3 : tout lecteur lit GET /v1/autonomy dans les deux a
     store.appendEvent("validation", "r2", { gate: "verdict", approve: true, liftable: true });
 
     const autonomy = await call("GET", "/v1/autonomy");
-    const wire = client("HarnessAutonomy.swift");
+    const wire = client("Autonomy/HarnessAutonomy.swift");
     covers(autonomy, swiftFields(wire, "HarnessAutonomyView"), "HarnessAutonomyView");
     const repo = covers(
       (autonomy.repos as unknown[])[0],
@@ -304,7 +306,7 @@ test("autonomie-console/AC-3 : tout lecteur lit GET /v1/autonomy dans les deux a
     /case \.autonomy:\s*page\(refresh: \{ await server\.autonomy\.refresh\(\) \}\) \{\s*AutonomySections\(server: server, drafts: drafts\)/,
   );
   // La page ne montre aucune section vide.
-  const page = read("Sources", "ConsoleUI", "AutonomyViews.swift");
+  const page = read("Sources", "ConsoleUI", "Autonomy", "AutonomyViews.swift");
   assert.match(page, /if !view\.proposals\.isEmpty \{/);
   assert.match(page, /if !view\.validations\.isEmpty \{/);
 });
