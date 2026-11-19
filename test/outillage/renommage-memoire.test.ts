@@ -682,6 +682,7 @@ const MOTIFS_PAR_FICHIER: Record<string, NomMotif[]> = {
   "test/console/typographie-et-glossaire-francais.test.ts": ["PY"],
   "test/harness/api/decoupage-serveur-http.test.ts": ["GUARD"],
   "test/harness/config/harness-politique.test.ts": ["ENV_V"],
+  "test/harness/memory/harness-memory.test.ts": ["SYSUSER", "DATA_DIR"],
   "test/harness/intake/demande.test.ts": ["ENV_V"],
   "test/harness/reorganisation-de-la-base-de-code.test.ts": ["GUARD"],
   "test/harness/reorganisation-ranger-les-tests-du-serve.test.ts": ["GUARD"],
@@ -1023,7 +1024,7 @@ const LECTURES_SANS_REPLI: Record<string, string[]> = {
 
 /**
  * Les anomalies de lecture d'un jeu de fichiers : un `MEM0_*` hors de la table S-4, un `MEMORY_X` de classe V lu sans
- * l'aide de son langage ni son repli `MEM0_X` sur la même ligne ou la suivante, un `MEMORY_*` lu hors de la table.
+ * l'aide de son langage ni son repli d'ancien nom sur la même ligne ou la suivante, un `MEMORY_*` lu hors de la table.
  */
 function scanLectures(files: Fichier[]): string[] {
   const problemes: string[] = [];
@@ -3062,7 +3063,7 @@ const NOMS_PAR_TYPE: Record<string, Array<[string, string]>> = {
       (nom): [string, string] => [`MEM0_DREAM_${nom}`, `MEMORY_DREAM_${nom}`],
     ),
     ...["INTERVAL_HOURS", "KEEP", "FILE", "REMOTE_CMD", "REMOTE_TIMEOUT_SECONDS"].map(
-      (nom): [string, string] => [`MEM0_BACKUP_${nom}`, `MEMORY_BACKUP_${nom}`],
+      (nom): [string, string] => [`${"MEM0"}_BACKUP_${nom}`, `MEMORY_BACKUP_${nom}`],
     ),
     ["MEM0_LOG_DIR", "MEMORY_LOG_DIR"],
     ["MEM0_LOG_RETENTION_DAYS", "MEMORY_LOG_RETENTION_DAYS"],

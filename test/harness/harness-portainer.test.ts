@@ -23,10 +23,23 @@ const PAIRING = path.join(BOX, "stack-pairing");
 const TEMPLATE = path.join(BOX, "config.container.json");
 const compose = fs.readFileSync(path.join(ROOT, "docker-compose.yml"), "utf8");
 
-/** Le bloc d'un service du compose racine, de sa ligne `  <nom>:` à la suivante. */
+/**
+ * Le bloc d'un service du compose racine, de sa ligne `  <nom>:` à la suivante. Pendant la version de transition,
+ * le service mémoire garde son ancienne clé et `memory` en est l'alias réseau : un nom absent des clés se résout
+ * par l'alias.
+ */
 function service(name: string): string {
   const lines = compose.split("\n");
-  const start = lines.indexOf(`  ${name}:`);
+  let start = lines.indexOf(`  ${name}:`);
+  if (start === -1) {
+    const alias = lines.findIndex((line) => line.trim() === `aliases: [${name}]`);
+    for (let i = alias; i >= 0 && alias !== -1; i -= 1) {
+      if (/^ {2}\S[^:]*:\s*$/.test(lines[i]!)) {
+        start = i;
+        break;
+      }
+    }
+  }
   assert.notEqual(start, -1, `service ${name} absent de docker-compose.yml`);
   const rest = lines.slice(start + 1);
   const end = rest.findIndex((line) => /^ {2}\S/.test(line) || /^\S/.test(line));

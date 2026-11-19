@@ -153,12 +153,13 @@ test("harness-memory/AC-3 : derrière le lanceur root, la scope passe par trois 
 test("harness-memory/AC-4 : memory-rs tourne sur le VPS sous son propre user, durci, hors du budget des runs, et invisible des jobs heavy", () => {
   const unit = fs.readFileSync(path.join(DEPLOY, "omp-harness-memory.service"), "utf8");
   for (const directive of [
-    "User=omp-memory",
+    "User=omp-mem0",
+    "EnvironmentFile=-/etc/omp-harness/mem0.env",
+    "EnvironmentFile=-/etc/omp-harness/memory.env",
     "ExecStart=/usr/local/bin/memory-rs --host 127.0.0.1 --port 8321",
-    "EnvironmentFile=/etc/omp-harness/memory.env",
     "NoNewPrivileges=yes",
     "ProtectSystem=strict",
-    "ReadWritePaths=/var/lib/omp-memory",
+    "ReadWritePaths=/var/lib/omp-mem0 -/var/lib/omp-memory",
     "ManagedOOMPreference=omit",
   ]) {
     assert.match(unit, new RegExp(`^${directive.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}$`, "m"), directive);
@@ -170,9 +171,12 @@ test("harness-memory/AC-4 : memory-rs tourne sur le VPS sous son propre user, du
   );
   assert.match(
     fs.readFileSync(path.join(DEPLOY, "tmpfiles.conf"), "utf8"),
-    /^d \/var\/lib\/omp-memory\s+0700 omp-memory omp-memory/m,
+    /^d \/var\/lib\/omp-mem0\s+0700 omp-mem0 omp-mem0/m,
   );
-  assert.match(fs.readFileSync(path.join(DEPLOY, "launcher.conf"), "utf8"), /^HEAVY_HIDDEN=.*\/var\/lib\/omp-memory/m);
+  assert.match(
+    fs.readFileSync(path.join(DEPLOY, "launcher.conf"), "utf8"),
+    /^HEAVY_HIDDEN=.*\/var\/lib\/omp-mem0 \/var\/lib\/omp-memory/m,
+  );
   const install = fs.readFileSync(path.join(DEPLOY, "install.sh"), "utf8");
   assert.match(install, /chmod 0600 \/etc\/omp-harness\/memory\.env/, "le jeton memory n'est lisible que par root");
   assert.match(

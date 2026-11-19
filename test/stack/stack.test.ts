@@ -17,7 +17,8 @@ test("stack/AC-23 : toute variable consommée par le compose est déclarée dans
   const example = read("memory-stack/.env.example");
 
   const declared = new Set([...example.matchAll(/^([A-Z_][A-Z0-9_]*)=/gm)].map((m) => m[1]!));
-  const consumed = new Set([...compose.matchAll(/\$\{([A-Z_][A-Z0-9_]*)/g)].map((m) => m[1]!));
+  // Un repli d'ancien nom, imbriqué dans le nom à jour, n'est pas une variable de plus à déclarer.
+  const consumed = new Set([...compose.matchAll(/(?<!:?-)\$\{([A-Z_][A-Z0-9_]*)/g)].map((m) => m[1]!));
   assert.ok(consumed.size > 0, "aucune variable interpolée trouvée dans docker-compose.yml");
 
   const missing = [...consumed].filter((name) => !declared.has(name)).sort();
