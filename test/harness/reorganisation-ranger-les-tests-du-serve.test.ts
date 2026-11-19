@@ -1,8 +1,8 @@
 // Feature reorganisation-ranger-les-tests-du-serve : les tests du serveur de pipelines (omp-harness/) sont rangés dans
 // test/harness/<dossier du serveur>/, sous le même nom de fichier. La racine de test/harness/ ne garde que des
 // transverses nommés. La garde est une fonction pure des chemins : elle juge l'arbre réel pour l'état de la branche
-// et des listes fabriquées pour chaque cas d'échec, et le test n'écrit jamais rien sous le dépôt (criteria.test.ts et
-// ci-macos-jobs-paralleles.test.ts relisent la liste des tests en parallèle, copyRepo recopie test/).
+// et des listes fabriquées pour chaque cas d'échec, et le test n'écrit jamais rien sous le dépôt (criteria.test.ts
+// et ci-macos-jobs-paralleles.test.ts relisent la liste des tests en parallèle, copyRepo recopie test/).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
