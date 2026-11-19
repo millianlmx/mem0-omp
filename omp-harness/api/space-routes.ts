@@ -26,7 +26,7 @@ const ACTS_ON_LOCAL_SESSIONS = "geste réservé à l'humain — un client pilote
 const BEATS_LOCAL_SESSIONS = "réservé au poste de l'humain — un client pilote ne signale pas de session locale";
 
 export function spaceRoutes(kit: RouteKit) {
-  const { orchestrator, store, clients, route, once, sees, runId, ownerOf, READS_SIGNALS, posteScope, limitOf } = kit;
+  const { orchestrator, store, clients, route, once, sees, ownerOf, READS_SIGNALS, posteScope, limitOf } = kit;
   /** L'espace d'une route `/v1/spaces/{id}/…` : sous `?space=`, ce ne peut être que celui-là (404 sinon, comme s'il n'existait pas). */
   const spaceId = (call: Call): string => {
     const id = call.match[1] as string;

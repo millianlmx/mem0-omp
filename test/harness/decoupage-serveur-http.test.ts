@@ -295,7 +295,9 @@ test("decoupage-serveur-http/AC-5 : aucune réexportation ne vise un morceau, et
     for (const match of text.matchAll(LOCAL_EXPORT)) {
       for (const spec of (match[1] ?? "").split(",")) {
         const name = (spec.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0] ?? "").trim();
-        if (importedFromPieces.has(name)) problems.push(`${file}:${lineOf(text, match.index)} → ${name} : façade`);
+        if (importedFromPieces.has(name)) {
+          problems.push(`${file}:${lineOf(text, match.index)} → ${name} : façade`);
+        }
       }
     }
   }
