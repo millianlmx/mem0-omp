@@ -37,11 +37,14 @@ import { createRuntime, forgetInjected, projectId, stateOf } from "./state.ts";
 import { registerMemoryTools } from "./tools.ts";
 
 // Marque de process : deux copies du plugin chargées dans un même process (installées sous l'ancien et le nouveau
-// nom) n'enregistrent qu'une fois chaque outil, chaque commande et chaque hook.
+// nom) n'enregistrent qu'une fois chaque outil, chaque commande et chaque hook. La marque porte l'adresse du module
+// qui s'est activé : une autre copie (autre adresse) ne fait rien ; le même module rappelé (rechargement de la
+// session) se réactive.
 export default function memoryPluginExtension(pi: ExtensionAPI) {
   const mark = globalThis as Record<symbol, unknown>;
-  if (mark[Symbol.for("omp-memory.extension")]) return;
-  mark[Symbol.for("omp-memory.extension")] = true;
+  const owner = mark[Symbol.for("omp-memory.extension")];
+  if (owner !== undefined && owner !== import.meta.url) return;
+  mark[Symbol.for("omp-memory.extension")] = import.meta.url;
 
   // L'état vivant (sessions, brief déjà provisionné) appartient à CETTE instance :
   // créé ici, puis passé aux modules, comme l'était la fermeture d'avant le

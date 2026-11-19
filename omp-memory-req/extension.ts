@@ -97,10 +97,12 @@ async function guarded(ctx: Ctx, tag: string, fn: () => Promise<void>): Promise<
 }
 
 export default function reqExtension(pi: ExtensionAPI) {
-  // Marque de process : deux copies du plugin (installées sous l'ancien et le nouveau nom) ne s'activent qu'une fois.
+  // Marque de process : deux copies du plugin (installées sous l'ancien et le nouveau nom) ne s'activent qu'une
+  // fois. La marque porte l'adresse du module activé : le même module rappelé (rechargement) se réactive.
   const mark = globalThis as Record<symbol, unknown>;
-  if (mark[Symbol.for("omp-memory-req.extension")]) return;
-  mark[Symbol.for("omp-memory-req.extension")] = true;
+  const owner = mark[Symbol.for("omp-memory-req.extension")];
+  if (owner !== undefined && owner !== import.meta.url) return;
+  mark[Symbol.for("omp-memory-req.extension")] = import.meta.url;
   const follower = createFollower(pi);
   registerHarnessTools(pi, { onLaunched: (resolved, runs) => follower.start(resolved, runs) });
   registerWorkstationTools(pi);

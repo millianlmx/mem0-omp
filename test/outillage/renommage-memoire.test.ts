@@ -1926,7 +1926,7 @@ function verifierCatalogue(
   return ecarts;
 }
 
-test("renommage-memoire/AC-308 : les catalogues gardent le nom mem0-omp et portent les quatre entrées ; la doc installe les nouvelles ; deux copies du plugin n'enregistrent qu'une fois chaque outil et chaque commande", () => {
+test("renommage-memoire/AC-308 : les catalogues gardent le nom mem0-omp et portent les quatre entrées ; la doc installe les nouvelles ; deux copies du plugin n'enregistrent qu'une fois chaque outil et chaque commande", async () => {
   const sourceExiste = (source: string): boolean => fs.existsSync(path.join(ROOT, source, "package.json"));
   const nomDuPlugin = (source: string): string | null => JSON.parse(lire(`${source.replace(/^\.\//, "")}/package.json`)).name ?? null;
   const commandesDe = (source: string): string[] | null => {
@@ -1989,12 +1989,20 @@ test("renommage-memoire/AC-308 : les catalogues gardent le nom mem0-omp et porte
   const installation = sectionDe(lire("README.md"), "## Installation");
   assert.doesNotMatch(installation, /install omp-mem0-/, "une installation neuve n'installe pas les anciennes entrées");
 
-  // Le double chargement : deux copies dans un même process, la seconde ne fait rien.
+  // Le double chargement : deux copies (deux adresses de module, comme deux dossiers d'installation) dans un même
+  // process, la seconde ne fait rien ; la même copie rappelée (rechargement) se réactive.
+  const copieDe = async (fichier: string): Promise<(pi: never) => void> => {
+    const url = new URL(fichier, import.meta.url);
+    url.search = "?copie=2";
+    return (await import(url.href)).default;
+  };
   oublierMarques();
   const premiere = piDouble();
   const seconde = piDouble();
+  const rechargee = piDouble();
   memoryPluginExtension(premiere.pi);
-  memoryPluginExtension(seconde.pi);
+  (await copieDe("../../omp-memory/extension.ts"))(seconde.pi as never);
+  memoryPluginExtension(rechargee.pi);
   const unique = (noms: string[]): void => assert.equal(
     new Set(noms).size,
     noms.length,
@@ -2027,7 +2035,7 @@ test("renommage-memoire/AC-308 : les catalogues gardent le nom mem0-omp et porte
   reqExtension(piReq());
   const apresPremiere = [requete.outils.length, requete.commandes.length];
   assert.ok(apresPremiere[0]! > 0 && apresPremiere[1]! > 0);
-  reqExtension(piReq());
+  (await copieDe("../../omp-memory-req/extension.ts"))(piReq() as never);
   assert.deepEqual(
     [requete.outils.length, requete.commandes.length],
     apresPremiere,
