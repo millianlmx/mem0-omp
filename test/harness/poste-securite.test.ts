@@ -12,7 +12,7 @@ import { ClientRegistry } from "../../omp-harness/api/auth.ts";
 import { defaultConfig, validateConfig } from "../../omp-harness/config/config.ts";
 import type { WorkstationAction } from "../../omp-harness/db/db.ts";
 import { createHandler } from "../../omp-harness/api/http.ts";
-import type { WorkstationStatus } from "../../omp-harness/workstation/workstation.ts";
+import type { WorkstationStatus } from "../../omp-harness/workstation/workstation-input.ts";
 import {
   UNTRUSTED_END,
   hostListed,

@@ -81,22 +81,16 @@ import { PairingDesk } from "./pairing.ts";
 import { scoreboardDays, scoreboardOf } from "../reports/scoreboard.ts";
 import { spaceUsageOf, usageCsv, usageFormat, usageWindow } from "../reports/space-usage.ts";
 import { SPACES_OWNER_ONLY, SPACE_REPORT_WINDOW_MS, onboardInput, spaceEdit, spaceInput } from "../spaces/spaces.ts";
-import type { BrowserHello, SessionJob, Workstation } from "../workstation/workstation.ts";
+import type { BrowserHello } from "../workstation/workstation-input.ts";
+import type { SessionJob, Workstation } from "../workstation/workstation.ts";
 import type { VigieStatus } from "../db/db.ts";
 import { VIGIE_STATUSES } from "../db/db.ts";
 import { handleMcp } from "./mcp.ts";
 import { readerOf } from "../human/proposals.ts";
 import { parseLoginInput } from "../browser/vps-login.ts";
-import {
-  MAX_WAIT_SEC,
-  SESSION_JOBS,
-  approverFor,
-  parseActionInput,
-  NO_SPACE_BROWSER,
-  parseBrowserHello,
-  parseRequestStates,
-  workstationFor,
-} from "../workstation/workstation.ts";
+import { MAX_WAIT_SEC, SESSION_JOBS, approverFor, workstationFor } from "../workstation/workstation.ts";
+import { parseActionInput, parseBrowserHello, parseRequestStates } from "../workstation/workstation-input.ts";
+import { NO_SPACE_BROWSER } from "../workstation/workstation-presence.ts";
 import type { AtlassianDesk } from "../atlassian/desk.ts";
 import { INVALID_LINK, writeStateOf } from "../atlassian/desk.ts";
 import { isLocalSessionEvent, localSessionStates } from "../sessions/local-sessions.ts";

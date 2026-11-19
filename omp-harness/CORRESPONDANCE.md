@@ -101,4 +101,8 @@ Les chemins sont relatifs à `omp-harness/`. Cette table vient de la réorganisa
 | `verdict.ts` | `runs/verdict.ts` |  |
 | `workstation-agent.ts` | `workstation/workstation-agent.ts` |  |
 | `workstation-guards.ts` | `workstation/workstation-guards.ts` |  |
-| `workstation.ts` | `workstation/workstation.ts` |  |
+| `workstation.ts` | `workstation/workstation-errands.ts` | meetings, demandes et automatisations |
+| `workstation.ts` | `workstation/workstation-input.ts` | formes et validation des entrées du poste |
+| `workstation.ts` | `workstation/workstation-presence.ts` | navigateurs, présence et espaces |
+| `workstation.ts` | `workstation/workstation-profile.ts` | profil de travail |
+| `workstation.ts` | `workstation/workstation.ts` | file d'actions et garde d'envoi |

@@ -21,7 +21,7 @@ export const BODY_MAX = 20_000;
 /** Le corps envoyé à la forge, borné après caviardage. */
 export const SENT_BODY_MAX = 60_000;
 
-/** Un texte d'une seule forme comparée sans casse ni espaces : adresse, pseudo (workstation.ts `identity`). */
+/** Un texte d'une seule forme comparée sans casse ni espaces : adresse, pseudo (workstation-input.ts `identity`). */
 export function identity(value: string): string {
   return value.toLowerCase().replace(/\s+/g, "");
 }
