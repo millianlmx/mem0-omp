@@ -271,13 +271,13 @@ test("demande-voies/AC-7 : le prompt du classeur décrit les trois voies et les 
 
 test("demande-voies/AC-8 : les apps décodent la voie, sa raison et les critères du plan, la carte les montre, et « Modifier le plan » corrige la voie et les critères sans envoyer la raison", () => {
   const read = (rel: string): string => fs.readFileSync(path.join(ROOT, "omp-console/Sources", rel), "utf8");
-  const fields = swiftFields(read("ConsoleClient/HarnessIntake.swift"), "HarnessIntakePlan");
+  const fields = swiftFields(read("ConsoleClient/Intake/HarnessIntake.swift"), "HarnessIntakePlan");
   assert.equal(fields.get("lane"), true);
   assert.equal(fields.get("laneReason"), true);
   assert.equal(fields.get("criteria"), false);
   // Un serveur antérieur aux voies n'envoie pas `criteria` : le décodage le tolère.
   assert.match(
-    read("ConsoleClient/HarnessIntake.swift"),
+    read("ConsoleClient/Intake/HarnessIntake.swift"),
     /decodeIfPresent\(\[String\]\.self, forKey: \.criteria\) \?\? \[\]/,
   );
 
@@ -285,7 +285,7 @@ test("demande-voies/AC-8 : les apps décodent la voie, sa raison et les critère
   assert.match(card, /IntakeText\.laneLine\(plan\.lane, reason: plan\.laneReason\)/);
   assert.match(card, /plan\.criteria/);
 
-  const sheet = read("ConsoleUI/IntakeViews.swift");
+  const sheet = read("ConsoleUI/Intake/IntakeViews.swift");
   assert.match(sheet, /Picker\(IntakeText\.laneLabel, selection: laneBinding\)/);
   assert.match(sheet, /IntakeText\.criteriaLabel/);
   assert.match(sheet, /sent\.laneReason = nil/);

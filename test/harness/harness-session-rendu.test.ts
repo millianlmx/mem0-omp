@@ -355,7 +355,7 @@ test("harness-session-rendu/AC-4 : le JSON des autres outils devient des champs,
 /** Les propriétés stockées d'une struct Swift du client : nom → optionnelle ? */
 function swiftFields(struct: string): Map<string, boolean> {
   const source = fs.readFileSync(
-    path.join(ROOT, "omp-console", "Sources", "ConsoleClient", "HarnessSession.swift"),
+    path.join(ROOT, "omp-console", "Sources", "ConsoleClient", "Runs", "HarnessSession.swift"),
     "utf8",
   );
   const start = source.indexOf(`public struct ${struct}:`);

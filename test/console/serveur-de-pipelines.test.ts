@@ -186,27 +186,27 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
     ["HarnessModel.swift", '/template")', "GET", "/v1/runs/r1/template"],
     ["HarnessModel.swift", 'path: "/v1/push/activities/start"', "POST", "/v1/push/activities/start"],
     ["HarnessModel.swift", 'path: "/v1/push/activities/start/\\(id)"', "DELETE", "/v1/push/activities/start/ab12"],
-    ["HarnessLoop.swift", 'readBound("/v1/pause")', "GET", "/v1/pause"],
-    ["HarnessLoop.swift", '"POST", "/v1/pause"', "POST", "/v1/pause"],
-    ["HarnessStandingRules.swift", 'readBound("/v1/rules")', "GET", "/v1/rules"],
-    ["HarnessStandingRules.swift", '"POST", "/v1/rules"', "POST", "/v1/rules"],
-    ["HarnessStandingRules.swift", '"PUT", "/v1/rules/\\(', "PUT", "/v1/rules/c1"],
-    ["HarnessStandingRules.swift", '"DELETE", "/v1/rules/\\(', "DELETE", "/v1/rules/c1"],
-    ["HarnessAutonomy.swift", '"POST", "/v1/autonomy/rules"', "POST", "/v1/autonomy/rules"],
-    ["HarnessSpaces.swift", 'readBound("/v1/spaces")', "GET", "/v1/spaces"],
-    ["HarnessSpaces.swift", '"POST", "/v1/spaces"', "POST", "/v1/spaces"],
-    ["HarnessSpaces.swift", 'gesture(space, "PUT"', "PUT", "/v1/spaces/e1"],
-    ["HarnessSpaces.swift", 'gesture(space, "DELETE"', "DELETE", "/v1/spaces/e1"],
-    ["HarnessSpaces.swift", '(space.id))/report"', "GET", "/v1/spaces/e1/report"],
-    ["HarnessBrief.swift", '?? "/v1/brief"', "GET", "/v1/brief"],
-    ["HarnessBrief.swift", '"POST", "/v1/brief/seen"', "POST", "/v1/brief/seen"],
-    ["HarnessBrief.swift", 'readScoped("/v1/scoreboard?days=', "GET", "/v1/scoreboard"],
-    ["HarnessProposals.swift", 'readScoped("/v1/proposals")', "GET", "/v1/proposals"],
-    ["HarnessProposals.swift", '(proposal.id))/accept"', "POST", "/v1/proposals/issue.0123456789abcdef/accept"],
-    ["HarnessProposals.swift", '(proposal.id))/dismiss"', "POST", "/v1/proposals/issue.0123456789abcdef/dismiss"],
-    ["HarnessLocalSessions.swift", 'readBound("/v1/local-sessions")', "GET", "/v1/local-sessions"],
-    ["HarnessLocalSessions.swift", '(session.id))/handoff"', "POST", "/v1/local-sessions/s1/handoff"],
-    ["HarnessLocalSessions.swift", '"DELETE", "/v1/local-sessions/\\(', "DELETE", "/v1/local-sessions/s1"],
+    ["Autonomy/HarnessLoop.swift", 'readBound("/v1/pause")', "GET", "/v1/pause"],
+    ["Autonomy/HarnessLoop.swift", '"POST", "/v1/pause"', "POST", "/v1/pause"],
+    ["Autonomy/HarnessStandingRules.swift", 'readBound("/v1/rules")', "GET", "/v1/rules"],
+    ["Autonomy/HarnessStandingRules.swift", '"POST", "/v1/rules"', "POST", "/v1/rules"],
+    ["Autonomy/HarnessStandingRules.swift", '"PUT", "/v1/rules/\\(', "PUT", "/v1/rules/c1"],
+    ["Autonomy/HarnessStandingRules.swift", '"DELETE", "/v1/rules/\\(', "DELETE", "/v1/rules/c1"],
+    ["Autonomy/HarnessAutonomy.swift", '"POST", "/v1/autonomy/rules"', "POST", "/v1/autonomy/rules"],
+    ["Spaces/HarnessSpaces.swift", 'readBound("/v1/spaces")', "GET", "/v1/spaces"],
+    ["Spaces/HarnessSpaces.swift", '"POST", "/v1/spaces"', "POST", "/v1/spaces"],
+    ["Spaces/HarnessSpaces.swift", 'gesture(space, "PUT"', "PUT", "/v1/spaces/e1"],
+    ["Spaces/HarnessSpaces.swift", 'gesture(space, "DELETE"', "DELETE", "/v1/spaces/e1"],
+    ["Spaces/HarnessSpaces.swift", '(space.id))/report"', "GET", "/v1/spaces/e1/report"],
+    ["OS/HarnessBrief.swift", '?? "/v1/brief"', "GET", "/v1/brief"],
+    ["OS/HarnessBrief.swift", '"POST", "/v1/brief/seen"', "POST", "/v1/brief/seen"],
+    ["OS/HarnessBrief.swift", 'readScoped("/v1/scoreboard?days=', "GET", "/v1/scoreboard"],
+    ["OS/HarnessProposals.swift", 'readScoped("/v1/proposals")', "GET", "/v1/proposals"],
+    ["OS/HarnessProposals.swift", '(proposal.id))/accept"', "POST", "/v1/proposals/issue.0123456789abcdef/accept"],
+    ["OS/HarnessProposals.swift", '(proposal.id))/dismiss"', "POST", "/v1/proposals/issue.0123456789abcdef/dismiss"],
+    ["OS/HarnessLocalSessions.swift", 'readBound("/v1/local-sessions")', "GET", "/v1/local-sessions"],
+    ["OS/HarnessLocalSessions.swift", '(session.id))/handoff"', "POST", "/v1/local-sessions/s1/handoff"],
+    ["OS/HarnessLocalSessions.swift", '"DELETE", "/v1/local-sessions/\\(', "DELETE", "/v1/local-sessions/s1"],
   ];
   for (const [file, client, method, sample] of osCalls) {
     assert.ok(fs.readFileSync(path.join(CLIENT, file), "utf8").includes(client), `${file} n'appelle plus ${client}`);
@@ -215,7 +215,7 @@ test("serveur-de-pipelines/AC-2 : chaque route appelée par le client existe dan
   // Le flux d'événements est servi hors de la table (SSE).
   assert.ok(model.includes("/v1/events?after="), "le client ne suit plus /v1/events");
   assert.match(read("omp-harness", "api", "http.ts"), /url\.pathname === "\/v1\/events"/);
-  const transport = fs.readFileSync(path.join(CLIENT, "HarnessTransport.swift"), "utf8");
+  const transport = fs.readFileSync(path.join(CLIENT, "Connection", "HarnessTransport.swift"), "utf8");
   assert.match(transport, /"Bearer \\\(server\.token\)", forHTTPHeaderField: "Authorization"/);
   assert.match(read("omp-harness", "api", "http.ts"), /auth\.startsWith\("Bearer "\)/);
 });
@@ -280,7 +280,7 @@ test("serveur-de-pipelines/AC-3 : la coque Mac et l'app iOS ouvrent la feuille d
   );
   // ⌘K › Serveur, partagé par les deux apps, ouvre aussi la feuille.
   assert.match(
-    read("omp-console", "Sources", "ConsoleUI", "CommandPalette.swift"),
+    read("omp-console", "Sources", "ConsoleUI", "Palette", "CommandPalette.swift"),
     /case \.server:\s*\n\s*drafts\.serverSheetShown = true/,
   );
   assert.match(
@@ -351,7 +351,7 @@ test("serveur-de-pipelines/AC-5 : les apps Mac et iOS ouvrent « Fournisseurs et
 });
 
 test("serveur-de-pipelines/AC-6 : chaque route du poste de travail appelée par le client Swift est servie, au rôle du contrat, et aucune n'approuve sans geste", () => {
-  const model = fs.readFileSync(path.join(CLIENT, "WorkstationModel.swift"), "utf8");
+  const model = fs.readFileSync(path.join(CLIENT, "Workstation", "WorkstationModel.swift"), "utf8");
   const routes = apiRoutes({ store: {} } as never, new ClientRegistry(null, "t".repeat(64)));
   const calls: [string, string, string, string][] = [
     ['path: "/v1/workstation")', "GET", "/v1/workstation", "viewer"],
@@ -384,7 +384,7 @@ test("serveur-de-pipelines/AC-6 : chaque route du poste de travail appelée par 
     "le modèle approuve l'action affichée",
   );
   assert.equal(code(model).split("approve(shown:").length - 1, 0, "le modèle n'approuve que sur appel");
-  for (const view of ["Sources/ConsoleUI/WorkstationSections.swift"]) {
+  for (const view of ["Sources/ConsoleUI/Workstation/WorkstationSections.swift"]) {
     const source = code(read("omp-console", view));
     const uses = [...source.matchAll(/approve\(shown:/g)].map((match) => source.slice(0, match.index));
     assert.equal(uses.length, 1, `${view} : une seule approbation, celle du bouton`);
@@ -395,7 +395,9 @@ test("serveur-de-pipelines/AC-6 : chaque route du poste de travail appelée par 
     );
     assert.ok(source.includes("approve(shown: action)"), `${view} : l'approbation porte l'action affichée`);
   }
-  const notifications = code(read("omp-console", "Sources", "ConsoleClient", "HarnessNotifications.swift"));
+  const notifications = code(
+    read("omp-console", "Sources", "ConsoleClient", "Notifications", "HarnessNotifications.swift"),
+  );
   const decisions = [...notifications.matchAll(/decideFromNotification\([^)]*approve: true\)/g)];
   assert.equal(decisions.length, 1, "une seule approbation depuis une notification");
   assert.match(
@@ -477,7 +479,7 @@ test("serveur-de-pipelines/AC-7 : chaque champ du poste de travail décodé par 
     });
     assert.equal(meeting.status, 201, JSON.stringify(meeting.json));
 
-    const wire = fs.readFileSync(path.join(CLIENT, "WorkstationWire.swift"), "utf8");
+    const wire = fs.readFileSync(path.join(CLIENT, "Workstation", "WorkstationWire.swift"), "utf8");
     const status = (await call("GET", "/v1/workstation")).json;
     covers(status, swiftFields(wire, "WorkstationStatus"), "WorkstationStatus");
     covers(object(status.autonomy, "autonomy"), swiftFields(wire, "WorkstationAutonomy"), "WorkstationAutonomy");
@@ -532,7 +534,7 @@ test("serveur-de-pipelines/AC-8 : le client Swift reconnaît le refus APPROVER_O
     "configure() appelle le serveur avec le jeton approbateur du code",
   );
 
-  const pairing = read("omp-console", "Sources", "ConsoleClient", "HarnessPairing.swift");
+  const pairing = read("omp-console", "Sources", "ConsoleClient", "Pairing", "HarnessPairing.swift");
   const writer = pairing.slice(
     pairing.indexOf("public func writeShared"),
     pairing.indexOf("private static func writePrivate"),
@@ -571,7 +573,7 @@ test("serveur-de-pipelines/AC-29 : chaque champ des demandes et automatisations 
     ws.startRequest(request.id);
     ws.createAction({ kind: "tabs", params: {}, rationale: "voir" }, "agent", "agent", request.id);
 
-    const wire = fs.readFileSync(path.join(CLIENT, "WorkstationWire.swift"), "utf8");
+    const wire = fs.readFileSync(path.join(CLIENT, "Workstation", "WorkstationWire.swift"), "utf8");
     const listed = firstOf((await get("/v1/workstation/requests")).requests, "requests");
     covers(listed, swiftFields(wire, "WorkstationRequest"), "WorkstationRequest (liste)");
     const detail = await get(`/v1/workstation/requests/${request.id}`);
@@ -599,10 +601,20 @@ test("serveur-de-pipelines/AC-30 : multi-client — chaque route, chaque capacit
   const client = (file: string) => fs.readFileSync(path.join(CLIENT, file), "utf8");
   const routes = apiRoutes({ store: {} } as never, new ClientRegistry(null, "t".repeat(64)));
   const calls: [string, string, string, string][] = [
-    ["HarnessSpaces.swift", '"POST", "/v1/spaces/onboard"', "POST", "/v1/spaces/onboard"],
-    ["HarnessSpaces.swift", 'readBound("/v1/spaces/\\(HarnessModel.pathComponent(id))")', "GET", "/v1/spaces/e1"],
-    ["HarnessSpaces.swift", '(spaceId))/usage"', "GET", "/v1/spaces/e1/usage"],
-    ["WorkstationControl.swift", '"PUT", "/v1/workstation/browsers/\\(', "PUT", "/v1/workstation/browsers/b1"],
+    ["Spaces/HarnessSpaces.swift", '"POST", "/v1/spaces/onboard"', "POST", "/v1/spaces/onboard"],
+    [
+      "Spaces/HarnessSpaces.swift",
+      'readBound("/v1/spaces/\\(HarnessModel.pathComponent(id))")',
+      "GET",
+      "/v1/spaces/e1",
+    ],
+    ["Spaces/HarnessSpaces.swift", '(spaceId))/usage"', "GET", "/v1/spaces/e1/usage"],
+    [
+      "Workstation/WorkstationControl.swift",
+      '"PUT", "/v1/workstation/browsers/\\(',
+      "PUT",
+      "/v1/workstation/browsers/b1",
+    ],
   ];
   for (const [file, literal, method, sample] of calls) {
     assert.ok(client(file).includes(literal), `${file} n'appelle plus ${literal}`);
@@ -612,14 +624,14 @@ test("serveur-de-pipelines/AC-30 : multi-client — chaque route, chaque capacit
     );
   }
   // Les capacités que le client lit dans `features` sont celles que le serveur annonce.
-  const scope = client("HarnessScope.swift");
+  const scope = client("Spaces/HarnessScope.swift");
   for (const feature of ["space-scope", "space-knowledge", "space-workstation", "space-policy"]) {
     assert.ok(scope.includes(`= "${feature}"`), `le client ne lit plus la capacité ${feature}`);
     assert.ok((API_FEATURES as readonly string[]).includes(feature), `le serveur n'annonce pas ${feature}`);
   }
   // `?space=` part sur ce que le serveur compose, jamais sur la pause (il suspendrait l'espace au lieu de tout).
   assert.match(scope, /\+ "space=" \+ queryValue\(id\)/);
-  assert.ok(!client("HarnessLoop.swift").includes("readScoped("), "la pause se lit et se pose sans `?space=`");
+  assert.ok(!client("Autonomy/HarnessLoop.swift").includes("readScoped("), "la pause se lit et se pose sans `?space=`");
 
   const token = "t".repeat(64);
   const world = fakeWorld({});
@@ -651,18 +663,26 @@ test("serveur-de-pipelines/AC-30 : multi-client — chaque route, chaque capacit
     const listed = firstOf((await call("GET", "/v1/spaces")).json.spaces, "spaces");
     const alone = object((await call("GET", `/v1/spaces/${id}`)).json.space, "space");
     for (const space of [listed, alone]) {
-      covers(space, swiftFields(client("HarnessSpaces.swift"), "HarnessSpace"), "HarnessSpace");
+      covers(space, swiftFields(client("Spaces/HarnessSpaces.swift"), "HarnessSpace"), "HarnessSpace");
       for (const key of ["memoryScopes", "stats", "policy", "identities", "isolation", "atlassian"])
         assert.ok(key in space, `HarnessSpace.${key} : le client Swift le décode, le serveur ne l'envoie pas`);
       const stats = object(space.stats, "stats");
-      covers(stats, swiftFields(client("HarnessSpaces.swift"), "HarnessSpaceStats"), "HarnessSpaceStats");
+      covers(stats, swiftFields(client("Spaces/HarnessSpaces.swift"), "HarnessSpaceStats"), "HarnessSpaceStats");
       const isolation = object(space.isolation, "isolation");
-      covers(isolation, swiftFields(client("HarnessSpaceFrontier.swift"), "HarnessIsolation"), "HarnessIsolation");
+      covers(
+        isolation,
+        swiftFields(client("Spaces/HarnessSpaceFrontier.swift"), "HarnessIsolation"),
+        "HarnessIsolation",
+      );
       for (const gap of isolation.gaps as Record<string, unknown>[])
-        covers(gap, swiftFields(client("HarnessSpaceFrontier.swift"), "HarnessIsolationGap"), "HarnessIsolationGap");
+        covers(
+          gap,
+          swiftFields(client("Spaces/HarnessSpaceFrontier.swift"), "HarnessIsolationGap"),
+          "HarnessIsolationGap",
+        );
     }
     // Les codes de lacune que le client nomme sont ceux du serveur.
-    const codes = [...client("HarnessSpaceFrontier.swift").matchAll(/^ {4}case \w+ = "([a-z_]+)"$/gm)].map(
+    const codes = [...client("Spaces/HarnessSpaceFrontier.swift").matchAll(/^ {4}case \w+ = "([a-z_]+)"$/gm)].map(
       ([, code]) => code,
     );
     const isolation = read("omp-harness", "spaces", "isolation.ts");
@@ -679,7 +699,7 @@ test("serveur-de-pipelines/AC-30 : multi-client — chaque route, chaque capacit
 
     // La consommation : JSON et CSV.
     const usage = object((await call("GET", `/v1/spaces/${id}/usage`)).json.usage, "usage");
-    covers(usage, swiftFields(client("HarnessSpaceFrontier.swift"), "HarnessSpaceUsage"), "HarnessSpaceUsage");
+    covers(usage, swiftFields(client("Spaces/HarnessSpaceFrontier.swift"), "HarnessSpaceUsage"), "HarnessSpaceUsage");
     const csv = await call("GET", `/v1/spaces/${id}/usage?format=csv`);
     assert.equal(csv.status, 200);
     assert.match(csv.text, /^jour;espace;depot;modele;cout_usd;jetons_entree;jetons_sortie\r\n/);
@@ -696,7 +716,7 @@ test("serveur-de-pipelines/AC-30 : multi-client — chaque route, chaque capacit
     const rules = (await call("GET", "/v1/rules")).json.rules as Record<string, unknown>[];
     covers(
       rules[0] as Record<string, unknown>,
-      swiftFields(client("HarnessStandingRules.swift"), "HarnessStandingRule"),
+      swiftFields(client("Autonomy/HarnessStandingRules.swift"), "HarnessStandingRule"),
       "HarnessStandingRule",
     );
 

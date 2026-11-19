@@ -211,7 +211,7 @@ function menuFaults(all: Map<string, string>): string[] {
 }
 
 const THREAD_LIST = path.join("OS", "OSThreadList.swift");
-const RUN_MENU = "RunMenuItems.swift";
+const RUN_MENU = "Runs/RunMenuItems.swift";
 
 /** Aucune action par balayage dans l'app (B-3 : hors périmètre). */
 function swipeFaults(all: Map<string, string>): string[] {
@@ -225,13 +225,13 @@ function swipeFaults(all: Map<string, string>): string[] {
 /** Les surfaces de texte sélectionnable (S-6), avec leur nombre de poses : les specs à
  *  valider, la fiche d'un souvenir, le direct d'une session et ce même direct dans
  *  « Comprendre » (`IOSOSSessionPane`), la clé de déploiement et les commandes d'un dépôt. */
-const SPECS = "InboxFeed.swift";
+const SPECS = "Inbox/InboxFeed.swift";
 const SELECTABLE: Record<string, number> = {
   [SPECS]: 1,
   "IOSMemoryDetailView.swift": 1,
   "IOSSessionSheet.swift": 1,
   "IOSOSScreens.swift": 1,
-  "RepoSettingsViews.swift": 2,
+  "Control/RepoSettingsViews.swift": 2,
 };
 
 /** AC-9 (S-6) : `.textSelection(.enabled)` une fois par surface, nulle part ailleurs. */

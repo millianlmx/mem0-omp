@@ -142,7 +142,7 @@ const MAC_FILE = [...SOURCES.keys()].find((file) => file.startsWith("omp-console
 const TAB_SCREENS = "omp-console/ios/OMPConsoleIOS/IOSOSScreens.swift";
 const SHELL = "omp-console/ios/OMPConsoleIOS/IOSOSRootView.swift";
 /** Le formulaire de lancement d'une feature, partagé par les deux coques (ConsoleUI). */
-const NEW_FEATURE_FORM = "omp-console/Sources/ConsoleUI/LaunchViews.swift";
+const NEW_FEATURE_FORM = "omp-console/Sources/ConsoleUI/Runs/LaunchViews.swift";
 
 const TUTOIEMENT = "Vérifie que le Mac est allumé, puis réessaie";
 

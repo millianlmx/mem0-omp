@@ -77,6 +77,36 @@ La racine de `omp-harness/` ne garde que `main.ts` et `cli.ts`, les deux points 
 | `vigie/` | La vigie : surveillance de la pile, incidents, triage et attribution (point d'entrée `vigie/main.ts`). |
 | `workstation/` | Le poste de travail : relais de l'extension Chrome, agent 24/24, gardes du poste. |
 
+### L'app Swift, dossier par dossier
+
+Le client et les écrans que partagent l'app Mac et l'app iOS sont rangés par domaine ; un domaine présent des deux côtés porte le même nom de dossier. La racine de `omp-console/Sources/ConsoleClient/` ne garde que ses deux transverses, `HarnessModel.swift` (le modèle observable que portent tous les domaines) et `HarnessWire.swift` (le contrat JSON commun des runs, de la boîte et des décisions) ; celle de `omp-console/Sources/ConsoleUI/` ne garde que `ConsoleShell.swift`, le socle de tous les écrans partagés.
+
+| Dossier | Responsabilité |
+| --- | --- |
+| `ConsoleClient/Autonomy/` | L'autonomie vue du client : paliers et validations prises seules, consignes permanentes, curseur d'une feature, correction et pause globale. |
+| `ConsoleClient/Connection/` | Le lien au serveur de pipelines : transport https et SSE, porte des appels, lectures groupées et cycle de vie de la coque iOS, remontée et phrase des échecs, préférences et trousseau. |
+| `ConsoleClient/Control/` | La tour de contrôle : vigie, planifications, administration et dépôts, issues par le MCP du serveur, fournisseurs et modèles, santé des services. |
+| `ConsoleClient/Intake/` | La Demande : une phrase libre classée par le serveur, puis un plan à confirmer. |
+| `ConsoleClient/Memory/` | La mémoire du projet lue et corrigée directement par l'app iOS : accès, pages, recherche, graphe, écritures. |
+| `ConsoleClient/Notifications/` | Ce que l'app montre hors d'elle : notifications actionnables et leur pont système, Live Activity, widget. |
+| `ConsoleClient/OS/` | L'OS agentique : décisions et leurs lots, pouls des agents, espaces de l'écran, fils, tableau de bord, brief et chiffres, propositions, sessions locales. |
+| `ConsoleClient/Pairing/` | L'appairage : code `omp1:` et réglage partagé, lien QR et échange du ticket. |
+| `ConsoleClient/Palette/` | La palette de commandes et sa recherche globale, calculées sans vue. |
+| `ConsoleClient/Runs/` | Une feature, du lancement à la preuve : options de lancement et brouillons des gestes, historique, direct et graphe de session, monitoring, preuves, question située. |
+| `ConsoleClient/Spaces/` | Les espaces clients : liste et rapport, frontière et consommation, portée courante gardée par serveur. |
+| `ConsoleClient/Workstation/` | Le poste de travail : extension Chrome et agent 24/24, tour de contrôle du poste, navigateur du serveur, Atlassian. |
+| `ConsoleUI/Autonomy/` | La preuve d'une validation prise seule et la page Système › Autonomie. |
+| `ConsoleUI/Control/` | Les écrans d'exploitation : vigie, planifications, administration et issues, dépôts et leurs réglages, carte « Services ». |
+| `ConsoleUI/Inbox/` | Ce qui attend l'humain : cartes de la boîte, question située, carte d'une question, carte en place sur une feature. |
+| `ConsoleUI/Intake/` | La feuille de la Demande et « Modifier le plan ». |
+| `ConsoleUI/Memory/` | La feuille « Modifier le souvenir ». |
+| `ConsoleUI/Notifications/` | L'ouverture de l'app à l'endroit qu'une notification désigne. |
+| `ConsoleUI/OS/` | Les écrans de l'OS agentique : accueil, radar, fils, décisions, comprendre, savoir, hub Système, espaces. |
+| `ConsoleUI/Palette/` | La palette de commandes (⌘K, ⌘F) et les feuilles de création qu'elle ouvre. |
+| `ConsoleUI/Pairing/` | La feuille « Appairer un iPhone », sa confirmation et le QR code. |
+| `ConsoleUI/Runs/` | Une feature à l'écran : lancement, menus et gestes, consigne et budget, preuves, carte de la session. |
+| `ConsoleUI/Workstation/` | L'écran Poste : état, envois à approuver, tour de contrôle du poste, page Atlassian. |
+
 ## Tests et scripts
 
 La suite node vit dans `test/`, rangée par **ce qu'elle éprouve** ; un fichier =
