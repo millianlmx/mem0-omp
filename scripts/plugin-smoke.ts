@@ -36,6 +36,13 @@
 // Un plugin du catalogue sans vérification d'invocation connue est un ÉCHEC, pas
 // un silence : AC-2 exige qu'une commande ou un outil de CHAQUE plugin soit
 // invoqué. Ajouter un plugin au catalogue impose donc d'étendre INVOCATIONS.
+//
+// Exception : l'entrée d'un ANCIEN nom de plugin (RENAMED_PLUGINS de release.ts,
+// version de transition) livre la même source que l'entrée du nouveau nom. La
+// recharger dans ce process n'enregistrerait rien (garde de double chargement de
+// l'extension) : elle n'est pas rechargée, mais doit porter la même source, la même
+// version et les mêmes commandes que l'entrée du nouveau nom, qui, elle, est chargée
+// et invoquée.
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -43,6 +50,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LAUNCH_APPROVAL } from "../omp-memory-req/extension.ts";
 import { renamedEnv } from "../omp-harness/config/env.ts";
+import { RENAMED_PLUGINS } from "./release.ts";
 
 /** Racine du dépôt, déduite du script (comme check.sh) — pas du cwd appelant. */
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -208,7 +216,7 @@ function uiStub(notes: string[]) {
   } as never;
 }
 
-type Entry = { name: string; source?: unknown; commands?: string[] };
+type Entry = { name: string; source?: unknown; version?: unknown; commands?: string[] };
 type Invocation = (ctx: {
   session: HostSession;
   notes: string[];
@@ -322,8 +330,32 @@ const entries = catalog.plugins ?? [];
 if (entries.length === 0) bail("catalogue vide");
 const pluginRoot = catalog.metadata?.pluginRoot ?? "";
 
+/** Le nouveau nom dont `name` est l'ancien nom, ou `undefined`. */
+const renamedTo = (name: string): string | undefined =>
+  Object.entries(RENAMED_PLUGINS).find(([, renamed]) => renamed.name === name)?.[0];
+
+/** Les écarts d'une entrée d'ancien nom à l'entrée de son nouveau nom (vide : conforme). */
+function aliasGaps(alias: Entry, current: Entry | undefined, currentName: string): string[] {
+  if (current === undefined) return [`l'entrée ${currentName} manque au catalogue`];
+  const gaps: string[] = [];
+  if (alias.source !== current.source) gaps.push(`source ${String(alias.source)} ≠ ${String(current.source)}`);
+  if (alias.version !== current.version) gaps.push(`version ${String(alias.version)} ≠ ${String(current.version)}`);
+  if (JSON.stringify(alias.commands ?? []) !== JSON.stringify(current.commands ?? [])) {
+    gaps.push(`commandes différentes de celles de ${currentName}`);
+  }
+  return gaps;
+}
+
 for (const entry of entries) {
   console.log(`── ${entry.name}`);
+  const currentName = renamedTo(entry.name);
+  if (currentName !== undefined) {
+    const gaps = aliasGaps(entry, entries.find((other) => other.name === currentName), currentName);
+    gaps.length === 0
+      ? ok(`ancien nom de ${currentName} : même source, même version, mêmes commandes (chargé sous ${currentName})`)
+      : bad(`${entry.name}, ancien nom de ${currentName} : ${gaps.join(" ; ")}`);
+    continue;
+  }
   const source = entry.source;
   if (typeof source !== "string" || !source.startsWith("./")) {
     console.log(`  · ${entry.name} : source distante, non vérifiable`);

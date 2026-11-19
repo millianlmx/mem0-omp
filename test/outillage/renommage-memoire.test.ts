@@ -40,7 +40,9 @@ import type { FauxOpenAI } from "../../scripts/memory-http-contrat/faux-openai.t
 import { fakeSchema } from "../support/fake-zod.ts";
 import { testConfig } from "../support/harness-fixtures.ts";
 import { prerequisAbsent } from "../support/prerequis.ts";
-import { ROOT, excludedFromCopy, tmpdir } from "../support/repo.ts";
+import { ROOT, childEnv, excludedFromCopy, tmpdir } from "../support/repo.ts";
+import { spawnAsync } from "../support/spawn.ts";
+import type { Run } from "../support/spawn.ts";
 import { ancienEnsureBrief } from "../support/renommage-memoire/ancien-brief.ts";
 
 const FIXTURES = path.join(ROOT, "test", "support", "renommage-memoire");
@@ -1233,22 +1235,40 @@ test("renommage-memoire/AC-303 : l'ancien nom est lu quand le nouveau manque, le
   }
 });
 
-// ── Le binaire memory-rs : convention de memoire-liee (MEMORY_RS_BIN, saut annoncé, échec sous MEMORY_OMP_REQUIRE_RUST=1) ──
-const BINAIRE =
-  renamedEnvHarness(process.env, "MEMORY_RS_BIN", "MEM0_RS_BIN") ??
-  path.join(ROOT, "memory-stack", "memory-rs", "target", "debug", "memory-rs");
+// ── Le binaire memory-rs : convention de memoire-liee (cargo le construit, saut annoncé sans cargo, échec sous
+// MEMORY_OMP_REQUIRE_RUST=1). La part macOS de la CI (`macos-tests (2/2)`) ne lance pas la section rust de
+// check.sh avant ce fichier : le binaire n'y existe que si ce test le construit.
+const BINAIRE_DECLARE = renamedEnvHarness(process.env, "MEMORY_RS_BIN", "MEM0_RS_BIN");
+const CIBLE_CARGO = process.env.CARGO_TARGET_DIR
+  ? path.resolve(ROOT, process.env.CARGO_TARGET_DIR)
+  : path.join(ROOT, "memory-stack", "memory-rs", "target");
+const BINAIRE = BINAIRE_DECLARE ?? path.join(CIBLE_CARGO, "debug", "memory-rs");
+const CONSTRUIRE = ["build", "--manifest-path", "memory-stack/memory-rs/Cargo.toml", "--locked"];
 const EXIGE_RUST = renamedEnvHarness(process.env, "MEMORY_OMP_REQUIRE_RUST", "MEM0_OMP_REQUIRE_RUST") === "1";
+const PROFONDEUR = Number(renamedEnvHarness(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
+let construction: Promise<Run> | undefined;
 
-/** Le binaire est-il là ? Sinon le sous-test est sauté (annoncé), ou échoue sous MEMORY_OMP_REQUIRE_RUST=1. */
-function binairePret(t: { skip(message: string): void }): boolean {
+/**
+ * Le binaire est-il là ? Absent, cargo le construit une fois (au premier niveau seulement, et jamais à la place
+ * d'un MEMORY_RS_BIN déclaré) ; une construction en échec fait échouer le sous-test. Sans cargo, le sous-test est
+ * sauté (annoncé), ou échoue sous MEMORY_OMP_REQUIRE_RUST=1.
+ */
+async function binairePret(t: { skip(message: string): void }): Promise<boolean> {
   if (fs.existsSync(BINAIRE)) return true;
-  prerequisAbsent(
-    t,
-    `binaire memory-rs (${BINAIRE})`,
-    "service mémoire non lancé",
-    EXIGE_RUST ? "MEMORY_OMP_REQUIRE_RUST=1" : null,
-  );
-  return false;
+  if (BINAIRE_DECLARE !== undefined || PROFONDEUR !== 0) {
+    const exigence = EXIGE_RUST ? "MEMORY_OMP_REQUIRE_RUST=1" : null;
+    prerequisAbsent(t, `binaire memory-rs (${BINAIRE})`, "service mémoire non lancé", exigence);
+    return false;
+  }
+  if (spawnSync("cargo", ["--version"], { encoding: "utf8" }).status !== 0) {
+    prerequisAbsent(t, "cargo", "memory-rs non construit", EXIGE_RUST ? "MEMORY_OMP_REQUIRE_RUST=1" : null);
+    return false;
+  }
+  construction ??= spawnAsync("cargo", CONSTRUIRE, { cwd: ROOT, env: childEnv(), timeout: 1_200_000 });
+  const construit = await construction;
+  assert.equal(construit.status, 0, `cargo build de memory-rs : ${construit.stdout}${construit.stderr}`);
+  assert.ok(fs.existsSync(BINAIRE), `cargo build a réussi, mais ${BINAIRE} est absent`);
+  return true;
 }
 
 type ServiceRs = {
@@ -1358,7 +1378,7 @@ test("renommage-memoire/AC-304 : le service juge X-Memory-Token, sinon X-Mem0-To
   await t.test(
     "memory-rs avec un jeton : l'un, l'autre, les deux (bon nouveau + mauvais ancien → 200, mauvais nouveau + bon ancien → 401)",
     async (st) => {
-      if (!binairePret(st)) return;
+      if (!(await binairePret(st))) return;
       const faux = await demarrerFauxOpenAI();
       const home = tmpdir("renommage-memoire-http-");
       const service = await lancerService({ HOME: home, MEMORY_HTTP_TOKEN: "bon" }, faux);
@@ -1562,7 +1582,7 @@ test("renommage-memoire/AC-305 : les anciens réglages et la base d'avant sont l
   await t.test(
     "memory-rs : la base d'avant `~/.mem0/mem0-rs.db` est lue sur place, sans variable, et rien n'est créé sous `~/.memory/`",
     async (st) => {
-      if (!binairePret(st)) return;
+      if (!(await binairePret(st))) return;
       const faux = await demarrerFauxOpenAI();
       const maison = tmpdir("renommage-memoire-base-");
       const ancienne = path.join(maison, ".mem0", "mem0-rs.db");
@@ -2084,7 +2104,7 @@ test("renommage-memoire/AC-309 : /health porte memory et mem0, /metrics chaque f
   await t.test(
     "memory-rs démarré : le corps de /health, les familles de /metrics et le journal du jour",
     async (st) => {
-      if (!binairePret(st)) return;
+      if (!(await binairePret(st))) return;
       const faux = await demarrerFauxOpenAI();
       const donnees = tmpdir("renommage-memoire-emission-");
       const service = await lancerService(
