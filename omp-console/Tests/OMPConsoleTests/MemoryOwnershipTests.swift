@@ -49,7 +49,7 @@ private final class ForeignOwnershipDouble: @unchecked Sendable {
     }
 }
 
-private let ourExecutable = URL(fileURLWithPath: "/Applications/OMP Console.app/Contents/Resources/mem0-rs")
+private let ourExecutable = URL(fileURLWithPath: "/Applications/OMP Console.app/Contents/Resources/memory-rs")
 
 /// Un enregistrement `lsof -F pcn`.
 private func lsofRecord(pid: Int32, command: String, port: Int) -> String {
@@ -62,14 +62,14 @@ private func lsofRecord(pid: Int32, command: String, port: Int) -> String {
 func remoteAddressNamesTheHostWithoutProbing() async {
     let double = ForeignOwnershipDouble()
     let ownership = await StackOwnership.foreignOwnership(
-        address: "http://mem0.example.com:8321",
+        address: "http://memory.example.com:8321",
         ourExecutable: ourExecutable,
         environment: [:],
         run: double.runner
     )
 
-    #expect(ownership?.owner == "le service distant mem0.example.com")
-    #expect(ownership?.address == "http://mem0.example.com:8321")
+    #expect(ownership?.owner == "le service distant memory.example.com")
+    #expect(ownership?.address == "http://memory.example.com:8321")
     #expect(ownership?.gesture == StackOwnership.remoteAddressGesture)
     // Aucun `lsof`, aucun `ps` : on ne sonde pas un hôte distant.
     #expect(double.calls.isEmpty)
@@ -81,7 +81,7 @@ func localHostsAreTheThreeLoopbackSpellings() {
     #expect(StackOwnership.isLocalHost("127.0.0.1"))
     #expect(StackOwnership.isLocalHost("::1"))
     #expect(StackOwnership.isLocalHost("[::1]"))
-    #expect(!StackOwnership.isLocalHost("mem0.example.com"))
+    #expect(!StackOwnership.isLocalHost("memory.example.com"))
     #expect(!StackOwnership.isLocalHost("192.168.1.10"))
 }
 

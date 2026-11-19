@@ -1,4 +1,4 @@
-// L'oracle : mem0-rs, scope PROJET. Briefs clients, comptes rendus de besoins,
+// L'oracle : memory-rs, scope PROJET. Briefs clients, comptes rendus de besoins,
 // schémas d'archi et surtout les décisions tranchées par l'humain, avec leur raison.
 //
 // Lu par /req, /specs et /project ; écrit par le knowledge-updater (fin de run) et
@@ -29,7 +29,7 @@ export type FetchLike = (
 ) => Promise<FetchResponse>;
 
 /**
- * Le dossier de consolidation d'une portée (`GET /memory/dream/dossier` de mem0-rs) :
+ * Le dossier de consolidation d'une portée (`GET /memory/dream/dossier` de memory-rs) :
  * ce que la session de rêve lit. Les champs non lus par le harness restent opaques.
  */
 export type DreamDossier = {
@@ -40,7 +40,7 @@ export type DreamDossier = {
   [key: string]: unknown;
 };
 
-/** Ce que mem0-rs a écrit d'une consolidation (`POST /memory/dream/consolidation`). */
+/** Ce que memory-rs a écrit d'une consolidation (`POST /memory/dream/consolidation`). */
 export type ConsolidationReport = {
   dream: string;
   observations_added: number;
@@ -58,7 +58,7 @@ export interface Oracle {
   retain(scope: string, text: string, tags?: string[]): Promise<boolean>;
   /** Le service répond-il (`GET /health`, `ok: true`) ? */
   health(): Promise<boolean>;
-  /** Le corps de `GET /health` de mem0-rs (version, souvenirs, taille, sauvegardes) ; `null` : injoignable. */
+  /** Le corps de `GET /health` de memory-rs (version, souvenirs, taille, sauvegardes) ; `null` : injoignable. */
   memoryHealth(): Promise<Record<string, unknown> | null>;
   /** Le dossier de rêve de la portée ; `null` : service injoignable ou sans cette route. */
   dreamDossier(scope: string): Promise<DreamDossier | null>;
@@ -71,7 +71,7 @@ export interface Oracle {
   lostWrites(): LostWrites;
 }
 
-/** Les étiquettes d'une ligne mem0 : `tags` (chaîne « a,b » ou liste), sinon `metadata.tags`. */
+/** Les étiquettes d'une ligne memory : `tags` (chaîne « a,b » ou liste), sinon `metadata.tags`. */
 function tagsOf(record: Record<string, unknown>): string[] {
   const metadata = record.metadata;
   const raw =
@@ -91,7 +91,7 @@ export function isDecisionMemory(memory: Memory): boolean {
   return memory.tags.includes("harness") && memory.tags.includes("decision");
 }
 
-/** Les lignes d'une réponse de recherche mem0 (liste nue ou `{ results }`). */
+/** Les lignes d'une réponse de recherche memory (liste nue ou `{ results }`). */
 export function memoriesOf(body: unknown): Memory[] {
   const rows = Array.isArray(body)
     ? body
@@ -116,11 +116,11 @@ export function memoriesOf(body: unknown): Memory[] {
   return out;
 }
 
-/** Un refus HTTP de mem0-rs, avec son statut : 429 et 5xx se retentent, un autre 4xx non. */
+/** Un refus HTTP de memory-rs, avec son statut : 429 et 5xx se retentent, un autre 4xx non. */
 class OracleHttpError extends Error {
   readonly status: number;
   constructor(status: number, body: string) {
-    super(`mem0 ${status}: ${body.slice(0, 200)}`);
+    super(`memory ${status}: ${body.slice(0, 200)}`);
     this.status = status;
   }
 }
@@ -167,7 +167,7 @@ export type HttpOracleOptions = {
   log?: LogLine;
   /** Le délai d'une lecture (rappel, santé, dossier) : elles sont sur le chemin des prompts. */
   timeoutMs?: number;
-  /** Le délai d'un essai d'écriture : mem0-rs y plonge le texte, son modèle d'embedding peut se recharger. */
+  /** Le délai d'un essai d'écriture : memory-rs y plonge le texte, son modèle d'embedding peut se recharger. */
   writeTimeoutMs?: number;
   /** Les essais d'une écriture, le premier compris. */
   writeAttempts?: number;
@@ -210,7 +210,7 @@ export class HttpOracle implements Oracle {
         method: body ? "POST" : "GET",
         headers: {
           ...(body ? { "Content-Type": "application/json" } : {}),
-          ...(this.#config.token ? { "X-Mem0-Token": this.#config.token } : {}),
+          ...(this.#config.token ? { "X-Memory-Token": this.#config.token } : {}),
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
         signal: controller.signal,
@@ -281,7 +281,7 @@ export class HttpOracle implements Oracle {
   }
 
   /**
-   * mem0-rs ne filtre `tags` que par égalité stricte de la chaîne entière (« a,b »),
+   * memory-rs ne filtre `tags` que par égalité stricte de la chaîne entière (« a,b »),
    * et l'ordre des étiquettes n'est pas garanti : le filtre se fait ici, sur une
    * fenêtre plus large que `limit`.
    */

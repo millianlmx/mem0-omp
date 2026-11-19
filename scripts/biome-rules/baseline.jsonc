@@ -34,8 +34,8 @@
         "!**/test/harness/runs/harness-fairness.test.ts",
         "!**/test/harness/runs/harness-raison-de-file.test.ts",
         "!**/test/harness/workstation/poste-serveur.test.ts",
-        "!**/test/stack/mem0-rs-migration.test.ts",
-        "!**/test/stack/mem0-stack-bascule-rust.test.ts",
+        "!**/test/stack/memory-rs-migration.test.ts",
+        "!**/test/stack/memory-stack-bascule-rust.test.ts",
         "!**/test/support/atlassian-double.ts",
         "!**/test/support/fake-omp-rpc.ts",
         "!**/test/support/harness-fixtures.ts",
@@ -46,7 +46,7 @@
       "path": "./scripts/biome-rules/no-unknown-returns.grit",
       "includes": [
         "**/omp-harness/**/*.ts",
-        "**/omp-mem0-req/**/*.ts",
+        "**/omp-memory-req/**/*.ts",
         "**/omp-chrome/**/*.ts",
         "**/scripts/**/*.ts",
         "!**/omp-chrome/src/cdp.ts"

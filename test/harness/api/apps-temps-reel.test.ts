@@ -5,7 +5,7 @@
 //   chaque événement relisait tout l'historique.
 // - Les réponses JSON de plus de 2 Ko partent en gzip au client qui l'accepte.
 // - `GET /v1/stats` est gardé 30 s, puis rendu périmé pendant son recalcul ; `GET /v1/status` ne fait plus
-//   attendre ses lecteurs sur la santé de mem0.
+//   attendre ses lecteurs sur la santé de memory.
 // - L'ouverture ne lit plus tout l'historique : `GET /v1/runs?recent=`, une boîte qui ne lit que les runs
 //   vivants et borne ses décisions à relire, des compteurs de statut et de projets tenus en base.
 import test from "node:test";
@@ -13,7 +13,9 @@ import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as zlib from "node:zlib";
-import { GZIP_MIN_BYTES, PULSE_TEXT, StatsCache, createHandler, pulseFrame } from "../../../omp-harness/api/http.ts";
+import { PULSE_TEXT, createHandler, pulseFrame } from "../../../omp-harness/api/http.ts";
+import { GZIP_MIN_BYTES } from "../../../omp-harness/api/http-io.ts";
+import { StatsCache } from "../../../omp-harness/api/run-routes.ts";
 import type { EventRow } from "../../../omp-harness/db/db.ts";
 import { INBOX_DECISIONS } from "../../../omp-harness/api/queries.ts";
 import { fakeWorld } from "../../support/harness-fixtures.ts";
@@ -218,7 +220,7 @@ test("apps-temps-reel/AC-3 : une réponse JSON de plus de 2 Ko part en gzip au c
   }
 });
 
-test("apps-temps-reel/AC-4 : les statistiques sont gardées 30 s par lecteur, puis rendues telles quelles pendant qu'un seul recalcul part hors de la requête ; /v1/status lit la santé de mem0 en cache", async () => {
+test("apps-temps-reel/AC-4 : les statistiques sont gardées 30 s par lecteur, puis rendues telles quelles pendant qu'un seul recalcul part hors de la requête ; /v1/status lit la santé de memory en cache", async () => {
   let now = 0;
   const deferred: (() => void)[] = [];
   const cache = new StatsCache(

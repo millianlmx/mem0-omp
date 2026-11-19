@@ -164,7 +164,7 @@ public enum MarkdownDocument {
 
     /// Les commentaires HTML (`<!-- … -->`) sont invisibles dans un rendu Markdown ;
     /// le parseur de Foundation les rend comme du texte (vu à la recette :
-    /// `<!-- mem0:brief v5 -->` affiché en tête d'AGENTS.md). Ils sont retirés HORS
+    /// `<!-- memory:brief v5 -->` affiché en tête d'AGENTS.md). Ils sont retirés HORS
     /// des blocs de code clôturés, qui gardent leur texte exact.
     public static func withoutHTMLComments(_ markdown: String) -> String {
         guard markdown.contains("<!--") else { return markdown }

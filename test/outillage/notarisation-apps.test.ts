@@ -91,7 +91,7 @@ esac`,
   "scripts/swift-app.sh": `
 echo "swift-app $* OMP_CODESIGN_IDENTITY=\${OMP_CODESIGN_IDENTITY:-}" >> "$LOG"
 app="$(dirname "$0")/../omp-console/build/OMP Console.app/Contents"
-mkdir -p "$app/MacOS" "$app/Resources" && echo binaire > "$app/MacOS/OMPConsole" && echo service > "$app/Resources/mem0-rs"`,
+mkdir -p "$app/MacOS" "$app/Resources" && echo binaire > "$app/MacOS/OMPConsole" && echo service > "$app/Resources/memory-rs"`,
   security: `
 echo "security $*" >> "$LOG"
 case "$1" in
@@ -116,7 +116,7 @@ case "$1 $2" in
     cp "$3" "$DEVELOPER_DIR/soumis.zip"
     while [ $# -gt 0 ]; do [ "$1" = --key ] && cp "$2" "$DEVELOPER_DIR/cle-vue.p8"; shift; done
     printf '%s\\n' "$NOTARY_REPONSE" ;;
-  "notarytool log") echo '{"issues":[{"path":"OMP Console.app/Contents/Resources/mem0-rs","message":"The signature does not include a secure timestamp."}]}' ;;
+  "notarytool log") echo '{"issues":[{"path":"OMP Console.app/Contents/Resources/memory-rs","message":"The signature does not include a secure timestamp."}]}' ;;
   "stapler staple") echo ticket > "$3/Contents/CodeResources" ;;
 esac
 exit 0`,
@@ -240,7 +240,7 @@ test("notarisation-apps/AC-2 : avec les secrets Mac, trousseau temporaire, signa
     `security set-key-partition-list `,
     `security list-keychains -d user -s ${keychain} /Users/runner/Library/Keychains/login.keychain-db`,
     `swift-app --no-tests OMP_CODESIGN_IDENTITY=${SHA}`,
-    `codesign --force --timestamp --options runtime --sign ${SHA} ${bundle}/Contents/Resources/mem0-rs`,
+    `codesign --force --timestamp --options runtime --sign ${SHA} ${bundle}/Contents/Resources/memory-rs`,
     `codesign --force --timestamp --options runtime --sign ${SHA} ${bundle}`,
     `codesign --verify --strict --deep ${bundle}`,
     `xcrun notarytool submit `,

@@ -4,7 +4,7 @@
 //   au journal ;
 // - l'état des sauvegardes (backup.ts) : la dernière réussie, le dernier échec, local ou
 //   distant — un échec devient `backup_failed` (notifié) ;
-// - la santé de la mémoire (mem0-rs `GET /health`), gardée `MEMORY_TTL_MS` ;
+// - la santé de la mémoire (memory-rs `GET /health`), gardée `MEMORY_TTL_MS` ;
 // - les compteurs HTTP et SSE de `GET /metrics` (prometheus.ts) ;
 // - la rétention : points de `/v1/metrics` (`metrics.retentionDays`) et erreurs des
 //   clients (`events.retentionDays`), au plus une fois par heure.
@@ -29,7 +29,7 @@ const PRUNE_EVERY_MS = 60 * 60 * 1000;
 const MESSAGE_MAX = 2000;
 const CONTEXT_MAX_BYTES = 8192;
 
-/** La santé de la mémoire (mem0-rs) telle que `GET /v1/status` la rend. */
+/** La santé de la mémoire (memory-rs) telle que `GET /v1/status` la rend. */
 export type MemoryStatus = {
   configured: boolean;
   ok: boolean;
@@ -37,7 +37,7 @@ export type MemoryStatus = {
   uptimeSec: number | null;
   memories: number | null;
   dbBytes: number | null;
-  /** Le dernier instantané de mem0-rs (ISO 8601), et la raison de son dernier échec. */
+  /** Le dernier instantané de memory-rs (ISO 8601), et la raison de son dernier échec. */
   lastBackupAt: string | null;
   lastBackupError: string | null;
   checkedAt: number;
@@ -62,13 +62,13 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
-/** La santé de mem0-rs lue dans le corps de son `GET /health` (`null` : injoignable). */
+/** La santé de memory-rs lue dans le corps de son `GET /health` (`null` : injoignable). */
 export function memoryStatusOf(configured: boolean, body: Record<string, unknown> | null, now: number): MemoryStatus {
-  const banner = stringOrNull(body?.mem0);
+  const banner = stringOrNull(body?.memory);
   return {
     configured,
     ok: configured && body?.ok === true,
-    version: stringOrNull(body?.version) ?? (banner ? banner.replace(/^mem0-rs\s+/, "") : null),
+    version: stringOrNull(body?.version) ?? (banner ? banner.replace(/^memory-rs\s+/, "") : null),
     uptimeSec: numberOrNull(body?.uptime_s),
     memories: numberOrNull(body?.memories),
     dbBytes: numberOrNull(body?.db_bytes),

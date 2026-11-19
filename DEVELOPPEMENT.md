@@ -1,4 +1,4 @@
-# Développer mem0-omp
+# Développer memory-omp
 
 L'organisation du dépôt et le détail de la suite de tests, de la CI et de la release. Les règles à respecter
 avant une PR sont dans [CONTRIBUTING.md](CONTRIBUTING.md), la publication dans
@@ -7,18 +7,18 @@ avant une PR sont dans [CONTRIBUTING.md](CONTRIBUTING.md), la publication dans
 ## Le dépôt
 
 ```
-mem0-omp/                              racine = marketplace OMP
+memory-omp/                              racine = marketplace OMP
 ├── .omp-plugin/marketplace.json       catalogue (repli : .claude-plugin/)
 ├── docker-compose.yml                 le serveur en une pile, pour Portainer (omp-harness/README.md § « Avec Portainer »)
-├── omp-mem0-memory/                   le plugin mémoire (un module par responsabilité, install.sh)
-├── omp-mem0-req/                      le plugin des pipelines : client du serveur (/req, /project, /audit, /pipelines, /harness-follow ; outils harness_* du modèle)
+├── omp-memory/                   le plugin mémoire (un module par responsabilité, install.sh)
+├── omp-memory-req/                      le plugin des pipelines : client du serveur (/req, /project, /audit, /pipelines, /harness-follow ; outils harness_* du modèle)
 ├── omp-harness/                       le serveur de pipelines du VPS
 │   └── deploy/                        conteneurs (harness.sh, compose), install.sh et systemd, module NixOS
 ├── omp-console/                       l'app macOS (SwiftUI), le noyau partagé et l'app iOS
 │   └── ios/                           le projet Xcode de l'app iOS
 ├── omp-chrome/                        l'extension Chrome du poste de travail (MV3 : observation, actions de l'agent, transcription locale)
-├── mem0-stack/                        la pile conteneur du service mémoire
-│   └── mem0-rs/                       le serveur mémoire (Rust + SQLite)
+├── memory-stack/                        la pile conteneur du service mémoire
+│   └── memory-rs/                       le serveur mémoire (Rust + SQLite)
 ├── test/                              la suite node --test
 ├── scripts/check.sh                   la validation avant publication
 ├── scripts/test-files.sh              liste les fichiers de test : tous, macOS, du diff, d'une liste, outillage
@@ -41,7 +41,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/app-icon.sh                dessine l'icône de l'app
 ├── scripts/run-console.sh             recompile et relance l'app Mac
 ├── scripts/recette/                   recettes manuelles, jamais lancées par la CI
-├── scripts/mem0-http-contrat.sh       contrat HTTP boîte noire du service mémoire
+├── scripts/memory-http-contrat.sh       contrat HTTP boîte noire du service mémoire
 ├── scripts/release.ts                 commit de release sur main, tags et releases au merge
 ├── scripts/release-assets.sh          construit l'app Mac et l'IPA jointes à chaque release
 ├── scripts/no-manual-bump.sh          refuse un bump de version manuel
@@ -107,6 +107,20 @@ Le client et les écrans que partagent l'app Mac et l'app iOS sont rangés par d
 | `ConsoleUI/Runs/` | Une feature à l'écran : lancement, menus et gestes, consigne et budget, preuves, carte de la session. |
 | `ConsoleUI/Workstation/` | L'écran Poste : état, envois à approuver, tour de contrôle du poste, page Atlassian. |
 
+### Le service mémoire, dossier par dossier
+
+La racine de `src/` du crate du service mémoire ne garde que son point d'entrée `main.rs` (le serveur et les sous-commandes `import` et `banc`) et deux transverses lus par presque tous les domaines : `config.rs` (ligne de commande et variables d'environnement) et `horodatage.rs` (le format d'instant commun). Chaque autre module est rangé, sous son nom de base, dans le dossier de son domaine, avec les fichiers de données qu'il intègre au binaire.
+
+| Dossier | Responsabilité |
+| --- | --- |
+| `api/` | La surface HTTP : routes du contrat et routes des liens, du rêve et de la consolidation, décodage et validation des corps, jetons et portées, masquage des secrets avant écriture. |
+| `classement/` | La recherche hybride : plongements denses et creux (BM25), fusion des classements, et le banc qui mesure ces fusions sur un corpus étiqueté. |
+| `entretien/` | L'entretien de la mémoire hors des requêtes : rêve local et dossiers de consolidation. |
+| `exploitation/` | L'exploitation du service : journal structuré, métriques Prometheus, instantanés de la base. |
+| `modele/` | Le modèle de langage : appels OpenAI-compatibles (délais, nouvelles tentatives) et extraction additive des faits, avec ses invites. |
+| `reprise/` | La reprise d'une mémoire de l'ancien service Python : collection Qdrant et historique lus, base écrite en une transaction. |
+| `stockage/` | La base SQLite unique : souvenirs, vecteurs, termes et historique, graphe des liens et ses entités, voisins de proximité, verrou d'exclusivité. |
+
 ## Tests et scripts
 
 La suite node vit dans `test/`, rangée par **ce qu'elle éprouve** ; un fichier =
@@ -115,8 +129,8 @@ une feature (son slug), et un id `<slug>/AC-<n>` ne vit que dans un test
 
 | Dossier | Ce qu'il éprouve |
 |---|---|
-| `test/memoire/` | le plugin `omp-mem0-memory` (rappel, brief, outils mem0) |
-| `test/req/` | le plugin `omp-mem0-req`, client du harness |
+| `test/memoire/` | le plugin `omp-memory` (rappel, brief, outils memory) |
+| `test/req/` | le plugin `omp-memory-req`, client du harness |
 | `test/harness/` | le serveur de pipelines `omp-harness/`, un sous-dossier par dossier du serveur ; à la racine, les seuls tests transverses : point d'entrée `cli.ts`, déploiement (installation, conteneur, Portainer, NixOS, déploiement continu), structure du serveur et rangement de ses tests |
 | `test/harness/api/` | l'API des clients : HTTP, SSE, MCP, appairage, idempotence, sécurité de l'API, premier chargement |
 | `test/harness/atlassian/` | le connecteur Atlassian et ses agents |
@@ -142,7 +156,7 @@ une feature (son slug), et un id `<slug>/AC-<n>` ne vit que dans un test
 | `test/harness/workstation/` | le poste de travail : agent, demandes, navigateurs, sécurité, serveur, visibilité |
 | `test/extension/` | l'extension Chrome `omp-chrome` : modules purs (appairage, observation, garde d'envoi, snapshot, STT) et construction |
 | `test/console/` | les sources d'OMP Console — gardes textuelles Mac et iOS (`ios-*`), noyau partagé, coque iOS |
-| `test/stack/` | `mem0-stack` : mem0-rs, contrat boîte noire, migration, `doctor.sh` |
+| `test/stack/` | `memory-stack` : memory-rs, contrat boîte noire, migration, `doctor.sh` |
 | `test/outillage/` | l'outillage du dépôt : `check.sh`, CI, release, smoke des plugins, documentation |
 | `test/support/` | les modules partagés, jamais lancés seuls (pas de `.test.ts`) : `repo.ts` (racine, liste des tests, dossiers jetables, copie du dépôt, environnement des enfants), `git.ts` (dépôts git jetables), `spawn.ts` (processus enfants en parallèle), `swift-source.ts` (sources Swift sans commentaires, lexer de littéraux), `harness-fixtures.ts` et `fake-omp-rpc.ts` (harness complet aux runners factices), `fake-zod.ts`, `doctor-banc.ts`, `prerequis.ts` (sauts « prérequis absent », outils épinglés), `workflows.ts` (lecture des workflows aux `uses:` épinglés) |
 
@@ -202,28 +216,28 @@ jamais par un `t.skip` nu : c'est ce saut que `--strict` change en échec nommé
 
 `scripts/` ne garde à sa racine que ce que la CI, la release et le développement
 lancent (`check.sh`, `test-files.sh`, `typecheck.sh`, `release.ts`,
-`swift-app.sh`, `ios-build.sh`, `run-console.sh`, `mem0-http-contrat.sh`…) ; les
+`swift-app.sh`, `ios-build.sh`, `run-console.sh`, `memory-http-contrat.sh`…) ; les
 recettes manuelles ou gatées (captures iOS, sondes AX, bascule réelle, pile compose)
 vivent dans `scripts/recette/`.
 
 `bash scripts/recette/smoke-pile.sh [--omlx <url …/v1>] [--keep]` éprouve la pile
 compose du serveur (`docker-compose.yml`, celle de Portainer) sur un poste avec Docker
 (ou podman et sa CLI `docker`), Compose ≥ 2.24.4, node, git et curl : il construit
-les images, monte le harness et mem0-rs sous un projet, un réseau, des dossiers
+les images, monte le harness et memory-rs sous un projet, un réseau, des dossiers
 (`OMP_SMOKE_DIR`, `~/.cache` par défaut) et des ports à lui, sans clé de modèle — un
 faux serveur compatible OpenAI sert les embeddings, ou l'oMLX donné par `--omlx`
 (`http://host.docker.internal:8000/v1` sur un Mac) —, puis vérifie dans l'ordre :
 `/v1/health` à 200 avec le commit du clone, un client appairé (`--add-client`) dont
 le jeton ouvre l'API (401 sans), un run de /req au merge sur un dépôt jetable avec le
 faux runner des tests (`test/support/fake-omp-rpc.ts`), et un souvenir écrit puis
-retrouvé dans mem0. Le faux runner ne pesant rien, la recette abaisse l'admission
+retrouvé dans memory. Le faux runner ne pesant rien, la recette abaisse l'admission
 mémoire du service (`admission.reserveMiB` 256, runner et heavy 64 Mio) : avec la
 réserve de 2 Gio d'un serveur, une VM de poste de 4 Go refuse toute admission et le
 run reste en file (`admission_refused` dans sa timeline). Une ligne `✓`/`✗` par
 vérification ; au premier écart, l'état des conteneurs, les journaux du harness, de
-mem0 et du faux runner, `GET /v1/status` et la timeline du run, puis la sortie 1.
+memory et du faux runner, `GET /v1/status` et la timeline du run, puis la sortie 1.
 Tout vert : 0. La pile est retirée à la fin, sauf avec `--keep`. La première fois,
-la construction de mem0-rs prend plusieurs minutes (`OMP_SMOKE_TIMEOUT`, 300 s par
+la construction de memory-rs prend plusieurs minutes (`OMP_SMOKE_TIMEOUT`, 300 s par
 étape d'attente). Ni `check.sh` ni la CI ne la lancent.
 
 ## Naviguer sans le Chrome du Mac (Moli)
@@ -321,7 +335,7 @@ Pour couper le relais Chrome de l'outil navigateur intégré d'omp, lance omp av
   isolation `container` porte une preuve `screenshot` « rendu Moli, fidélité visuelle non garantie »
   sans que l'agent appelle `qa_*`, et `docker ps` ne montre plus de conteneur `omp-qa-*` après la revue ;
 - isolement réseau réel de la QA : depuis le conteneur `omp-qa-<run>-<étape>-browser`, ni `http://harness:8790`,
-  ni `http://mem0:8321`, ni `moli-poste`, ni la prévisualisation d'une autre revue ne répondent, et depuis
+  ni `http://memory:8321`, ni `moli-poste`, ni la prévisualisation d'une autre revue ne répondent, et depuis
   un runner la prévisualisation d'une revue ne répond pas (les tests ne modélisent cet espace réseau que par
   `--proxy` et prouvent la construction des commandes, pas le noyau) ;
 - `docker exec -i … /busybox nc 127.0.0.1 9222` relaie le WebSocket CDP sans altération avec le vrai CLI
@@ -360,9 +374,9 @@ Types rougit en donnant cette commande. La CI la lance avant `check.sh` (étape
 `release` et `release-simulation`. La validation ne se contente pas de
 transpiler les extensions : `scripts/plugin-smoke.ts` charge
 **réellement** chaque plugin du catalogue dans un OMP (SDK épinglé sous Bun),
-vérifie les commandes enregistrées, invoque `/mem0-status` puis l'outil
-`mem0_search` d'un côté, `/req` de l'autre, et exige le résultat observé — le
-service mem0 étant remplacé par un stub local, donc sans conteneur ni credential.
+vérifie les commandes enregistrées, invoque `/memory-status` puis l'outil
+`memory_search` d'un côté, `/req` de l'autre, et exige le résultat observé — le
+service memory étant remplacé par un stub local, donc sans conteneur ni credential.
 Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux statuts
 ainsi que `release-simulation` : le merge est bloqué.
 
@@ -381,7 +395,7 @@ Son `.env` pose `OMP_IOS_SIMULATOR=<udid>` (simulateur `mem0-omp-ci`, réservé 
 sur le simulateur que le poste utilise, `xcodebuild test` perd testmanagerd. Les jobs : `macos-app-swift` (`--sections=app-swift`), `macos-app-ios` (`--sections=app-ios`)
 et `macos-tests (1/2)`, `macos-tests (2/2)`. Les deux jobs d'app commencent par
 `scripts/ci-scope.sh --base=<sha de la base> app-swift|app-ios` : si rien dans le diff ne
-commence par `omp-console/`, `scripts/`, `mem0-stack/` (app Swift seulement) ou
+commence par `omp-console/`, `scripts/`, `memory-stack/` (app Swift seulement) ou
 `.github/workflows/check.yml`, l'étape de compilation est sautée et le job reste vert ;
 un diff illisible ou vide fait compiler. Mesuré le 2026-10-22, avant ce découpage :
 `macos-app-ios` 674 s dont 13 s de tests, `macos-app-swift` 529 s, 16 jobs macOS par
@@ -409,7 +423,7 @@ un run nocturne ou manuel n'est jamais annulé.
 **Caches de la CI.** Les jobs qui installent ou compilent restaurent un cache
 `actions/cache@v6` avant `check.sh` : `check` et `macos-tests` le cache npm
 `~/.npm` (hôte OMP) et le cache cargo (`~/.cargo/registry/index`,
-`~/.cargo/registry/cache`, `~/.cargo/git/db` et `mem0-stack/mem0-rs/target`) —
+`~/.cargo/registry/cache`, `~/.cargo/git/db` et `memory-stack/memory-rs/target`) —
 dans `macos-tests`, cargo pour la partie 1/2 seulement ; `macos-app-swift`
 le cache cargo (cible release de `swift-app.sh`) ;
 `release-simulation` le cache cargo. Plus aucun cache SwiftPM (`.build-app`,
@@ -445,7 +459,7 @@ de `check.yml` et `release-simulation.yml`, 10 pour l'agrégateur) — sauf le j
 et chaque action est épinglée par le sha de son commit, sa version en commentaire
 (`uses: actions/cache@<sha> # v6.1.0`).
 `.github/dependabot.yml` tient chaque semaine ces épingles, la crate
-`mem0-stack/mem0-rs` et les images des Dockerfile et des compose à jour,
+`memory-stack/memory-rs` et les images des Dockerfile et des compose à jour,
 mineures et correctifs groupés en une PR ; jamais npm, dont les outils sont
 installés à une version exacte par les scripts. Les gardes de `test/outillage`
 lisent un `uses:` épinglé par sa version majeure (`test/support/workflows.ts`) :
@@ -461,7 +475,7 @@ local — sans option, toutes les sections et toute la suite tournent :
 | `--tests-scope=macos` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=macos` |
 | `--tests-base=<réf>` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=changed=<réf> --with-outillage` (avec `--macos` si `--tests-scope=macos`) ; une sélection vide laisse la section verte avec un `·` explicatif ; en vert, la section liste aussi ses tests de 2 s ou plus |
 | `--tests-part=1/2` ou `2/2` | `1/2` : les tests `socle-app-swift/*` de `test/outillage/check.test.ts` ; `2/2` : tous les autres — chaque test tourne exactement une fois |
-| `--strict` | un test de `test/` sauté faute de prérequis installable (`prerequisAbsent` de `test/support/prerequis.ts`) et les absences que `MEM0_OMP_REQUIRE_SMOKE`/`RUST`/`IOS` durciraient deviennent des échecs nommés ; restent des sauts : plateforme (Swift/iOS hors macOS), copie imbriquée, `MEM0_OMP_SKIP_*` |
+| `--strict` | un test de `test/` sauté faute de prérequis installable (`prerequisAbsent` de `test/support/prerequis.ts`) et les absences que `MEMORY_OMP_REQUIRE_SMOKE`/`RUST`/`IOS` durciraient deviennent des échecs nommés ; restent des sauts : plateforme (Swift/iOS hors macOS), copie imbriquée, `MEMORY_OMP_SKIP_*` |
 
 Chaque section exécutée se termine par sa durée sur stdout, `  · <n> s` (secondes
 entières), pour lire dans un journal de CI où le temps part.
@@ -469,14 +483,14 @@ entières), pour lire dans un journal de CI où le temps part.
 À la racine du dépôt, `package.json` (privé, sans dépendance) donne cinq alias :
 `npm run setup` enchaîne les cinq préparations qui exigent le réseau
 (`bash scripts/lint.sh --prepare`, `bash scripts/typecheck.sh --prepare`,
-`bash scripts/omp-host.sh --prepare`, `bash scripts/mem0-http-contrat.sh --prepare`
+`bash scripts/omp-host.sh --prepare`, `bash scripts/memory-http-contrat.sh --prepare`
 et `bash scripts/moli.sh --prepare`),
 à lancer une fois par clone ou par worktree — avant, un test qui dépend de Biome ou
 du TypeScript épinglé se saute par `prerequisAbsent` en nommant l'outil, et
 `--strict` (la CI) en fait un échec. `omp-host.sh` installe l'hôte OMP que la CI
 installe (`OMP_HOST_VERSION` et `OMP_HOST_TYPES_NODE`, lus dans l'`env:` de
 `check.yml`), environ 2 Go, une fois par machine dans
-`${XDG_CACHE_HOME:-~/.cache}/mem0-omp/omp-host-<version>-types-node-<version>/` :
+`${XDG_CACHE_HOME:-~/.cache}/memory-omp/omp-host-<version>-types-node-<version>/` :
 sans variable de la CI, le type-check et la section « Plugins réels » le
 trouvent avant bun ou npm global, et jugent donc contre le même hôte que la CI ;
 `npm run check` lance `bash scripts/check.sh`, `npm run typecheck` lance
@@ -484,7 +498,7 @@ trouvent avant bun ou npm global, et jugent donc contre le même hôte que la CI
 `npm run test:touched -- <fichiers…>` lance `bash scripts/test-touched.sh`.
 Les arguments placés après `--` sont transmis tels quels (`npm run check -- --sections=types`,
 `npm test -- --tests-part=1/2`) ; `npm test -- --sections=…` est refusé par `check.sh`
-(option répétée). Depuis `omp-mem0-req/` ou `omp-mem0-memory/`, npm lit le
+(option répétée). Depuis `omp-memory-req/` ou `omp-memory/`, npm lit le
 `package.json` du plugin, qui n'a pas ces alias.
 
 Chaque PR vers `main` passe aussi `scripts/release-simulation.sh`, qui rejoue la
@@ -502,16 +516,16 @@ peut pas être fusionnée.
 
 La section `── Lint TypeScript` (id `lint`, juste après `types`) passe
 `scripts/lint.sh` : Biome, épinglé dans le script, vérifie à la fois les règles
-de lint et le format du TypeScript de `omp-mem0-req/`, `omp-harness/`, `scripts/` et `test/`, sans jamais
+de lint et le format du TypeScript de `omp-memory-req/`, `omp-harness/`, `scripts/` et `test/`, sans jamais
 toucher au réseau. Prérequis, une fois par clone ou par worktree et avec le
 réseau : `bash scripts/lint.sh --prepare`, qui installe la version épinglée dans
 `.lint/` (ignoré par git). Un outil absent ou d'une autre version rougit la
-section avec cette commande — elle n'est jamais sautée. `MEM0_OMP_LINT_DIR`
+section avec cette commande — elle n'est jamais sautée. `MEMORY_OMP_LINT_DIR`
 désigne une installation préparée ailleurs : les `check.sh` imbriqués des tests
 et la copie de `scripts/release-simulation.sh` réutilisent ainsi celle de la
 racine. Chaque job CI qui lance `check.sh` prépare l'outil juste avant. Pour
 corriger en local ce que la section signale :
-`.lint/node_modules/.bin/biome check --write omp-mem0-req omp-harness scripts test`.
+`.lint/node_modules/.bin/biome check --write omp-memory-req omp-harness scripts test`.
 
 Le même lint porte des règles « anti-slop » en GritQL, un fichier par règle dans
 `scripts/biome-rules/`, déclarées sous `plugins` dans `biome.jsonc` (les globs y
@@ -526,7 +540,7 @@ figé ni l'écho d'une doublure — et chaque diagnostic cite `anti-slop/<règle
 | `no-module-mocking` | `mock.module`, `mock.method`, `mock.getter`/`setter`, `jest.mock`, `vi.spyOn`… | le test prouve alors l'écho de la doublure, pas le module ; injecte la dépendance ou lance le vrai code (`mock.fn`, `mock.timers` restent permis) | `test/` | erreur |
 | `no-only-tests` | `test.only`, `describe.only`, `{ only: true }` | un `only` oublié fait taire le reste du fichier en laissant la suite verte | `test/` | erreur |
 | `no-tautological-assertions` | `assert.equal(x, x)`, `assert.deepEqual(a.b, a.b)`, `assert.ok(true)` | elle passe quel que soit le code testé | `test/` | erreur |
-| `no-unknown-returns` | une fonction **exportée** dont le retour est `unknown` ou `Promise<unknown>` | l'appelant refait le typage par un `as` sans preuve ; `unknown` reste permis en entrée | `omp-harness/`, `omp-mem0-req/`, `omp-chrome/`, `scripts/` | baseline |
+| `no-unknown-returns` | une fonction **exportée** dont le retour est `unknown` ou `Promise<unknown>` | l'appelant refait le typage par un `as` sans preuve ; `unknown` reste permis en entrée | `omp-harness/`, `omp-memory-req/`, `omp-chrome/`, `scripts/` | baseline |
 
 Mesuré à la pose (2026-11-10) : 51 sites dans 27 fichiers pour `no-sleep-in-tests`,
 1 pour `no-unknown-returns` (`omp-chrome/src/cdp.ts`, une commande CDP dont le
@@ -544,7 +558,7 @@ La section `── Plafond de types` (id `plafond-types`, juste après `lint`) p
 `scripts/types-ratchet.ts` : il rejoue les trois programmes de `scripts/typecheck.sh`
 (même tsc épinglé, mêmes types de l'hôte, hors réseau) avec une option stricte que les
 `tsconfig` n'activent pas, `noUncheckedIndexedAccess`, passée par
-`MEM0_OMP_TSC_ARGS`, puis compte les erreurs **par fichier** (une erreur vue par deux
+`MEMORY_OMP_TSC_ARGS`, puis compte les erreurs **par fichier** (une erreur vue par deux
 programmes compte une fois) et les compare au plafond de
 `scripts/types-ratchet-baseline.json`. Mesuré à la pose (2026-11-10, sur `main`) :
 `noUncheckedIndexedAccess` donne 372 erreurs brutes sur les trois programmes (316 distinctes,
@@ -561,58 +575,58 @@ qui réécrit la baseline — à n'utiliser que pour **baisser** (une hausse s'a
 section annonce « plafond non vérifié » sans `✓` (la section Types rougit déjà pour un
 tsc absent) ; elle fait partie du job `macos-tests (1/2)`.
 
-La section `── Rust mem0-rs` joue le **contrat boîte noire** de l'API mémoire
-(`scripts/mem0-http-contrat.sh --run`) contre mem0-rs : il exerce par HTTP les 9 routes du
+La section `── Rust memory-rs` joue le **contrat boîte noire** de l'API mémoire
+(`scripts/memory-http-contrat.sh --run`) contre memory-rs : il exerce par HTTP les 9 routes du
 serveur (`/health`, add, add_procedure, search, all, graph, PUT, DELETE, history)
 et vérifie pour chaque réponse le jeu de clés exact et le type des valeurs. Le
-serveur à tester est démarré jetable, sans conteneur : le binaire mem0-rs
+serveur à tester est démarré jetable, sans conteneur : le binaire memory-rs
 (`--start-rs`) sur une base SQLite neuve, et un faux serveur OpenAI-compatible
 (embeddings déterministes de 1024 dimensions, réponses chat scriptées), donc ni
 oMLX ni la base réelle. Une Qdrant **native** v1.19.0 ne sert plus que de source
-aux tests de `mem0-rs import` : elle se prépare une fois, hors du dépôt, par
-`bash scripts/mem0-http-contrat.sh --prepare` ; sans elle, ces tests annoncent le
+aux tests de `memory-rs import` : elle se prépare une fois, hors du dépôt, par
+`bash scripts/memory-http-contrat.sh --prepare` ; sans elle, ces tests annoncent le
 saut en nommant la pièce manquante. La CI la prépare avant `check.sh` (étape
-« Préparer la Qdrant source des tests d'import mem0-rs ») et pose
-`MEM0_OMP_REQUIRE_RUST=1` : une pièce manquante ou un cas en échec y rougit le
+« Préparer la Qdrant source des tests d'import memory-rs ») et pose
+`MEMORY_OMP_REQUIRE_RUST=1` : une pièce manquante ou un cas en échec y rougit le
 job. Variables lues :
 
 | Variable | Effet |
 |---|---|
-| `MEM0_CONTRAT_URL` | URL de base `http://<hôte>:<port>` du serveur à tester |
-| `MEM0_CONTRAT_START` | commande shell qui démarre le serveur à tester (défaut : `bash scripts/mem0-http-contrat.sh --start-rs`) |
-| `MEM0_CONTRAT_EXTERNE` | `1` accepte une URL sans commande de démarrage (instance externe, vide exigée) |
-| `MEM0_CONTRAT_TOKEN` | `X-Mem0-Token` envoyé à une instance externe |
-| `MEM0_CONTRAT_INFER` | `0` désactive le groupe infer=true (extraction LLM) |
-| `MEM0_CONTRAT_OPENAI_PORT` | port fixe du faux serveur OpenAI (libre par défaut) |
-| `MEM0_CONTRAT_OPENAI_HOTE` | adresse IPv4 d'écoute du faux serveur OpenAI (défaut `127.0.0.1`, sinon refus en code 3) |
-| `MEM0_CONTRAT_MOTEUR` | moteur de `--start-conteneur` (défaut : `podman` s'il est sur le PATH, sinon `docker`) |
-| `MEM0_CONTRAT_QDRANT` | binaire Qdrant à utiliser à la place de celui du cache |
-| `MEM0_CONTRAT_RANG_FIXTURE` | fixture de rang à utiliser à la place de `scripts/mem0-http-contrat/rang.json` |
-| `MEM0_RS_BIN` | binaire démarré par `--start-rs` (défaut : `${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}/debug/mem0-rs`) |
+| `MEMORY_CONTRAT_URL` | URL de base `http://<hôte>:<port>` du serveur à tester |
+| `MEMORY_CONTRAT_START` | commande shell qui démarre le serveur à tester (défaut : `bash scripts/memory-http-contrat.sh --start-rs`) |
+| `MEMORY_CONTRAT_EXTERNE` | `1` accepte une URL sans commande de démarrage (instance externe, vide exigée) |
+| `MEMORY_CONTRAT_TOKEN` | `X-Memory-Token` envoyé à une instance externe |
+| `MEMORY_CONTRAT_INFER` | `0` désactive le groupe infer=true (extraction LLM) |
+| `MEMORY_CONTRAT_OPENAI_PORT` | port fixe du faux serveur OpenAI (libre par défaut) |
+| `MEMORY_CONTRAT_OPENAI_HOTE` | adresse IPv4 d'écoute du faux serveur OpenAI (défaut `127.0.0.1`, sinon refus en code 3) |
+| `MEMORY_CONTRAT_MOTEUR` | moteur de `--start-conteneur` (défaut : `podman` s'il est sur le PATH, sinon `docker`) |
+| `MEMORY_CONTRAT_QDRANT` | binaire Qdrant à utiliser à la place de celui du cache |
+| `MEMORY_CONTRAT_RANG_FIXTURE` | fixture de rang à utiliser à la place de `scripts/memory-http-contrat/rang.json` |
+| `MEMORY_RS_BIN` | binaire démarré par `--start-rs` (défaut : `${CARGO_TARGET_DIR:-memory-stack/memory-rs/target}/debug/memory-rs`) |
 
-`--start-qdrant` lance une Qdrant native jetable sur `MEM0_CONTRAT_PORT` (HTTP)
-et `MEM0_CONTRAT_GRPC_PORT`, stockage dans `$MEM0_CONTRAT_WORKDIR/qdrant`, clé
+`--start-qdrant` lance une Qdrant native jetable sur `MEMORY_CONTRAT_PORT` (HTTP)
+et `MEMORY_CONTRAT_GRPC_PORT`, stockage dans `$MEMORY_CONTRAT_WORKDIR/qdrant`, clé
 API fixe `contrat-qdrant-cle` ; l'appelant attend `/readyz`. La preuve de
-migration `test/stack/mem0-rs-migration.test.ts` y sème la collection `omp_memory` et
-écrit à côté un `history.db`, puis les importe par `mem0-rs import`.
+migration `test/stack/memory-rs-migration.test.ts` y sème la collection `omp_memory` et
+écrit à côté un `history.db`, puis les importe par `memory-rs import`.
 
-`--start-conteneur` démarre le service mem0-rs de `mem0-stack/docker-compose.yml`
-(image `mem0-rs:local` déjà construite, sinon code 2) sous le projet
-`mem0-contrat-<port>`, avec un volume nommé que l'arrêt efface (`down -v`) :
+`--start-conteneur` démarre le service memory-rs de `memory-stack/docker-compose.yml`
+(image `memory-rs:local` déjà construite, sinon code 2) sous le projet
+`memory-contrat-<port>`, avec un volume nommé que l'arrêt efface (`down -v`) :
 c'est la preuve locale du conteneur, jamais jouée en CI.
 
 Les **preuves conteneur** de la bascule vivent dans
-`test/stack/mem0-stack-bascule-rust.test.ts`, sautées sans leur drapeau et jamais
-jouées en CI. Moteur : `MEM0_CONTRAT_MOTEUR`, sinon `podman`, sinon `docker` ;
+`test/stack/memory-stack-bascule-rust.test.ts`, sautées sans leur drapeau et jamais
+jouées en CI. Moteur : `MEMORY_CONTRAT_MOTEUR`, sinon `podman`, sinon `docker` ;
 le test refuse un moteur qui porte des conteneurs `omp-console-*`. Elles
-construisent l'image par `compose build mem0-rs` et ne publient que des ports
+construisent l'image par `compose build memory-rs` et ne publient que des ports
 libres (jamais 8321 ni 6333) :
 
-- `MEM0_BASCULE_CONTENEUR=1` : un souvenir survit à `down`/`up` du conteneur, la
+- `MEMORY_BASCULE_CONTENEUR=1` : un souvenir survit à `down`/`up` du conteneur, la
   base apparaît dans le dossier de l'hôte (AC-2), puis le contrat boîte noire
   passe contre `--start-conteneur` (AC-3) ;
-- `MEM0_BASCULE_REEL=1` avec `MEM0_BASCULE_HISTORY_DB=<copie de history.db>` :
-  répétition à blanc de la migration de `mem0-stack/README.md` sur une réplique
+- `MEMORY_BASCULE_REEL=1` avec `MEMORY_BASCULE_HISTORY_DB=<copie de history.db>` :
+  répétition à blanc de la migration de `memory-stack/README.md` sur une réplique
   de la vraie Qdrant, puis comparaison du nombre de souvenirs et des têtes de
   recherche avec la pile d'omp-console, qui n'est lue que par `inspect` et HTTP
   (AC-11, AC-12). La copie se fait par
@@ -620,41 +634,41 @@ libres (jamais 8321 ni 6333) :
 
 ```bash
 export PATH=/opt/podman/bin:$PATH && podman machine start
-MEM0_BASCULE_CONTENEUR=1 node --test --experimental-strip-types test/stack/mem0-stack-bascule-rust.test.ts
-MEM0_BASCULE_REEL=1 MEM0_BASCULE_HISTORY_DB=<copie> node --test --experimental-strip-types test/stack/mem0-stack-bascule-rust.test.ts
+MEMORY_BASCULE_CONTENEUR=1 node --test --experimental-strip-types test/stack/memory-stack-bascule-rust.test.ts
+MEMORY_BASCULE_REEL=1 MEMORY_BASCULE_HISTORY_DB=<copie> node --test --experimental-strip-types test/stack/memory-stack-bascule-rust.test.ts
 podman machine stop
 ```
 
 Le contrat joue aussi une phase **`rang`**, sur une instance neuve (l'IDF du BM25
-ne voit que ce corpus) : la fixture commitée `scripts/mem0-http-contrat/rang.json`
+ne voit que ce corpus) : la fixture commitée `scripts/memory-http-contrat/rang.json`
 porte un petit corpus, des requêtes et, capturés sur l'ancien mem0-http Python
-(mem0 2.2.1), l'ordre des ids rendus par chaque recherche (`attendu`) et les
+(memory 2.2.1), l'ordre des ids rendus par chaque recherche (`attendu`) et les
 arêtes du graphe. Toute divergence d'ordre, un `semantic_score` qui n'est pas le
 cosinus brut du faux embedder, un souvenir lexical rendu malgré `threshold` ou
-une arête différente fait échouer le run : c'est la preuve de parité de mem0-rs.
+une arête différente fait échouer le run : c'est la preuve de parité de memory-rs.
 La phase est sautée en mode externe ; une fixture illisible ou non capturée est
 un refus (code 3). La fixture n'est plus recapturée : le Python qui servait de
 référence est retiré.
 
-Viser mem0-rs (binaire construit par `cargo build --manifest-path
-mem0-stack/mem0-rs/Cargo.toml --locked`), sans toucher à cas.ts :
+Viser memory-rs (binaire construit par `cargo build --manifest-path
+memory-stack/memory-rs/Cargo.toml --locked`), sans toucher à cas.ts :
 
 ```bash
-MEM0_CONTRAT_START="bash scripts/mem0-http-contrat.sh --start-rs" bash scripts/mem0-http-contrat.sh --run
+MEMORY_CONTRAT_START="bash scripts/memory-http-contrat.sh --start-rs" bash scripts/memory-http-contrat.sh --run
 ```
 
 `--start-rs` démarre le binaire sur une base SQLite neuve du répertoire de travail
-de la phase ; binaire absent → `non exécuté : binaire mem0-rs absent (<chemin>)`, code 2.
+de la phase ; binaire absent → `non exécuté : binaire memory-rs absent (<chemin>)`, code 2.
 
-La section `── Rust mem0-rs` (id `rust`, juste après `lint`) éprouve la crate
-`mem0-stack/mem0-rs` : `cargo clippy --all-targets -- -D warnings` (aucun
+La section `── Rust memory-rs` (id `rust`, juste après `lint`) éprouve la crate
+`memory-stack/memory-rs` : `cargo clippy --all-targets -- -D warnings` (aucun
 avertissement toléré), `cargo test`, `cargo build`, puis ce même contrat contre le
 binaire construit, groupe infer=true compris. Les trois étapes cargo tournent même si
 l'une échoue, et leur sortie n'est imprimée qu'en cas d'échec ; la commande à
 relancer est donnée par chaque ✗. Sans `cargo` (ou sans clippy) dans le `PATH`, la
 section annonce le saut sans ✓ et ne fait rien échouer sur un poste ; la CI installe
-clippy (`rustup component add clippy`) et pose `MEM0_OMP_REQUIRE_RUST=1`, qui
-change ce saut en échec. `MEM0_OMP_SKIP_RUST` non vide ignore la section : les
+clippy (`rustup component add clippy`) et pose `MEMORY_OMP_REQUIRE_RUST=1`, qui
+change ce saut en échec. `MEMORY_OMP_SKIP_RUST` non vide ignore la section : les
 copies jetables des tests le posent.
 
 Un merge sur `main` déclenche `.github/workflows/release.yml`. Il n'y a plus de PR
@@ -715,8 +729,8 @@ par une erreur :
 - `pi.zod` : depuis la v17.2.10, zod est remplacé par `omptype` avec une façade de
   compatibilité. L'usage ici est basique et devrait passer ; si un `registerTool`
   échoue au chargement, c'est le premier endroit à regarder.
-- `pi.sendUserMessage(content)` et `ctx.waitForIdle()`, utilisés par `/mem0-init`.
-  Si la relecture ne démarre pas, `/mem0-init --scan-only` reste utilisable et tu
+- `pi.sendUserMessage(content)` et `ctx.waitForIdle()`, utilisés par `/memory-init`.
+  Si la relecture ne démarre pas, `/memory-init --scan-only` reste utilisable et tu
   peux coller le prompt à la main.
 
 L'event `session_start` n'est pas critique : si ta version ne l'émet pas, le premier

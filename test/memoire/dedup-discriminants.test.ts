@@ -1,25 +1,25 @@
-// Dédup à l'écriture (omp-mem0-memory/dedupe.ts) : les nombres, versions et
+// Dédup à l'écriture (omp-memory/dedupe.ts) : les nombres, versions et
 // négations comptent. `contentTokens` ne garde que les mots de plus de 3 lettres :
 // « timeout 3 s » couvrait donc « timeout 20 s », et le correctif était jugé déjà
 // en mémoire (skip) ou concaténé à l'ancienne valeur. Et le plancher de similarité
 // porte sur le cosinus brut (`score_details.semantic_score`) quand le serveur le
 // renvoie, plus sur le score combiné que BM25 sature.
 //
-// `planMerge` et `planDedupe` sont purs ; `findSimilar` et `mem0_add` sont joués
+// `planMerge` et `planDedupe` sont purs ; `findSimilar` et `memory_add` sont joués
 // contre une doublure de `fetch`, extension importée pour de vrai.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fakeSchema } from "../support/fake-zod.ts";
 import { tmpdir } from "../support/repo.ts";
 
-process.env.MEM0_AUTOSETUP = "0";
+process.env.MEMORY_AUTOSETUP = "0";
 const {
-  default: mem0MemoryExtension,
+  default: memoryPluginExtension,
   dedupTokens,
   findSimilar,
   planDedupe,
   planMerge,
-} = await import("../../omp-mem0-memory/extension.ts");
+} = await import("../../omp-memory/extension.ts");
 
 const similar = (text: string) => ({ id: "m-1", text, score: 0.8 });
 
@@ -96,7 +96,7 @@ test("dedup-discriminants/AC-4 : une redite aux mêmes valeurs reste un skip, un
   assert.ok(voisins.action !== "update" || !voisins.superseded, JSON.stringify(voisins));
 });
 
-test("dedup-discriminants/AC-5 : le nettoyage /mem0-dedupe n'apparie plus deux valeurs différentes", () => {
+test("dedup-discriminants/AC-5 : le nettoyage /memory-dedupe n'apparie plus deux valeurs différentes", () => {
   const entree = (id: string, text: string) => ({ id, text, tokens: dedupTokens(text) });
   const pairs = planDedupe(
     [entree("a", "Timeout de recherche du rappel : 3 s."), entree("b", "Timeout de recherche du rappel : 20 s.")],
@@ -144,7 +144,7 @@ test("dedup-discriminants/AC-7 : sans score_details, findSimilar retombe sur le 
   }
 });
 
-test("dedup-discriminants/AC-8 : mem0_add réécrit le souvenir contredit et rend l'ancien texte", async () => {
+test("dedup-discriminants/AC-8 : memory_add réécrit le souvenir contredit et rend l'ancien texte", async () => {
   const ancien = "Timeout de recherche du rappel : 3 s.";
   const s = stub([{ id: "m-42", memory: ancien, score: 0.9, score_details: { semantic_score: 0.92 } }]);
   try {
@@ -156,10 +156,10 @@ test("dedup-discriminants/AC-8 : mem0_add réécrit le souvenir contredit et ren
       on: () => {},
       registerCommand: () => {},
       registerTool: (def: { name: string; execute: typeof execute }) => {
-        if (def.name === "mem0_add") execute = def.execute;
+        if (def.name === "memory_add") execute = def.execute;
       },
     };
-    mem0MemoryExtension(pi as unknown as Parameters<typeof mem0MemoryExtension>[0]);
+    memoryPluginExtension(pi as unknown as Parameters<typeof memoryPluginExtension>[0]);
     const nouveau = "Timeout de recherche du rappel : 20 s.";
     const res = await execute!("c1", { text: nouveau }, undefined, undefined, { cwd: tmpdir("dedup-ac8-") });
     const put = s.calls.filter((c) => c.method === "PUT");

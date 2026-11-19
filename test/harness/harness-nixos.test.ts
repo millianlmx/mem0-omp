@@ -106,7 +106,7 @@ test("harness-nixos/AC-2 : le module NixOS pose les mêmes dossiers, droits, cl�
     /users = \[ "omp-harness" \]; runAs = "root"; commands = \[ \{ command = launcherBin; options = \[ "NOPASSWD" \]; \} \]/,
   );
   assert.doesNotMatch(MODULE, /SETENV/);
-  assert.match(MODULE, /od -An -N32 -tx1 \/dev\/urandom/, "le jeton mem0 naît sur la machine, jamais dans le store");
+  assert.match(MODULE, /od -An -N32 -tx1 \/dev\/urandom/, "le jeton memory naît sur la machine, jamais dans le store");
   assert.match(MODULE, /patchShebangs \$out\/bin/);
 });
 
@@ -133,7 +133,7 @@ test("harness-nixos/AC-3 : le module prend omp en paquet, pose la clé SSH du se
 });
 
 test("harness-nixos/AC-4 : les embeddings de la mémoire tournent sur la machine (Ollama local), et `tailscale serve` se déclare dans le flake", () => {
-  // Un Ollama sur la boucle locale seulement, ses modèles tirés au démarrage, mem0 pointé dessus.
+  // Un Ollama sur la boucle locale seulement, ses modèles tirés au démarrage, memory pointé dessus.
   assert.match(
     MODULE,
     /services\.ollama = lib\.mkIf cfg\.embeddings\.enable \{\n\s+enable = true;\n\s+host = "127\.0\.0\.1";/,
@@ -141,8 +141,8 @@ test("harness-nixos/AC-4 : les embeddings de la mémoire tournent sur la machine
   assert.match(MODULE, /loadModels = \[ cfg\.embeddings\.model \]/);
   assert.match(MODULE, /OMLX_BASE_URL = ollamaUrl;/);
   assert.match(MODULE, /ollamaUrl = "http:\/\/127\.0\.0\.1:\$\{toString cfg\.embeddings\.port\}\/v1";/);
-  assert.match(MODULE, /\/\/ cfg\.mem0\.environment;/, "mem0.environment l'emporte toujours");
-  assert.match(MODULE, /"ollama-model-loader\.service"/, "mem0 démarre après le téléchargement du modèle");
+  assert.match(MODULE, /\/\/ cfg\.memory\.environment;/, "memory.environment l'emporte toujours");
+  assert.match(MODULE, /"ollama-model-loader\.service"/, "memory démarre après le téléchargement du modèle");
   // tailscale serve : un service déclaré, qui attend le nœud et s'efface à l'arrêt.
   assert.match(MODULE, /systemd\.services\.omp-harness-tailscale-serve = lib\.mkIf cfg\.tailscale\.serve \{/);
   assert.match(

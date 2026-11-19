@@ -146,7 +146,7 @@ test("trailer `Release-Event:` dans la PR : aucune exemption, le bump reste refu
   pkg.version = "0.0.1";
   fs.writeFileSync(path.join(dir, rel), `${JSON.stringify(pkg, null, 2)}\n`);
   // Le trailer est dans le CORPS du commit, comme celui que le job écrit.
-  commitAll(dir, "chore(release): omp-mem0-memory 0.0.1", "Release-Event: 0123456789abcdef");
+  commitAll(dir, "chore(release): omp-memory 0.0.1", "Release-Event: 0123456789abcdef");
 
   // Le job de release pousse son commit sur `main` sans PR : une PR qui imite
   // son trailer ne contourne pas la garde.
@@ -186,7 +186,7 @@ test("base avancée : un bump déjà publié sur `main` ne fait pas échouer la 
   const pkg = readJson<Record<string, unknown>>(dir, rel);
   pkg.version = "7.7.7";
   fs.writeFileSync(path.join(dir, rel), `${JSON.stringify(pkg, null, 2)}\n`);
-  const mainTip = commitAll(dir, "chore(release): omp-mem0-memory 7.7.7", "Release-Event: abcdef");
+  const mainTip = commitAll(dir, "chore(release): omp-memory 7.7.7", "Release-Event: abcdef");
 
   const run = runGuard(dir, ["--base", mainTip, "--head", "pr"]);
   assert.equal(run.status, 0, output(run));

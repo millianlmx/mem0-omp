@@ -5,7 +5,7 @@
 // comme « sa » pile qu'une réponse qui le porte.
 //
 // Sans ce jeton, un `200` nu sur 127.0.0.1:8321 suffisait : une autre pile (celle
-// de `mem0-stack/`, un conteneur homonyme, n'importe quel service) passait pour la
+// de `memory-stack/`, un conteneur homonyme, n'importe quel service) passait pour la
 // nôtre — c'est le bogue que B-4 nomme.
 //
 // L'écriture suit EXACTEMENT le patron de `StackEnvStore.write` (atomique, puis

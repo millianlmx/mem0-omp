@@ -34,7 +34,7 @@ export const GH_TOKEN_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
 /** Les jetons GitLab que `glab` lit (`GITLAB_TOKEN` d'abord). */
 export const GITLAB_TOKEN_VARS = ["GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN"] as const;
 
-/** Un jeton mémoire tel que mem0-rs l'accepte dans `MEM0_HTTP_TOKENS` (ni `:`, ni `;`, ni espace). */
+/** Un jeton mémoire tel que memory-rs l'accepte dans `MEMORY_HTTP_TOKENS` (ni `:`, ni `;`, ni espace). */
 const MEMORY_TOKEN = /^[A-Za-z0-9._~+/=-]{16,512}$/;
 
 /** La politique permet-elle ce modèle : `local-only` ne permet que le fournisseur local, `providers` est une liste blanche. */
@@ -278,7 +278,7 @@ export function syncMemoryTokenFile(config: HarnessConfig, repoName: string, tok
   }
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const temp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(temp, `MEM0_HTTP_TOKEN=${token}\n`, { mode: 0o600 });
+  fs.writeFileSync(temp, `MEMORY_HTTP_TOKEN=${token}\n`, { mode: 0o600 });
   fs.renameSync(temp, file);
   return file;
 }

@@ -9,7 +9,7 @@
 // ou une erreur de chargement remontent pour de vrai — les trois modes de
 // défaillance qu'aucun test unitaire ne peut voir.
 //
-// Aucune dépendance externe : le service mem0 est remplacé par un stub HTTP
+// Aucune dépendance externe : le service memory est remplacé par un stub HTTP
 // local (`Bun.serve({ port: 0 })`), donc ni conteneur, ni credential.
 //
 // PIÈGES MESURÉS (2026-09-24, OMP 18.2.11, Bun 1.4.0) :
@@ -20,16 +20,16 @@
 //  * `initializeExtensions` n'est pas réexporté par la racine : le spécifieur
 //    exact est `<hôte>/@oh-my-pi/pi-coding-agent/src/modes/runtime-init.ts` ;
 //  * sans contexte UI, le runner monte un contexte muet : `ctx.ui.notify` n'est
-//    plus observable, or c'est le seul résultat visible de `/mem0-status` ;
+//    plus observable, or c'est le seul résultat visible de `/memory-status` ;
 //  * le cwd de l'extension est celui du SessionManager, jamais l'option `cwd`
 //    de `createAgentSession` (le plugin voyait le cwd du process) ;
-//  * `MEM0_HTTP_URL` est lue au chargement du module `mem0Client.ts` : elle doit
+//  * `MEMORY_HTTP_URL` est lue au chargement du module `memoryClient.ts` : elle doit
 //    être posée AVANT de charger les extensions ;
 //  * l'extension interne de l'hôte (`path === "<inline-0>"`) appelle
 //    `ctx.ui.setWidget` : un stub UI qui ne le définit pas remonte un
 //    `runtimeError` inoffensif mais bruyant.
 //
-// `MEM0_OMP_REQUIRE_SMOKE` n'est PAS lue ici : c'est `scripts/check.sh` qui
+// `MEMORY_OMP_REQUIRE_SMOKE` n'est PAS lue ici : c'est `scripts/check.sh` qui
 // durcit l'absence de prérequis en échec (S-2). Le harnais, lui, sort toujours
 // 0 (tout est vert), 1 (au moins un échec) ou 2 (prérequis absent).
 //
@@ -41,7 +41,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { LAUNCH_APPROVAL } from "../omp-mem0-req/extension.ts";
+import { LAUNCH_APPROVAL } from "../omp-memory-req/extension.ts";
+import { renamedEnv } from "../omp-harness/config/env.ts";
 
 /** Racine du dépôt, déduite du script (comme check.sh) — pas du cwd appelant. */
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -51,7 +52,7 @@ const TIMEOUT_MS = 60_000;
 // 1. Résolution de l'hôte AVANT toute autre chose
 // ---------------------------------------------------------------------------
 //
-// L'ordre est celui de scripts/typecheck.sh, avec MEM0_OMP_HOST_MODULES en
+// L'ordre est celui de scripts/typecheck.sh, avec MEMORY_OMP_HOST_MODULES en
 // tête (posée par la CI), puis l'hôte épinglé de scripts/omp-host.sh. Elle doit
 // être résolue avant de remplacer HOME, sinon le cache de l'hôte épinglé et le
 // repli `$BUN_INSTALL` (défaut `~/.bun`) désigneraient le faux HOME.
@@ -59,7 +60,7 @@ const HOME_INITIAL = process.env.HOME ?? os.homedir();
 
 function hostCandidates(): string[] {
   const out: string[] = [];
-  if (process.env.MEM0_OMP_HOST_MODULES) out.push(process.env.MEM0_OMP_HOST_MODULES);
+  if (renamedEnv(process.env, "MEMORY_OMP_HOST_MODULES", "MEM0_OMP_HOST_MODULES")) out.push(renamedEnv(process.env, "MEMORY_OMP_HOST_MODULES", "MEM0_OMP_HOST_MODULES"));
   const pinned = spawnSync("bash", [path.join(ROOT, "scripts", "omp-host.sh"), "--path"], { encoding: "utf8" });
   if (pinned.status === 0 && pinned.stdout.trim()) out.push(pinned.stdout.trim());
   out.push(path.join(ROOT, "node_modules"));
@@ -91,11 +92,11 @@ process.env.HOME = home;
 process.env.PI_CODING_AGENT_DIR = path.join(home, ".omp", "agent");
 // Sans ça, le brief mémoire s'installerait tout seul dans le dépôt de session et
 // le harnais écrirait hors de ses temporaires.
-process.env.MEM0_AUTOSETUP = "0";
+process.env.MEMORY_AUTOSETUP = "0";
 Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd: project });
 
 // ---------------------------------------------------------------------------
-// 3. Stub mem0 : la dépendance remplacée, sur un port éphémère
+// 3. Stub memory : la dépendance remplacée, sur un port éphémère
 // ---------------------------------------------------------------------------
 const hits: string[] = [];
 const server = Bun.serve({
@@ -121,7 +122,7 @@ const server = Bun.serve({
   },
 });
 const STUB_URL = `http://127.0.0.1:${server.port}`;
-process.env.MEM0_HTTP_URL = STUB_URL;
+process.env.MEMORY_HTTP_URL = STUB_URL;
 
 // ---------------------------------------------------------------------------
 // 4. Chargement de l'hôte (chemins absolus, cf. pièges en tête de fichier)
@@ -217,42 +218,42 @@ type Invocation = (ctx: {
 /** Vérifications d'invocation : une entrée par plugin dont le harnais connaît
  *  le contrat observable. Un plugin absent de cette table échoue plus bas. */
 const INVOCATIONS: Record<string, Invocation> = {
-  "omp-mem0-memory": async ({ session, notes, ok, bad }) => {
+  "omp-memory": async ({ session, notes, ok, bad }) => {
     notes.length = 0;
     try {
-      const handled = await within("/mem0-status", () => session.prompt("/mem0-status"));
+      const handled = await within("/memory-status", () => session.prompt("/memory-status"));
       const text = notes.join(" | ");
       const verdict =
         !handled && text.includes("ok=true") && text.includes("1 souvenir(s) · global 0") && text.includes(STUB_URL);
       verdict
-        ? ok(`/mem0-status invoqué — « ${text} »`)
-        : bad(`/mem0-status : handled=${handled}, notes=${text || "(aucune)"}`);
+        ? ok(`/memory-status invoqué — « ${text} »`)
+        : bad(`/memory-status : handled=${handled}, notes=${text || "(aucune)"}`);
     } catch (error) {
-      bad(`/mem0-status : ${error instanceof Error ? error.message : String(error)}`);
+      bad(`/memory-status : ${error instanceof Error ? error.message : String(error)}`);
     }
     hits.includes("GET /health")
-      ? ok(`le stub mem0 a été appelé (GET /health) sur ${STUB_URL}`)
-      : bad(`le stub mem0 n'a pas été appelé (GET /health) — appels reçus : ${hits.join(", ") || "aucun"}`);
+      ? ok(`le stub memory a été appelé (GET /health) sur ${STUB_URL}`)
+      : bad(`le stub memory n'a pas été appelé (GET /health) — appels reçus : ${hits.join(", ") || "aucun"}`);
 
-    const tool = session.getToolByName?.("mem0_search");
+    const tool = session.getToolByName?.("memory_search");
     if (!tool) {
-      bad("outil mem0_search absent du runtime");
+      bad("outil memory_search absent du runtime");
       return;
     }
     try {
-      const result = await within("mem0_search", () =>
+      const result = await within("memory_search", () =>
         tool.execute("smoke", { query: "fixture" }, undefined, undefined, undefined),
       );
       const out = JSON.stringify(result?.content ?? null);
       out.includes("souvenir de recherche (fixture)") && out.includes("[smoke-2]")
-        ? ok(`mem0_search invoqué — ${out}`)
-        : bad(`mem0_search : ${out}`);
+        ? ok(`memory_search invoqué — ${out}`)
+        : bad(`memory_search : ${out}`);
     } catch (error) {
-      bad(`mem0_search : ${error instanceof Error ? error.message : String(error)}`);
+      bad(`memory_search : ${error instanceof Error ? error.message : String(error)}`);
     }
   },
 
-  "omp-mem0-req": async ({ session, notes, ok, bad }) => {
+  "omp-memory-req": async ({ session, notes, ok, bad }) => {
     // Sans harness configuré, la commande refuse en nommant ce qui manque, sans rien envoyer.
     // Vides, pas absentes : elles masquent aussi un ~/.omp/harness.json de la machine.
     process.env.HARNESS_URL = "";

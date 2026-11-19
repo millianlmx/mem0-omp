@@ -113,8 +113,8 @@ export class MemoryOracle implements Oracle {
   async health(): Promise<boolean> {
     return this.healthy;
   }
-  /** Le corps de `GET /health` de mem0-rs rendu quand le service répond. */
-  healthBody: Record<string, unknown> = { ok: true, mem0: "mem0-rs 0.0.0-test" };
+  /** Le corps de `GET /health` de memory-rs rendu quand le service répond. */
+  healthBody: Record<string, unknown> = { ok: true, memory: "memory-rs 0.0.0-test" };
   async memoryHealth(): Promise<Record<string, unknown> | null> {
     return this.healthy ? this.healthBody : null;
   }

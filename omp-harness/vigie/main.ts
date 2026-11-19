@@ -11,7 +11,7 @@
 //   VIGIE_REPOS_DIR       les clones des dépôts (`<racine>/repos`, en lecture seule)
 //   VIGIE_OMP_BIN         omp (défaut : omp) ; VIGIE_MODEL `fournisseur/modèle` (défaut : celui d'omp)
 //   VIGIE_SESSION_TIMEOUT_SEC  l'échéance d'une session de tri ou de pilotage (600)
-//   MEM0_HTTP_URL, MEM0_HTTP_TOKEN  la mémoire du projet (rappel des bugs connus)
+//   MEMORY_HTTP_URL, MEMORY_HTTP_TOKEN  la mémoire du projet (rappel des bugs connus)
 //   ANTHROPIC_API_KEY, OPENROUTER_API_KEY…  les clés des sessions omp
 // Elle n'a ni le socket du moteur, ni la base, ni le jeton GitHub : un arrêt du harness ne
 // l'arrête pas (elle garde ses signaux et constate le silence).
@@ -24,6 +24,7 @@ import { HarnessApi } from "./api.ts";
 import { Vigie } from "./agent.ts";
 import type { CiRun } from "./collect.ts";
 import { record, textOf } from "./json.ts";
+import { renamedEnv } from "../config/env.ts";
 
 const env = process.env;
 
@@ -64,10 +65,10 @@ if (token === "") {
   process.exit(2);
 }
 const stateDir = env.VIGIE_STATE_DIR ?? path.join(env.HOME ?? ".", ".omp-vigie");
-const mem0 = env.MEM0_HTTP_URL?.trim();
+const memory = renamedEnv(env, "MEMORY_HTTP_URL", "MEM0_HTTP_URL")?.trim();
 const vigie = new Vigie({
   api: new HarnessApi(env.VIGIE_HARNESS_URL ?? "http://127.0.0.1:8790", token),
-  oracle: mem0 ? new HttpOracle({ url: mem0, token: env.MEM0_HTTP_TOKEN?.trim() || null }) : null,
+  oracle: memory ? new HttpOracle({ url: memory, token: renamedEnv(env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN")?.trim() || null }) : null,
   spawn: (command, args, options) =>
     spawn(command, args, { cwd: options.cwd, env: options.env as NodeJS.ProcessEnv, stdio: ["pipe", "pipe", "pipe"] }),
   exec: execProcess,

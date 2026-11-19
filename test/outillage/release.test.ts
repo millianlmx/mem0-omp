@@ -13,7 +13,7 @@
 //     que les écritures du moteur laissent les autres sections de check.sh
 //     (catalogue, versions, types…) vertes, pas qu'on rejoue la suite ;
 //  2. les scénarios sont construits UNE fois, ENSEMBLE, avant le premier test et
-//     seulement au premier niveau (`MEM0_CHECK_DEPTH === 0`) : lancés depuis la
+//     seulement au premier niveau (`MEMORY_CHECK_DEPTH === 0`) : lancés depuis la
 //     copie d'un autre test, ils se rappelleraient eux-mêmes ;
 //  3. aucune version de l'arbre n'est FIGÉE : le job de release lance `check.sh`
 //     APRÈS avoir écrit le bump, donc cette suite tourne aussi sur un arbre où un
@@ -59,6 +59,7 @@ import { outilEpingleAbsent } from "../support/prerequis.ts";
 import { LINT_TOOL_ENV, ROOT, copyRepo, tmpdir } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
 import { ACTIONS, lireWorkflow } from "../support/workflows.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
 // Assemblé, jamais littéral : test/outillage/docs.test.ts calcule la liste des fichiers du
@@ -70,7 +71,7 @@ const WORKFLOW = ".github/workflows/release.yml";
 /** Date de fusion du faux `gh` : fixe, pour que les scénarios soient rejouables. */
 const MERGE_DATE = "2026-09-27T12:00:00+00:00";
 /** Profondeur d'imbrication : 0 = `node --test test/outillage/release.test.ts` à la main. */
-const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
+const DEPTH = Number(renamedEnv(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
 
 type Catalog = {
   name: string;
@@ -205,27 +206,27 @@ test("analyse du log : corps multi-lignes et fichiers, séparateur non ambigu", 
   const raw = [
     `\u001e${"1".repeat(40)}\u001ffix(memory)!: sujet\u001fcorps ligne 1\nligne 2\n\nBREAKING CHANGE: la casse\nsuite\u001d`,
     "",
-    "omp-mem0-memory/state.ts",
+    "omp-memory/state.ts",
     "README.md",
     `\u001e${"2".repeat(40)}\u001ffeat(req): autre\u001f\u001d`,
     "",
-    "omp-mem0-req/seeds.ts",
+    "omp-memory-req/seeds.ts",
     "",
   ].join("\n");
 
   const commits = parseCommits(raw);
   assert.equal(commits.length, 2);
   assert.equal(commits[0]?.subject, "fix(memory)!: sujet");
-  assert.deepEqual(commits[0]?.files, ["omp-mem0-memory/state.ts", "README.md"]);
+  assert.deepEqual(commits[0]?.files, ["omp-memory/state.ts", "README.md"]);
   assert.equal(breakingText(commits[0]?.body ?? ""), "la casse suite");
   assert.equal(levelOf(commits[0]?.subject ?? "", commits[0]?.body ?? ""), "major");
   assert.equal(commits[1]?.body, "");
-  assert.deepEqual(commits[1]?.files, ["omp-mem0-req/seeds.ts"]);
+  assert.deepEqual(commits[1]?.files, ["omp-memory-req/seeds.ts"]);
   assert.deepEqual(parseCommits(""), [], "une plage vide n'est pas une erreur");
 
   // L'attribution est par sous-dossier du plugin, jamais par nom de fichier.
   assert.deepEqual(
-    changesBetween(commits, "omp-mem0-memory").map((change) => change.sha),
+    changesBetween(commits, "omp-memory").map((change) => change.sha),
     ["1".repeat(7)],
   );
   assert.deepEqual(changesBetween(commits, "docs"), []);
@@ -250,9 +251,9 @@ test("historique : première apparition de chaque version, dans l'ordre chronolo
   assert.equal(history[history.length - 1]?.version, "2.3.0", "la dernière est la version courante");
   assert.deepEqual(historyOf([]), [], "un historique vide ne produit aucune entrée");
 
-  const existing = new Set([versionTag("omp-mem0-memory", "2.2.0"), versionTag("omp-mem0-memory", "2.3.0")]);
+  const existing = new Set([versionTag("omp-memory", "2.2.0"), versionTag("omp-memory", "2.3.0")]);
   assert.deepEqual(
-    backlogOf("omp-mem0-memory", history, existing).map((entry) => entry.version),
+    backlogOf("omp-memory", history, existing).map((entry) => entry.version),
     ["0.1.0", "0.2.0"],
     "une version déjà taguée n'est jamais republiée",
   );
@@ -263,11 +264,11 @@ function fixtureRelease(level: Release["level"], breaking: string | null): Relea
   const version = level === "major" ? "3.0.0" : "2.9.8";
   return {
     kind: "bump",
-    name: "omp-mem0-memory",
-    dir: "omp-mem0-memory",
+    name: "omp-memory",
+    dir: "omp-memory",
     from: "2.9.7",
     version,
-    tag: `omp-mem0-memory-v${version}`,
+    tag: `omp-memory-v${version}`,
     commit: null,
     date: "2026-09-27",
     level,
@@ -275,7 +276,7 @@ function fixtureRelease(level: Release["level"], breaking: string | null): Relea
     // Un bump majeur a, par définition, au moins un commit de rupture : c'est ce
     // commit-là que la section « Ce qui casse » liste.
     breaking: level === "major" ? [change] : [],
-    previousTag: "omp-mem0-memory-v2.9.6",
+    previousTag: "omp-memory-v2.9.6",
   };
 }
 
@@ -292,13 +293,13 @@ test("changelog : entrées insérées après le titre, la plus récente d'abord,
     date: "2026-09-25",
     changes: [{ sha: "bbbbbbb", subject: "deux", level: "patch", breaking: null }],
   });
-  assert.equal(older, "## omp-mem0-memory 2.9.8 — 2026-09-24\n\n- un (aaaaaaa)");
+  assert.equal(older, "## omp-memory 2.9.8 — 2026-09-24\n\n- un (aaaaaaa)");
 
   const first = insertChangelog(null, [older]);
-  assert.equal(first, "# Journal des versions\n\n## omp-mem0-memory 2.9.8 — 2026-09-24\n\n- un (aaaaaaa)\n");
+  assert.equal(first, "# Journal des versions\n\n## omp-memory 2.9.8 — 2026-09-24\n\n- un (aaaaaaa)\n");
 
   const second = insertChangelog(first, [newer]);
-  assert.ok(second.startsWith("# Journal des versions\n\n## omp-mem0-memory 2.9.9"), second);
+  assert.ok(second.startsWith("# Journal des versions\n\n## omp-memory 2.9.9"), second);
   assert.ok(second.indexOf("2.9.9") < second.indexOf("2.9.8"), "la plus récente passe en tête");
   assert.equal(second.split("# Journal des versions").length, 2, "un seul titre");
   assert.ok(second.endsWith("\n"), "le fichier finit par un saut de ligne");
@@ -318,20 +319,20 @@ test("changelog : entrées insérées après le titre, la plus récente d'abord,
 test("corps de release : gabarit exact, rupture AVANT l'installation, première version", () => {
   const options = { ownerRepo: REPO, marketplace: "mem0-omp" };
   const minor = renderReleaseBody([fixtureRelease("minor", null)], options);
-  assert.ok(minor.includes("Changements depuis omp-mem0-memory-v2.9.6 :"), minor);
+  assert.ok(minor.includes("Changements depuis omp-memory-v2.9.6 :"), minor);
   assert.ok(!minor.includes("Ce qui casse"), minor);
   assert.ok(minor.indexOf("### Installation") < minor.indexOf("### Mise à jour"), minor);
   assert.equal(
     minor,
     [
-      "## omp-mem0-memory 2.9.8",
+      "## omp-memory 2.9.8",
       "",
-      "Changements depuis omp-mem0-memory-v2.9.6 :",
+      "Changements depuis omp-memory-v2.9.6 :",
       "- feat(memory): le brief change (aaaaaaa)",
       "",
       "### Installation",
       `/marketplace add ${REPO}`,
-      "/marketplace install omp-mem0-memory@mem0-omp",
+      "/marketplace install omp-memory@mem0-omp",
       "",
       "### Mise à jour",
       `Suivre la procédure de \`PUBLISHING.md\` § « Mettre à jour » (dépôt ${REPO}).`,
@@ -381,7 +382,7 @@ test("plan : rattrapage + bump, ordres de publication et de journal, gardes d'id
   );
   assert.equal(plan.releases[0]?.previousTag, versionTag(MEMORY.name, "0.1.0"));
   assert.equal(plan.releases[1]?.previousTag, versionTag(MEMORY.name, "0.2.0"));
-  assert.equal(plan.releases[2]?.previousTag, null, "première version publiée de omp-mem0-req");
+  assert.equal(plan.releases[2]?.previousTag, null, "première version publiée de omp-memory-req");
   assert.equal(plan.releases[0]?.commit, "b".repeat(40), "un rattrapage est tagué sur son commit d'apparition");
   assert.equal(plan.releases[0]?.date, "2026-01-01");
   assert.deepEqual(
@@ -702,10 +703,10 @@ function runEngine(
     // Le moteur lance `check.sh` sur la copie : la section « App Swift » y
     // compilerait pour de vrai (~ 40 s) sans rien prouver de la release, et la
     // section « App iOS » de même.
-    MEM0_OMP_SKIP_SWIFT_APP: "1",
-    MEM0_OMP_SKIP_IOS: "1",
-    // La section Rust (cargo, contrat contre mem0-rs) n'a rien à faire ici.
-    MEM0_OMP_SKIP_RUST: "1",
+    MEMORY_OMP_SKIP_SWIFT_APP: "1",
+    MEMORY_OMP_SKIP_IOS: "1",
+    // La section Rust (cargo, contrat contre memory-rs) n'a rien à faire ici.
+    MEMORY_OMP_SKIP_RUST: "1",
     // Le Biome épinglé de la racine : une copie n'emporte pas `.lint/`.
     ...LINT_TOOL_ENV,
   };
@@ -803,7 +804,7 @@ const MAJOR_STEPS: Step[] = [
   },
   {
     subject: "feat(memory)!: le brief change de format",
-    body: "BREAKING CHANGE: le brief v3 n'est plus lu, relance /mem0-brief",
+    body: "BREAKING CHANGE: le brief v3 n'est plus lu, relance /memory-brief",
     edits: [{ file: `${MEMORY.dir}/brief.ts`, append: "\n// scénario\n" }],
   },
 ];
@@ -1009,7 +1010,7 @@ async function buildDeploy(kind: string): Promise<DeployBuilt> {
 }
 
 // Les scénarios sont construits une seule fois, avant le premier test : chaque
-// test ne réclame que le sien, et les copies imbriquées (`MEM0_CHECK_DEPTH` ≠ 0)
+// test ne réclame que le sien, et les copies imbriquées (`MEMORY_CHECK_DEPTH` ≠ 0)
 // n'en construisent aucun — sinon elles se rappelleraient elles-mêmes. Ils se
 // construisent EN MÊME TEMPS : chacun a sa copie, son remote, son faux `gh` et
 // son état, donc leurs moteurs (et leurs `check.sh`) se chevauchent au lieu de
@@ -1350,7 +1351,7 @@ test("notes de release : commandes d'installation, mise à jour, et rupture d'un
   assert.ok(major && minor);
   assert.ok(major.notes.includes("### Ce qui casse / quoi faire"), major.notes);
   assert.ok(
-    major.notes.includes("- feat(memory)!: le brief change de format — le brief v3 n'est plus lu, relance /mem0-brief"),
+    major.notes.includes("- feat(memory)!: le brief change de format — le brief v3 n'est plus lu, relance /memory-brief"),
     major.notes,
   );
   assert.ok(
@@ -1661,7 +1662,7 @@ test("release/AC-15 : après la publication, la branche deploy avance en avance 
     `${b}\trefs/tags/omp-harness-v1.10.0`,
     `${c}\trefs/tags/omp-harness-v1.10.0^{}`,
     `${d}\trefs/tags/omp-harness-v2.0.0-rc.1`,
-    `${d}\trefs/tags/omp-mem0-memory-v9.0.0`,
+    `${d}\trefs/tags/omp-memory-v9.0.0`,
   ].join("\n");
   assert.deepEqual(deployTargetOf(listing, "omp-harness"), { tag: "omp-harness-v1.10.0", commit: c });
   assert.deepEqual(
@@ -1671,7 +1672,7 @@ test("release/AC-15 : après la publication, la branche deploy avance en avance 
     ),
     { tag: "omp-harness-v1.10.0", commit: c },
   );
-  assert.equal(deployTargetOf(`${d}\trefs/tags/omp-mem0-memory-v9.0.0`, "omp-harness"), null);
+  assert.equal(deployTargetOf(`${d}\trefs/tags/omp-memory-v9.0.0`, "omp-harness"), null);
 
   if (outilEpingleAbsent(t, "biome", "typescript")) return;
   const built = scenario(SCENARIOS?.deploy, t);
@@ -1714,7 +1715,7 @@ test("release/AC-17 : un plugin touché depuis sa version par des commits sans f
       {
         ...memory,
         sinceCurrent: [
-          { sha: "e".repeat(40), subject: "omp-mem0-memory : une refonte", level: null, breaking: null },
+          { sha: "e".repeat(40), subject: "omp-memory : une refonte", level: null, breaking: null },
           { sha: "f".repeat(40), subject: "docs: le README", level: null, breaking: null },
         ],
       },
@@ -1734,12 +1735,12 @@ test("release/AC-18 : la sortie `assets` nomme, par commit tagué, les releases 
   assert.deepEqual(
     assetGroupsOf([
       { tag: "omp-harness-v1.2.0", commit: "a".repeat(40) },
-      { tag: "omp-mem0-req-v0.4.0", commit: "b".repeat(40) },
+      { tag: "omp-memory-req-v0.4.0", commit: "b".repeat(40) },
       { tag: "omp-console-v1.3.0", commit: "a".repeat(40) },
     ]),
     [
       { ref: "a".repeat(40), tags: "omp-harness-v1.2.0 omp-console-v1.3.0" },
-      { ref: "b".repeat(40), tags: "omp-mem0-req-v0.4.0" },
+      { ref: "b".repeat(40), tags: "omp-memory-req-v0.4.0" },
     ],
   );
   assert.deepEqual(assetGroupsOf([]), []);

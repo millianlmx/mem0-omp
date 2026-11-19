@@ -1,11 +1,11 @@
-// Tests de buildIndex (omp-mem0-memory/extension.ts) : le sommaire injecté dans
+// Tests de buildIndex (omp-memory/extension.ts) : le sommaire injecté dans
 // le system prompt. L'invariant qui compte : il ne prétend "exhaustif" — et ne
-// dit "n'appelle pas mem0_search" — QUE tant qu'il n'a pas été tronqué. Une
+// dit "n'appelle pas memory_search" — QUE tant qu'il n'a pas été tronqué. Une
 // liste tronquée qui se prétend complète pousse l'agent à ignorer des souvenirs
 // réels, soit exactement la ré-exploration que le dispositif doit supprimer.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildIndex } from "../../omp-mem0-memory/extension.ts";
+import { buildIndex } from "../../omp-memory/extension.ts";
 
 const prepared = (id: string, text: string) => ({
   id,
@@ -19,10 +19,10 @@ const cache = (n: number, text = (i: number) => `souvenir ${i}`) => ({
   df: new Map<string, number>(),
 });
 
-test("buildIndex: liste non tronquée → exhaustive, décourage mem0_search", () => {
+test("buildIndex: liste non tronquée → exhaustive, décourage memory_search", () => {
   const out = buildIndex("proj", cache(3));
   assert.match(out, /exhaustif/);
-  assert.match(out, /n'appelle pas mem0_search/);
+  assert.match(out, /n'appelle pas memory_search/);
   assert.ok(!out.includes("plus anciens"), "aucun pied de page de troncature");
   assert.match(out, /3 souvenir\(s\)/);
 });
@@ -30,12 +30,12 @@ test("buildIndex: liste non tronquée → exhaustive, décourage mem0_search", (
 test("buildIndex: liste tronquée → retire la garantie et invite à chercher", () => {
   const out = buildIndex("proj", cache(75));
   assert.doesNotMatch(out, /Ce sommaire est exhaustif/);
-  assert.doesNotMatch(out, /n'appelle pas mem0_search/);
+  assert.doesNotMatch(out, /n'appelle pas memory_search/);
   assert.match(out, /n'est donc pas exhaustive/);
   // 75 entrées, 60 affichées, 15 cachées.
   assert.match(out, /75 souvenir\(s\)/);
   assert.match(out, /15 plus anciens/);
-  assert.match(out, /\+ 15 souvenir\(s\) plus anciens, atteignables par mem0_search/);
+  assert.match(out, /\+ 15 souvenir\(s\) plus anciens, atteignables par memory_search/);
 });
 
 test("buildIndex: chaque ligne réduite à la première ligne du souvenir, clippée", () => {

@@ -38,9 +38,9 @@ pass() { echo "  ✓ $1"; }
 #                             un saut : test de test/ sauté par `prerequisAbsent`
 #                             (test/support/prerequis.ts, message « prérequis
 #                             absent : … »), node absent, et toute absence que
-#                             MEM0_OMP_REQUIRE_SMOKE/RUST/IOS=1 durcirait. Restent
+#                             MEMORY_OMP_REQUIRE_SMOKE/RUST/IOS=1 durcirait. Restent
 #                             des sauts : la plateforme (Swift/iOS hors macOS), la
-#                             copie imbriquée, l'opt-in, et MEM0_OMP_SKIP_* qui
+#                             copie imbriquée, l'opt-in, et MEMORY_OMP_SKIP_* qui
 #                             garde la priorité. Comme les autres options, il ne
 #                             passe pas aux check.sh relancés dans les copies.
 #
@@ -140,11 +140,11 @@ section_on() {
 }
 
 # Vrai si l'absence d'un prérequis du domaine <X> (SMOKE, RUST, IOS) est un
-# échec : MEM0_OMP_REQUIRE_<X>=1 (posée par la CI) ou --strict. Pose
+# échec : MEMORY_OMP_REQUIRE_<X>=1 (posée par la CI) ou --strict. Pose
 # `strict_note` : vide sous la variable, dont les messages historiques restent
 # inchangés, ` (--strict)` quand seul le mode strict durcit.
 required() {
-  local var="MEM0_OMP_REQUIRE_$1"
+  local var="MEMORY_OMP_REQUIRE_$1"
   strict_note=""
   [ "${!var:-}" = "1" ] && return 0
   strict_note=" (--strict)"
@@ -347,7 +347,7 @@ echo "── Extension"
 # extensions DU DÉPÔT, y compris si un plugin venait à disparaître du catalogue.
 if command -v npx >/dev/null 2>&1; then
   TRANSPILED=1
-  for p in omp-mem0-memory omp-mem0-req; do
+  for p in omp-memory omp-memory-req; do
     if npx --yes esbuild@0.24.0 "$p/extension.ts" --format=esm --outfile=/dev/null --log-level=error 2>&1; then
       :
     else
@@ -367,7 +367,7 @@ fi
 # toute comparaison et affichait un « ✓ » mensonger (voir la doc §5).
 #
 # Le balayage est RÉCURSIF depuis que les extensions sont découpées en modules
-# (`omp-mem0-memory/*.ts`, `omp-mem0-req/*.ts`) : ne contrôler que
+# (`omp-memory/*.ts`, `omp-memory-req/*.ts`) : ne contrôler que
 # `extension.ts` laisserait passer un import de valeur écrit dans un module.
 if command -v python3 >/dev/null 2>&1; then
 python3 - <<'PY'
@@ -377,7 +377,7 @@ pat = re.compile(r'^\s*import\s+(?!type\b)[^;]*from\s+["\']@oh-my-pi/', re.M)
 hits = []
 files = sorted(
     f
-    for root in ("omp-mem0-memory", "omp-mem0-req")
+    for root in ("omp-memory", "omp-memory-req")
     for f in Path(root).rglob("*.ts")
 )
 for f in files:
@@ -424,7 +424,7 @@ fi
 if section_on lint; then
 echo "── Lint TypeScript"
 
-# Lint + format du TypeScript de omp-mem0-req/, omp-harness/, scripts/ et test/
+# Lint + format du TypeScript de omp-memory-req/, omp-harness/, scripts/ et test/
 # par le Biome épinglé de scripts/lint.sh (périmètre et règles : biome.jsonc).
 # Jamais sautée : un outil
 # absent ou d'une autre version (code 3) est un échec qui nomme la commande
@@ -433,7 +433,7 @@ lint_out="$(bash scripts/lint.sh 2>&1)"
 lint_status=$?
 [ -n "$lint_out" ] && printf '%s\n' "$lint_out"
 case "$lint_status" in
-  0) pass "lint et format du TypeScript conformes (omp-mem0-req/, omp-harness/, scripts/, test/)" ;;
+  0) pass "lint et format du TypeScript conformes (omp-memory-req/, omp-harness/, scripts/, test/)" ;;
   3) fail "linter épinglé indisponible (installe : bash scripts/lint.sh --prepare)" ;;
   *)
     lint_paths="$(printf '%s\n' "$lint_out" | grep -oE '^[^[:space:]:]+\.(ts|jsonc)' | awk '!seen[$0]++' | tr '\n' ' ')"
@@ -469,70 +469,70 @@ fi
 fi
 
 if section_on rust; then
-echo "── Rust mem0-rs"
+echo "── Rust memory-rs"
 
-# La crate mem0-stack/mem0-rs : clippy sans avertissement toléré sur toutes les
+# La crate memory-stack/memory-rs : clippy sans avertissement toléré sur toutes les
 # cibles, `cargo test`, le binaire, puis le contrat boîte noire contre lui. Les
 # trois étapes cargo tournent même si la précédente échoue, et leur sortie n'est
 # imprimée qu'en cas d'échec ; le contrat n'exige que le binaire, et sa sortie
 # est recopiée telle quelle.
-# cargo ou clippy absent ⇒ saut annoncé sans ✓ — SAUF si MEM0_OMP_REQUIRE_RUST=1
+# cargo ou clippy absent ⇒ saut annoncé sans ✓ — SAUF si MEMORY_OMP_REQUIRE_RUST=1
 # (posée par la CI) ou --strict : là, c'est un échec. Les copies jetables des
-# harnais posent MEM0_OMP_SKIP_RUST=1 pour ne rien compiler, ce qui prime.
-rust_manifest=(--manifest-path mem0-stack/mem0-rs/Cargo.toml --locked)
-rust_contrat_start="bash scripts/mem0-http-contrat.sh --start-rs"
-if [ -n "${MEM0_OMP_SKIP_RUST:-}" ]; then
-  echo "  · ignorée (MEM0_OMP_SKIP_RUST=1)"
+# harnais posent MEMORY_OMP_SKIP_RUST=1 pour ne rien compiler, ce qui prime.
+rust_manifest=(--manifest-path memory-stack/memory-rs/Cargo.toml --locked)
+rust_contrat_start="bash scripts/memory-http-contrat.sh --start-rs"
+if [ -n "${MEMORY_OMP_SKIP_RUST:-${MEM0_OMP_SKIP_RUST:-}}" ]; then
+  echo "  · ignorée (MEMORY_OMP_SKIP_RUST=1)"
 elif ! command -v cargo >/dev/null 2>&1; then
   if required RUST; then
-    fail "Rust mem0-rs — cargo absent${strict_note:- (MEM0_OMP_REQUIRE_RUST=1)}"
+    fail "Rust memory-rs — cargo absent${strict_note:- (MEMORY_OMP_REQUIRE_RUST=1)}"
   else
     echo "  · cargo absent, sections Rust non exécutées (installe la toolchain : https://rustup.rs)"
   fi
 elif ! cargo clippy --version >/dev/null 2>&1; then
   if required RUST; then
-    fail "Rust mem0-rs — cargo clippy absent${strict_note:- (MEM0_OMP_REQUIRE_RUST=1)}"
+    fail "Rust memory-rs — cargo clippy absent${strict_note:- (MEMORY_OMP_REQUIRE_RUST=1)}"
   else
     echo "  · cargo clippy absent, sections Rust non exécutées (rustup component add clippy)"
   fi
 else
   if rust_out="$(cargo clippy "${rust_manifest[@]}" --all-targets -- -D warnings 2>&1)"; then
-    pass "Rust mem0-rs : clippy sans avertissement (--all-targets -D warnings)"
+    pass "Rust memory-rs : clippy sans avertissement (--all-targets -D warnings)"
   else
     printf '%s\n' "$rust_out"
-    fail "Rust mem0-rs — clippy en échec (relance : cargo clippy --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked --all-targets -- -D warnings)"
+    fail "Rust memory-rs — clippy en échec (relance : cargo clippy --manifest-path memory-stack/memory-rs/Cargo.toml --locked --all-targets -- -D warnings)"
   fi
   if rust_out="$(cargo test "${rust_manifest[@]}" 2>&1)"; then
-    pass "Rust mem0-rs : cargo test conforme"
+    pass "Rust memory-rs : cargo test conforme"
   else
     printf '%s\n' "$rust_out"
-    fail "Rust mem0-rs — cargo test en échec (relance : cargo test --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked)"
+    fail "Rust memory-rs — cargo test en échec (relance : cargo test --manifest-path memory-stack/memory-rs/Cargo.toml --locked)"
   fi
   if rust_out="$(cargo build "${rust_manifest[@]}" 2>&1)"; then
-    pass "Rust mem0-rs : binaire mem0-rs construit"
-    rs_out="$(MEM0_CONTRAT_START="$rust_contrat_start" bash scripts/mem0-http-contrat.sh --run 2>&1)"
+    pass "Rust memory-rs : binaire memory-rs construit"
+    rs_out="$(MEMORY_CONTRAT_START="$rust_contrat_start" bash scripts/memory-http-contrat.sh --run 2>&1)"
     rs_status=$?
     [ -n "$rs_out" ] && printf '%s\n' "$rs_out"
     case "$rs_status" in
       0)
-        pass "Rust mem0-rs : contrat boîte noire conforme contre mem0-rs"
+        pass "Rust memory-rs : contrat boîte noire conforme contre memory-rs"
         ;;
       2)
         rs_reason="$(printf '%s\n' "$rs_out" | head -n 1)"
         if required RUST; then
-          fail "Rust mem0-rs — contrat boîte noire contre mem0-rs ${rs_reason}${strict_note}"
+          fail "Rust memory-rs — contrat boîte noire contre memory-rs ${rs_reason}${strict_note}"
         else
           echo "  · ${rs_reason}"
         fi
         ;;
       *)
-        fail "Rust mem0-rs — contrat boîte noire contre mem0-rs en échec (relance : MEM0_CONTRAT_START=\"$rust_contrat_start\" bash scripts/mem0-http-contrat.sh --run)"
+        fail "Rust memory-rs — contrat boîte noire contre memory-rs en échec (relance : MEMORY_CONTRAT_START=\"$rust_contrat_start\" bash scripts/memory-http-contrat.sh --run)"
         ;;
     esac
   else
     printf '%s\n' "$rust_out"
-    fail "Rust mem0-rs — cargo build en échec (relance : cargo build --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked)"
-    echo "  · contrat boîte noire contre mem0-rs non exécuté (binaire absent)"
+    fail "Rust memory-rs — cargo build en échec (relance : cargo build --manifest-path memory-stack/memory-rs/Cargo.toml --locked)"
+    echo "  · contrat boîte noire contre memory-rs non exécuté (binaire absent)"
   fi
 fi
 fi
@@ -547,12 +547,12 @@ echo "── Plugins réels (OMP)"
 # s'enregistre pas au runtime.
 #
 # Prérequis absents (bun, hôte OMP) ⇒ on l'annonce sans ✓ mensonger, comme pour
-# la transpilation — SAUF si MEM0_OMP_REQUIRE_SMOKE=1 (posée par la CI) ou
+# la transpilation — SAUF si MEMORY_OMP_REQUIRE_SMOKE=1 (posée par la CI) ou
 # --strict : là, un prérequis manquant est un échec, jamais un skip silencieux.
 smoke_host=""
 # L'hôte épinglé de la CI préparé par `bash scripts/omp-host.sh --prepare` vient
 # juste après la variable de la CI : le poste charge les plugins dans le même OMP.
-for candidate in "${MEM0_OMP_HOST_MODULES:-}" "$(bash scripts/omp-host.sh --path 2>/dev/null)" "./node_modules" "${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules"; do
+for candidate in "${MEMORY_OMP_HOST_MODULES:-${MEM0_OMP_HOST_MODULES:-}}" "$(bash scripts/omp-host.sh --path 2>/dev/null)" "./node_modules" "${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules"; do
   if [ -n "$candidate" ] && [ -f "$candidate/@oh-my-pi/pi-coding-agent/src/index.ts" ]; then
     smoke_host="$candidate"
     break
@@ -859,12 +859,12 @@ annoter_app_swift() {
 # script a déjà dit « non exécuté » — aucune ✓ n'est affichée, sinon la section
 # mentirait sur ce qu'elle a vérifié.
 #
-# `MEM0_OMP_SKIP_SWIFT_APP=1` neutralise la section : le harnais de test lance
+# `MEMORY_OMP_SKIP_SWIFT_APP=1` neutralise la section : le harnais de test lance
 # check.sh une dizaine de fois dans des copies jetables, qui paieraient sinon
 # chacune une compilation Swift complète (≈ 35 s). Une valeur vide vaut absence.
 if [ -f scripts/swift-app.sh ]; then
-  if [ -n "${MEM0_OMP_SKIP_SWIFT_APP:-}" ]; then
-    echo "  · ignorée (MEM0_OMP_SKIP_SWIFT_APP=1)"
+  if [ -n "${MEMORY_OMP_SKIP_SWIFT_APP:-${MEM0_OMP_SKIP_SWIFT_APP:-}}" ]; then
+    echo "  · ignorée (MEMORY_OMP_SKIP_SWIFT_APP=1)"
   else
     swift_out="$(bash scripts/swift-app.sh 2>&1)"
     swift_status=$?
@@ -892,17 +892,17 @@ echo "── App iOS"
 # l'a pas — le script sort 2 (« non exécuté ») et aucune ✓ n'est affichée, sinon la
 # section mentirait sur ce qu'elle a vérifié.
 #
-# `MEM0_OMP_SKIP_IOS=1` neutralise la section : le harnais de test lance check.sh
+# `MEMORY_OMP_SKIP_IOS=1` neutralise la section : le harnais de test lance check.sh
 # une dizaine de fois dans des copies jetables, qui paieraient sinon chacune une
 # compilation iOS complète. Une valeur vide vaut absence.
 #
-# `MEM0_OMP_REQUIRE_IOS=1` (posée par la CI macOS) fait échouer un « non exécuté » :
+# `MEMORY_OMP_REQUIRE_IOS=1` (posée par la CI macOS) fait échouer un « non exécuté » :
 # en CI, Xcode manquant est un échec, jamais un skip silencieux. `--strict` en fait
 # autant SOUS macOS seulement : ailleurs, le code 2 dit « plateforme non
 # supportée », pas « prérequis absent », et reste un saut annoncé.
 if [ -f scripts/ios-build.sh ]; then
-  if [ -n "${MEM0_OMP_SKIP_IOS:-}" ]; then
-    echo "  · ignorée (MEM0_OMP_SKIP_IOS=1)"
+  if [ -n "${MEMORY_OMP_SKIP_IOS:-${MEM0_OMP_SKIP_IOS:-}}" ]; then
+    echo "  · ignorée (MEMORY_OMP_SKIP_IOS=1)"
   else
     ios_out="$(bash scripts/ios-build.sh 2>&1)"
     ios_status=$?

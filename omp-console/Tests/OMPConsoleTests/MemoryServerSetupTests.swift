@@ -1,6 +1,6 @@
 // La mémoire d'un serveur (memoire-du-serveur) : quand l'appairage a posé
-// `~/.omp/mem0.json` vers un serveur, ou que MEM0_HTTP_URL désigne une adresse hors
-// de ce Mac, la préparation arrête l'agent mem0-rs de l'app au lieu de le démarrer.
+// `~/.omp/memory.json` vers un serveur, ou que MEMORY_HTTP_URL désigne une adresse hors
+// de ce Mac, la préparation arrête l'agent memory-rs de l'app au lieu de le démarrer.
 // Aucun launchctl réel : la doublure `AgentDouble` de MemoryAgentTests joue launchd.
 
 import Foundation
@@ -8,12 +8,12 @@ import Testing
 
 @testable import OMPConsole
 
-/// Un HOME jetable, avec ou sans `.omp/mem0.json`.
+/// Un HOME jetable, avec ou sans `.omp/memory.json`.
 private func home(settings: [String: Any]?) throws -> String {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("omp-console-home-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir.appendingPathComponent(".omp"), withIntermediateDirectories: true)
     if let settings {
-        try JSONSerialization.data(withJSONObject: settings).write(to: dir.appendingPathComponent(".omp/mem0.json"))
+        try JSONSerialization.data(withJSONObject: settings).write(to: dir.appendingPathComponent(".omp/memory.json"))
     }
     return dir.path
 }
@@ -34,7 +34,7 @@ private func agent(_ sandbox: AgentSandbox, _ double: AgentDouble) -> MemoryAgen
     return agent
 }
 
-@Test("memoire-du-serveur/AC-1 : un mem0.json ou un MEM0_HTTP_URL hors de ce Mac désigne la mémoire d'un serveur ; sans fichier, ou vers ce Mac, la mémoire est celle de l'app")
+@Test("memoire-du-serveur/AC-1 : un memory.json ou un MEMORY_HTTP_URL hors de ce Mac désigne la mémoire d'un serveur ; sans fichier, ou vers ce Mac, la mémoire est celle de l'app")
 func memoryHostingFollowsPairing() throws {
     let paired = try home(settings: ["url": "https://vps.tailnet.ts.net:8443", "token": "jeton-vps"])
     #expect(MemoryHosting.resolve(environment: ["HOME": paired]) == .server(URL(string: "https://vps.tailnet.ts.net:8443")!))
@@ -42,7 +42,7 @@ func memoryHostingFollowsPairing() throws {
     let bare = try home(settings: nil)
     #expect(MemoryHosting.resolve(environment: ["HOME": bare]) == .local)
     #expect(
-        MemoryHosting.resolve(environment: ["HOME": bare, "MEM0_HTTP_URL": "http://vps.example:8321"])
+        MemoryHosting.resolve(environment: ["HOME": bare, "MEMORY_HTTP_URL": "http://vps.example:8321"])
             == .server(URL(string: "http://vps.example:8321")!)
     )
 

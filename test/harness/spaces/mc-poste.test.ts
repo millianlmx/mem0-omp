@@ -19,7 +19,8 @@ import type {
   WorkstationProfile,
   WorkstationRequest,
 } from "../../../omp-harness/db/db.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import type { IntakeView } from "../../../omp-harness/intake/intake.ts";
 import type { BrowserView, WorkstationStatus } from "../../../omp-harness/workstation/workstation-input.ts";
 import type { ProfileStats } from "../../../omp-harness/workstation/workstation-profile.ts";
@@ -207,7 +208,7 @@ const launches = (world: FakeWorld): { cwd: string; scope: unknown }[] =>
     .filter((entry) => entry.kind === "argv")
     .map((entry) => ({
       cwd: path.basename(String(entry.cwd)),
-      scope: (entry.env as Record<string, unknown> | undefined)?.MEM0_PROJECT_ID,
+      scope: (entry.env as Record<string, unknown> | undefined)?.MEMORY_PROJECT_ID,
     }));
 
 async function until(world: FakeWorld, id: string, state: WorkstationRequest["state"]): Promise<WorkstationRequest> {

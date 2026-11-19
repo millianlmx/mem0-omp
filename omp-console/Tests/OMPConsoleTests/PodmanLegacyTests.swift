@@ -1,7 +1,7 @@
 // La migration unique de la pile podman (omp-console-sans-podman, S-4 ; AC-2,
-// AC-6, AC-7, AC-8, AC-9). Aucun podman, mem0-rs ni Qdrant réel : la doublure
+// AC-6, AC-7, AC-8, AC-9). Aucun podman, memory-rs ni Qdrant réel : la doublure
 // `LegacyDouble` route par binaire ABSOLU (le podman de la racine jetable, le
-// mem0-rs embarqué) et tient un JOURNAL ORDONNÉ de chaque appel — sonde `/readyz`
+// memory-rs embarqué) et tient un JOURNAL ORDONNÉ de chaque appel — sonde `/readyz`
 // comprise —, ce qui fige l'ordre « l'import précède l'arrêt ».
 
 import CryptoKit
@@ -12,7 +12,7 @@ import Testing
 
 // MARK: - La doublure
 
-/// Un podman, un mem0-rs et une sonde `/readyz` scriptés. `@unchecked Sendable` :
+/// Un podman, un memory-rs et une sonde `/readyz` scriptés. `@unchecked Sendable` :
 /// tous les accès viennent du MainActor (les tests y vivent).
 final class LegacyDouble: @unchecked Sendable {
     struct Call {
@@ -23,7 +23,7 @@ final class LegacyDouble: @unchecked Sendable {
     }
 
     let podman: String
-    let mem0rs: String
+    let memoryrs: String
     let switchState: URL
 
     private(set) var calls: [Call] = []
@@ -48,7 +48,7 @@ final class LegacyDouble: @unchecked Sendable {
     @MainActor
     init(sandbox: LegacySandbox) {
         podman = sandbox.legacy.podmanBinary.path
-        mem0rs = sandbox.executable.path
+        memoryrs = sandbox.executable.path
         switchState = sandbox.paths.switchState
     }
 
@@ -65,7 +65,7 @@ final class LegacyDouble: @unchecked Sendable {
             switch binary.path {
             case podman:
                 return podmanRun(arguments, environment)
-            case mem0rs:
+            case memoryrs:
                 calls.append(Call(label: "import", arguments: arguments, environment: environment))
                 return importRun
             default:
@@ -118,7 +118,7 @@ final class LegacyDouble: @unchecked Sendable {
 let importSucceeded = #"{"agents":[{"agent_id":"a1","importes":2,"deja_presents":0,"rejetes":[],"revisions":1,"messages":0},{"agent_id":"a2","importes":1,"deja_presents":0,"rejetes":[],"revisions":0,"messages":0}],"totaux":{"importes":3,"deja_presents":0,"rejetes":0,"revisions":1,"messages":0}}"# + "\n"
 
 /// Le rapport réel d'un import avec rejets (test Rust `rapport_json` de
-/// mem0-stack/mem0-rs/src/import.rs) : deux rejets chez deux agents.
+/// memory-stack/memory-rs/src/reprise/import.rs) : deux rejets chez deux agents.
 let importWithRejects = #"{"agents":[{"agent_id":"B","importes":1,"deja_presents":0,"rejetes":[],"revisions":0,"messages":0},"#
     + #"{"agent_id":"b","importes":1,"deja_presents":0,"rejetes":[{"element":"message","id":"m2","raison":"champ_invalide","detail":"content"}],"revisions":1,"messages":1},"#
     + #"{"agent_id":"é","importes":0,"deja_presents":0,"rejetes":[{"element":"souvenir","id":"4","raison":"texte_absent","detail":"payload sans texte"}],"revisions":0,"messages":0},"#
@@ -126,7 +126,7 @@ let importWithRejects = #"{"agents":[{"agent_id":"B","importes":1,"deja_presents
     + #""totaux":{"importes":3,"deja_presents":0,"rejetes":2,"revisions":1,"messages":1}}"#
     + "\n"
 
-/// Une racine jetable : podman et mem0-rs exécutables, `stack/env` de recette, et
+/// Une racine jetable : podman et memory-rs exécutables, `stack/env` de recette, et
 /// (par défaut) une collection Qdrant `omp_memory` avec un fichier témoin.
 @MainActor
 struct LegacySandbox {
@@ -139,7 +139,7 @@ struct LegacySandbox {
         let fileManager = FileManager.default
         root = fileManager.temporaryDirectory.appendingPathComponent("omp-legacy-\(UUID().uuidString)", isDirectory: true)
         paths = AppPaths(supportRoot: root.appendingPathComponent("support", isDirectory: true))
-        executable = root.appendingPathComponent("OMP Console.app/Contents/Resources/mem0-rs")
+        executable = root.appendingPathComponent("OMP Console.app/Contents/Resources/memory-rs")
         legacy = PodmanLegacy(paths: paths, executable: executable)
         try Self.writeExecutable(executable)
         try Self.writeExecutable(legacy.podmanBinary)
@@ -254,7 +254,7 @@ func ac6ImportPrecedesStop() async throws {
     #expect(importCall.environment == [
         "HOME": "/Users/recette",
         "PATH": "/usr/bin:/bin",
-        "MEM0_DB_PATH": paths.mem0Database.path,
+        "MEMORY_DB_PATH": paths.memoryDatabase.path,
         "EMBEDDING_DIMS": "768",
         "QDRANT_API_KEY": "cle-de-recette",
     ])
@@ -413,7 +413,7 @@ func ac8FailuresLeaveStackInPlace() async throws {
 }
 
 @MainActor
-@Test("omp-console-sans-podman/AC-8 : podman ou mem0-rs absent ⇒ erreur typée avant toute commande")
+@Test("omp-console-sans-podman/AC-8 : podman ou memory-rs absent ⇒ erreur typée avant toute commande")
 func ac8MissingBinariesFailBeforeAnyCommand() async throws {
     let sandbox = try LegacySandbox()
     defer { sandbox.remove() }
@@ -529,7 +529,7 @@ func ac9ImportReportDecodes() throws {
 func ac2NoCollectionMeansNoPodman() async throws {
     let sandbox = try LegacySandbox(collection: false)
     defer { sandbox.remove() }
-    // Ni podman ni mem0-rs ne sont nécessaires sur une racine vierge.
+    // Ni podman ni memory-rs ne sont nécessaires sur une racine vierge.
     try FileManager.default.removeItem(at: sandbox.legacy.podmanBinary)
     let double = LegacyDouble(sandbox: sandbox)
     var steps: [MigrationStep] = []

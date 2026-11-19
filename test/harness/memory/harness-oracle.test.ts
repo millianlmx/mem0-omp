@@ -1,4 +1,4 @@
-// Feature harness-oracle : mem0-rs en scope projet — rappel, écriture, et dégradation
+// Feature harness-oracle : memory-rs en scope projet — rappel, écriture, et dégradation
 // silencieuse quand l'oracle est injoignable (le harness ne bloque jamais). Lent n'est
 // pas injoignable : une écriture lente est retentée, une écriture perdue est comptée.
 import test from "node:test";
@@ -23,7 +23,7 @@ import { fakeWorld } from "../../support/harness-fixtures.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
-/** Une réponse de mem0-rs. */
+/** Une réponse de memory-rs. */
 function reply(status: number, body: unknown): FetchResponse {
   return {
     ok: status >= 200 && status < 300,
@@ -46,7 +46,7 @@ const silent: FetchLike = (_url, init) =>
 
 const NOW = new Date("2026-10-31T08:00:00Z");
 
-test("harness-oracle/AC-1 : le rappel interroge /memory/search dans la scope du projet, avec le jeton mem0", async () => {
+test("harness-oracle/AC-1 : le rappel interroge /memory/search dans la scope du projet, avec le jeton memory", async () => {
   const seen: { url: string; headers: Record<string, string>; body: Record<string, unknown> }[] = [];
   const fetch: FetchLike = async (url, init) => {
     seen.push({ url, headers: init.headers, body: JSON.parse(init.body ?? "{}") });
@@ -79,7 +79,7 @@ test("harness-oracle/AC-1 : le rappel interroge /memory/search dans la scope du 
     },
   ]);
   assert.equal(seen[0]?.url, "http://oracle:8321/memory/search");
-  assert.equal(seen[0]?.headers["X-Mem0-Token"], "tok");
+  assert.equal(seen[0]?.headers["X-Memory-Token"], "tok");
   assert.deepEqual([seen[0]?.body.agent_id, seen[0]?.body.query, seen[0]?.body.limit], ["demo", "export csv", 5]);
   assert.equal(await oracle.retain("demo", "fait"), true);
   assert.equal(seen[1]?.url, "http://oracle:8321/memory/add");
@@ -282,7 +282,7 @@ test("harness-oracle/AC-9 : un 4xx n'est pas retenté ; 429, 5xx et connexion co
   );
   assert.equal(await strict.retain("demo", "x"), false);
   assert.equal(calls, 1);
-  assert.match(refused.join("\n"), /^oracle en erreur \(écriture perdue après 1 essai\) : mem0 422: /);
+  assert.match(refused.join("\n"), /^oracle en erreur \(écriture perdue après 1 essai\) : memory 422: /);
   assert.equal(strict.lostWrites().count, 1);
 
   const answers: (() => FetchResponse | Promise<FetchResponse>)[] = [

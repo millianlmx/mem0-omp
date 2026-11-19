@@ -1,5 +1,5 @@
 // Tests de PERTINENCE du rappel automatique et de la recherche manuelle
-// (omp-mem0-memory/extension.ts). Le plancher porte sur le COSINUS BRUT
+// (omp-memory/extension.ts). Le plancher porte sur le COSINUS BRUT
 // (`score_details.semantic_score`), jamais sur le `score` renvoyé par le serveur :
 // celui-ci est le score combiné, que BM25 sature — mesuré sur la base réelle, une
 // sonde hors-sujet (« recette de tarte aux pommes ») reçoit bm25 = 1.000 et un
@@ -18,15 +18,15 @@ import assert from "node:assert/strict";
 import { fakeSchema } from "../support/fake-zod.ts";
 import { tmpdir } from "../support/repo.ts";
 
-// L'extension provisionne le brief (écrit .omp/mem0-brief.md et AGENTS.md) au
-// premier tour. MEM0_AUTOSETUP est lu à l'ÉVALUATION du module : un import statique
+// L'extension provisionne le brief (écrit .omp/memory-brief.md et AGENTS.md) au
+// premier tour. MEMORY_AUTOSETUP est lu à l'ÉVALUATION du module : un import statique
 // (hoisté au-dessus de toute affectation) ne permettrait pas de le poser avant, d'où
 // l'import dynamique — c'est le seul moyen de charger le module dans cet état.
-process.env.MEM0_AUTOSETUP = "0";
-const { default: mem0MemoryExtension, selectRelevant } = await import("../../omp-mem0-memory/extension.ts");
+process.env.MEMORY_AUTOSETUP = "0";
+const { default: memoryPluginExtension, selectRelevant } = await import("../../omp-memory/extension.ts");
 
 // ---------------------------------------------------------------------------
-// Doublure du service mem0 : sert des lignes mesurées, enregistre les requêtes
+// Doublure du service memory : sert des lignes mesurées, enregistre les requêtes
 // ---------------------------------------------------------------------------
 
 type SearchCall = { query: string; agent_id: string; limit: number; threshold: number | null; explain: boolean };
@@ -41,7 +41,7 @@ const scored = (id: string, semantic: number) => ({
 /** Ligne d'un service antérieur à `explain` : aucune trace du cosinus brut. */
 const unscored = (id: string) => ({ id, memory: `souvenir ${id}` });
 
-/** Doublure de `Response` : `mem0Fetch` ne lit que `ok`, `json()` et `text()`. */
+/** Doublure de `Response` : `memoryFetch` ne lit que `ok`, `json()` et `text()`. */
 function jsonResponse(payload: unknown): Response {
   const res = { ok: true, status: 200, json: async () => payload, text: async () => JSON.stringify(payload) };
   // Forme partielle de Response, connue de ce fichier seulement : cast local assumé.
@@ -97,7 +97,7 @@ function mkApp(): App {
     },
     registerCommand: (_name: string, _def: unknown) => {},
   };
-  mem0MemoryExtension(pi as unknown as Parameters<typeof mem0MemoryExtension>[0]);
+  memoryPluginExtension(pi as unknown as Parameters<typeof memoryPluginExtension>[0]);
   return { hooks, tools };
 }
 
@@ -126,7 +126,7 @@ async function search(
   cwd: string,
   query: string,
 ): Promise<{ text: string; details: { candidates: number; scored: number; floor: number; kept: unknown[] } }> {
-  const execute = app.tools.get("mem0_search")!;
+  const execute = app.tools.get("memory_search")!;
   const result = (await execute("call-1", { query }, undefined, undefined, { cwd })) as {
     content: Array<{ text: string }>;
     details: { candidates: number; scored: number; floor: number; kept: unknown[] };
@@ -201,8 +201,8 @@ test("service sans score sémantique → statut unavailable, message de reconstr
     assert.equal(message.details.status, "unavailable");
     assert.ok(
       message.content.includes(
-        "[mem0] Le service mémoire ne renvoie pas de score sémantique (paramètre absent) — reconstruis le " +
-          "conteneur : docker compose build mem0-http && docker compose up -d mem0-http. Aucun rappel ce tour.",
+        "[memory] Le service mémoire ne renvoie pas de score sémantique (paramètre absent) — reconstruis le " +
+          "conteneur : docker compose build memory-http && docker compose up -d memory-http. Aucun rappel ce tour.",
       ),
       `message de reconstruction exact, reçu : ${message.content}`,
     );
@@ -233,7 +233,7 @@ test("relevance/AC-3 : un prompt en rapport injecte les souvenirs pertinents, tr
     [scored("4b7866e3", 0.457)],
   );
   try {
-    const message = await recall(mkApp(), mkCwd(), "corrige le bug du recall mem0 qui injecte du hors-sujet");
+    const message = await recall(mkApp(), mkCwd(), "corrige le bug du recall memory qui injecte du hors-sujet");
 
     assert.equal(message.details.status, "hit");
     assert.deepEqual(
@@ -276,7 +276,7 @@ test("relevance/AC-4 : un souvenir d'un autre dépôt n'est pas injecté, les so
     const message = await recall(
       mkApp(),
       mkCwd(),
-      "le rappel automatique de mem0 injecte des souvenirs qui n'ont rien à voir avec la demande en cours",
+      "le rappel automatique de memory injecte des souvenirs qui n'ont rien à voir avec la demande en cours",
     );
 
     assert.equal(message.details.status, "hit");
@@ -320,7 +320,7 @@ test("relevance/AC-5 : une recherche hors-sujet ne retourne aucun résultat", as
 test("relevance/AC-6 : une recherche qui correspond à des souvenirs réels les retourne", async () => {
   const svc = stubService([scored("4f41b0d5", 0.619), scored("1978ef06", 0.55), scored("d319c0c3", 0.525)], []);
   try {
-    const { text, details } = await search(mkApp(), mkCwd(), "explique la déduplication à l'écriture dans mem0_add");
+    const { text, details } = await search(mkApp(), mkCwd(), "explique la déduplication à l'écriture dans memory_add");
 
     assert.match(text, /- \[4f41b0d5\] souvenir 4f41b0d5/);
     assert.match(text, /- \[1978ef06\] souvenir 1978ef06/);

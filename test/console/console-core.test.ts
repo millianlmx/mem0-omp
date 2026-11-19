@@ -6,7 +6,7 @@
 //     l'arbre réel, qui doit rester publiable), où `check.sh` ne lance que la
 //     section observée (`--sections=`) ;
 //  2. les vérifications qui portent sur l'arbre réel ne s'exécutent qu'au premier
-//     niveau (`MEM0_CHECK_DEPTH` compte les niveaux : un `check.sh` complet
+//     niveau (`MEMORY_CHECK_DEPTH` compte les niveaux : un `check.sh` complet
 //     relance la suite).
 //
 // INVARIANT DE NOMMAGE : l'invariant `criteria/AC-13` exige qu'un slug de feature
@@ -20,16 +20,17 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT, copyRepo, tmpdir } from "../support/repo.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 const SHELL = path.join(ROOT, "omp-console");
 const CORE_SOURCES = path.join(SHELL, "Sources", "ConsoleCore");
 const SHELL_SOURCES = path.join(SHELL, "Sources", "OMPConsole");
 
 /** Profondeur d'imbrication : 0 = `node --test test/console/console-core.test.ts`. */
-const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
+const DEPTH = Number(renamedEnv(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
 
 /** Hors de l'arbre réel (copie jetable ou suite relancée par `check.sh`). */
-const IN_COPY = DEPTH > 0 || process.env.MEM0_OMP_SKIP_SWIFT_APP === "1";
+const IN_COPY = DEPTH > 0 || renamedEnv(process.env, "MEMORY_OMP_SKIP_SWIFT_APP", "MEM0_OMP_SKIP_SWIFT_APP") === "1";
 
 const output = (r: SpawnSyncReturns<string>) => `${r.stdout ?? ""}${r.stderr ?? ""}`;
 
@@ -43,10 +44,10 @@ function runCheck(cwd: string, sections: string, env: Record<string, string> = {
     encoding: "utf8",
     env: {
       ...process.env,
-      MEM0_CHECK_DEPTH: String(DEPTH + 1),
-      MEM0_OMP_SKIP_SWIFT_APP: "1",
-      MEM0_OMP_SKIP_IOS: "1",
-      MEM0_OMP_SKIP_RUST: "1",
+      MEMORY_CHECK_DEPTH: String(DEPTH + 1),
+      MEMORY_OMP_SKIP_SWIFT_APP: "1",
+      MEMORY_OMP_SKIP_IOS: "1",
+      MEMORY_OMP_SKIP_RUST: "1",
       ...env,
     },
     timeout: 900_000,
@@ -466,7 +467,7 @@ test("noyau-partage-console/AC-10 : aucune garde nouvelle n'exige macOS ni un to
   stub(bin, "swift", `printf '%s\\n' "$*" >> '${log}'\nexit 127`);
 
   const copy = copyRepo("noyau-copie-");
-  const run = runCheck(copy, "noyau,app-swift", { PATH: `${bin}:${process.env.PATH}`, MEM0_OMP_SKIP_SWIFT_APP: "" });
+  const run = runCheck(copy, "noyau,app-swift", { PATH: `${bin}:${process.env.PATH}`, MEMORY_OMP_SKIP_SWIFT_APP: "" });
   const out = output(run);
   assert.equal(run.status, 0, out);
   assert.ok(out.includes("✓ la cible partagée ConsoleCore n'importe ni AppKit ni UIKit"), out);

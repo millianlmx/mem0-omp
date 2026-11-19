@@ -72,7 +72,7 @@ const FAMILIES = {
   },
   cargo: {
     toolchain: "rustc-${{ steps.toolchain.outputs.rust }}",
-    content: "${{ hashFiles('mem0-stack/mem0-rs/Cargo.lock', 'mem0-stack/mem0-rs/Cargo.toml') }}",
+    content: "${{ hashFiles('memory-stack/memory-rs/Cargo.lock', 'memory-stack/memory-rs/Cargo.toml') }}",
   },
 } as const;
 type Family = keyof typeof FAMILIES;
@@ -96,7 +96,7 @@ function cacheStep(name: string, family: Family, paths: string[], condition?: st
 
 const NPM = cacheStep("Cache npm (hôte OMP)", "npm", ["~/.npm"]);
 const CARGO = (target: string, condition?: string) =>
-  cacheStep("Cache cargo (mem0-rs)", "cargo", [...CARGO_REGISTRY, target], condition);
+  cacheStep("Cache cargo (memory-rs)", "cargo", [...CARGO_REGISTRY, target], condition);
 const INSTALL =
   '          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" "@oh-my-pi/pi-coding-agent@$OMP_HOST_VERSION" "@types/node@$OMP_HOST_TYPES_NODE"';
 
@@ -119,7 +119,7 @@ const EXPECTED: Expected[] = [
     anchor: `      - uses: ${ACTIONS.setupNode}`,
     caches: [
       { family: "npm", step: NPM },
-      { family: "cargo", step: CARGO("mem0-stack/mem0-rs/target") },
+      { family: "cargo", step: CARGO("memory-stack/memory-rs/target") },
     ],
     consumer: "        run: ./scripts/check.sh",
   },
@@ -127,7 +127,7 @@ const EXPECTED: Expected[] = [
     job: "macos-app-swift",
     file: CHECK_FILE,
     anchor: `      - uses: ${ACTIONS.checkout}`,
-    caches: [{ family: "cargo", step: CARGO("mem0-stack/mem0-rs/target") }],
+    caches: [{ family: "cargo", step: CARGO("memory-stack/memory-rs/target") }],
     consumer: "        run: ./scripts/check.sh --sections=app-swift",
   },
   {
@@ -136,7 +136,7 @@ const EXPECTED: Expected[] = [
     anchor: `      - uses: ${ACTIONS.setupNode}`,
     caches: [
       { family: "npm", step: NPM },
-      { family: "cargo", step: CARGO("mem0-stack/mem0-rs/target", "matrix.part == '1/2'") },
+      { family: "cargo", step: CARGO("memory-stack/memory-rs/target", "matrix.part == '1/2'") },
     ],
     consumer: "        run: ./scripts/check.sh --sections=",
   },

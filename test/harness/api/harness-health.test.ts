@@ -10,7 +10,8 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { API_FEATURES, HARNESS_VERSION, createHandler, healthChecks } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler, healthChecks } from "../../../omp-harness/api/http.ts";
+import { HARNESS_VERSION } from "../../../omp-harness/api/http-io.ts";
 import { fakeWorld } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
 
@@ -56,7 +57,7 @@ async function health(url: string): Promise<{ status: number; body: Health }> {
 /** La sonde `node -e …` du service `harness` d'un compose. */
 function probeOf(file: string): string {
   const text = fs.readFileSync(path.join(ROOT, file), "utf8");
-  const block = text.slice(text.indexOf("\n  harness:\n"), text.indexOf("\n  mem0:\n"));
+  const block = text.slice(text.indexOf("\n  harness:\n"), text.indexOf("\n  memory:\n"));
   const match = /healthcheck:\n\s+test: \["CMD", "node", "-e", "(.+)"\]\n/.exec(block);
   assert.ok(match, `${file} : le service harness n'a pas de sonde node sur /v1/health`);
   return (match[1] as string).replace(/\\"/g, '"');

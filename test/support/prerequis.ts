@@ -13,13 +13,14 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 /** Préfixe du message de saut que `check.sh --strict` reconnaît. */
 export const PREREQUIS_ABSENT = "prérequis absent : ";
 
 /**
  * Saute le test faute de `prerequis` — ou le fait échouer si `exigence` (la
- * variable qui le durcit, ex. `"MEM0_OMP_REQUIRE_RUST=1"`) est donnée.
+ * variable qui le durcit, ex. `"MEMORY_OMP_REQUIRE_RUST=1"`) est donnée.
  *
  * Le message tient sur UNE ligne : une ligne TAP `# SKIP` coupée ne serait plus
  * reconnue par check.sh. `prerequis` vient parfois de la sortie d'un script
@@ -49,13 +50,13 @@ export type OutilEpingle = "biome" | "typescript";
 /**
  * Où vit chaque outil épinglé et quelle version il doit porter. La version est
  * LUE dans le script qui l'épingle (source unique) ; le dossier est celui que le
- * script lui-même consulte — `MEM0_OMP_LINT_DIR` d'abord pour Biome, comme
+ * script lui-même consulte — `MEMORY_OMP_LINT_DIR` d'abord pour Biome, comme
  * scripts/lint.sh.
  */
 function outil(nom: OutilEpingle): { libelle: string; version: string; paquet: string; prepare: string } {
   if (nom === "biome") {
     const script = fs.readFileSync(path.join(RACINE, "scripts", "lint.sh"), "utf8");
-    const dossier = path.resolve(RACINE, process.env.MEM0_OMP_LINT_DIR || ".lint");
+    const dossier = path.resolve(RACINE, renamedEnv(process.env, "MEMORY_OMP_LINT_DIR", "MEM0_OMP_LINT_DIR") || ".lint");
     return {
       libelle: "Biome",
       version: /^BIOME_VERSION="([^"]+)"$/m.exec(script)?.[1] ?? "",

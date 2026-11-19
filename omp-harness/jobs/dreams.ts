@@ -1,14 +1,14 @@
 // Le rêve de la mémoire (phases 3 et 4) : quand un dépôt est au repos, un runner relit
-// les faits nouveaux de sa mémoire (le dossier de mem0-rs) et les consolide en
+// les faits nouveaux de sa mémoire (le dossier de memory-rs) et les consolide en
 // observations, liens de cause et mental models, rendus par l'outil hôte
 // `dream_consolidate`. Le service mémoire valide et applique la consolidation d'un bloc ;
 // un refus revient au modèle avec sa raison, qui corrige et rappelle l'outil.
 //
 // Les phases 1, 2, 5 et 6 (réindexation, paires proches, oubli, journal) tournent dans
-// mem0-rs, sur son propre LLM : seules celles qui raisonnent sur toute une portée passent
+// memory-rs, sur son propre LLM : seules celles qui raisonnent sur toute une portée passent
 // par une session omp, dont les modèles sont déjà configurés pour les runs.
 //
-// Rien n'est persisté ici : le filigrane de consolidation vit dans mem0-rs, et un rêve
+// Rien n'est persisté ici : le filigrane de consolidation vit dans memory-rs, et un rêve
 // interrompu (arrêt, échec) est simplement repris au prochain examen.
 import * as fs from "node:fs";
 import * as path from "node:path";

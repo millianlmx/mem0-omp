@@ -16,9 +16,9 @@ elle.
 | Composant | Où |
 |---|---|
 | Serveur de pipelines (harness) : API HTTP, jetons, conteneurs de runners | `omp-harness/` |
-| Serveur mémoire : API HTTP, jeton `X-Mem0-Token`, base SQLite | `mem0-stack/mem0-rs/`, `mem0-stack/` |
+| Serveur mémoire : API HTTP, jeton `X-Memory-Token`, base SQLite | `memory-stack/memory-rs/`, `memory-stack/` |
 | Apps OMP Console macOS et iOS, et le jumelage avec le harness | `omp-console/` |
-| Plugins OMP du catalogue | `omp-mem0-memory/`, `omp-mem0-req/` |
+| Plugins OMP du catalogue | `omp-memory/`, `omp-memory-req/` |
 
 Hors périmètre : les dépendances tierces elles-mêmes (signale-les en amont), et
 une instance déployée hors des procédures documentées du dépôt.

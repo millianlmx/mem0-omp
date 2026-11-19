@@ -43,7 +43,7 @@ public enum OSDecideText {
         L10n.format("Lancer sur %@", repo)
     }
 
-    /// « Toujours valider seul « Bogue » sur mem0-omp » : la règle de palier du type, sur le dépôt.
+    /// « Toujours valider seul « Bogue » sur memory-omp » : la règle de palier du type, sur le dépôt.
     public static func alwaysAlone(kind: String, repo: String) -> String {
         L10n.format("Toujours valider seul « %@ » sur %@", AutonomyText.kind(kind), repo)
     }

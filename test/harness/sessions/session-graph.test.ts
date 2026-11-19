@@ -21,7 +21,8 @@ import { alertFor } from "../../../omp-harness/notify/push-alerts.ts";
 import { EVIDENCE_MAX, planDecision } from "../../../omp-harness/runs/decisions.ts";
 import { EPHEMERAL_EVENTS, EVENT_TYPES } from "../../../omp-harness/api/events.ts";
 import { autoAnswerOf } from "../../../omp-harness/human/gestures.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import { Orchestrator } from "../../../omp-harness/runs/orchestrator.ts";
 import type { GraphNode, SessionGraphView } from "../../../omp-harness/sessions/session-graph.ts";
 import {

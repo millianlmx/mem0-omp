@@ -7,8 +7,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
-import reqExtension from "../../omp-mem0-req/extension.ts";
-import { ACTION_KINDS, APPROVAL_RULE, type actApproval, actWait } from "../../omp-mem0-req/workstation.ts";
+import reqExtension from "../../omp-memory-req/extension.ts";
+import { ACTION_KINDS, APPROVAL_RULE, type actApproval, actWait } from "../../omp-memory-req/workstation.ts";
 import { fakeSchema } from "../support/fake-zod.ts";
 import { tmpdir } from "../support/repo.ts";
 

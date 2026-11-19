@@ -89,9 +89,9 @@ func noRecentChoiceHasNoKnownProject() {
 @MainActor
 @Test("mac-etats-vides-sans-issue/AC-2 : une entrée par projet, libellée du nom du dossier, dans l'ordre reçu")
 func entriesAreNamedByFolder() {
-    let entries = ProjectChooserModel.entries(for: ["/Users/a/mem0-omp", "/Users/a/zeta"])
-    #expect(entries.map(\.id) == ["/Users/a/mem0-omp", "/Users/a/zeta"])
-    #expect(entries.map(\.label) == ["mem0-omp", "zeta"])
+    let entries = ProjectChooserModel.entries(for: ["/Users/a/memory-omp", "/Users/a/zeta"])
+    #expect(entries.map(\.id) == ["/Users/a/memory-omp", "/Users/a/zeta"])
+    #expect(entries.map(\.label) == ["memory-omp", "zeta"])
 }
 
 @MainActor

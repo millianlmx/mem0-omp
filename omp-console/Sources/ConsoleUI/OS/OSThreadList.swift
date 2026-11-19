@@ -405,7 +405,7 @@ public struct OSThreadRow: View, Equatable {
         .padding(.vertical, 2)
     }
 
-    /// Où, puis ce qui s'y passe : « mem0-omp · ↳ relance la suite », « Poste · Perso · livré »,
+    /// Où, puis ce qui s'y passe : « memory-omp · ↳ relance la suite », « Poste · Perso · livré »,
     /// « MacBook-Pro · feat/inscription · ↳ valide le courriel ».
     private var subtitle: String {
         if thread.isLocalSession, let session = thread.localSession {

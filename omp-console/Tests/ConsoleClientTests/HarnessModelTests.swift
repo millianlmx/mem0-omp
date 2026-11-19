@@ -410,7 +410,7 @@ struct HarnessModelTests {
         let harness = try #require(harnessObject as? [String: Any])
         #expect(harness["url"] as? String == "https://vps.tailnet.ts.net")
         #expect((harness["repos"] as? [String: String]) == ["/code/produit": "produit"])
-        let memoryObject = try JSONSerialization.jsonObject(with: Data(contentsOf: home.appendingPathComponent(".omp/mem0.json")))
+        let memoryObject = try JSONSerialization.jsonObject(with: Data(contentsOf: home.appendingPathComponent(".omp/memory.json")))
         let memory = try #require(memoryObject as? [String: String])
         #expect(memory == ["url": "https://vps.tailnet.ts.net:8443", "token": "memoire"])
 
@@ -461,7 +461,7 @@ struct HarnessModelTests {
 
         let shared = try #require(HarnessPairing.sharedSettings(home: home))
         #expect(shared.token == "ordinaire", "omp lit le jeton ordinaire")
-        for name in ["harness.json", "mem0.json"] {
+        for name in ["harness.json", "memory.json"] {
             let text = try String(contentsOf: home.appendingPathComponent(".omp/\(name)"), encoding: .utf8)
             #expect(!text.contains(approver), "\(name) ne contient jamais le jeton approbateur")
         }

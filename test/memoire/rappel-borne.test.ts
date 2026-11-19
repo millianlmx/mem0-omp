@@ -9,14 +9,14 @@ import assert from "node:assert/strict";
 import { fakeSchema } from "../support/fake-zod.ts";
 import { tmpdir } from "../support/repo.ts";
 
-process.env.MEM0_AUTOSETUP = "0";
-delete process.env.MEM0_MODE;
+process.env.MEMORY_AUTOSETUP = "0";
+delete process.env.MEMORY_MODE;
 const {
-  default: mem0MemoryExtension,
+  default: memoryPluginExtension,
   RECALL_BLOCK_CHARS,
   RECALL_ITEM_CHARS,
-} = await import("../../omp-mem0-memory/extension.ts");
-const { budgetRecall, recallText, RECALL_CUT_MARK } = await import("../../omp-mem0-memory/recall.ts");
+} = await import("../../omp-memory/extension.ts");
+const { budgetRecall, recallText, RECALL_CUT_MARK } = await import("../../omp-memory/recall.ts");
 
 const ligne = (id: string, longueur: number, score = 0.9) => ({
   id,
@@ -100,7 +100,7 @@ test("rappel-borne/AC-4 : de bout en bout, le message de rappel d'un tour sur de
     registerTool: () => {},
     registerCommand: () => {},
   };
-  mem0MemoryExtension(pi as unknown as Parameters<typeof mem0MemoryExtension>[0]);
+  memoryPluginExtension(pi as unknown as Parameters<typeof memoryPluginExtension>[0]);
   const ctx = { cwd: tmpdir("rappel-borne-"), sessionManager: { getSessionId: () => "rappel-borne" } };
   const tour = (await before!(
     { prompt: "Comment se déploie le serveur ?", systemPrompt: [] } as never,

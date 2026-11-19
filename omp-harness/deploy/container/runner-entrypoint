@@ -14,7 +14,7 @@ fi
 # Le jeton mémoire propre au dépôt (policy.ts) : il remplace le jeton global de runner.env.
 # Monté mais illisible : le runner s'arrête (`set -e`), jamais de repli sur le jeton global.
 if [ -e /run/secrets/memory.env ]; then
-  unset MEM0_HTTP_TOKEN
+  unset MEMORY_HTTP_TOKEN
   set -a
   . /run/secrets/memory.env
   set +a

@@ -9,11 +9,11 @@
 // Le composant reste utilisé par la préparation des composants, `omp models --json`
 // et « Lancer omp » du terminal ; c'est ce que la recette gatée vérifie.
 //
-// Désactivée par défaut : `MEM0_SESSION_COMPONENT_RECIPE=1`.
+// Désactivée par défaut : `MEMORY_SESSION_COMPONENT_RECIPE=1`.
 // Prérequis : la préparation a installé les composants (racine de support réelle,
 // ou `OMP_CONSOLE_SUPPORT_ROOT`), la pile mémoire tourne, et oMLX répond.
 //
-//   cd omp-console && MEM0_SESSION_COMPONENT_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
+//   cd omp-console && MEMORY_SESSION_COMPONENT_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
 //     --filter sessionComponent -Xswiftc -plugin-path \
 //     -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 
@@ -22,7 +22,7 @@ import Testing
 @testable import OMPConsole
 
 private var recipeEnabled: Bool {
-    ProcessInfo.processInfo.environment["MEM0_SESSION_COMPONENT_RECIPE"] != nil
+    ProcessInfo.processInfo.environment["MEMORY_SESSION_COMPONENT_RECIPE"] != nil
 }
 
 /// Un dépôt git neuf, dans un dossier temporaire.
@@ -114,5 +114,5 @@ func terminalRunRecallsMemoryWithoutTheApp() async throws {
     let newest = created.sorted().last
     let file = try #require(newest, "aucun fichier de session créé par le run")
     let text = try String(contentsOfFile: file, encoding: .utf8)
-    #expect(text.contains("mem0-recall"), "le run terminal doit recevoir le rappel mémoire (fichier : \(file))")
+    #expect(text.contains("memory-recall"), "le run terminal doit recevoir le rappel mémoire (fichier : \(file))")
 }

@@ -14,7 +14,7 @@ import * as net from "node:net";
 import * as path from "node:path";
 import { ClientRegistry } from "../../omp-harness/api/auth.ts";
 import { loadConfig } from "../../omp-harness/config/config.ts";
-import { APPROVER_CODE_REFUSAL, decodePairing } from "../../omp-mem0-req/harness.ts";
+import { APPROVER_CODE_REFUSAL, decodePairing } from "../../omp-memory-req/harness.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
 
 const BOX = path.join(ROOT, "omp-harness", "deploy", "container");
@@ -88,7 +88,7 @@ test("harness-portainer/AC-1 : la pile racine se monte seule — chaque image se
     ["setup", "omp-harness:local"],
     ["repos", "omp-harness:local"],
     ["runner-image", "omp-harness-runner:local"],
-    ["mem0", "mem0-rs:local"],
+    ["memory", "memory-rs:local"],
     ["pairing", "omp-harness-pairing:local"],
   ]) {
     const block = service(name);
@@ -103,7 +103,7 @@ test("harness-portainer/AC-1 : la pile racine se monte seule — chaque image se
 
   // Rien n'est lu à l'analyse du compose : les secrets n'existent qu'après `setup`.
   assert.doesNotMatch(compose, /env_file:/);
-  for (const name of ["harness", "mem0"])
+  for (const name of ["harness", "memory"])
     assert.match(service(name), /setup: \{ condition: service_completed_successfully \}/, `${name} n'attend pas setup`);
 
   // La racine au même chemin (les frères montent un worktree par son chemin d'hôte), le socket, le réseau.
@@ -114,13 +114,13 @@ test("harness-portainer/AC-1 : la pile racine se monte seule — chaque image se
   assert.equal(JSON.parse(read(TEMPLATE)).container.network, "omp-harness");
 
   // Les clés LLM n'entrent que dans `setup`, qui les écrit pour les runners.
-  for (const name of ["harness", "repos", "mem0", "pairing"]) {
+  for (const name of ["harness", "repos", "memory", "pairing"]) {
     assert.doesNotMatch(service(name), /API_KEY|runner\.env/, `${name} voit les clés LLM`);
   }
   assert.match(service("setup"), /ANTHROPIC_API_KEY: \$\{ANTHROPIC_API_KEY:-\}/);
   // Le service ne reçoit que le dossier de son jeton, la mémoire que le sien.
   assert.match(service("harness"), /\/harness:\/run\/secrets\/omp-harness:ro/);
-  assert.match(service("mem0"), /\/mem0:\/run\/secrets\/mem0:ro/);
+  assert.match(service("memory"), /\/memory:\/run\/secrets\/memory:ro/);
 
   // Aucun port public : la boucle locale, que le Tailscale de l'hôte ouvre au tailnet.
   const published = [...compose.matchAll(/^ {4}ports:\n((?: {6}(?:#.*|- .*)\n)+)/gm)].flatMap((m) =>
@@ -143,7 +143,7 @@ test("harness-portainer/AC-2 : `setup` crée tout au premier démarrage, puis ne
   const first = run(SETUP, ["init"], { ...env, ANTHROPIC_API_KEY: "sk-ant-test_1" });
   assert.equal(first.status, 0, first.stderr);
 
-  const token = /^MEM0_HTTP_TOKEN=([0-9a-f]{64})$/m.exec(read(path.join(secrets, "mem0", "mem0.env")))?.[1];
+  const token = /^MEMORY_HTTP_TOKEN=([0-9a-f]{64})$/m.exec(read(path.join(secrets, "memory", "memory.env")))?.[1];
   assert.ok(token, "jeton de la mémoire absent");
   const cdp = (name: string) =>
     /^MOLI_CDP_TOKEN=([0-9a-f]{64})$/m.exec(read(path.join(secrets, name, "moli.env")))?.[1];
@@ -151,14 +151,14 @@ test("harness-portainer/AC-2 : `setup` crée tout au premier démarrage, puis ne
   assert.ok(t1 && t2, "jetons CDP absents");
   assert.equal(
     read(path.join(secrets, "harness", "harness.env")),
-    `MEM0_HTTP_TOKEN=${token}\nMOLI_CDP_URL=http://moli:9222\nMOLI_CDP_TOKEN=${t1}\nMOLI_POSTE_CDP_URL=http://moli-poste:9222\nMOLI_POSTE_CDP_TOKEN=${t2}\n`,
+    `MEMORY_HTTP_TOKEN=${token}\nMOLI_CDP_URL=http://moli:9222\nMOLI_CDP_TOKEN=${t1}\nMOLI_POSTE_CDP_URL=http://moli-poste:9222\nMOLI_POSTE_CDP_TOKEN=${t2}\n`,
     "le service n'a que ses jetons",
   );
-  assert.equal(read(path.join(secrets, "runner.env")), `MEM0_HTTP_TOKEN=${token}\nANTHROPIC_API_KEY=sk-ant-test_1\n`);
-  assert.match(read(path.join(secrets, "mem0", "mem0.env")), /^OMLX_BASE_URL=http:\/\/embeddings:11434\/v1$/m);
+  assert.equal(read(path.join(secrets, "runner.env")), `MEMORY_HTTP_TOKEN=${token}\nANTHROPIC_API_KEY=sk-ant-test_1\n`);
+  assert.match(read(path.join(secrets, "memory", "memory.env")), /^OMLX_BASE_URL=http:\/\/embeddings:11434\/v1$/m);
   // L'Ollama intégré ne sert que les embeddings : le chat de la mémoire est coupé.
-  assert.match(read(path.join(secrets, "mem0", "mem0.env")), /^OMLX_CHAT_BASE_URL=off$/m);
-  for (const file of ["runner.env", "harness/harness.env", "mem0/mem0.env"])
+  assert.match(read(path.join(secrets, "memory", "memory.env")), /^OMLX_CHAT_BASE_URL=off$/m);
+  for (const file of ["runner.env", "harness/harness.env", "memory/memory.env"])
     assert.equal(mode(path.join(secrets, file)), 0o600, `${file} lisible par d'autres`);
   for (const dir of [root, secrets, path.join(root, "home", ".ssh")]) assert.equal(mode(dir), 0o700, dir);
 
@@ -167,7 +167,7 @@ test("harness-portainer/AC-2 : `setup` crée tout au premier démarrage, puis ne
   assert.equal(config.runner.isolation, "container");
   assert.equal(config.container.runnerEnvFile, path.join(secrets, "runner.env"));
   assert.equal(config.dataDir, path.join(root, "state"));
-  assert.equal(config.oracle?.url, "http://mem0:8321");
+  assert.equal(config.oracle?.url, "http://memory:8321");
   const key = read(path.join(root, "home", ".ssh", "id_ed25519.pub"));
 
   // Redéploiement : la clé du modèle et le serveur d'embeddings suivent les variables ;
@@ -180,18 +180,18 @@ test("harness-portainer/AC-2 : `setup` crée tout au premier démarrage, puis ne
     OMLX_BASE_URL: "http://10.0.0.2:8000/v1",
   });
   assert.equal(again.status, 0, again.stderr);
-  assert.equal(read(path.join(secrets, "runner.env")), `MEM0_HTTP_TOKEN=${token}\nOPENROUTER_API_KEY=sk-or-2\n`);
-  assert.match(read(path.join(secrets, "mem0", "mem0.env")), new RegExp(`^MEM0_HTTP_TOKEN=${token}$`, "m"));
-  assert.match(read(path.join(secrets, "mem0", "mem0.env")), /^OMLX_BASE_URL=http:\/\/10\.0\.0\.2:8000\/v1$/m);
-  // Un serveur à soi : le chat le suit (aucune ligne, mem0-rs reprend OMLX_BASE_URL).
-  assert.doesNotMatch(read(path.join(secrets, "mem0", "mem0.env")), /^OMLX_CHAT_/m);
+  assert.equal(read(path.join(secrets, "runner.env")), `MEMORY_HTTP_TOKEN=${token}\nOPENROUTER_API_KEY=sk-or-2\n`);
+  assert.match(read(path.join(secrets, "memory", "memory.env")), new RegExp(`^MEMORY_HTTP_TOKEN=${token}$`, "m"));
+  assert.match(read(path.join(secrets, "memory", "memory.env")), /^OMLX_BASE_URL=http:\/\/10\.0\.0\.2:8000\/v1$/m);
+  // Un serveur à soi : le chat le suit (aucune ligne, memory-rs reprend OMLX_BASE_URL).
+  assert.doesNotMatch(read(path.join(secrets, "memory", "memory.env")), /^OMLX_CHAT_/m);
   const chat = run(SETUP, ["init"], {
     ...env,
     OMLX_CHAT_BASE_URL: "http://10.0.0.3:8000/v1",
     OMLX_CHAT_API_TOKEN: "cle-chat",
   });
   assert.equal(chat.status, 0, chat.stderr);
-  const withChat = read(path.join(secrets, "mem0", "mem0.env"));
+  const withChat = read(path.join(secrets, "memory", "memory.env"));
   assert.match(withChat, /^OMLX_BASE_URL=http:\/\/embeddings:11434\/v1$/m);
   assert.match(withChat, /^OMLX_CHAT_BASE_URL=http:\/\/10\.0\.0\.3:8000\/v1$/m);
   assert.match(withChat, /^OMLX_CHAT_API_TOKEN=cle-chat$/m);
@@ -281,18 +281,18 @@ cat "${dir}/state$n"
   );
   fs.writeFileSync(path.join(dir, "token"), "harness-token\n");
   fs.writeFileSync(
-    path.join(dir, "mem0.env"),
-    "MEM0_HTTP_TOKEN=mem0-token\nOMLX_BASE_URL=http://embeddings:11434/v1\n",
+    path.join(dir, "memory.env"),
+    "MEMORY_HTTP_TOKEN=memory-token\nOMLX_BASE_URL=http://embeddings:11434/v1\n",
   );
   const env = {
     PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
     TS_SOCKET: socket,
     OMP_HARNESS_TOKEN_FILE: path.join(dir, "token"),
-    OMP_HARNESS_MEM0_ENV: path.join(dir, "mem0.env"),
+    OMP_HARNESS_MEMORY_ENV: path.join(dir, "memory.env"),
     OMP_HARNESS_PUBLISHED: path.join(dir, "published.env"),
     OMP_HARNESS_PAIRING_POLL: "0",
     OMP_HARNESS_PORT: "8790",
-    OMP_HARNESS_MEM0_PORT: "8321",
+    OMP_HARNESS_MEMORY_PORT: "8321",
   };
   const serveLog = () => (fs.existsSync(path.join(dir, "serve.log")) ? read(path.join(dir, "serve.log")) : "");
   return { dir, env, serveLog, close: () => server.close() };
@@ -330,12 +330,12 @@ test("harness-portainer/AC-5 : `pairing` attend le Tailscale de l'hôte, publie 
     assert.deepEqual(decodePairing(code), {
       url: "https://vps.tail1234.ts.net",
       token: "harness-token",
-      mem0Url: "https://vps.tail1234.ts.net:8443",
-      mem0Token: "mem0-token",
+      memoryUrl: "https://vps.tail1234.ts.net:8443",
+      memoryToken: "memory-token",
     });
     assert.equal(
       read(ts.env.OMP_HARNESS_PUBLISHED),
-      "URL=https://vps.tail1234.ts.net\nMEM0_URL=https://vps.tail1234.ts.net:8443\n",
+      "URL=https://vps.tail1234.ts.net\nMEMORY_URL=https://vps.tail1234.ts.net:8443\n",
       "les adresses du code, pour `omp-harness-stack approver`",
     );
 
@@ -410,9 +410,9 @@ test("harness-portainer/AC-7 : aucun démon Tailscale dans la pile — `pairing`
   assert.match(service("pairing"), /- \$\{OMP_HARNESS_TAILSCALE_RUN:-\/var\/run\/tailscale\}:\/var\/run\/tailscale\n/);
   for (const variable of [
     "OMP_HARNESS_PORT",
-    "OMP_HARNESS_MEM0_PORT",
+    "OMP_HARNESS_MEMORY_PORT",
     "OMP_HARNESS_TAILNET_PORT",
-    "OMP_HARNESS_TAILNET_MEM0_PORT",
+    "OMP_HARNESS_TAILNET_MEMORY_PORT",
   ])
     assert.ok(service("pairing").includes(`${variable}: \${${variable}:-`), `${variable} absent de pairing`);
   assert.match(
@@ -421,8 +421,8 @@ test("harness-portainer/AC-7 : aucun démon Tailscale dans la pile — `pairing`
   );
 
   const dir = tmpdir("harness-portainer-entry-");
-  fs.writeFileSync(path.join(dir, "harness.env"), "MEM0_HTTP_TOKEN=depuis-le-fichier\n");
-  const entry = entrypoint(dir, 'printf %s "$MEM0_HTTP_TOKEN"');
+  fs.writeFileSync(path.join(dir, "harness.env"), "MEMORY_HTTP_TOKEN=depuis-le-fichier\n");
+  const entry = entrypoint(dir, 'printf %s "$MEMORY_HTTP_TOKEN"');
   assert.equal(entry.status, 0, entry.stderr);
   assert.equal(entry.stdout, "depuis-le-fichier");
 });
@@ -430,7 +430,7 @@ test("harness-portainer/AC-7 : aucun démon Tailscale dans la pile — `pairing`
 test("harness-portainer/AC-8 : les ports du tailnet se choisissent — `pairing` y publie le harness et la mémoire, le code les porte, la sortie de `serve` reste dans les journaux", async () => {
   const ts = await fakeTailscale([RUNNING]);
   try {
-    const env = { ...ts.env, OMP_HARNESS_TAILNET_PORT: "444", OMP_HARNESS_TAILNET_MEM0_PORT: "8444" };
+    const env = { ...ts.env, OMP_HARNESS_TAILNET_PORT: "444", OMP_HARNESS_TAILNET_MEMORY_PORT: "8444" };
     const pairing = run(PAIRING, [], env);
     assert.equal(pairing.status, 0, pairing.stderr);
     assert.equal(
@@ -444,8 +444,8 @@ test("harness-portainer/AC-8 : les ports du tailnet se choisissent — `pairing`
     assert.deepEqual(decodePairing(code), {
       url: "https://vps.tail1234.ts.net:444",
       token: "harness-token",
-      mem0Url: "https://vps.tail1234.ts.net:8444",
-      mem0Token: "mem0-token",
+      memoryUrl: "https://vps.tail1234.ts.net:8444",
+      memoryToken: "memory-token",
     });
 
     // OMP_HARNESS_TAILSCALE_SERVE=0 : rien n'est publié, mais le code garde les ports choisis.
@@ -457,8 +457,8 @@ test("harness-portainer/AC-8 : les ports du tailnet se choisissent — `pairing`
     assert.deepEqual(decodePairing(kept ?? ""), {
       url: "https://vps.tail1234.ts.net:444",
       token: "harness-token",
-      mem0Url: "https://vps.tail1234.ts.net:8444",
-      mem0Token: "mem0-token",
+      memoryUrl: "https://vps.tail1234.ts.net:8444",
+      memoryToken: "memory-token",
     });
   } finally {
     ts.close();
@@ -480,20 +480,20 @@ test("harness-portainer/AC-32 : `init` écrit GH_TOKEN dans harness.env (0600) �
   for (let attempt = 0; attempt < 2; attempt++) {
     const result = run(SETUP, ["init"], { ...env, GH_TOKEN: "ghp_Ab1-x_2", ANTHROPIC_API_KEY: "sk-ant-test_1" });
     assert.equal(result.status, 0, result.stderr);
-    const token = /^MEM0_HTTP_TOKEN=([0-9a-f]{64})$/m.exec(read(path.join(secrets, "mem0", "mem0.env")))?.[1];
+    const token = /^MEMORY_HTTP_TOKEN=([0-9a-f]{64})$/m.exec(read(path.join(secrets, "memory", "memory.env")))?.[1];
     assert.ok(token);
-    assert.equal(read(harnessEnv), `MEM0_HTTP_TOKEN=${token}\n${moliLines(secrets)}GH_TOKEN=ghp_Ab1-x_2\n`);
+    assert.equal(read(harnessEnv), `MEMORY_HTTP_TOKEN=${token}\n${moliLines(secrets)}GH_TOKEN=ghp_Ab1-x_2\n`);
     assert.equal(mode(harnessEnv), 0o600);
-    for (const file of ["runner.env", "mem0/mem0.env"])
+    for (const file of ["runner.env", "memory/memory.env"])
       assert.doesNotMatch(read(path.join(secrets, file)), /GH_TOKEN|ghp_/, file);
   }
   for (const empty of [{}, { GH_TOKEN: "" }] as Record<string, string>[]) {
     const result = run(SETUP, ["init"], { ...env, ...empty });
     assert.equal(result.status, 0, result.stderr);
-    const token = /^MEM0_HTTP_TOKEN=([0-9a-f]{64})$/m.exec(read(path.join(secrets, "mem0", "mem0.env")))?.[1];
+    const token = /^MEMORY_HTTP_TOKEN=([0-9a-f]{64})$/m.exec(read(path.join(secrets, "memory", "memory.env")))?.[1];
     assert.equal(
       read(harnessEnv),
-      `MEM0_HTTP_TOKEN=${token}\n${moliLines(secrets)}`,
+      `MEMORY_HTTP_TOKEN=${token}\n${moliLines(secrets)}`,
       "la ligne disparaît avec la variable, sans ligne vide",
     );
   }
@@ -511,8 +511,8 @@ test("harness-portainer/AC-33 : `harness-entrypoint` exporte le GH_TOKEN du fich
     assert.equal(entry.status, 0, entry.stderr);
     return entry.stdout;
   };
-  assert.equal(launch("MEM0_HTTP_TOKEN=m\nGH_TOKEN=ghp_depuis-le-fichier\n"), "ghp_depuis-le-fichier");
-  assert.equal(launch("MEM0_HTTP_TOKEN=m\n"), "absent");
+  assert.equal(launch("MEMORY_HTTP_TOKEN=m\nGH_TOKEN=ghp_depuis-le-fichier\n"), "ghp_depuis-le-fichier");
+  assert.equal(launch("MEMORY_HTTP_TOKEN=m\n"), "absent");
 });
 
 test("harness-portainer/AC-34 : `approver`, dans le conteneur harness, (re)crée l'approbateur et imprime le code des apps — le code de `pairing` plus son jeton ; sans adresses publiées, il le dit et ne crée rien", () => {
@@ -534,9 +534,9 @@ test("harness-portainer/AC-34 : `approver`, dans le conteneur harness, (re)crée
 
   fs.writeFileSync(
     path.join(root, "published", "published.env"),
-    "URL=https://vps.tail1234.ts.net:7443\nMEM0_URL=https://vps.tail1234.ts.net:8443\n",
+    "URL=https://vps.tail1234.ts.net:7443\nMEMORY_URL=https://vps.tail1234.ts.net:8443\n",
   );
-  const mem0Token = /^MEM0_HTTP_TOKEN=(.+)$/m.exec(read(path.join(secrets, "harness", "harness.env")))?.[1];
+  const memoryToken = /^MEMORY_HTTP_TOKEN=(.+)$/m.exec(read(path.join(secrets, "harness", "harness.env")))?.[1];
   const lines = () => {
     const result = run(SETUP, ["approver"], approverEnv);
     assert.equal(result.status, 0, result.stderr);
@@ -550,7 +550,7 @@ test("harness-portainer/AC-34 : `approver`, dans le conteneur harness, (re)crée
     "https://vps.tail1234.ts.net:7443",
     "harness-token",
     "https://vps.tail1234.ts.net:8443",
-    mem0Token,
+    memoryToken,
   ]);
   assert.equal(clients.authenticate(first[4])?.approver, true);
 

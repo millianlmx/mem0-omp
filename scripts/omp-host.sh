@@ -10,11 +10,11 @@
 # .github/workflows/check.yml (OMP_HOST_VERSION, OMP_HOST_TYPES_NODE) : une seule
 # déclaration, donc le poste type-checke et charge les plugins contre le même hôte
 # que la CI. L'installation pèse environ 2 Go : elle vit dans le cache de
-# l'utilisateur (comme la Qdrant de mem0-http-contrat.sh), partagée par tous les
+# l'utilisateur (comme la Qdrant de memory-http-contrat.sh), partagée par tous les
 # clones et worktrees, un dossier par couple de versions.
 #
 # scripts/typecheck.sh et la section « Plugins réels » de check.sh la consultent
-# après les variables de la CI (MEM0_OMP_HOST_TYPES, MEM0_OMP_HOST_MODULES) et
+# après les variables de la CI (MEMORY_OMP_HOST_TYPES, MEMORY_OMP_HOST_MODULES) et
 # avant les installations globales (bun, npm).
 set -u
 
@@ -40,7 +40,7 @@ if [ -z "$HOST_VERSION" ] || [ -z "$TYPES_NODE" ]; then
   exit 1
 fi
 
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/mem0-omp"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/memory-omp"
 DIR="$CACHE/omp-host-$HOST_VERSION-types-node-$TYPES_NODE"
 MODULES="$DIR/node_modules"
 # Le dernier fichier écrit par une installation réussie : un dossier interrompu

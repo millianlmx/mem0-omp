@@ -41,7 +41,7 @@ Connexion : HARNESS_URL et HARNESS_TOKEN, sinon ~/.omp/harness.json ({"url", "to
 Sortie : 0 livré · 1 échoué, annulé ou refusé · 2 ligne de commande fausse · 3 attend un humain
          4 délai d'attente dépassé · 5 serveur injoignable ou non configuré`;
 
-/** Le plus gros corps que le serveur lit (omp-harness/api/http.ts, MAX_BODY) : au-delà il rend 413. */
+/** Le plus gros corps que le serveur lit (omp-harness/api/http-io.ts, MAX_BODY) : au-delà il rend 413. */
 const MAX_BODY_BYTES = 1024 * 1024;
 /** Une réponse du serveur qui ne vient pas en 30 s est une panne réseau. */
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -79,7 +79,7 @@ const redact = (text: string): string => (secret === "" ? text : text.replaceAll
 /**
  * Où et comment joindre le harness : `HARNESS_URL` / `HARNESS_TOKEN`, sinon `~/.omp/harness.json`
  * (`{url, token}`, le fichier qu'écrit `harness.sh pair` et que lisent le plugin et les apps ; même
- * lecture que `resolveTarget` d'omp-mem0-req/harness.ts, sans le dépôt). Le serveur est un dossier
+ * lecture que `resolveTarget` d'omp-memory-req/harness.ts, sans le dépôt). Le serveur est un dossier
  * à part : le plugin n'est pas importé.
  */
 function connectionOf(

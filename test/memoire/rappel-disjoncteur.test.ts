@@ -1,4 +1,4 @@
-// Latence et panne du rappel automatique (omp-mem0-memory/recall.ts).
+// Latence et panne du rappel automatique (omp-memory/recall.ts).
 //
 // Avant : le chargement du cache (10 s de budget) PUIS les recherches (20 s)
 // partaient en série, à chaque tour d'une panne — 30 s, le délai au bout duquel
@@ -15,9 +15,9 @@ import assert from "node:assert/strict";
 import { fakeSchema } from "../support/fake-zod.ts";
 import { tmpdir } from "../support/repo.ts";
 
-process.env.MEM0_AUTOSETUP = "0";
-delete process.env.MEM0_MODE;
-const { default: mem0MemoryExtension, RECALL_BACKOFF_MS, TIMEOUT } = await import("../../omp-mem0-memory/extension.ts");
+process.env.MEMORY_AUTOSETUP = "0";
+delete process.env.MEMORY_MODE;
+const { default: memoryPluginExtension, RECALL_BACKOFF_MS, TIMEOUT } = await import("../../omp-memory/extension.ts");
 
 type Mode = "ok" | "pendu" | "differe";
 type Pending = { route: string; repondre: () => void };
@@ -84,7 +84,7 @@ function mkApp() {
     registerTool: () => {},
     registerCommand: () => {},
   };
-  mem0MemoryExtension(pi as unknown as Parameters<typeof mem0MemoryExtension>[0]);
+  memoryPluginExtension(pi as unknown as Parameters<typeof memoryPluginExtension>[0]);
   sessions += 1;
   const ctx = { cwd: tmpdir("disjoncteur-"), sessionManager: { getSessionId: () => `disjoncteur-${sessions}` } };
   /** Lance un tour ; `fini` dit s'il a rendu, sans l'attendre. */

@@ -14,7 +14,8 @@ import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
 import type { ApnsConfig } from "../../../omp-harness/config/config.ts";
 import { Store } from "../../../omp-harness/db/db.ts";
 import { PUSH_START_TOKENS_MAX } from "../../../omp-harness/db/local-sessions.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import type { IntakeView } from "../../../omp-harness/intake/intake.ts";
 import type { ApnsReply, ApnsTransport } from "../../../omp-harness/notify/push.ts";
 import {

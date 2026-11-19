@@ -1,5 +1,5 @@
 // La lecture DIRECTE de la mémoire du serveur par l'app iOS (`MemoryReader`) :
-// pages du sommaire, recherche de `mem0_search`, graphe du noyau, portées, et une
+// pages du sommaire, recherche de `memory_search`, graphe du noyau, portées, et une
 // cause par panne. Hermétique : une doublure de transport rend statut et corps.
 
 import ConsoleCore
@@ -67,7 +67,7 @@ struct MemoryReaderTests {
         let second = try await reader(transport).page(scope: "produit", offset: 100)
         #expect(second.rows.count == 50)
         #expect(second.nextOffset == nil)
-        #expect(transport.requests.first?.value(forHTTPHeaderField: "X-Mem0-Token") == "jeton")
+        #expect(transport.requests.first?.value(forHTTPHeaderField: "X-Memory-Token") == "jeton")
         #expect(transport.requests.first?.url?.absoluteString == "https://vps.tailnet.ts.net:8443/memory/all?agent_id=produit")
     }
 
@@ -81,7 +81,7 @@ struct MemoryReaderTests {
         #expect(transport.requests.isEmpty)
     }
 
-    @Test("la recherche est celle de mem0_search : pool, seuil, tri par cosinus brut")
+    @Test("la recherche est celle de memory_search : pool, seuil, tri par cosinus brut")
     func search() async throws {
         let transport = ScriptedMemoryTransport()
         transport.reply("/memory/search", json: #"""

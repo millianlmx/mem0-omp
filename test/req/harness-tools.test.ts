@@ -6,12 +6,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo, Socket } from "node:net";
-import reqExtension, { LAUNCH_APPROVAL, PROJECT_SEED, REQ_SEED } from "../../omp-mem0-req/extension.ts";
-import { parseFrame, readEvents, splitFrames } from "../../omp-mem0-req/events.ts";
-import { createFollower, followLine } from "../../omp-mem0-req/follow.ts";
-import { HarnessCallError, harnessCall } from "../../omp-mem0-req/harness.ts";
-import { ARTIFACT_LIMIT, GESTURE_RULE, STALE_MESSAGE, renderRun } from "../../omp-mem0-req/tools.ts";
-import { parseRunView } from "../../omp-mem0-req/wire.ts";
+import reqExtension, { LAUNCH_APPROVAL, PROJECT_SEED, REQ_SEED } from "../../omp-memory-req/extension.ts";
+import { parseFrame, readEvents, splitFrames } from "../../omp-memory-req/events.ts";
+import { createFollower, followLine } from "../../omp-memory-req/follow.ts";
+import { HarnessCallError, harnessCall } from "../../omp-memory-req/harness.ts";
+import { ARTIFACT_LIMIT, GESTURE_RULE, STALE_MESSAGE, renderRun } from "../../omp-memory-req/tools.ts";
+import { parseRunView } from "../../omp-memory-req/wire.ts";
 import { fakeSchema } from "../support/fake-zod.ts";
 import { tmpdir } from "../support/repo.ts";
 

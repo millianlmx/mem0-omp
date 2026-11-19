@@ -1,6 +1,6 @@
 // La recette manuelle des composants (BR-1) : hors suite, hors CI.
 //
-// Désactivée par défaut (`MEM0_COMPONENTS_RECIPE` non posée) : elle touche le
+// Désactivée par défaut (`MEMORY_COMPONENTS_RECIPE` non posée) : elle touche le
 // RÉSEAU RÉEL et télécharge ~208 Mo (omp seul : l'app n'installe plus podman).
 // Elle installe omp dans une racine TEMPORAIRE (`OMP_CONSOLE_SUPPORT_ROOT` n'est
 // pas requis, la racine est passée directement), vérifie qu'aucun
@@ -15,7 +15,7 @@ import Testing
 @MainActor
 @Test(
     "all-in-one-app/AC-2 : recette réelle — télécharge omp dans une racine temporaire et exécute son --version",
-    .enabled(if: ProcessInfo.processInfo.environment["MEM0_COMPONENTS_RECIPE"] != nil)
+    .enabled(if: ProcessInfo.processInfo.environment["MEMORY_COMPONENTS_RECIPE"] != nil)
 )
 func recetteReelleInstalleLesDeuxComposants() async throws {
     let root = FileManager.default.temporaryDirectory

@@ -14,7 +14,7 @@
 #
 # Mêmes users, mêmes droits, mêmes tranches et le même lanceur root que sur Debian ;
 # seuls les chemins changent (store Nix, /run/wrappers/bin/sudo, bash du store).
-# Les secrets (jeton mem0, clés des fournisseurs) ne passent JAMAIS par le store :
+# Les secrets (jeton memory, clés des fournisseurs) ne passent JAMAIS par le store :
 # `omp-harness-secrets` les crée une fois dans /etc/omp-harness, root seul.
 { config, lib, pkgs, ... }:
 
@@ -22,21 +22,21 @@ let
   cfg = config.services.omp-harness;
   repo = ../../..;
 
-  # Le service et le plugin mémoire, côte à côte (scope.ts importe ../omp-mem0-memory).
+  # Le service et le plugin mémoire, côte à côte (scope.ts importe ../omp-memory).
   src = lib.fileset.toSource {
     root = repo;
-    fileset = lib.fileset.unions [ (repo + "/omp-harness") (repo + "/omp-mem0-memory") ];
+    fileset = lib.fileset.unions [ (repo + "/omp-harness") (repo + "/omp-memory") ];
   };
 
-  mem0Dir = repo + "/mem0-stack/mem0-rs";
-  mem0-rs = pkgs.rustPlatform.buildRustPackage {
-    pname = "mem0-rs";
+  memoryDir = repo + "/memory-stack/memory-rs";
+  memory-rs = pkgs.rustPlatform.buildRustPackage {
+    pname = "memory-rs";
     version = "0.1.0";
     src = lib.fileset.toSource {
-      root = mem0Dir;
-      fileset = lib.fileset.unions [ (mem0Dir + "/Cargo.toml") (mem0Dir + "/Cargo.lock") (mem0Dir + "/src") ];
+      root = memoryDir;
+      fileset = lib.fileset.unions [ (memoryDir + "/Cargo.toml") (memoryDir + "/Cargo.lock") (memoryDir + "/src") ];
     };
-    cargoLock.lockFile = mem0Dir + "/Cargo.lock";
+    cargoLock.lockFile = memoryDir + "/Cargo.lock";
     doCheck = false;
   };
 
@@ -70,15 +70,15 @@ let
         PATH = lib.concatStringsSep ":" [ (lib.makeBinPath cfg.heavyPackages) "/run/current-system/sw/bin" ];
       };
     };
-    oracle = if cfg.mem0.enable then { url = "http://127.0.0.1:8321"; token = null; } else null;
+    oracle = if cfg.memory.enable then { url = "http://127.0.0.1:8321"; token = null; } else null;
   };
   merged = lib.recursiveUpdate defaults cfg.settings;
   harnessConfig = (pkgs.formats.json { }).generate "omp-harness-config.json" merged;
 
-  # Les réglages de mem0-rs : l'Ollama local quand il est déclaré, sinon un serveur ailleurs ;
-  # `mem0.environment` l'emporte toujours.
+  # Les réglages de memory-rs : l'Ollama local quand il est déclaré, sinon un serveur ailleurs ;
+  # `memory.environment` l'emporte toujours.
   ollamaUrl = "http://127.0.0.1:${toString cfg.embeddings.port}/v1";
-  mem0Environment =
+  memoryEnvironment =
     (
       if cfg.embeddings.enable then
         {
@@ -103,7 +103,7 @@ let
           EMBEDDING_DIMS = "1024";
         }
     )
-    // cfg.mem0.environment;
+    // cfg.memory.environment;
 
   tailscale = config.services.tailscale.package;
   serveScript = pkgs.writeShellScript "omp-harness-tailscale-serve" ''
@@ -114,13 +114,13 @@ let
       sleep 2
     done
     ${tailscale}/bin/tailscale serve --bg --https=${toString cfg.tailscale.httpsPort} http://127.0.0.1:${toString merged.listen.port}
-    ${lib.optionalString (cfg.mem0.enable && cfg.tailscale.mem0HttpsPort != null)
-      "${tailscale}/bin/tailscale serve --bg --https=${toString cfg.tailscale.mem0HttpsPort} http://127.0.0.1:8321"}
+    ${lib.optionalString (cfg.memory.enable && cfg.tailscale.memoryHttpsPort != null)
+      "${tailscale}/bin/tailscale serve --bg --https=${toString cfg.tailscale.memoryHttpsPort} http://127.0.0.1:8321"}
   '';
   unserveScript = pkgs.writeShellScript "omp-harness-tailscale-unserve" ''
     ${tailscale}/bin/tailscale serve --https=${toString cfg.tailscale.httpsPort} off || true
-    ${lib.optionalString (cfg.mem0.enable && cfg.tailscale.mem0HttpsPort != null)
-      "${tailscale}/bin/tailscale serve --https=${toString cfg.tailscale.mem0HttpsPort} off || true"}
+    ${lib.optionalString (cfg.memory.enable && cfg.tailscale.memoryHttpsPort != null)
+      "${tailscale}/bin/tailscale serve --https=${toString cfg.tailscale.memoryHttpsPort} off || true"}
   '';
 
   launcherConf = ''
@@ -136,11 +136,11 @@ let
     OMP_BIN=${cfg.ompBin}
     RUNNER_ENV_FILE=/etc/omp-harness/runner.env
     RUNNER_ENV_DIR=/run/omp-harness-launcher
-    RUNNER_HIDDEN=/var/lib/omp-harness/state /var/lib/omp-heavy /var/lib/omp-mem0 /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private
+    RUNNER_HIDDEN=/var/lib/omp-harness/state /var/lib/omp-heavy /var/lib/omp-memory /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private
     PROVIDERS_ENV_FILE=/var/lib/omp-harness/state/providers.env
     PROVIDERS_MODELS_FILE=/var/lib/omp-harness/state/providers.models.yml
     MEMORY_TOKENS_DIR=/var/lib/omp-harness/state/memory-tokens
-    HEAVY_HIDDEN=/var/lib/omp-runner /var/lib/omp-harness/state /var/lib/omp-mem0 /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private
+    HEAVY_HIDDEN=/var/lib/omp-runner /var/lib/omp-harness/state /var/lib/omp-memory /etc/omp-harness /run/dbus /run/docker.sock /var/run/docker.sock /run/systemd/private
     HEAVY_SHELL=${shell}
   '';
 
@@ -201,19 +201,19 @@ in
       '';
     };
 
-    mem0 = {
+    memory = {
       enable = lib.mkOption {
         type = lib.types.bool;
         default = true;
-        description = "L'oracle mem0-rs (la mémoire du projet) sur 127.0.0.1:8321.";
+        description = "L'oracle memory-rs (la mémoire du projet) sur 127.0.0.1:8321.";
       };
       environment = lib.mkOption {
         type = lib.types.attrsOf lib.types.str;
         default = { };
         example = { OMLX_BASE_URL = "http://homelab:8000/v1"; };
         description = ''
-          Réglages non secrets de mem0-rs, par-dessus ceux du module (l'Ollama local de
-          `embeddings`, sinon http://homelab:8000/v1) ; OMLX_API_TOKEN va dans /etc/omp-harness/mem0.env.
+          Réglages non secrets de memory-rs, par-dessus ceux du module (l'Ollama local de
+          `embeddings`, sinon http://homelab:8000/v1) ; OMLX_API_TOKEN va dans /etc/omp-harness/memory.env.
         '';
       };
     };
@@ -224,7 +224,7 @@ in
         default = true;
         description = ''
           Un Ollama sur cette machine (127.0.0.1 seulement) qui sert les embeddings de la mémoire.
-          Faux : mem0.environment.OMLX_BASE_URL désigne un serveur compatible OpenAI ailleurs.
+          Faux : memory.environment.OMLX_BASE_URL désigne un serveur compatible OpenAI ailleurs.
         '';
       };
       model = lib.mkOption {
@@ -269,7 +269,7 @@ in
         default = 443;
         description = "Le port HTTPS de l'API sur le tailnet : https://<machine>.<tailnet>.ts.net.";
       };
-      mem0HttpsPort = lib.mkOption {
+      memoryHttpsPort = lib.mkOption {
         type = lib.types.nullOr lib.types.port;
         default = 8443;
         description = "Le port HTTPS de la mémoire sur le tailnet (partagée avec le Mac) ; null : non publiée.";
@@ -298,16 +298,16 @@ in
       host = "127.0.0.1";
       port = cfg.embeddings.port;
       loadModels = [ cfg.embeddings.model ] ++ lib.optional (cfg.embeddings.llmModel != null) cfg.embeddings.llmModel;
-      # Les modèles restent chargés : un rechargement à froid ferait expirer les écritures de mem0.
+      # Les modèles restent chargés : un rechargement à froid ferait expirer les écritures de memory.
       environmentVariables.OLLAMA_KEEP_ALIVE = "-1";
     };
 
-    users.groups = { omp-work = { }; omp-harness = { }; omp-runner = { }; omp-heavy = { }; omp-mem0 = { }; };
+    users.groups = { omp-work = { }; omp-harness = { }; omp-runner = { }; omp-heavy = { }; omp-memory = { }; };
     users.users = {
       omp-harness = { isSystemUser = true; group = "omp-harness"; extraGroups = [ "omp-work" ]; home = homes.omp-harness; description = "OMP harness - service"; };
       omp-runner = { isSystemUser = true; group = "omp-runner"; extraGroups = [ "omp-work" ]; home = homes.omp-runner; description = "OMP harness - runners"; };
       omp-heavy = { isSystemUser = true; group = "omp-heavy"; extraGroups = [ "omp-work" ]; home = homes.omp-heavy; description = "OMP harness - jobs heavy"; };
-      omp-mem0 = { isSystemUser = true; group = "omp-mem0"; home = "/var/lib/omp-mem0"; description = "OMP harness - oracle mem0-rs"; };
+      omp-memory = { isSystemUser = true; group = "omp-memory"; home = "/var/lib/omp-memory"; description = "OMP harness - oracle memory-rs"; };
     };
 
     # deploy/tmpfiles.conf, plus le safe.directory git de chaque user.
@@ -322,7 +322,7 @@ in
       "d /var/cache/omp-harness/pnpm-store   2770 omp-harness omp-work -"
       "d /var/lib/omp-runner                 0700 omp-runner omp-runner -"
       "d /var/lib/omp-heavy                  0700 omp-heavy omp-heavy -"
-      "d /var/lib/omp-mem0                   0700 omp-mem0 omp-mem0 -"
+      "d /var/lib/omp-memory                   0700 omp-memory omp-memory -"
       "d /etc/omp-harness                    0755 root root -"
     ] ++ lib.mapAttrsToList (_: home: "L+ ${home}/.gitconfig - - - - ${gitconfig}") homes;
 
@@ -347,11 +347,11 @@ in
       };
     };
 
-    # Le jeton mem0 partagé (mem0-rs, service, runners) : créé une fois, root seul, hors du store.
+    # Le jeton memory partagé (memory-rs, service, runners) : créé une fois, root seul, hors du store.
     systemd.services.omp-harness-secrets = {
       description = "OMP harness — secrets de /etc/omp-harness";
       wantedBy = [ "multi-user.target" ];
-      before = [ "omp-harness.service" "omp-harness-mem0.service" ];
+      before = [ "omp-harness.service" "omp-harness-memory.service" ];
       path = [ pkgs.coreutils pkgs.openssh pkgs.util-linux ];
       serviceConfig = { Type = "oneshot"; RemainAfterExit = true; };
       script = ''
@@ -359,12 +359,12 @@ in
         cd /etc/omp-harness
         [ -e env ] || install -m 0640 -g omp-harness /dev/null env
         [ -e runner.env ] || install -m 0600 /dev/null runner.env
-        if [ ! -e mem0.env ]; then
+        if [ ! -e memory.env ]; then
           token="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
-          install -m 0600 /dev/null mem0.env
-          printf 'MEM0_HTTP_TOKEN=%s\n# OMLX_API_TOKEN=\n' "$token" > mem0.env
-          printf 'MEM0_HTTP_TOKEN=%s\n' "$token" >> env
-          printf 'MEM0_HTTP_URL=http://127.0.0.1:8321\nMEM0_HTTP_TOKEN=%s\n' "$token" >> runner.env
+          install -m 0600 /dev/null memory.env
+          printf 'MEMORY_HTTP_TOKEN=%s\n# OMLX_API_TOKEN=\n' "$token" > memory.env
+          printf 'MEMORY_HTTP_TOKEN=%s\n' "$token" >> env
+          printf 'MEMORY_HTTP_URL=http://127.0.0.1:8321\nMEMORY_HTTP_TOKEN=%s\n' "$token" >> runner.env
         fi
         # La clé SSH du service : le repli des dépôts sans `sshKey` (chacun devrait avoir la sienne,
         # GitHub refusant une même clé de déploiement sur deux dépôts : README § NixOS).
@@ -379,20 +379,20 @@ in
       '';
     };
 
-    systemd.services.omp-harness-mem0 = lib.mkIf cfg.mem0.enable {
-      description = "OMP harness — oracle mem0-rs (mémoire du projet)";
+    systemd.services.omp-harness-memory = lib.mkIf cfg.memory.enable {
+      description = "OMP harness — oracle memory-rs (mémoire du projet)";
       after = [ "network-online.target" "tailscaled.service" "omp-harness-secrets.service" ]
         ++ lib.optionals cfg.embeddings.enable [ "ollama.service" "ollama-model-loader.service" ];
       wants = [ "network-online.target" ] ++ lib.optionals cfg.embeddings.enable [ "ollama.service" "ollama-model-loader.service" ];
       requires = [ "omp-harness-secrets.service" ];
       before = [ "omp-harness.service" ];
       wantedBy = [ "multi-user.target" ];
-      environment = mem0Environment // { MEM0_DB_PATH = "/var/lib/omp-mem0/mem0-rs.db"; };
+      environment = memoryEnvironment // { MEMORY_DB_PATH = "/var/lib/omp-memory/memory-rs.db"; };
       serviceConfig = {
-        User = "omp-mem0";
-        Group = "omp-mem0";
-        EnvironmentFile = "/etc/omp-harness/mem0.env";
-        ExecStart = "${mem0-rs}/bin/mem0-rs --host 127.0.0.1 --port 8321";
+        User = "omp-memory";
+        Group = "omp-memory";
+        EnvironmentFile = "/etc/omp-harness/memory.env";
+        ExecStart = "${memory-rs}/bin/memory-rs --host 127.0.0.1 --port 8321";
         Restart = "on-failure";
         RestartSec = 5;
         MemoryMax = "512M";
@@ -403,15 +403,15 @@ in
         ProtectHome = true;
         PrivateTmp = true;
         PrivateDevices = true;
-        ReadWritePaths = [ "/var/lib/omp-mem0" ];
+        ReadWritePaths = [ "/var/lib/omp-memory" ];
         RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
       };
     };
 
     systemd.services.omp-harness = {
       description = "OMP harness — Pipeline Service (API REST + SSE, runners, heavy)";
-      after = [ "network-online.target" "omp-harness-secrets.service" ] ++ lib.optional cfg.mem0.enable "omp-harness-mem0.service";
-      wants = [ "network-online.target" ] ++ lib.optional cfg.mem0.enable "omp-harness-mem0.service";
+      after = [ "network-online.target" "omp-harness-secrets.service" ] ++ lib.optional cfg.memory.enable "omp-harness-memory.service";
+      wants = [ "network-online.target" ] ++ lib.optional cfg.memory.enable "omp-harness-memory.service";
       requires = [ "omp-harness-secrets.service" ];
       wantedBy = [ "multi-user.target" ];
       restartTriggers = [ harnessConfig launcherConf ];

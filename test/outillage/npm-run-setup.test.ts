@@ -58,7 +58,7 @@ test("npm-run-setup/AC-2 : Biome absent ou d'une autre version, un test qui en d
   const lancer = (lintDir: string) =>
     spawnSync("node", ["--test", "--experimental-strip-types", "--test-reporter=tap", sonde], {
       encoding: "utf8",
-      env: childEnv({ MEM0_OMP_LINT_DIR: lintDir }),
+      env: childEnv({ MEMORY_OMP_LINT_DIR: lintDir }),
     });
 
   const vide = lancer(tmpdir("npm-run-setup-vide-"));

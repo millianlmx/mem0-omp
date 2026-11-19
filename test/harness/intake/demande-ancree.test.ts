@@ -112,7 +112,7 @@ test("demande-ancree/AC-1 : les règles du classeur envoient une demande d'idée
   const prompt = intakePrompt({
     text: "quelle feature virale ajouter à ce projet ?",
     source: "console",
-    visibleRepos: ["swimmich", "mem0-omp"],
+    visibleRepos: ["swimmich", "memory-omp"],
     requestedRepo: null,
     exchanges: [],
   });
@@ -168,8 +168,8 @@ test("demande-ancree/AC-2 : une `question` qui porte un dépôt et aucune répon
     const worktree = intakeAnswerWorktree(world.config, "demo", intake.id);
     assert.notEqual(classifier.cwd, worktree);
     assert.equal(reader.cwd, worktree, "la réponse tourne dans le worktree détaché du dépôt");
-    assert.ok(!(reader.argv as string[]).some((arg) => arg.includes("omp-mem0-memory")), "aucun plugin mémoire");
-    assert.equal((reader.env as Record<string, string>).MEM0_PROJECT_ID, `intake-${intake.id}`);
+    assert.ok(!(reader.argv as string[]).some((arg) => arg.includes("omp-memory")), "aucun plugin mémoire");
+    assert.equal((reader.env as Record<string, string>).MEMORY_PROJECT_ID, `intake-${intake.id}`);
     assert.ok(!fs.existsSync(worktree), "le worktree est rendu");
     assert.ok(!worktrees(world, "demo").includes(`_demande-${intake.id}`));
 
@@ -452,10 +452,10 @@ test("demande-ancree/AC-14 : la session de réponse porte la politique de modèl
   try {
     const file = memoryTokenFile(world.config, "demo");
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, "MEM0_HTTP_TOKEN=jeton-du-depot-demo-0123456789\n");
+    fs.writeFileSync(file, "MEMORY_HTTP_TOKEN=jeton-du-depot-demo-0123456789\n");
     const intake = await settled(world, call);
     assert.equal(intake.state, "answered", intake.reason ?? "");
-    assert.equal(fs.readFileSync(file, "utf8"), "MEM0_HTTP_TOKEN=jeton-du-depot-demo-0123456789\n");
+    assert.equal(fs.readFileSync(file, "utf8"), "MEMORY_HTTP_TOKEN=jeton-du-depot-demo-0123456789\n");
   } finally {
     await done();
   }

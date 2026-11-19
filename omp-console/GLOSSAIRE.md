@@ -25,8 +25,8 @@ Ces termes s’écrivent tels quels, avec cette casse.
 | `Web` | usage du français d’Apple | « Recherche Web » |
 | `OMP` | nom propre ou norme | « Lancer OMP » |
 | `OMP Console` | nom propre ou norme | « Bienvenue dans OMP Console » |
-| `mem0` | nom propre ou norme | « Mémoire du projet servie par mem0 » |
-| `omp-mem0-req` | nom propre ou norme | « vérifiez que le module omp-mem0-req est installé » |
+| `memory` | nom propre ou norme | « Mémoire du projet servie par memory » |
+| `omp-memory-req` | nom propre ou norme | « vérifiez que le module omp-memory-req est installé » |
 | `oMLX` | nom propre ou norme | « Démarrez oMLX, puis rafraîchissez. » |
 | `OMLX_API_TOKEN` | nom propre ou norme | « vérifiez OMLX_API_TOKEN. » |
 | `Podman` | nom propre ou norme | « Installation de Podman… » |
@@ -60,7 +60,7 @@ Chaque forme refusée est interdite dans les textes ; le terme retenu la rempla
 | worktree | `worktree`, `worktrees` | dossier de feature | « Aucun dossier de feature dans ce projet. » |
 | token | `token`, `tokens` | jeton | « Jeton révoqué » |
 | CI | `CI` | intégration continue | « PR et intégration continue » |
-| plugin | `plugin`, `plugins` | module | « vérifiez que le module omp-mem0-req est installé » |
+| plugin | `plugin`, `plugins` | module | « vérifiez que le module omp-memory-req est installé » |
 | commit | `commit`, `commits` | version validée | « Comparé à la dernière version validée » |
 | diff | `diff`, `diffs` | différences | « en-tête de différences » |
 | shell | `shell`, `shells` | interpréteur | « L’interpréteur est actif. » |

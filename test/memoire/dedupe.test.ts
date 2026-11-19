@@ -1,10 +1,10 @@
-// Tests des fonctions pures de déduplication (omp-mem0-memory/extension.ts).
+// Tests des fonctions pures de déduplication (omp-memory/extension.ts).
 // Exécutés hors runtime OMP : planDedupe/renderDedupePreview ne dépendent que de
 // leurs arguments. Les jetons sont fournis explicitement pour cibler la logique
 // de regroupement, pas le tokeniseur interne.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { planDedupe, renderDedupePreview, type DedupeEntry } from "../../omp-mem0-memory/extension.ts";
+import { planDedupe, renderDedupePreview, type DedupeEntry } from "../../omp-memory/extension.ts";
 
 const entry = (id: string, text: string, tokens: string[]): DedupeEntry => ({
   id,

@@ -33,7 +33,7 @@ import {
   mergeFrames,
   takeSnapshot,
 } from "../../omp-chrome/src/lib/snapshot.ts";
-import { actApproval, renderActOutcome } from "../../omp-mem0-req/workstation.ts";
+import { actApproval, renderActOutcome } from "../../omp-memory-req/workstation.ts";
 import { fakeChrome, flush, sleep } from "../support/chrome-double.ts";
 import { FakeElement, FakeInput, FakeOption, FakeSelect, FakeTextArea, install, page } from "../support/dom-double.ts";
 import { fakeWorld } from "../support/harness-fixtures.ts";

@@ -1,7 +1,7 @@
-// La lecture des réponses de la mémoire (mem0-rs), partagée par la coque macOS
+// La lecture des réponses de la mémoire (memory-rs), partagée par la coque macOS
 // (`HTTPMemoryService`) et l'app iOS (`MemoryReader`) : décodage TOLÉRANT des
 // lignes, des pages et des arêtes, et sélection de pertinence d'une recherche,
-// portées du plugin mémoire (`omp-mem0-memory/mem0Client.ts`).
+// portées du plugin mémoire (`omp-memory/memoryClient.ts`).
 
 import Foundation
 
@@ -56,12 +56,12 @@ public struct MemoryPage: Equatable, Sendable {
     }
 }
 
-/// Les gardes de décodage des lignes réseau, portées de `mem0Client.ts:82-111`.
+/// Les gardes de décodage des lignes réseau, portées de `memoryClient.ts:82-111`.
 /// Les lignes ne sont validées nulle part ailleurs : chaque garde est locale, et
 /// une ligne mal formée rend un champ `nil` — jamais un `force`-unwrap, jamais une
 /// exception qui ferait tomber la liste entière.
 public enum MemoryJSON {
-    /// `rows(result)` (mem0Client.ts:71-73) : tableau nu ou `{"results": […]}`.
+    /// `rows(result)` (memoryClient.ts:71-73) : tableau nu ou `{"results": […]}`.
     public static func rows(_ json: Any) -> [Any] {
         if let array = json as? [Any] { return array }
         if let object = json as? [String: Any], let results = object["results"] as? [Any] { return results }
@@ -159,7 +159,7 @@ public enum MemoryJSON {
 }
 
 // La sélection de pertinence d'une recherche (S-1, point 2) : portage LITTÉRAL de
-// `selectRelevant` (`omp-mem0-memory/mem0Client.ts:113-140`), avec les constantes de
+// `selectRelevant` (`omp-memory/memoryClient.ts:113-140`), avec les constantes de
 // `config.ts:53,55` et le sur-échantillonnage de `tools.ts:79`.
 //
 // Le SEUL critère est le cosinus brut (`score_details.semantic_score`) : ni la date,
@@ -170,7 +170,7 @@ public enum MemorySearch {
     public static let threshold: Double = 0.55
     /// Plafond du pool demandé au service (`SEARCH_POOL_MAX`, config.ts:55).
     public static let poolMax = 50
-    /// Limite finale, figée par S-1 (le défaut du tool `mem0_search`, tools.ts:76).
+    /// Limite finale, figée par S-1 (le défaut du tool `memory_search`, tools.ts:76).
     public static let defaultLimit = 6
 
     /// Le pool sur-échantillonné demandé au serveur : `min(limit × 4, 50)`.

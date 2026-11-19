@@ -1,6 +1,6 @@
-// MEM0_MODE=runner (omp-mem0-memory) : une session conduite par le harness ne
+// MEMORY_MODE=runner (omp-memory) : une session conduite par le harness ne
 // reçoit ni rappel, ni checkpoint, ni agrafe, ni relance de fin, ni brief — mais
-// garde les outils mem0_*. Sans la variable, le dispositif est inchangé.
+// garde les outils memory_*. Sans la variable, le dispositif est inchangé.
 //
 // Isolation : HOME temporaire AVANT l'import de l'extension (registry de phases
 // global, cf. plugin-handlers.test.ts) ; `fetch` doublé pour servir un souvenir
@@ -9,14 +9,14 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { runnerMode, sessionNudgeEnabled } from "../../omp-mem0-memory/config.ts";
+import { runnerMode, sessionNudgeEnabled } from "../../omp-memory/config.ts";
 import { fakeSchema } from "../support/fake-zod.ts";
 import { tmpdir } from "../support/repo.ts";
 
 process.env.HOME = tmpdir("runner-mode-home-");
-delete process.env.MEM0_AUTOSETUP;
+delete process.env.MEMORY_AUTOSETUP;
 
-const { default: mem0MemoryExtension } = await import("../../omp-mem0-memory/extension.ts");
+const { default: memoryPluginExtension } = await import("../../omp-memory/extension.ts");
 
 const MEMORY = {
   id: "m-1",
@@ -62,7 +62,7 @@ function mkApp(): App {
     sendMessage: () => {},
     sendUserMessage: () => {},
   };
-  mem0MemoryExtension(pi as unknown as Parameters<typeof mem0MemoryExtension>[0]);
+  memoryPluginExtension(pi as unknown as Parameters<typeof memoryPluginExtension>[0]);
   return { hooks, tools };
 }
 
@@ -109,64 +109,64 @@ async function simulate(app: App, ctx: unknown, explorations: number) {
   return { injected, pins, stop };
 }
 
-test("runner-mode/AC-1 : runnerMode ne lit que MEM0_MODE=runner ; MEM0_NUDGE=0 reste valable seul", () => {
+test("runner-mode/AC-1 : runnerMode ne lit que MEMORY_MODE=runner ; MEMORY_NUDGE=0 reste valable seul", () => {
   assert.equal(runnerMode({}), false);
-  assert.equal(runnerMode({ MEM0_MODE: "runner" }), true);
-  assert.equal(runnerMode({ MEM0_MODE: "interactive" }), false);
-  assert.equal(sessionNudgeEnabled({ MEM0_NUDGE: "0" }), false);
-  assert.equal(sessionNudgeEnabled({ MEM0_MODE: "runner" }), false);
-  assert.equal(sessionNudgeEnabled({ MEM0_MODE: "runner", MEM0_NUDGE: "1" }), false);
+  assert.equal(runnerMode({ MEMORY_MODE: "runner" }), true);
+  assert.equal(runnerMode({ MEMORY_MODE: "interactive" }), false);
+  assert.equal(sessionNudgeEnabled({ MEMORY_NUDGE: "0" }), false);
+  assert.equal(sessionNudgeEnabled({ MEMORY_MODE: "runner" }), false);
+  assert.equal(sessionNudgeEnabled({ MEMORY_MODE: "runner", MEMORY_NUDGE: "1" }), false);
   assert.equal(sessionNudgeEnabled({}), true);
 });
 
 test("runner-mode/AC-2 : sans la variable, 20 explorations produisent rappel, agrafe, checkpoint, relance et brief", async () => {
-  delete process.env.MEM0_MODE;
+  delete process.env.MEMORY_MODE;
   const app = mkApp();
   const { repo, ctx } = mkSession();
   const { injected, pins, stop } = await simulate(app, ctx, 20);
-  assert.ok(injected.includes("mem0-recall"), "un rappel est injecté");
+  assert.ok(injected.includes("memory-recall"), "un rappel est injecté");
   // Le checkpoint est posé au milieu du tour, en tête du résultat d'outil qui franchit le seuil.
   const textes = pins.map((p) => (p as { content: Array<{ text?: string }> }).content[0]?.text ?? "");
   assert.ok(
-    textes.some((t) => t.startsWith("[mem0 checkpoint]")),
+    textes.some((t) => t.startsWith("[memory checkpoint]")),
     "le checkpoint tire au-delà de 15 explorations",
   );
   assert.ok(pins.length > 0, "le souvenir est agrafé aux grep");
   assert.ok(stop && typeof stop === "object" && "continue" in stop, "la relance de fin est émise");
-  assert.ok(fs.existsSync(path.join(repo, ".omp", "mem0-brief.md")), "le brief est posé");
+  assert.ok(fs.existsSync(path.join(repo, ".omp", "memory-brief.md")), "le brief est posé");
 });
 
-test("runner-mode/AC-3 : MEM0_MODE=runner — ni rappel, ni checkpoint, ni agrafe, ni relance, ni brief ; outils présents", async () => {
-  process.env.MEM0_MODE = "runner";
+test("runner-mode/AC-3 : MEMORY_MODE=runner — ni rappel, ni checkpoint, ni agrafe, ni relance, ni brief ; outils présents", async () => {
+  process.env.MEMORY_MODE = "runner";
   try {
     const app = mkApp();
     const { repo, ctx } = mkSession();
     const callsBefore = calls;
     const { injected, pins, stop } = await simulate(app, ctx, 20);
-    assert.deepEqual(injected, [], "aucun custom_message mem0-recall");
+    assert.deepEqual(injected, [], "aucun custom_message memory-recall");
     assert.deepEqual(pins, [], "aucun épinglage ni checkpoint sur les résultats d'outils");
     assert.equal(stop, undefined, "aucune relance de fin");
-    assert.equal(fs.existsSync(path.join(repo, ".omp", "mem0-brief.md")), false, "aucun brief posé");
+    assert.equal(fs.existsSync(path.join(repo, ".omp", "memory-brief.md")), false, "aucun brief posé");
     assert.equal(fs.existsSync(path.join(repo, "AGENTS.md")), false, "AGENTS.md intact");
     assert.equal(calls, callsBefore, "aucun appel réseau sur les hooks");
-    for (const name of ["mem0_search", "mem0_add", "mem0_update", "mem0_forget"]) {
+    for (const name of ["memory_search", "memory_add", "memory_update", "memory_forget"]) {
       assert.ok(app.tools.has(name), `${name} reste enregistré`);
     }
   } finally {
-    delete process.env.MEM0_MODE;
+    delete process.env.MEMORY_MODE;
   }
 });
 
 test("runner-mode/AC-4 : la variable est lue à l'appel — posée après le chargement, elle coupe quand même", async () => {
-  delete process.env.MEM0_MODE;
+  delete process.env.MEMORY_MODE;
   const app = mkApp();
   const { ctx } = mkSession();
-  process.env.MEM0_MODE = "runner";
+  process.env.MEMORY_MODE = "runner";
   try {
     const { injected, stop } = await simulate(app, ctx, 16);
     assert.deepEqual(injected, []);
     assert.equal(stop, undefined);
   } finally {
-    delete process.env.MEM0_MODE;
+    delete process.env.MEMORY_MODE;
   }
 });

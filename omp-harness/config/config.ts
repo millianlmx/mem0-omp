@@ -290,7 +290,7 @@ export type RepoConfig = {
   /** Le clone que le harness possède : `main` n'y est pas extraite (clone nu ou dédié). */
   path: string;
   /**
-   * La scope mem0 de l'oracle (identité de PROJET, partagée avec le plugin mémoire).
+   * La scope memory de l'oracle (identité de PROJET, partagée avec le plugin mémoire).
    * Vide : lue au démarrage dans les manifestes de `main`, comme le fait le plugin.
    */
   scope: string;
@@ -359,7 +359,7 @@ export type RepoConfig = {
   gitlab?: { host?: string; tokenEnv?: string; configDir?: string };
   /**
    * Le jeton mémoire de ce dépôt : `tokenEnv` est le NOM d'une variable du service qui
-   * porte un jeton mem0-rs limité à sa scope (`MEM0_HTTP_TOKENS`). Ses runners le
+   * porte un jeton memory-rs limité à sa scope (`MEMORY_HTTP_TOKENS`). Ses runners le
    * reçoivent au lieu du jeton global. Absent : le jeton global.
    */
   memory?: { tokenEnv?: string };
@@ -438,7 +438,7 @@ export type HarnessConfig = {
     lendMax: number;
     /**
      * Les extensions chargées par chaque runner (`-e`) EN PLUS du plugin mémoire
-     * (`omp-mem0-memory/extension.ts`), que la pile charge toujours (`runnerExtensions`).
+     * (`omp-memory/extension.ts`), que la pile charge toujours (`runnerExtensions`).
      */
     extensions: string[];
   };
@@ -477,7 +477,7 @@ export type HarnessConfig = {
     testImage: string;
     /** Le réseau des runners (celui du compose, qui porte la mémoire) ; les tests n'en ont aucun. */
     network: string | null;
-    /** Le fichier de l'hôte monté dans chaque runner (clés LLM, jeton mem0), lu par son entrée. */
+    /** Le fichier de l'hôte monté dans chaque runner (clés LLM, jeton memory), lu par son entrée. */
     runnerEnvFile: string | null;
     /** Le dossier de l'hôte monté en HOME des runners (connexion OMP, profil). */
     runnerHome: string | null;
@@ -538,7 +538,7 @@ export type HarnessConfig = {
     /** Une même notification (titre et corps) n'est pas renvoyée avant ces minutes ; `null` : toujours. */
     dedupMin: number | null;
   };
-  /** `runnerMode` : les runners reçoivent `MEM0_MODE=runner` (pas de rappel par tour ni d'épinglage). */
+  /** `runnerMode` : les runners reçoivent `MEMORY_MODE=runner` (pas de rappel par tour ni d'épinglage). */
   memory: { runnerMode: boolean };
   oracle: { url: string; token: string | null } | null;
   /**

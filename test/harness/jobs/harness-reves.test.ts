@@ -1,6 +1,6 @@
 // Feature harness-reves : le rêve de la mémoire (phases 3 et 4). Un dépôt au repos dont
 // la mémoire a assez de faits nouveaux est confié à un runner, qui consolide le dossier
-// de mem0-rs en observations, causes et mental models par `dream_consolidate` ; le
+// de memory-rs en observations, causes et mental models par `dream_consolidate` ; le
 // service mémoire valide, un refus revient au modèle qui corrige.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -163,7 +163,7 @@ test("harness-reves/AC-3 : une consolidation refusée revient au modèle avec sa
 
   // Un refus du service mémoire (ids inconnus…) revient aussi au modèle ; sans consolidation acceptée, le rêve échoue.
   const refused = dreamWorld({ reve: [[{ tool: "dream_consolidate", args: CONSOLIDATION }]] });
-  refused.oracle.refuse = "mem0 422: evidence : f9 n'est pas un fait de la portée";
+  refused.oracle.refuse = "memory 422: evidence : f9 n'est pas un fait de la portée";
   await refused.orchestrator.start();
   try {
     await settled(refused);
@@ -171,7 +171,7 @@ test("harness-reves/AC-3 : une consolidation refusée revient au modèle avec sa
     assert.equal(row?.state, "failed");
     assert.match(row?.reason ?? "", /n'a pas été rendue/);
     const tool = refused.log().find((e) => e.kind === "tool" && e.tool === "dream_consolidate");
-    assert.match(String(tool?.result), /refusée par le service mémoire : mem0 422/);
+    assert.match(String(tool?.result), /refusée par le service mémoire : memory 422/);
   } finally {
     await refused.orchestrator.stop();
   }

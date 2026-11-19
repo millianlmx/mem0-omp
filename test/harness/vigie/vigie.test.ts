@@ -30,6 +30,7 @@ import type { SpawnOmp } from "../../../omp-harness/vigie/triage.ts";
 import { FAKE_RUNNER, fakeWorld, git, waitFor } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../../support/repo.ts";
+import { renamedEnv } from "../../../omp-harness/config/env.ts";
 
 const done = (stdout: string, code = 0, stderr = ""): ProcResult => ({
   code,
@@ -271,8 +272,8 @@ test("vigie/AC-1 : l'empreinte est stable aux variables près (ids, nombres, hor
   assert.equal(a, b, "même bug, autres variables");
   assert.match(a, /^[0-9a-f]{24}$/);
   assert.equal(
-    fingerprintOf({ source: "log:harness", location: "omp-harness/oracle.ts:120 (recall)", message: "mem0 503" }),
-    fingerprintOf({ source: "log:harness", location: "omp-harness/oracle.ts:131 (recall)", message: "mem0 502" }),
+    fingerprintOf({ source: "log:harness", location: "omp-harness/oracle.ts:120 (recall)", message: "memory 503" }),
+    fingerprintOf({ source: "log:harness", location: "omp-harness/oracle.ts:131 (recall)", message: "memory 502" }),
     "la ligne et le code changent, l'emplacement reste",
   );
   assert.equal(
@@ -296,7 +297,7 @@ test("vigie/AC-2 : le caviardage retire secrets, e-mails, requêtes d'URL, chemi
     "Authorization: Bearer abcdefghijklmnop1234",
     "password=hunter2hunter2",
     "écrit à alice@example.com",
-    "https://mem0.example.com/memory/search?token=abc&q=bug",
+    "https://memory.example.com/memory/search?token=abc&q=bug",
     "dans /Users/millian/Projets/secret.ts",
     "serveur vps.tail1234.ts.net en 100.64.1.2",
   ].join("\n");
@@ -315,7 +316,7 @@ test("vigie/AC-2 : le caviardage retire secrets, e-mails, requêtes d'URL, chemi
   ])
     assert.ok(!redacted.includes(secret), `${secret} a fuité : ${redacted}`);
   assert.ok(redacted.includes(REDACTED) && redacted.includes("[EMAIL]") && redacted.includes("/Users/[USER]"));
-  assert.ok(redacted.includes("https://mem0.example.com/memory/search?"), "le chemin d'une URL reste");
+  assert.ok(redacted.includes("https://memory.example.com/memory/search?"), "le chemin d'une URL reste");
   const sha = "a3f9c2e1b4d5a6f7e8d9c0b1a2f3e4d5c6b7a8f9";
   assert.ok(redactSecrets(`commit ${sha}`).includes(sha), "une empreinte de commit reste lisible");
   assert.equal(redactSecrets("git@github.com:moi/demo.git"), "git@github.com:moi/demo.git");
@@ -784,7 +785,7 @@ function makeVigie(
     reposDir,
     ci: async () => [],
     version: "test",
-    env: { PATH: process.env.PATH, HARNESS_TOKEN: "jeton-secret", MEM0_HTTP_TOKEN: "mem0-secret", VIGIE_TOKEN: "x" },
+    env: { PATH: process.env.PATH, HARNESS_TOKEN: "jeton-secret", MEMORY_HTTP_TOKEN: "memory-secret", VIGIE_TOKEN: "x" },
     log: () => {},
   });
 }
@@ -865,7 +866,7 @@ test("vigie/AC-9 : la vigie suit le flux, trie une empreinte nouvelle par une se
     assert.match(String(prompt?.message), /init/, "git log de main");
     assert.match(String(prompt?.message), /worktree retiré trop tôt/, "la mémoire des bugs connus");
     const argv = omp.log().find((entry) => entry.kind === "argv") as { env: Record<string, unknown>; argv: string[] };
-    assert.deepEqual([argv.env.HARNESS_TOKEN, argv.env.MEM0_HTTP_TOKEN], [null, null]);
+    assert.deepEqual([argv.env.HARNESS_TOKEN, renamedEnv(argv.env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN")], [null, null]);
     assert.ok(argv.argv.includes("--model") && argv.argv.includes("anthropic/test"));
 
     // En fix, la correction part dans la foulée d'un bug nouveau.
@@ -927,10 +928,10 @@ test("vigie/AC-10 : le journal structuré (contrat C1) — les lignes warn et er
     await vigie.start();
     await vigie.pollLogs();
     assert.equal(v.world.store.listVigieIncidents().length, 0, "l'histoire n'est pas rejouée");
-    const today = path.join(logs, "mem0-2026-11-07.jsonl");
-    fs.writeFileSync(today, line({ level: "info", msg: "tout va bien", src: "mem0" }));
-    fs.appendFileSync(today, line({ level: "warn", msg: "embeddings lents", src: "mem0", event: "embed" }));
-    fs.appendFileSync(today, `{"ts":"${new Date().toISOString()}","level":"error","src":"mem0","msg":"coupée`);
+    const today = path.join(logs, "memory-2026-11-07.jsonl");
+    fs.writeFileSync(today, line({ level: "info", msg: "tout va bien", src: "memory" }));
+    fs.appendFileSync(today, line({ level: "warn", msg: "embeddings lents", src: "memory", event: "embed" }));
+    fs.appendFileSync(today, `{"ts":"${new Date().toISOString()}","level":"error","src":"memory","msg":"coupée`);
     await vigie.pollLogs();
     const seen = () =>
       v.world.store
@@ -1272,7 +1273,7 @@ test("vigie/AC-15 : le service `vigie` de la pile — image à omp épinglé, à
   const content = read(file);
   const token = /^VIGIE_TOKEN=([0-9a-f]{64})$/m.exec(content)?.[1];
   assert.ok(token, content);
-  assert.match(content, /^MEM0_HTTP_TOKEN=[0-9a-f]{64}$/m);
+  assert.match(content, /^MEMORY_HTTP_TOKEN=[0-9a-f]{64}$/m);
   assert.match(content, /^ANTHROPIC_API_KEY=sk-ant-test_1$/m);
   assert.doesNotMatch(content, /GH_TOKEN|ghp_/, "jamais le jeton GitHub");
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);

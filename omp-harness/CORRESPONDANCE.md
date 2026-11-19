@@ -37,7 +37,13 @@ Les chemins sont relatifs à `omp-harness/`. Cette table vient de la réorganisa
 | `git.ts` | `forge/git.ts` |  |
 | `heavy.ts` | `heavy/heavy.ts` |  |
 | `host-tools.ts` | `runs/host-tools.ts` |  |
-| `http.ts` | `api/http.ts` |  |
+| `http.ts` | `api/admin-routes.ts` | routes d'administration et d'exploitation du serveur |
+| `http.ts` | `api/http-io.ts` | transport |
+| `http.ts` | `api/http.ts` | transport |
+| `http.ts` | `api/route-table.ts` | table des routes |
+| `http.ts` | `api/run-routes.ts` | routes des runs et de l'usine |
+| `http.ts` | `api/space-routes.ts` | routes des espaces et des intégrations |
+| `http.ts` | `api/workstation-routes.ts` | routes du poste |
 | `idempotency.ts` | `api/idempotency.ts` |  |
 | `ids.ts` | `runs/ids.ts` |  |
 | `input.ts` | `api/input.ts` |  |

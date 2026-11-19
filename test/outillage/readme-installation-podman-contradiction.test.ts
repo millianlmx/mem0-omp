@@ -147,7 +147,7 @@ test("readme-installation-podman-contradiction/AC-3 : la voie manuelle garde clo
     "podman compose up -d",
     "docker compose up -d",
     "doctor.sh",
-    "mem0-stack/README.md#migrer-une-pile-mem0-http-existante",
+    "memory-stack/README.md#migrer-une-pile-mem0-http-existante",
   ]) {
     assert.ok(manuelle.includes(needle), `voie manuelle sans « ${needle} »`);
   }
@@ -157,12 +157,12 @@ test("readme-installation-podman-contradiction/AC-4 : la voie plugins garde mark
   const plugins = voie("plugins").text;
   for (const needle of [
     "/marketplace add millianlmx/mem0-omp",
-    "install omp-mem0-memory@mem0-omp",
-    "install omp-mem0-req@mem0-omp",
+    "install omp-memory@mem0-omp",
+    "install omp-memory-req@mem0-omp",
     "relance `omp`",
     "omp plugin install",
     "--scope project",
-    "omp-mem0-memory/install.sh",
+    "omp-memory/install.sh",
     "rien à faire par projet",
     "déjà joignable",
     "Aucun service",

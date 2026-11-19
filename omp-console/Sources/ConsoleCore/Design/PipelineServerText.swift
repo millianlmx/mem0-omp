@@ -78,7 +78,7 @@ public enum PipelineServerText {
 
     // MARK: - Questions situées
 
-    /// Le fil d'Ariane d'une question : « mem0-omp › Export CSV › /impl ».
+    /// Le fil d'Ariane d'une question : « memory-omp › Export CSV › /impl ».
     public static func trail(_ parts: [String]) -> String { parts.joined(separator: " › ") }
     public static let trailSymbol = "folder"
     public static let contextTitle = L10n.text("Contexte")

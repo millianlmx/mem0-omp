@@ -71,8 +71,8 @@ dans `config.json` (voir « Configuration »), puis `harness.sh reload` (les dé
 
 | Variable de `up` | Effet |
 |---|---|
-| `OMLX_BASE_URL` | Ton serveur d'embeddings compatible OpenAI, au lieu de l'Ollama intégré (première installation ; ensuite, `mem0.env`) ; avec `--omlx`, celui des agents aussi |
-| `OMLX_CHAT_BASE_URL` | Le serveur de chat du rêve de la mémoire (première installation ; ensuite, `mem0.env`) ; défaut : `OMLX_BASE_URL`, `off` (coupé) avec l'Ollama intégré, qui n'a pas de modèle de chat |
+| `OMLX_BASE_URL` | Ton serveur d'embeddings compatible OpenAI, au lieu de l'Ollama intégré (première installation ; ensuite, `memory.env`) ; avec `--omlx`, celui des agents aussi |
+| `OMLX_CHAT_BASE_URL` | Le serveur de chat du rêve de la mémoire (première installation ; ensuite, `memory.env`) ; défaut : `OMLX_BASE_URL`, `off` (coupé) avec l'Ollama intégré, qui n'a pas de modèle de chat |
 | `OMLX_API_TOKEN`, `OMLX_CONTEXT_WINDOW` | Avec `--omlx` : la clé d'oMLX, et la fenêtre de contexte du modèle (131072) |
 | `OMP_HARNESS_TAILSCALE=0` | Ne publie rien : le service reste sur `127.0.0.1` |
 | `OMP_HARNESS_ENGINE` | `docker` ou `podman` (défaut : podman s'il est installé) |
@@ -114,7 +114,7 @@ d'abord qu'oMLX le sert, puis :
 - déclare oMLX dans le `models.yml` des agents
   (`~/.omp-harness/runner-home/.omp/profiles/pipeline/agent/`), joint par
   `host.docker.internal` (Docker) ou `host.containers.internal` (podman) ;
-- donne à la mémoire les embeddings et le modèle d'oMLX (`mem0.env`) ;
+- donne à la mémoire les embeddings et le modèle d'oMLX (`memory.env`) ;
 - ne demande aucune clé d'API ;
 - écrit `~/.omp/agent/models.yml` pour l'omp du Mac s'il n'existe pas (sinon, dit quoi
   y ajouter) : choisis ensuite `omlx/<modèle>` avec `/model`.
@@ -136,7 +136,7 @@ bash omp-harness/deploy/container/harness.sh connect      # plugins et app visen
 bash omp-harness/deploy/container/harness.sh disconnect   # retour au réglage précédent (le VPS)
 ```
 
-`connect` réécrit `~/.omp/harness.json` et `~/.omp/mem0.json` en gardant tes
+`connect` réécrit `~/.omp/harness.json` et `~/.omp/memory.json` en gardant tes
 correspondances dossier → dépôt, et met les anciens fichiers de côté. Relance omp et
 l'app ensuite.
 
@@ -175,7 +175,7 @@ dernier point de reprise après le redémarrage. Pour savoir ce qui tourne,
 `GET /v1/health` rend `version` et `commit` : Portainer supprime le `.git` de ses
 clones, donc le build retrouve le commit par le tag `omp-harness-v<version>` du dépôt
 `OMP_HARNESS_SOURCE_REPO` (l'URL ci-dessus par défaut), qu'il ne retient que si
-les arbres `omp-harness/` et `omp-mem0-memory/` construits sont exactement ceux du
+les arbres `omp-harness/` et `omp-memory/` construits sont exactement ceux du
 tag — sur `deploy`, c'est toujours le cas ; une pile qui suit `main` entre deux
 releases rend `commit: null` plutôt qu'un commit faux.
 
@@ -204,7 +204,7 @@ comme pour `harness.sh up`. `pairing` règle le `tailscale serve` de l'hôte com
 ferait `harness.sh up` : le port 443 vers le harness, le port 8443 vers la mémoire, au
 nom de la machine sur le tailnet (`https://<vps>.<tailnet>.ts.net`). Si l'hôte sert
 déjà autre chose sur ces ports (Portainer sur 443, par exemple), choisis-en d'autres
-avec `OMP_HARNESS_TAILNET_PORT` et `OMP_HARNESS_TAILNET_MEM0_PORT` : `pairing` y
+avec `OMP_HARNESS_TAILNET_PORT` et `OMP_HARNESS_TAILNET_MEMORY_PORT` : `pairing` y
 publie le harness et la mémoire, et le code d'appairage porte ces ports. Un `tailscale
 serve` sur un port déjà pris remplace ce qui y était publié. Avec
 `OMP_HARNESS_TAILSCALE_SERVE=0`, `pairing` ne touche pas au `tailscale serve` de
@@ -224,13 +224,13 @@ Les autres variables, facultatives :
 | `OMLX_CHAT_BASE_URL`, `OMLX_CHAT_API_TOKEN`, `OMLX_LLM_MODEL` | `OMLX_BASE_URL` ; `off` avec l'Ollama de la pile | le serveur de chat du rêve de la mémoire, sa clé et son modèle (`qwen3-8b`) |
 | `OMLX_EMBED_MODEL`, `EMBEDDING_DIMS` | `bge-m3`, `1024` | son modèle et sa dimension |
 | `GH_TOKEN` | aucun | le jeton GitHub des outils issues du MCP et de `"merge": "gh"`, écrit par `setup` dans le secret du service (pas dans l'environnement déclaré du conteneur) |
-| `OMP_HARNESS_MEMORY_TOKENS` | aucun | des jetons mémoire limités à des scopes, `nom:jeton:scope1,scope2;…` : mem0-rs les lit dans un fichier des secrets (`MEM0_HTTP_TOKENS_FILE`), le service les reçoit en `MEM0_TOKEN_<NOM>` (`repos[].memory.tokenEnv`, § « Projets perso et corpo ») |
+| `OMP_HARNESS_MEMORY_TOKENS` | aucun | des jetons mémoire limités à des scopes, `nom:jeton:scope1,scope2;…` : memory-rs les lit dans un fichier des secrets (`MEMORY_HTTP_TOKENS_FILE`), le service les reçoit en `MEMORY_TOKEN_<NOM>` (`repos[].memory.tokenEnv`, § « Projets perso et corpo ») |
 | `OMP_HARNESS_GITHUB_ACCOUNTS` | aucun | des comptes GitHub par dépôt, `nom:jeton;…` : le service les reçoit en `GH_TOKEN_<NOM>` (`repos[].gh.tokenEnv`) |
 | `OMP_HARNESS_GITLAB_ACCOUNTS` | aucun | des comptes GitLab par dépôt, `nom:jeton;…` : le service les reçoit en `GITLAB_TOKEN_<NOM>` (`repos[].gitlab.tokenEnv`) |
-| `OMP_HARNESS_PORT`, `OMP_HARNESS_MEM0_PORT` | `8790`, `8321` | les ports, sur la boucle locale de l'hôte |
+| `OMP_HARNESS_PORT`, `OMP_HARNESS_MEMORY_PORT` | `8790`, `8321` | les ports, sur la boucle locale de l'hôte |
 | `OMP_HARNESS_SOCKET` | `/var/run/docker.sock` | le socket du moteur |
 | `OMP_HARNESS_TAILSCALE_RUN` | `/var/run/tailscale` | le dossier du socket de tailscaled sur l'hôte |
-| `OMP_HARNESS_TAILNET_PORT`, `OMP_HARNESS_TAILNET_MEM0_PORT` | `443`, `8443` | les ports https du harness et de la mémoire sur le tailnet, ceux du code d'appairage |
+| `OMP_HARNESS_TAILNET_PORT`, `OMP_HARNESS_TAILNET_MEMORY_PORT` | `443`, `8443` | les ports https du harness et de la mémoire sur le tailnet, ceux du code d'appairage |
 | `OMP_HARNESS_TAILSCALE_SERVE` | `1` | `0` : `pairing` ne touche pas au `tailscale serve` de l'hôte |
 | `OMP_HARNESS_COMMIT` | aucun | le commit construit, rendu par `/v1/health` ; sans lui, lu dans le `.git` du clone (`docker compose up` depuis un clone), sinon prouvé par le tag de la version |
 | `OMP_HARNESS_SOURCE_REPO` | ce dépôt | le dépôt dont le build lit le tag `omp-harness-v<version>` quand le `.git` manque (un fork : le sien) ; vide : jamais |
@@ -309,13 +309,13 @@ connexion des runners à un compte OMP (`harness.sh login`) restent propres à
 
 Trois users se partagent la machine : `omp-harness` (le service, sa base, son
 jeton), `omp-runner` (les agents et leurs comptes LLM) et `omp-heavy` (les tests,
-sans réseau ni clé). Une quatrième, `omp-mem0`, tient la mémoire du projet
-(`mem0-rs`, sur `127.0.0.1:8321`).
+sans réseau ni clé). Une quatrième, `omp-memory`, tient la mémoire du projet
+(`memory-rs`, sur `127.0.0.1:8321`).
 
 #### Debian ou Ubuntu
 
 **1. Les prérequis.** Node ≥ 22.6, git, curl, ssh-keygen, sudo, systemd ≥ 250, et
-Rust ≥ 1.98 pour compiler `mem0-rs` :
+Rust ≥ 1.98 pour compiler `memory-rs` :
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -
@@ -331,8 +331,8 @@ retire `RUSTC_WRAPPER` de `heavy.env` dans la configuration.
 **2. L'installation**, depuis un clone de ce dépôt :
 
 ```bash
-cargo build --release --locked --manifest-path mem0-stack/mem0-rs/Cargo.toml
-sudo install -m 0755 mem0-stack/mem0-rs/target/release/mem0-rs /usr/local/bin/mem0-rs
+cargo build --release --locked --manifest-path memory-stack/memory-rs/Cargo.toml
+sudo install -m 0755 memory-stack/memory-rs/target/release/memory-rs /usr/local/bin/memory-rs
 sudo bash omp-harness/deploy/install.sh
 ```
 
@@ -393,10 +393,10 @@ echo 'ANTHROPIC_API_KEY=sk-ant-…' | sudo tee -a /etc/omp-harness/runner.env >/
 
 Ou un compte OMP : `sudo -u omp-runner -H omp --profile pipeline`, puis `/login`.
 
-**7. La mémoire.** `mem0-rs` calcule ses vecteurs avec un serveur compatible OpenAI,
-qui doit rester joignable par le VPS. Dans `/etc/omp-harness/mem0.env`, renseigne
+**7. La mémoire.** `memory-rs` calcule ses vecteurs avec un serveur compatible OpenAI,
+qui doit rester joignable par le VPS. Dans `/etc/omp-harness/memory.env`, renseigne
 `OMLX_BASE_URL` (et `OMLX_API_TOKEN` s'il en faut un), et `EMBEDDING_DIMS` s'il
-diffère de 1024 (bge-m3). Puis `sudo systemctl restart omp-harness-mem0`.
+diffère de 1024 (bge-m3). Puis `sudo systemctl restart omp-harness-memory`.
 
 **8. Vérifier, démarrer, publier.**
 
@@ -488,23 +488,23 @@ mémoire dès que le nœud est connecté, et les retire à l'arrêt. Sans lui, p
 main : `sudo tailscale serve --bg --https=443 http://127.0.0.1:8790`.
 
 **Les embeddings.** `embeddings.enable` (vrai par défaut) déclare `services.ollama` sur
-`127.0.0.1:11434`, qui télécharge `bge-m3` au premier démarrage ; mem0-rs y est
+`127.0.0.1:11434`, qui télécharge `bge-m3` au premier démarrage ; memory-rs y est
 pointé. Sans modèle de chat, le chat de la mémoire est coupé (`OMLX_CHAT_BASE_URL=off`) :
 le rêve ne compare pas les souvenirs. `embeddings.llmModel = "qwen3:1.7b";` ajoute un
 modèle de chat pour le rêve et l'extraction de souvenirs (`infer`), que ni le harness
 ni le plugin ne demandent par défaut. `embeddings.enable = false;` et
-`mem0.environment.OMLX_BASE_URL` désignent un serveur ailleurs.
+`memory.environment.OMLX_BASE_URL` désignent un serveur ailleurs.
 
-`omp-harness-secrets` crée une fois `/etc/omp-harness/{env,runner.env,mem0.env}`
+`omp-harness-secrets` crée une fois `/etc/omp-harness/{env,runner.env,memory.env}`
 (root seul, jamais dans le store) avec le jeton de la mémoire ; un `OMLX_API_TOKEN`
-s'ajoute à la main dans `mem0.env`.
+s'ajoute à la main dans `memory.env`.
 
 ### Mettre à jour
 
 Les runs en cours reprennent à leur dernier point de reprise après le redémarrage.
 
 - **Debian** : `git pull`, puis `sudo bash omp-harness/deploy/install.sh`. Pour
-  recompiler `mem0-rs`, refais les deux commandes `cargo build` et `install` de
+  recompiler `memory-rs`, refais les deux commandes `cargo build` et `install` de
   l'étape 2.
 - **NixOS** : `nix flake update mem0-omp`, puis `sudo nixos-rebuild switch`.
 - **En conteneurs** : `bash omp-harness/deploy/container/harness.sh up --ref deploy`
@@ -613,7 +613,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `notify.digestHour` | `8` | l'heure locale du serveur (0-23) du rapport du matin : avec une cible (`notify.url` ou `notify.targets`), un POST par jour titré « Rapport du matin » (corps Markdown, en-tête `Markdown: yes`) sur la fenêtre depuis le précédent envoi — runs mergés, décisions prises seules à relire, runs qui attendent l'humain, échecs, coût, puis la santé (mémoire, sauvegardes). L'instant du dernier envoi est gardé en base (réglage `digest-sent`) : un redémarrage ne le renvoie pas, un service arrêté à l'heure dite l'envoie à son retour. `null` : aucun rapport |
 | `notify.targets` | `[]` | des cibles en plus de `notify.url` : `{ "kind": "ntfy" \| "webhook", "url", "headers"?, "spaces"? }` ; un `webhook` reçoit un POST JSON `{title, body, priority, tags, click, event, runId, repo, at}`, `headers` porte un jeton d'accès. `spaces` (identifiants ou noms d'espaces, liste non vide) borne la cible : elle ne reçoit que les événements des dépôts de ces espaces, et son rapport du matin est le leur (§ « La portée d'un espace ») ; sans lui, elle reçoit tout. Un espace inconnu est un avertissement au démarrage, jamais un refus |
 | `notify.dedupMin` | `30` | une même notification (titre et corps) n'est pas renvoyée avant ces minutes, à aucune cible ; `null` ou `0` : toujours |
-| `memory.runnerMode` | `true` | les agents reçoivent `MEM0_MODE=runner` : pas de rappel mémoire par tour ni d'épinglage, les outils `mem0_*` restent |
+| `memory.runnerMode` | `true` | les agents reçoivent `MEMORY_MODE=runner` : pas de rappel mémoire par tour ni d'épinglage, les outils `memory_*` restent |
 | `dreams.checkMinutes` | `60` | le rêve de la mémoire (§ La mémoire du projet) : chaque dépôt au repos (aucun run en cours) est examiné au plus toutes les N minutes ; `null` coupe les rêves. Sans `oracle`, rien |
 | `dreams.minFacts`, `dreams.maxDelayHours` | `5`, `24` | la session de rêve ne part que s'il y a au moins `minFacts` faits nouveaux en mémoire, ou un fait nouveau qui attend depuis `maxDelayHours` heures ; `POST /v1/dreams` passe outre |
 | `dreams.tier` | `"standard"` | le niveau de modèle de la session de rêve |
@@ -639,9 +639,9 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `repos[].privacy` | `"standard"` | `"local-only"` : seul le modèle local `omlx` (`harness.sh local <modèle>`), aucune clé de fournisseur distant chez ses runners ; le serveur et les autres dépôts gardent leurs modèles |
 | `repos[].git` | `git` du serveur | `{ "name", "email" }` : l'identité des commits du dépôt (WIP, squash de merge, revert) |
 | `repos[].gh` | la connexion du service | `{ "configDir"?, "tokenEnv"? }` : le compte GitHub du dépôt pour `gh` (PR, merge, issues, MCP) — un `GH_CONFIG_DIR` à lui, ou le NOM d'une variable du service qui porte son jeton |
-| `repos[].memory.tokenEnv` | le jeton global | le NOM d'une variable du service qui porte un jeton mem0-rs limité à la scope du dépôt (`MEM0_HTTP_TOKENS`) : ses runners le reçoivent au lieu du jeton global |
+| `repos[].memory.tokenEnv` | le jeton global | le NOM d'une variable du service qui porte un jeton memory-rs limité à la scope du dépôt (`MEMORY_HTTP_TOKENS`) : ses runners le reçoivent au lieu du jeton global |
 | `repos[].autonomy.rules` | absent | l'autonomie par paliers du dépôt (§ « L'autonomie par paliers ») : des règles ordonnées `{ "match": { "kind", "maxDiffLines"?, "paths"?, "labels"? }, "require"?: { "reproTest"?, "greenChecks"?, "proofs"? }, "gates"?: { "specs"?, "review"? } }` — `kind` parmi `bug` · `feature` · `docs` · `deps` · `test`, chaque porte `human` (défaut) ou `auto`. Une règle mal formée refuse la configuration (et le rechargement : 400, l'ancienne reste). Une règle ne s'applique qu'aux attentes posées après son chargement |
-| `repos[].atlassian` | absent (`false`) | `true` : les étapes des runs de ce dépôt reçoivent les outils Atlassian en lecture et `corpo_recall` (§ « Atlassian »), si Atlassian est branché. **Jamais sur un dépôt public** (mem0-omp l'est) : ce qu'un agent lit de Jira ou Confluence peut finir dans le code, une PR ou une issue |
+| `repos[].atlassian` | absent (`false`) | `true` : les étapes des runs de ce dépôt reçoivent les outils Atlassian en lecture et `corpo_recall` (§ « Atlassian »), si Atlassian est branché. **Jamais sur un dépôt public** (memory-omp l'est) : ce qu'un agent lit de Jira ou Confluence peut finir dans le code, une PR ou une issue |
 | `runner.stepTimeoutSec` | `5400` | la durée maximale d'une étape (prompts, relance et bascules compris) : au-delà, le runner est arrêté et l'étape échoue, relançable |
 | `events.retentionDays` | `30` | le journal d'événements est purgé au-delà (au démarrage, puis chaque heure), le direct des sessions aussi |
 | `autonomyLearning.windowDays`, `.minRuns`, `.raiseMaxRate`, `.lowerMinRate` | `30`, `10`, `0.05`, `0.2` | les seuils des propositions de palier d'autonomie (`GET /v1/autonomy`) : sur `windowDays` jours, un groupe (dépôt, type, porte) d'au moins `minRuns` runs reçoit une proposition de baisse si son taux de runs corrigés vaut `lowerMinRate` ou plus, de montée s'il vaut `raiseMaxRate` ou moins (`raiseMaxRate` < `lowerMinRate`, entre 0 et 1). `windowDays` ne dépasse pas `events.retentionDays` (sinon la configuration est refusée : le journal purgé ne porte plus la fenêtre). Changés au redémarrage seulement |
@@ -695,9 +695,9 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 `heavy.memoryMax` (4 Go), le service à 1 Go. Le pire cas est
 `(runner.slots + runner.lendMax) × 1 Go + heavy.slots × 4 Go + 1 Go` : avec les défauts,
 `(5 + 3) × 1 + 3 × 4 + 1 = 21 Go`, dans la tranche `omp-harness.slice` de 23 Go (2 Go de marge), et
-9 Go laissés au système et à la pile mem0 sur un VPS de 32 Go. Un 4ᵉ slot heavy porterait le pire cas à
+9 Go laissés au système et à la pile memory sur un VPS de 32 Go. Un 4ᵉ slot heavy porterait le pire cas à
 25 Go : c'est la limite d'un VPS de 32 Go, à ne prendre qu'en relevant les tranches (`deploy/*.slice`,
-`deploy/nixos/module.nix`) et en vérifiant ce que la pile mem0 occupe vraiment. Une machine plus petite
+`deploy/nixos/module.nix`) et en vérifiant ce que la pile memory occupe vraiment. Une machine plus petite
 baisse `heavy.slots` et `runner.lendMax` dans `config.json` et ses tranches avec. Au-delà du pire cas
 écrit, l'admission sur `MemAvailable` (`admission.reserveMiB` + l'enveloppe du process) reste le garde-fou :
 un process de plus n'est lancé que s'il laisse la réserve libre, un runner prêté compris — son agent
@@ -1014,7 +1014,7 @@ elle. Sans `preview`, rien ne change.
   (`heavy.isolation`). Le navigateur est l'instance Moli de l'image épinglée
   `omp-harness-moli:local` (la même que la pile), lancée par le service pour CETTE revue sans
   `--block-private-networks` (la prévisualisation écoute sur la boucle locale), jointe à l'espace réseau de la prévisualisation (`--network=container:…`) et
-  à aucun autre : ni le harness, ni les runners, ni `harness:8790`, `mem0:8321`, `moli-poste`, ni
+  à aucun autre : ni le harness, ni les runners, ni `harness:8790`, `memory:8321`, `moli-poste`, ni
   l'hôte, ni la prévisualisation d'une autre revue. Le service `moli` de la pile n'y sert pas. Les
   deux conteneurs sont retirés ensemble (`docker rm --force`) à la fin de l'étape, quelle qu'en soit
   l'issue, et au redémarrage du service pour une revue interrompue.
@@ -1051,29 +1051,29 @@ elle. Sans `preview`, rien ne change.
 
 ## La mémoire du projet
 
-L'oracle du serveur **est** la mémoire mem0 du projet, la même que celle des
+L'oracle du serveur **est** la mémoire memory du projet, la même que celle des
 sessions du Mac une fois appairé (`/pair`, README racine § « Installation »).
 
 - **Même portée.** Une portée non déclarée est calculée à partir des manifestes de
   `main` (`package.json`, `pyproject.toml`, `Cargo.toml`, `Package.swift`, puis
-  `.xcodeproj`), avec la même table que le plugin (`omp-mem0-memory/state.ts`).
+  `.xcodeproj`), avec la même table que le plugin (`omp-memory/state.ts`).
   `GET /v1/status` l'affiche par dépôt.
 - **Agents branchés.** Chaque agent charge le plugin mémoire : il fait partie de la
   pile, toujours chargé sans déclaration (`runner.extensions` n'ajoute que d'autres
-  extensions). Il tourne avec `MEM0_PROJECT_ID=<portée>`, `MEM0_AUTOSETUP=0` (rien n'est écrit dans le
-  dépôt, donc rien dans la PR), `MEM0_NUDGE=0` et, avec `memory.runnerMode`
-  (vrai par défaut), `MEM0_MODE=runner` : ni rappel par tour ni épinglage — la
-  section Oracle du prompt est la seule source, et les outils `mem0_*` restent pour
+  extensions). Il tourne avec `MEMORY_PROJECT_ID=<portée>`, `MEMORY_AUTOSETUP=0` (rien n'est écrit dans le
+  dépôt, donc rien dans la PR), `MEMORY_NUDGE=0` et, avec `memory.runnerMode`
+  (vrai par défaut), `MEMORY_MODE=runner` : ni rappel par tour ni épinglage — la
+  section Oracle du prompt est la seule source, et les outils `memory_*` restent pour
   écrire les pièges durables en fin d'étape. Le service écrit lui-même en mémoire
   les besoins, chaque feature mergée et chaque correction humaine **avec sa
   raison**.
-- **Isolée.** `mem0-rs` tourne dans son conteneur (base en `~/.omp-harness/mem0`), ou
-  sous `omp-mem0` avec systemd (base en `/var/lib/omp-mem0`, 0700), hors du budget
+- **Isolée.** `memory-rs` tourne dans son conteneur (base en `~/.omp-harness/memory`), ou
+  sous `omp-memory` avec systemd (base en `/var/lib/omp-memory`, 0700), hors du budget
   des runs. Un jeton commun le relie au service et aux agents ; les jobs de tests ne
   voient ni la base ni le jeton. Injoignable, la mémoire dégrade sans bloquer.
 - **Lente n'est pas injoignable.** Une lecture (rappel, santé, dossier) abandonne à
   8 s : elle est sur le chemin des prompts. Une écriture a 30 s par essai et se retente
-  (attente de 2 s, doublée, 4 essais) si mem0-rs tarde, coupe la connexion ou répond
+  (attente de 2 s, doublée, 4 essais) si memory-rs tarde, coupe la connexion ou répond
   429/5xx ; une connexion refusée, un nom introuvable ou un autre 4xx la perdent tout
   de suite. Aucun geste ne l'attend. Chaque écriture perdue est journalisée une fois
   (« oracle lent | injoignable … (écriture perdue après N essais) ») et comptée dans
@@ -1082,7 +1082,7 @@ sessions du Mac une fois appairé (`/pair`, README racine § « Installation »)
   (`OLLAMA_KEEP_ALIVE=-1`) : un rechargement à froid suffisait à dépasser le délai.
 
 **Le rêve de la mémoire** (`dreams.ts`). Quand un dépôt est au repos, le service lit
-le dossier de consolidation de sa portée dans mem0-rs (`GET /memory/dream/dossier` :
+le dossier de consolidation de sa portée dans memory-rs (`GET /memory/dream/dossier` :
 les faits écrits depuis la dernière consolidation, les faits qui leur sont reliés, les
 observations et les mental models). S'il y a assez de nouveau (`dreams.minFacts`, ou
 un fait qui attend depuis `dreams.maxDelayHours`), un runner (`dreams.tier`, même
@@ -1090,36 +1090,36 @@ session que les audits) le relit en LECTURE SEULE dans un worktree détaché de 
 le dépôt fait autorité contre un souvenir — et rend par l'outil hôte
 `dream_consolidate` des **observations** (croyances fondées sur des faits, affinées
 plutôt qu'écrasées), des liens de **cause**, les observations devenues fausses et les
-**mental models** périmés réécrits. mem0-rs valide et applique d'un bloc ; un refus
+**mental models** périmés réécrits. memory-rs valide et applique d'un bloc ; un refus
 (une preuve qui n'est pas un fait de la portée…) revient au modèle avec sa raison, qui
 corrige et rappelle l'outil. Rien n'est persisté côté harness : le filigrane vit dans
-mem0-rs, et un rêve interrompu reprend au prochain examen. Chaque rêve publie
+memory-rs, et un rêve interrompu reprend au prochain examen. Chaque rêve publie
 `dream_state` (`dreaming`, puis `done`, `skipped` ou `failed`). Les autres phases du
-rêve (réindexation, paires proches, oubli) tournent dans mem0-rs, sur son propre LLM
-(`mem0-stack/mem0-rs/README.md` § Rêve).
+rêve (réindexation, paires proches, oubli) tournent dans memory-rs, sur son propre LLM
+(`memory-stack/memory-rs/README.md` § Rêve).
 
 **Reprendre la mémoire du Mac**, avant d'écrire quoi que ce soit sur le serveur (même
 modèle d'embedding des deux côtés, `EMBEDDING_DIMS`). Sur le Mac, copie sa base :
 
 ```bash
-sqlite3 ~/Library/Application\ Support/com.omp.console/mem0-rs/mem0-rs.db ".backup /tmp/mem0-rs.db"
-scp /tmp/mem0-rs.db <vps>:/tmp/
+sqlite3 ~/Library/Application\ Support/com.omp.console/memory-rs/memory-rs.db ".backup /tmp/memory-rs.db"
+scp /tmp/memory-rs.db <vps>:/tmp/
 ```
 
 Puis sur le VPS :
 
 ```bash
 # en conteneurs (docker, ou podman)
-docker compose -p omp-harness stop mem0
-rm -f ~/.omp-harness/mem0/mem0-rs.db-wal ~/.omp-harness/mem0/mem0-rs.db-shm
-cp /tmp/mem0-rs.db ~/.omp-harness/mem0/mem0-rs.db
-docker compose -p omp-harness start mem0
+docker compose -p omp-harness stop memory
+rm -f ~/.omp-harness/memory/memory-rs.db-wal ~/.omp-harness/memory/memory-rs.db-shm
+cp /tmp/memory-rs.db ~/.omp-harness/memory/memory-rs.db
+docker compose -p omp-harness start memory
 
 # avec systemd
-sudo systemctl stop omp-harness-mem0
-sudo rm -f /var/lib/omp-mem0/mem0-rs.db-wal /var/lib/omp-mem0/mem0-rs.db-shm
-sudo install -o omp-mem0 -g omp-mem0 -m 0600 /tmp/mem0-rs.db /var/lib/omp-mem0/mem0-rs.db
-sudo systemctl start omp-harness-mem0
+sudo systemctl stop omp-harness-memory
+sudo rm -f /var/lib/omp-memory/memory-rs.db-wal /var/lib/omp-memory/memory-rs.db-shm
+sudo install -o omp-memory -g omp-memory -m 0600 /tmp/memory-rs.db /var/lib/omp-memory/memory-rs.db
+sudo systemctl start omp-harness-memory
 ```
 
 ## Plusieurs clients, plusieurs projets
@@ -1223,7 +1223,7 @@ fournisseur, un autre compte ou le jeton global.
   "models": { "heavy": ["omlx/qwen3-coder-30b"] },
   "git": { "name": "Prénom Nom", "email": "prenom.nom@client.example" },
   "gh": { "configDir": "/var/lib/omp-harness/gh/client-corpo" },
-  "memory": { "tokenEnv": "MEM0_TOKEN_CLIENT_CORPO" }
+  "memory": { "tokenEnv": "MEMORY_TOKEN_CLIENT_CORPO" }
 }
 ```
 
@@ -1244,11 +1244,11 @@ fournisseur, un autre compte ou le jeton global.
   -H env GH_CONFIG_DIR=/var/lib/omp-harness/gh/client-corpo gh auth login`) ;
   `gh.tokenEnv` nomme une variable du service qui porte son jeton. Les jetons du
   service (`GH_TOKEN`, `GITHUB_TOKEN`) ne sont jamais passés à ce `gh`.
-- **La mémoire cloisonnée** : un jeton mem0-rs limité à la scope du dépôt
-  (`MEM0_HTTP_TOKENS`, `mem0-stack/README.md`), posé dans une variable du service
+- **La mémoire cloisonnée** : un jeton memory-rs limité à la scope du dépôt
+  (`MEMORY_HTTP_TOKENS`, `memory-stack/README.md`), posé dans une variable du service
   (`/etc/omp-harness/env`, `harness.env` des secrets en conteneurs, ou la variable de
   pile `OMP_HARNESS_MEMORY_TOKENS` sous Portainer, qui le nomme
-  `MEM0_TOKEN_<NOM>`). Ses runners le reçoivent au lieu du jeton global : par
+  `MEMORY_TOKEN_<NOM>`). Ses runners le reçoivent au lieu du jeton global : par
   l'environnement (`none`), par `memory.env` monté (`container`) ou par le lanceur
   root (`systemd`, `MEMORY_TOKENS_DIR/<dépôt>.env`), jamais sur une ligne de commande.
   Le runner d'un autre projet n'a jamais ce jeton, et ce jeton n'ouvre aucune autre
@@ -2367,7 +2367,7 @@ au dépôt (`omp-harness-client add ci-demo operator demo`).
 - **Journal JSON.** Une ligne par événement, sur stderr et dans
   `<logs.dir>/harness-AAAA-MM-JJ.jsonl` (jour UTC, `logs.retentionDays` jours gardés) :
   `{"ts", "level", "src": "harness", "msg", "runId"?, "repo"?, "event"?, "err"?: {message, stack?}}`.
-  mem0-rs écrit le même format (`src: "mem0"`, mem0-stack/README.md). Lire les erreurs
+  memory-rs écrit le même format (`src: "memory"`, memory-stack/README.md). Lire les erreurs
   d'un run : `jq -c 'select(.runId == "<id>")' harness-*.jsonl`.
 - **`GET /metrics`** (jeton d'un client viewer qui voit tous les dépôts ; 403 sinon) :
   l'exposition texte de Prometheus. `omp_harness_runs{repo,state}`,
@@ -2388,7 +2388,7 @@ au dépôt (`omp-harness-client add ci-demo operator demo`).
   vont en base, au journal (niveau error) et sur le flux (`client_error`).
 - **Santé de la mémoire.** `GET /v1/status` porte `memory {configured, ok, version,
   uptimeSec, memories, dbBytes, lastBackupAt, lastBackupError, checkedAt}` (lu sur le
-  `GET /health` de mem0-rs, gardé 30 s) et `backups {lastAt, lastError, lastErrorAt,
+  `GET /health` de memory-rs, gardé 30 s) et `backups {lastAt, lastError, lastErrorAt,
   remote {configured, lastAt, lastError}}` ; le rapport du matin en fait sa section « Santé ».
 - **Alertes.** `notify.url` et `notify.targets` (ntfy, webhook JSON), dédoublonnées
   par `notify.dedupMin`. `backup_failed` est notifié par défaut.
@@ -2402,7 +2402,7 @@ au dépôt (`omp-harness-client add ci-demo operator demo`).
   restaurer, depuis la copie rapatriée (`restic restore latest --target /tmp/r`) ;
   elle est éprouvée par `harness-backups/AC-1` (une copie rouvre la base telle quelle).
 - **Prometheus et Grafana.** `omp-harness/deploy/monitoring/` : `prometheus.yml`
-  (scrute le harness et mem0 avec leurs jetons), le tableau `grafana/omp-harness.json`
+  (scrute le harness et memory avec leurs jetons), le tableau `grafana/omp-harness.json`
   (importable tel quel, ou posé par le profil). En conteneurs, le profil `monitoring`
   du compose racine, coupé par défaut :
 
@@ -2410,7 +2410,7 @@ au dépôt (`omp-harness-client add ci-demo operator demo`).
   mkdir -p -m 0700 /var/lib/omp-harness-secrets/monitoring && cd /var/lib/omp-harness-secrets/monitoring
   docker compose exec harness node --experimental-strip-types /opt/omp-harness/omp-harness/main.ts \
     --config /etc/omp-harness/config.json --add-client prometheus --role viewer > harness.token
-  sed -n 's/^MEM0_HTTP_TOKEN=//p' ../mem0/mem0.env > mem0.token && chmod 0600 *.token
+  sed -n 's/^MEMORY_HTTP_TOKEN=//p' ../memory/memory.env > memory.token && chmod 0600 *.token
   docker compose --profile monitoring up -d   # Grafana : http://127.0.0.1:3000 (GRAFANA_ADMIN_PASSWORD)
   ```
 
@@ -2451,7 +2451,7 @@ clones (`<racine>/repos`) lui sont montés en lecture seule.
   hypothèse, fichiers et critères, numérotés `AC-n` dans l'issue (la voie directe du
   harness). La session ne reçoit ni le jeton de la vigie, ni celui de la mémoire.
 - **Publication** par `issue_create` (MCP), **caviardée par le serveur** (`vigie/redact.ts`,
-  les familles de mem0-rs réécrites en TS, plus jetons longs, e-mails, requête des URL,
+  les familles de memory-rs réécrites en TS, plus jetons longs, e-mails, requête des URL,
   chemins personnels, noms du tailnet et IP) ; tout texte que le serveur garde du poste
   (pages, meetings, actions, profil, identités) est retiré mot pour mot.
 - **Correction** (mode `fix`) : `issue_fix`, puis le pilotage du run quand il attend
@@ -2481,7 +2481,7 @@ clones (`<racine>/repos`) lui sont montés en lecture seule.
 
 Une session omp ouverte dans un terminal du poste se signale au serveur : les apps
 montrent ainsi, à côté des runs, ce qui se fait à la main. Le rapporteur vit dans le
-plugin `omp-mem0-req` (`local-session.ts`) : la session principale seulement (jamais un
+plugin `omp-memory-req` (`local-session.ts`) : la session principale seulement (jamais un
 sous-agent ni un runner du harness), un battement `POST /v1/local-sessions` à chaque
 changement d'état, et au plus un toutes les 10 s pour l'intention des outils. Il se coupe
 par `OMP_HARNESS_LOCAL_SESSIONS=0` et ne fait rien sans harness configuré.
@@ -2907,7 +2907,7 @@ et le rejeu d'un retard va par lots de 500, au rythme où le client lit.
 | `PUT /v1/rules/{id}` `{text?, enabled?}` · `DELETE /v1/rules/{id}` | operator | Changer le texte d'une consigne, la suspendre ou la réactiver (`{rule}`), la retirer (`{removed: true}`). Consigne inconnue, d'un dépôt non permis ou d'un espace sans dépôt visible (ou hors de l'espace de `?space=`) : 404 ; consigne d'un espace vu en partie : 403 ; pilote : 403. |
 | `GET /v1/projects` · `POST /v1/projects` `{repo, title, priority?, autonomy?, features: [{title, request, modules?}]}` · `GET /v1/projects/{id}` | viewer · operator · viewer | /project. La liste porte le décompte des runs de chaque projet par état. Le projet et ses runs naissent dans la même transaction ; `autonomy` pose le curseur de toutes ses features. |
 | `GET /v1/audits` · `POST /v1/audits` `{repo, focus?}` · `GET /v1/audits/{id}` | viewer · operator · viewer | /audit : `queued` → `analysing` → `proposed`. Chaque proposition rendue porte `kind`, `modules`, `rationale`, `evidence` (`fichier:ligne`, non vide pour une faiblesse), `dependsOn` (index des propositions prérequises), `impact` et `effort` (`low` · `medium` · `high`). |
-| `GET /v1/dreams` · `POST /v1/dreams` `{repo}` | viewer · operator | Le rêve de la mémoire : le dernier rêve de chaque dépôt (`state` `dreaming` · `done` · `skipped` · `failed`, `facts`, `reason`, `report` de mem0-rs) ; `POST` demande un rêve, examiné au prochain tour sans seuil de faits ni attente du repos (202 ; 409 sans oracle). |
+| `GET /v1/dreams` · `POST /v1/dreams` `{repo}` | viewer · operator | Le rêve de la mémoire : le dernier rêve de chaque dépôt (`state` `dreaming` · `done` · `skipped` · `failed`, `facts`, `reason`, `report` de memory-rs) ; `POST` demande un rêve, examiné au prochain tour sans seuil de faits ni attente du repos (202 ; 409 sans oracle). |
 | `POST /v1/audits/{id}/launch` `{items: [index], title?}` · `POST /v1/audits/{id}/cancel` | operator | Lancer les propositions retenues en projet (ordonnées selon `dependsOn` : une feature prend un `projectOrder` postérieur à ses prérequis retenus ; 400 si les dépendances bouclent), ou annuler. |
 | `GET /v1/intake?state=a,b&limit=` · `POST /v1/intake` `{text, source, repo?, context?}` · `GET /v1/intake/{id}` | viewer · operator · viewer | Les Demandes (capacité `intake`, § « Les demandes en langage libre ») : une phrase libre, classée par un job en un plan (`feature`, `bug`, `audit`, `workstation_request`, `schedule`) ou une réponse directe (`question`), ou une question de clarification. `POST` : 201 `{intake}` à l'état `classifying` ; `source` ∈ `console` · `ios` · `voice` · `slack` · `cli` · `chrome` (sinon 400), `text` non vide de 4000 caractères au plus (400), `repo` facultatif qui s'impose au plan (403 hors portée du client, 404 non déclaré), `context` facultatif (capacité `intake-context`) : la page d'où part la demande, `{url?: http(s) ≤ 2000, title?: ≤ 300, selection?: ≤ 4000}`, jugé strictement (400), l'adresse gardée sans identifiants, query ni fragment, rendu par la vue (`context`) à l'auteur et au propriétaire seulement (`null` sans page, et pour tout autre lecteur). La liste (200 `{intakes}`, `state` : des états parmi `classifying` · `clarifying` · `planned` · `answered` · `confirmed` · `cancelled` · `failed`, 400 sinon) et `GET /{id}` (404 pour une demande invisible) ne rendent que les demandes des dépôts du client, plus celles sans dépôt qu'il a posées. |
 | `POST /v1/intake/{id}/confirm` `{plan?}` · `POST /v1/intake/{id}/cancel` · `POST /v1/intake/{id}/answer` `{text}` | operator | `confirm` : crée l'objet du plan par le chemin existant (run, audit, planification, demande au poste) et lie la demande (201 `{intake}` avec `created {kind, id}`) ; `plan` corrige des champs (`kind`, `repo`, `title`, `statement`, `focus`, `schedule`, `lane`, `criteria` — une liste de chaînes qui remplace celle du plan), rejugés (400 : voie inconnue, `direct` sans critère, `criteria` qui n'est pas une liste) ; une voie changée prend la raison « choisie à la confirmation ». 409 si la demande n'est pas `planned` : une seconde confirmation ne crée rien ; 403 du chemin existant (demande au poste : appareil approbateur) : rien n'est créé, la demande reste confirmable. `cancel` : 200, arrête le classement en cours ; 409 si déjà confirmée ou annulée. `answer` : 200, la même demande est reclassée ; 409 si elle n'est pas en `clarifying`, 400 si `text` est vide. 404 pour une demande invisible. |
@@ -3042,7 +3042,7 @@ clé pendant que la première requête court encore : 409, le client réessaie. 
 | **Politique de décision** | `decisions.ts` | Outil hôte `decision` (`options` obligatoires, 2 à 4, `chosen` parmi elles ; `context`, la situation lisible hors de la session, obligatoire ; `impacts`, une conséquence par option, obligatoires pour une escalade). Une décision réversible — ou une `clarification` de produit/UX — devient un commit WIP `decision: … → …` (trailer `Harness-Decision: run/N`, remappé après rebase). Le schéma de données, l'API publique et les suppressions partent en escalade, batchée en fin d'étape. Le service durcit une catégorie, il ne l'adoucit jamais. Une décision cite celles dont elle découle (`dependsOn`). |
 | **Heavy** : systemd, 4 Go, 300 %, user dédié, sans réseau ni clé, cache, dédoublonnage, OOM | `heavy.ts`, `proc.ts` | Le runner attend, bloqué sur `run_tests`. Le cache est lu avant tout lancement, par clé tree hash du répertoire de travail + commande + env ; seul un VERT y entre, un rouge frais est relancé une fois (`heavy_fail_retry`) et jamais resservi. Deux appels de même clé partagent un seul process (`heavy_joined`) ; l'arrêt d'un appelant le désabonne, le dernier parti tue le job (SIGTERM puis SIGKILL, unité arrêtée, slot rendu). Scope `touched` : `tests.pattern` filtre les fichiers, aucun retenu ⇒ vert « rien lancé » (`heavy_skipped`) ; scope `check` : une commande nommée de `repos[].checks`, une clé de cache par nom. Un OOM donne un échec structuré et 2 relances, sans entrée de cache. |
 | **Worktrees** : 1 par run, artefacts, WIP, petites PR, caches de build, revert ciblé | `git.ts` | Branche `harness/<slug>`. Artefacts dans `.harness/` (exclu de git, versés dans la base). `CARGO_TARGET_DIR` par worktree, sccache et store pnpm partagés. Le tree hash du cache heavy part d'une copie de l'index du worktree (git ne relit que ce qui a changé). `diffLines(mode)` : `code` ignore `test/**`, `*.test.*`, `Tests/`, `*.md`, `CHANGELOG*`, `package.json`, `*.lock` — ce qui compte face à `review.maxDiffLines` (`review.diffCount`). `revertRange(de, à)` défait une plage de commits en un seul commit `revert: …` (checkpoints vides sautés) ; un conflit est abandonné, l'arbre rendu propre, et ses fichiers rendus — le renversement d'une décision ne perd plus le travail indépendant. Les gestes qui écrivent l'index ou HEAD d'un worktree (commit, reset, rebase, revert, fusion, worktree add/remove) passent un par un, dans une file par worktree : deux `decision` d'un même tour, la fin d'étape, la boucle humaine et le merge ne se marchent plus dessus ; `status` ne prend pas le verrou de l'index au passage (`GIT_OPTIONAL_LOCKS=0`). Un verrou `*.lock` tenu par un autre git est attendu 10 s, puis le geste échoue en le nommant ; plus vieux que 5 min (aucun git du service ne vit plus de 120 s), c'est le reste d'un git tué : retiré, journalisé, et le geste repart. |
-| **Oracle** : mem0-rs, scope projet | `oracle.ts` | Lu par toutes les étapes et /project (`recall`), et par les escalades (`recallDecisions` : les souvenirs `harness,decision` seulement, filtrés ici car mem0-rs ne filtre les étiquettes que par égalité stricte). En écriture : les besoins `B-n` du compte rendu (`briefOfReq`, ≤ 500 car.), chaque feature mergée (knowledge-updater : résumé, modules, risques, non vérifié, décisions) et chaque décision humaine **avec sa raison**, sa catégorie, ses options et son contexte. Rendu au prompt avec l'étiquette principale et la date courte. Injoignable, il dégrade sans bloquer. |
+| **Oracle** : memory-rs, scope projet | `oracle.ts` | Lu par toutes les étapes et /project (`recall`), et par les escalades (`recallDecisions` : les souvenirs `harness,decision` seulement, filtrés ici car memory-rs ne filtre les étiquettes que par égalité stricte). En écriture : les besoins `B-n` du compte rendu (`briefOfReq`, ≤ 500 car.), chaque feature mergée (knowledge-updater : résumé, modules, risques, non vérifié, décisions) et chaque décision humaine **avec sa raison**, sa catégorie, ses options et son contexte. Rendu au prompt avec l'étiquette principale et la date courte. Injoignable, il dégrade sans bloquer. |
 | **Backends LLM** : trois tiers, multi-provider | `config.ts` (`models`, `stepTiers`), `machine.ts` (`stepTier`), `runner-session.ts` | Trois chaînes : `models.fast`, `models.standard`, `models.heavy` (une chaîne vide prend celle du tier au-dessus). `stepTiers` donne le tier de chaque étape. Par défaut, heavy là où l'on juge (/req, /specs, /review, qui décide de l'auto-merge) et standard là où l'on exécute des specs précises (/impl, /impl --fix). La dernière correction avant le plafond passe en heavy. Review → fix garde son runner : seul le modèle change (`set_model`, événement `model_tier`). Sur une cause de `runner.failoverOn`, `set_model` fait passer le **même** runner au fournisseur suivant. |
 | **Sortie /review** : verdict structuré, auto-merge | `verdict.ts` | Outil hôte `review_verdict`, avec la table AC par AC (`criteria`), une `confidence` et le message du commit squash (`commit` : sujet Conventional Commits validé par le service, corps) obligatoires. Auto-merge si aucun bloquant, risque ≤ `review.autoMergeRisk`, suite complète **verte sur l'arbre exact** (cache heavy, jamais l'avis du runner), diff ≤ `review.maxDiffLines`, aucune escalade ouverte, confiance forte, chaque `AC-n` des specs gelées à la clôture de /specs (`_specs.baseline.md`), et de ceux ajoutés depuis, en `pass`, aucun critère gelé retiré ou réécrit (`criteriaDrift`), et tous les fichiers touchés (git) relus par la revue. Un point non vérifié ne bloque que s'il cite un `AC-n`. Sinon l'humain lit le verdict, et le code seulement si le verdict est faible. |
 | **Système** : zram, oomd, budget 21 Go | `deploy/` | `omp-harness.slice` 23G ⊃ runners 8G (5 slots + 3 prêtés) + heavy 12G + service 1G. OOM : heavy (800), puis runners (300), jamais le service (-900, `ManagedOOMPreference=omit`). zram 8 Go. |
@@ -3054,7 +3054,7 @@ clé pendant que la première requête court encore : 409, le client réessaie. 
 | **Autonomie par paliers** (ajout) | `autonomy-rules.ts`, `autonomy-gates.ts`, `autonomy-learning.ts`, `gestures.ts`, `steps.ts` | Règles par dépôt validées au chargement ; évaluation serveur à la pose de l'attente (échec fermé : jamais d'attente `irreversible`, `budget`, `arbitration` ou `failure`, d'escalade `schema`/`public_api`/`deletion`, de budget dépassé ni de run de la vigie), à partir de l'évidence de la revue (`_review-evidence.json`, invisible) ; validation par le même geste que l'humain, inscrite comme décision prise seule réversible ; propositions de palier calculées à la lecture, sans jamais modifier une règle. |
 | **Graphe de session** (ajout) | `session-graph.ts`, `steps.ts`, `host-tools.ts` | Construit par le service depuis les trames `tool_execution_*` réussies du runner de l'étape (lectures, recherches, modifications) et les outils hôtes (`run_tests`, `decision`) ; borné à 300 nœuds, écrit dans `_session-graph.json` et poussé en événement éphémère `graph` au plus une fois toutes les 2 s. Les preuves (`evidence`) d'une décision sont résolues contre lui, de façon synchrone, avant toute écriture. |
 | **Carte de décision** (ajout) | `card.ts`, `card-reader.ts`, `briefing.ts`, `decisions.ts`, `host-tools.ts`, `db/decisions.ts`, `steps.ts`, `orchestrator.ts` | Les règles de la carte vivent dans le serveur (`planDecision`, `parseCard`) ; une escalade la porte (`card`, artefact interne `_escalation-cards.json`), relue avant son départ par le relecteur « humain pressé » (tier `fast`, borné, jamais bloquant). Le `briefing` d'un run qui attend des specs ou un arbitrage est écrit AVANT l'attente (`_briefing.json`) et servi avec le run. |
-| **Rêve de la mémoire** (ajout) | `dreams.ts` | Un dépôt au repos dont la mémoire a assez de faits nouveaux est confié à un runner en lecture seule (worktree détaché de `main`), qui consolide le dossier de mem0-rs en observations, causes et mental models par l'outil hôte `dream_consolidate` ; mem0-rs valide et applique d'un bloc, un refus revient au modèle. Après l'admission des runs : un rêve ne prend qu'un slot que nul run n'attend. |
+| **Rêve de la mémoire** (ajout) | `dreams.ts` | Un dépôt au repos dont la mémoire a assez de faits nouveaux est confié à un runner en lecture seule (worktree détaché de `main`), qui consolide le dossier de memory-rs en observations, causes et mental models par l'outil hôte `dream_consolidate` ; memory-rs valide et applique d'un bloc, un refus revient au modèle. Après l'admission des runs : un rêve ne prend qu'un slot que nul run n'attend. |
 | **Poste de travail** (ajout) | `workstation.ts`, `workstation-guards.ts`, `workstation-agent.ts`, `db/workstation.ts`, `db/workstation-meetings.ts`, `db/workstation-captures.ts`, `db/workstation-browsers.ts`, `db/workstation-requests.ts` | Le relais de l'extension Chrome : observation validée et purgée, file d'actions (bail, résultat, garde d'envoi tenue par le serveur : approbation humaine ou destinataires tous à soi, jamais à l'échéance), cantonnement à la fenêtre de l'agent et navigation gardée (approbation), contenu des pages délimité comme non fiable, arrêt d'urgence, meetings, profil versionné, captures gardées. Les attentes (long-poll, résultat) sont des promesses en mémoire, réveillées par le changement, l'échéance ou le départ du client. L'agent 24/24 et ses jobs passent par la même session de runner que les audits, sur un dépôt synthétique (§ « Le poste de travail »). |
 | **Issues GitHub** (ajout) | `issues.ts`, `mcp.ts`, `db/issues.ts` | Le serveur MCP de `POST /v1/mcp` : les issues d'un dépôt déclaré lues par `gh` dans le dépôt GitHub de son distant, lancées en runs par `createRun` ; la table `issue_runs` lie chaque issue à son dernier run et empêche un double lancement (et deux appels simultanés sur la même issue n'en font qu'un). |
 | **Statistiques** (ajout) | `stats.ts` | Calculées à la demande sur la base : runs par état, taux de merge, délai médian, étapes et durées, corrections, tests heavy (cache, relances), décisions, audits. |

@@ -37,7 +37,8 @@ import type { HarnessConfig } from "./config/config.ts";
 import { Store } from "./db/db.ts";
 import { Git } from "./forge/git.ts";
 import { HeavyRunner } from "./heavy/heavy.ts";
-import { HARNESS_VERSION, createHandler } from "./api/http.ts";
+import { createHandler } from "./api/http.ts";
+import { HARNESS_VERSION } from "./api/http-io.ts";
 import { Logger, logDir, logRecord } from "./operations/logger.ts";
 import type { LogLine } from "./operations/logger.ts";
 import { HttpOracle, NO_ORACLE } from "./memory/oracle.ts";
@@ -48,6 +49,7 @@ import { ConfigAdmin, addRepo, sshKeygen } from "./config/repos.ts";
 import type { SpawnRunner } from "./runs/orchestrator.ts";
 import { execProcess } from "./runners/proc.ts";
 import { Scheduler } from "./runners/scheduler.ts";
+import { renamedEnv } from "./config/env.ts";
 
 /** Le jeton de l'API : variable d'environnement, sinon fichier 0600 (créé directement en 0600). */
 export function loadToken(config: HarnessConfig, env: Record<string, string | undefined> = process.env): string {
@@ -115,9 +117,9 @@ export async function startHarness(
   });
   const git = new Git(execProcess, repoIdentity(config), { log });
   const heavy = new HeavyRunner({ config, store, scheduler, git, exec: execProcess });
-  // Le jeton de mem0-rs peut venir de l'environnement (/etc/omp-harness/env), comme pour le plugin mémoire.
-  if (config.oracle && !config.oracle.token && process.env.MEM0_HTTP_TOKEN)
-    config.oracle.token = process.env.MEM0_HTTP_TOKEN;
+  // Le jeton de memory-rs peut venir de l'environnement (/etc/omp-harness/env), comme pour le plugin mémoire.
+  if (config.oracle && !config.oracle.token && renamedEnv(process.env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN"))
+    config.oracle.token = renamedEnv(process.env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN");
   // L'URL et le jeton du navigateur Moli des outils `browser_*`, posés par `setup` dans l'environnement.
   browserFromEnv(config);
   const oracle = config.oracle ? new HttpOracle(config.oracle, { log }) : NO_ORACLE;
@@ -329,8 +331,8 @@ if (isMain) {
     process.exit(output.status);
   }
   if (process.argv.includes("--check")) {
-    if (config.oracle && !config.oracle.token && process.env.MEM0_HTTP_TOKEN)
-      config.oracle.token = process.env.MEM0_HTTP_TOKEN;
+    if (config.oracle && !config.oracle.token && renamedEnv(process.env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN"))
+      config.oracle.token = renamedEnv(process.env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN");
     const oracle = config.oracle ? new HttpOracle(config.oracle) : null;
     const lines = await runChecks(config, {
       exec: execProcess,

@@ -8,11 +8,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { ROOT } from "../support/repo.ts";
 
-// URL de CE dépôt (hôte GitHub, un handle, puis mem0-omp), pas toute adresse GitHub : les
+// URL de CE dépôt (hôte GitHub, un handle, puis memory-omp), pas toute adresse GitHub : les
 // tests de la console citent des URL de PR fictives qui n'ont aucun handle à
 // remplacer. Assemblé, jamais littéral : ce fichier de test ne doit pas être
 // lui-même une occurrence, sinon l'ensemble calculé s'inclurait lui-même.
-const URL_MARK = new RegExp(`${["github", "com/"].join("\\.")}[^/\\s]+/mem0-omp`);
+const URL_MARK = new RegExp(`${["github", "com/"].join("\\.")}[^/\\s]+/memory-omp`);
 
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -54,7 +54,7 @@ function summaryWording(text: string, minimumMentions = 0): string[] {
 }
 
 // Les motifs de .gitignore qui sont des chemins littéraux (sans joker) sont
-// exclus du parcours : `node_modules/`, `mem0-stack/qdrant_storage/`, et
+// exclus du parcours : `node_modules/`, `memory-stack/qdrant_storage/`, et
 // `.omp/pipeline/` — le contrat du pipeline est un artefact transitoire, pas un
 // fichier du dépôt.
 const ignoredPaths = fs
@@ -138,9 +138,9 @@ test("docs/AC-19 : les commandes d'installation du README portent le slug réel 
   }
   assert.equal(slugs.size, 1, `les catalogues doivent nommer un seul dépôt : ${[...slugs].join(", ")}`);
   const [slug] = [...slugs];
-  assert.match(slug, /\/mem0-omp$/, "le slug canonique désigne ce dépôt");
+  assert.match(slug, /\/memory-omp$/, "le slug canonique désigne ce dépôt");
 
-  const occurrences = [...readme.matchAll(/\b[A-Za-z0-9_.-]+\/mem0-omp\b/g)].map((m) => m[0]);
+  const occurrences = [...readme.matchAll(/\b[A-Za-z0-9_.-]+\/memory-omp\b/g)].map((m) => m[0]);
   assert.ok(occurrences.length >= 3, "le README cite le dépôt pour cloner, ajouter et installer");
   for (const occurrence of occurrences) {
     assert.equal(occurrence, slug, `le README cite « ${occurrence} » au lieu de « ${slug} »`);
@@ -163,7 +163,7 @@ test("docs/AC-20 : chaque plugin du catalogue est installé et cité dans l'arbo
 
   // Forme figée de l'arborescence : le service avec son sous-dossier, les tests
   // et le script de validation.
-  for (const expected of ["mem0-stack/", "mem0-rs/", "test/", "scripts/check.sh"]) {
+  for (const expected of ["memory-stack/", "memory-rs/", "test/", "scripts/check.sh"]) {
     assert.ok(tree.includes(expected), `DEVELOPPEMENT.md : ${expected} absent de l'arborescence`);
   }
 });
@@ -293,8 +293,8 @@ test("documentation-derivee/AC-4 : les descriptions des catalogues ne sur-promet
 // réel n'est modifié (copie JSON profonde).
 test("documentation-derivee/AC-6 : le contrôle de vocabulaire échoue sur une copie fautive", () => {
   const copy = JSON.parse(JSON.stringify(catalog())) as Catalog;
-  const entry = copy.plugins.find((plugin) => plugin.name === "omp-mem0-memory");
-  assert.ok(entry !== undefined, "omp-mem0-memory absent du catalogue");
+  const entry = copy.plugins.find((plugin) => plugin.name === "omp-memory");
+  assert.ok(entry !== undefined, "omp-memory absent du catalogue");
 
   const fautive = `sommaire exhaustif ${entry.description ?? ""}`;
   assert.ok(summaryWording(fautive, 0).length > 0, "« sommaire exhaustif » doit échouer");

@@ -81,7 +81,7 @@ test("runner-journal-moteur/AC-108 : un runner conteneur coupe le journal du mot
   const variants: RunnerSpec[] = [
     spec({ model: null, memory: false }),
     spec({ localOnly: true }),
-    spec({ memoryEnvFile: "/srv/omp/state/memory.env", oracleUrl: "http://mem0:8321" }),
+    spec({ memoryEnvFile: "/srv/omp/state/memory.env", oracleUrl: "http://memory:8321" }),
   ];
   for (const variant of variants)
     for (const config of [containerConfig(), bare]) {

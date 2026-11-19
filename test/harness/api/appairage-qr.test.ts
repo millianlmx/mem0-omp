@@ -226,9 +226,9 @@ test("appairage-qr/AC-9 : `harness.sh pair-qr` crée le ticket sans mettre le je
   const bin = path.join(dir, "bin");
   for (const sub of [path.join(root, "state"), secrets, bin]) fs.mkdirSync(sub, { recursive: true });
   fs.writeFileSync(path.join(root, "state", "token"), "jeton-du-service\n");
-  fs.writeFileSync(path.join(root, "published.env"), "URL=http://100.64.0.9:8790\nMEM0_URL=http://100.64.0.9:8321\n");
+  fs.writeFileSync(path.join(root, "published.env"), "URL=http://100.64.0.9:8790\nMEMORY_URL=http://100.64.0.9:8321\n");
   fs.writeFileSync(path.join(root, "compose.env"), "OMP_HARNESS_PORT=8799\n");
-  fs.writeFileSync(path.join(secrets, "mem0.env"), "MEM0_HTTP_TOKEN=memtok\n");
+  fs.writeFileSync(path.join(secrets, "memory.env"), "MEMORY_HTTP_TOKEN=memtok\n");
   const record = path.join(dir, "curl.log");
   fs.writeFileSync(
     path.join(bin, "curl"),

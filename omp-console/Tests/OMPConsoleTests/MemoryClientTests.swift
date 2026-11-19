@@ -16,7 +16,7 @@ import ConsoleCore
 
 // MARK: - S-1 : la recherche
 
-@Test("memoire-mem0/AC-1 : la recherche émet le corps exact de mem0_search (pool de 24, seuil 0,55, explain, portée du projet)")
+@Test("memoire-memory/AC-1 : la recherche émet le corps exact de memory_search (pool de 24, seuil 0,55, explain, portée du projet)")
 func ac1SearchRequestMatchesThePlugin() async throws {
     StubURLProtocol.reset()
     StubURLProtocol.reply(
@@ -25,7 +25,7 @@ func ac1SearchRequestMatchesThePlugin() async throws {
     )
     let service = stubbedHTTPMemoryService()
 
-    let rows = try await service.search(query: "sujet", scope: "mem0-omp", pool: MemorySearch.pool(requested: 6))
+    let rows = try await service.search(query: "sujet", scope: "memory-omp", pool: MemorySearch.pool(requested: 6))
 
     #expect(MemorySearch.defaultLimit == 6)
     #expect(MemorySearch.threshold == 0.55)
@@ -37,7 +37,7 @@ func ac1SearchRequestMatchesThePlugin() async throws {
     #expect(request.httpMethod == "POST")
     let body = try #require(memoryBody(request))
     #expect(body["query"] as? String == "sujet")
-    #expect(body["agent_id"] as? String == "mem0-omp")
+    #expect(body["agent_id"] as? String == "memory-omp")
     #expect(body["limit"] as? Int == 24)
     #expect(body["threshold"] as? Double == 0.55)
     #expect(body["explain"] as? Bool == true)
@@ -46,7 +46,7 @@ func ac1SearchRequestMatchesThePlugin() async throws {
     #expect(rows.map(\.text) == ["un souvenir"])
 }
 
-@Test("memoire-mem0/AC-1 : la sélection est celle de selectRelevant — cosinus seuls, décroissant, tronqué")
+@Test("memoire-memory/AC-1 : la sélection est celle de selectRelevant — cosinus seuls, décroissant, tronqué")
 func ac1SelectionMatchesSelectRelevant() {
     let rows = [
         memoryRow(id: "m-1", text: "a", score: 0.9),
@@ -199,7 +199,7 @@ func ac12AddBodyIsExact() async throws {
     #expect(body["text"] as? String == "souvenir neuf")
     #expect(body["agent_id"] as? String == "projet-a")
     #expect(body["tags"] as? String == "t1,t2")
-    // REQUIS : sans lui, mem0 ferait résumer le texte par le LLM.
+    // REQUIS : sans lui, memory ferait résumer le texte par le LLM.
     #expect(body["infer"] as? Bool == false)
 
     StubURLProtocol.reset()
@@ -260,7 +260,7 @@ func ac11WriteFailureCarriesItsMessage() async {
 
 // MARK: - S-3 : le sommaire
 
-@Test("memoire-mem0/AC-3 : le sommaire demande la portée du projet et rend le compte et l'ordre du service")
+@Test("memoire-memory/AC-3 : le sommaire demande la portée du projet et rend le compte et l'ordre du service")
 func ac3SummaryCarriesScopeTotalAndOrder() async throws {
     StubURLProtocol.reset()
     StubURLProtocol.reply(
@@ -276,18 +276,18 @@ func ac3SummaryCarriesScopeTotalAndOrder() async throws {
     )
     let service = stubbedHTTPMemoryService()
 
-    let page = try await service.all(scope: "mem0-omp")
+    let page = try await service.all(scope: "memory-omp")
 
     let request = try #require(StubURLProtocol.requests.first)
     #expect(request.url?.path == "/memory/all")
     #expect(request.httpMethod == "GET")
-    #expect(request.url?.query == "agent_id=mem0-omp")
+    #expect(request.url?.query == "agent_id=memory-omp")
     #expect(page.total == 3)
     #expect(page.rows.map(\.id) == ["m-3", "m-2", "m-1"])
     #expect(page.rows.map(\.updatedAt) == ["2026-09-30T10:00:00Z", "2026-09-29T10:00:00Z", "2026-09-28T10:00:00Z"])
 }
 
-@Test("memoire-mem0/AC-3 : un sommaire sans `total` compte ses lignes, et un tableau nu est accepté")
+@Test("memoire-memory/AC-3 : un sommaire sans `total` compte ses lignes, et un tableau nu est accepté")
 func ac3PageToleratesBareShapes() {
     let withoutTotal = MemoryPage.decode(["results": [["id": "m-1", "memory": "a"]]] as [String: Any])
     #expect(withoutTotal.total == 1)
@@ -302,9 +302,9 @@ func ac3PageToleratesBareShapes() {
     #expect(empty.rows.isEmpty)
 }
 
-// MARK: - Décodage des lignes (mem0Client.ts:82-111)
+// MARK: - Décodage des lignes (memoryClient.ts:82-111)
 
-@Test("memoire-mem0/AC-6 : une ligne porte le texte COMPLET stocké, jamais un aperçu tronqué")
+@Test("memoire-memory/AC-6 : une ligne porte le texte COMPLET stocké, jamais un aperçu tronqué")
 func ac6RowKeepsTheFullStoredText() {
     let long = "première ligne très longue\nligne 2\n\nligne 4 avec des espaces   "
     let row = MemoryJSON.row(["id": "m-1", "memory": long])
@@ -317,7 +317,7 @@ func ac6RowKeepsTheFullStoredText() {
     #expect(serialized.contains("\"autre\""))
 }
 
-@Test("memoire-mem0/AC-3 : une ligne sans identifiant porte « ? », et un cosinus non fini est ignoré")
+@Test("memoire-memory/AC-3 : une ligne sans identifiant porte « ? », et un cosinus non fini est ignoré")
 func ac3RowGuardsAreLocal() {
     #expect(MemoryJSON.row(["memory": "sans id"]).id == "?")
     #expect(MemoryJSON.row(["id": 7, "memory": "numérique"]).id == "7")
@@ -345,10 +345,10 @@ func s18RowTagsComeFromMetadata() {
 
 // MARK: - S-6, S-7 : sonde, erreurs, config et jeton
 
-@Test("memoire-mem0/AC-7 : la sonde /health rend « disponible » quand le service répond ok AVEC notre jeton d'installation")
+@Test("memoire-memory/AC-7 : la sonde /health rend « disponible » quand le service répond ok AVEC notre jeton d'installation")
 func ac7HealthReportsAvailability() async throws {
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true, "mem0": "2.2.1", "user": "millian", "installation": "jeton"])))
+    StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true, "memory": "2.2.1", "user": "millian", "installation": "jeton"])))
     let service = stubbedHTTPMemoryService(installationToken: "jeton")
 
     let health = await service.health()
@@ -360,7 +360,7 @@ func ac7HealthReportsAvailability() async throws {
     #expect(StubURLProtocol.requests.first?.httpMethod == "GET")
 }
 
-@Test("memoire-mem0/AC-8 : un service arrêté rend le message de transport, et rien d'autre")
+@Test("memoire-memory/AC-8 : un service arrêté rend le message de transport, et rien d'autre")
 func ac8TransportFailureKeepsItsMessage() async {
     StubURLProtocol.reset()
     StubURLProtocol.reply("/health", .init(error: URLError(.cannotConnectToHost)))
@@ -379,7 +379,7 @@ func ac8TransportFailureKeepsItsMessage() async {
     }
 }
 
-@Test("memoire-mem0/AC-8 : 401, statut inattendu et corps illisible ont chacun leur texte")
+@Test("memoire-memory/AC-8 : 401, statut inattendu et corps illisible ont chacun leur texte")
 func ac8StatusesHaveTheirMessages() async {
     StubURLProtocol.reset()
     StubURLProtocol.reply("/memory/all", .init(status: 401, body: Data("nope".utf8)))
@@ -412,33 +412,33 @@ func ac8StatusesHaveTheirMessages() async {
     #expect(MemoryServiceError.unauthorized.userMessage == "jeton refusé (401)")
 }
 
-@Test("memoire-mem0/AC-8 : le jeton n'est envoyé que s'il est non vide, et l'adresse par défaut est localhost:8321")
+@Test("memoire-memory/AC-8 : le jeton n'est envoyé que s'il est non vide, et l'adresse par défaut est localhost:8321")
 func ac8ConfigAndToken() async throws {
     let defaulted = MemoryServiceConfig.fromEnvironment([:])
     #expect(defaulted.baseURL.absoluteString == "http://localhost:8321")
     #expect(defaulted.token.isEmpty)
 
     let overridden = MemoryServiceConfig.fromEnvironment([
-        "MEM0_HTTP_URL": "http://127.0.0.1:9000",
-        "MEM0_HTTP_TOKEN": "secret",
+        "MEMORY_HTTP_URL": "http://127.0.0.1:9000",
+        "MEMORY_HTTP_TOKEN": "secret",
     ])
     #expect(overridden.baseURL.absoluteString == "http://127.0.0.1:9000")
     #expect(overridden.token == "secret")
 
     // Une variable posée mais VIDE est traitée comme absente (le `||` du plugin).
-    let empty = MemoryServiceConfig.fromEnvironment(["MEM0_HTTP_URL": "", "MEM0_HTTP_TOKEN": ""])
+    let empty = MemoryServiceConfig.fromEnvironment(["MEMORY_HTTP_URL": "", "MEMORY_HTTP_TOKEN": ""])
     #expect(empty.baseURL.absoluteString == "http://localhost:8321")
     #expect(empty.token.isEmpty)
 
     StubURLProtocol.reset()
     StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true])))
     _ = await stubbedHTTPMemoryService(token: "secret").health()
-    #expect(StubURLProtocol.requests.first?.value(forHTTPHeaderField: "X-Mem0-Token") == "secret")
+    #expect(StubURLProtocol.requests.first?.value(forHTTPHeaderField: "X-Memory-Token") == "secret")
 
     StubURLProtocol.reset()
     StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true])))
     _ = await stubbedHTTPMemoryService(token: "").health()
-    #expect(StubURLProtocol.requests.first?.value(forHTTPHeaderField: "X-Mem0-Token") == nil)
+    #expect(StubURLProtocol.requests.first?.value(forHTTPHeaderField: "X-Memory-Token") == nil)
 }
 
 // MARK: - S-4 : identité d'installation de la pile
@@ -506,12 +506,12 @@ func ac4RealListenerRefusesThenAcceptsTheInstallationToken() async {
     #expect(!accepted.isForeign)
 }
 
-@Test("omp-console-sans-podman/AC-13 : la section Mémoire accepte le /health de mem0-rs portant le jeton d'installation et refuse un /health sans lui")
-func ac13Mem0RsHealthIsAcceptedOnlyWithTheInstallationToken() async {
-    // Le corps EXACT de mem0-rs 0.1.0 (DOC-4), sans puis avec `installation`.
+@Test("omp-console-sans-podman/AC-13 : la section Mémoire accepte le /health de memory-rs portant le jeton d'installation et refuse un /health sans lui")
+func ac13MemoryRsHealthIsAcceptedOnlyWithTheInstallationToken() async {
+    // Le corps EXACT de memory-rs 0.1.0 (DOC-4), sans puis avec `installation`.
     guard let server = EphemeralHTTPServer(bodies: [
-        memoryJSON(["ok": true, "mem0": "mem0-rs 0.1.0", "user": "moi"]),
-        memoryJSON(["ok": true, "mem0": "mem0-rs 0.1.0", "user": "moi", "installation": "jeton-agent"]),
+        memoryJSON(["ok": true, "memory": "memory-rs 0.1.0", "user": "moi"]),
+        memoryJSON(["ok": true, "memory": "memory-rs 0.1.0", "user": "moi", "installation": "jeton-agent"]),
     ]) else {
         Issue.record("impossible d'ouvrir un listener HTTP éphémère")
         return

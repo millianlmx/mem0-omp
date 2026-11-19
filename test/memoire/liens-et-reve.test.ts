@@ -1,18 +1,18 @@
-// Feature liens-et-reve : le plugin mémoire lit le graphe de liens et le rêve de mem0-rs v4.
-// `mem0_link` relie deux souvenirs ; `mem0_search` et le rappel automatique affichent les
+// Feature liens-et-reve : le plugin mémoire lit le graphe de liens et le rêve de memory-rs v4.
+// `memory_link` relie deux souvenirs ; `memory_search` et le rappel automatique affichent les
 // liens sous chaque souvenir et marquent les observations ; les mental models consolidés
-// par le rêve entrent au prompt système ; `/mem0-dream` montre le journal et tranche les
+// par le rêve entrent au prompt système ; `/memory-dream` montre le journal et tranche les
 // propositions. Un serveur plus ancien (404) ne casse rien.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fakeSchema } from "../support/fake-zod.ts";
 import { tmpdir } from "../support/repo.ts";
 
-process.env.MEM0_AUTOSETUP = "0";
-delete process.env.MEM0_MODE;
-const ext = await import("../../omp-mem0-memory/extension.ts");
+process.env.MEMORY_AUTOSETUP = "0";
+delete process.env.MEMORY_MODE;
+const ext = await import("../../omp-memory/extension.ts");
 const {
-  default: mem0MemoryExtension,
+  default: memoryPluginExtension,
   buildModelsBlock,
   linksOf,
   observationMark,
@@ -87,7 +87,7 @@ function mkApp(): {
     sendMessage: () => {},
     sendUserMessage: () => {},
   };
-  mem0MemoryExtension(pi as unknown as Parameters<typeof mem0MemoryExtension>[0]);
+  memoryPluginExtension(pi as unknown as Parameters<typeof memoryPluginExtension>[0]);
   sessions += 1;
   const notices: string[] = [];
   const ctx = {
@@ -157,7 +157,7 @@ test("liens-et-reve/AC-1 : rendu pur — liens, observations, mental models, jou
     },
     { name: "vide", question: "Rien ?", content: "", stale: true, updated_at: null },
   ])!;
-  assert.match(block, /^\[mem0\] Connaissance consolidée du projet "p"/);
+  assert.match(block, /^\[memory\] Connaissance consolidée du projet "p"/);
   assert.match(block, /## Quelle architecture \? · 2026-10-20\n- module A/);
   assert.match(block, /## Quels pièges \? · 2026-10-01 · peut être périmé/);
   assert.ok(!block.includes("Rien ?"));
@@ -208,7 +208,7 @@ test("liens-et-reve/AC-1 : rendu pur — liens, observations, mental models, jou
   assert.match(renderDreamJournal({}), /Aucun rêve encore[\s\S]*Aucune proposition/);
 });
 
-test("liens-et-reve/AC-2 : mem0_search demande les liens et les rend sous chaque souvenir, observations marquées", async () => {
+test("liens-et-reve/AC-2 : memory_search demande les liens et les rend sous chaque souvenir, observations marquées", async () => {
   const { app, ctx } = mkApp();
   serve("/memory/search", {
     results: [
@@ -219,7 +219,7 @@ test("liens-et-reve/AC-2 : mem0_search demande les liens et les rend sous chaque
       ligne("o", "Le rappel doit toujours être borné", 0.7, { metadata: { memory_type: "observation", preuves: 2 } }),
     ],
   });
-  const r = await app.tools.get("mem0_search")!("1", { query: "rappel lent", limit: 6 }, undefined, undefined, ctx);
+  const r = await app.tools.get("memory_search")!("1", { query: "rappel lent", limit: 6 }, undefined, undefined, ctx);
   const search = service.calls.find((c) => c.route === "/memory/search")!;
   assert.equal(search.body?.links, true);
   assert.equal(search.body?.explain, true);
@@ -234,10 +234,10 @@ test("liens-et-reve/AC-2 : mem0_search demande les liens et les rend sous chaque
   );
 });
 
-test("liens-et-reve/AC-3 : mem0_link pose le lien ; un id inconnu ou un serveur sans liens le dit", async () => {
+test("liens-et-reve/AC-3 : memory_link pose le lien ; un id inconnu ou un serveur sans liens le dit", async () => {
   const { app, ctx } = mkApp();
   serve("/memory/link", { link: { source: "a", target: "b", type: "cause" } });
-  const ok = await app.tools.get("mem0_link")!(
+  const ok = await app.tools.get("memory_link")!(
     "1",
     { source: "a", target: "b", type: "cause", reason: "le budget manquait" },
     undefined,
@@ -248,14 +248,14 @@ test("liens-et-reve/AC-3 : mem0_link pose le lien ; un id inconnu ou un serveur 
   const call = service.calls.find((c) => c.route === "/memory/link")!;
   assert.deepEqual(call.body, { source: "a", target: "b", type: "cause", reason: "le budget manquait" });
   serve("/memory/link", { detail: "souvenir inconnu : z" }, 404);
-  const ko = await app.tools.get("mem0_link")!(
+  const ko = await app.tools.get("memory_link")!(
     "2",
     { source: "a", target: "z", type: "voir" },
     undefined,
     undefined,
     ctx,
   );
-  assert.match(ko.content[0]!.text, /^Lien non posé : mem0-http 404.*souvenir inconnu : z.*Vérifie les deux ids/);
+  assert.match(ko.content[0]!.text, /^Lien non posé : memory-http 404.*souvenir inconnu : z.*Vérifie les deux ids/);
 });
 
 test("liens-et-reve/AC-4 : le rappel pose les liens des souvenirs injectés, et les mental models au prompt système", async () => {
@@ -296,7 +296,7 @@ test("liens-et-reve/AC-4 : le rappel pose les liens des souvenirs injectés, et 
     tour.message.content,
     /- \[a\] Le rappel ralentissait chaque tour\n {2}↳ a pour cause \[b\] Cause racine : pas de budget de temps/,
   );
-  const models = tour.systemPrompt.find((s) => s.startsWith("[mem0] Connaissance consolidée"));
+  const models = tour.systemPrompt.find((s) => s.startsWith("[memory] Connaissance consolidée"));
   assert.ok(models?.includes("- le rappel sans budget"), tour.systemPrompt.join("\n---\n"));
   assert.equal(service.calls.filter((c) => c.route === "/memory/models").length, 1, "demandés une fois par session");
 
@@ -318,9 +318,9 @@ test("liens-et-reve/AC-4 : le rappel pose les liens des souvenirs injectés, et 
   assert.equal(service.calls.filter((c) => c.route === "/memory/models").length, 1);
 });
 
-test("liens-et-reve/AC-5 : /mem0-dream montre le journal, tranche une proposition et rêve sur demande", async () => {
+test("liens-et-reve/AC-5 : /memory-dream montre le journal, tranche une proposition et rêve sur demande", async () => {
   const { app, ctx, notices } = mkApp();
-  const dream = app.commands.get("mem0-dream")!;
+  const dream = app.commands.get("memory-dream")!;
   serve("/memory/dream", {
     dreams: [],
     proposals: [
@@ -358,5 +358,5 @@ test("liens-et-reve/AC-5 : /mem0-dream montre le journal, tranche une propositio
 
   service.routes.clear();
   await dream("", ctx);
-  assert.match(notices.at(-1)!, /rêve indisponible : le service mémoire n'a pas de rêve \(mem0-rs v4 requis\)/);
+  assert.match(notices.at(-1)!, /rêve indisponible : le service mémoire n'a pas de rêve \(memory-rs v4 requis\)/);
 });

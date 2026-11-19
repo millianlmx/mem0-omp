@@ -101,7 +101,7 @@ public enum SetupText {
     public static let rejectedChoice =
         L10n.text("« Basculer quand même » démarre la nouvelle mémoire sans eux ; l’ancienne reste intacte sur ce Mac. « Réessayer » relance l’import.")
 
-    /// Le libellé d'une raison de rejet de `mem0-rs import` ; un code inconnu
+    /// Le libellé d'une raison de rejet de `memory-rs import` ; un code inconnu
     /// reste tel quel.
     public static func rejectionReason(_ code: String) -> String {
         switch code {

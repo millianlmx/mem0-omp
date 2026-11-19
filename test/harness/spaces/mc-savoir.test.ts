@@ -734,7 +734,7 @@ test("mc-savoir/AC-7 : une passe de savoir par connexion â€” celle d'un espace Ã
     const scopes = w
       .log()
       .filter((entry) => entry.kind === "argv")
-      .map((entry) => (entry.env as Record<string, unknown>).MEM0_PROJECT_ID);
+      .map((entry) => (entry.env as Record<string, unknown>).MEMORY_PROJECT_ID);
     assert.deepEqual(scopes, ["corpo", `corpo:${a.id}`]);
     assert.deepEqual([calls(sites.acme), calls(sites.base)], [["searchJiraIssuesUsingJql"], []]);
     assert.match(String(prompts(w, "poste-savoir")[1]?.message), /assignee = currentUser\(\) AND project in \(ACME\)/);

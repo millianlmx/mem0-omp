@@ -1,0 +1,34 @@
+{
+  "name": "omp-memory",
+  "version": "4.4.0",
+  "description": "Mémoire memory (Qdrant + oMLX) native pour OMP : brief posé automatiquement par projet, /memory-init pour amorcer un dépôt existant, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, écriture et liaison par l'agent (memory_link), rêve de la mémoire (/memory-dream, mental models en tête de session), scope par projet — worktrees git compris (une feature menée dans son worktree partage la mémoire du dépôt).",
+  "license": "MIT",
+  "author": "MillianLMX",
+  "homepage": "https://github.com/millianlmx/mem0-omp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/millianlmx/mem0-omp.git",
+    "directory": "omp-memory"
+  },
+  "keywords": [
+    "omp",
+    "oh-my-pi",
+    "extension",
+    "memory",
+    "memory",
+    "qdrant"
+  ],
+  "omp": {
+    "extensions": [
+      "./extension.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@oh-my-pi/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    }
+  }
+}

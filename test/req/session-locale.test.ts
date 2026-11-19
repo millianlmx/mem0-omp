@@ -1,4 +1,4 @@
-// Le rapporteur de session locale du plugin omp-mem0-req : la session principale se signale au
+// Le rapporteur de session locale du plugin omp-memory-req : la session principale se signale au
 // harness par battements — à chaque changement d'état, au plus un par 10 s pour les outils, un
 // dernier à l'arrêt — et jamais depuis un sous-agent, un runner, sans harness configuré ou quand
 // `OMP_HARNESS_LOCAL_SESSIONS=0`. Aucune erreur ne remonte dans l'hôte.
@@ -11,7 +11,7 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
-import reqExtension from "../../omp-mem0-req/extension.ts";
+import reqExtension from "../../omp-memory-req/extension.ts";
 import {
   BEAT_MIN_MS,
   IDLE_KEEPALIVE_MS,
@@ -20,11 +20,12 @@ import {
   gitOf,
   registerLocalSession,
   scrubRemote,
-} from "../../omp-mem0-req/local-session.ts";
-import type { GitInfo, LocalSessionOptions } from "../../omp-mem0-req/local-session.ts";
+} from "../../omp-memory-req/local-session.ts";
+import type { GitInfo, LocalSessionOptions } from "../../omp-memory-req/local-session.ts";
 import { fakeSchema } from "../support/fake-zod.ts";
 import { git } from "../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../support/repo.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 const TOKEN = "s".repeat(64);
 
@@ -191,14 +192,14 @@ test("session-locale/AC-1 : la session principale se signale — ouverte : idle 
   }
 });
 
-test("session-locale/AC-2 : un sous-agent ne rapporte rien, un runner du harness (MEM0_MODE=runner) non plus", async () => {
+test("session-locale/AC-2 : un sous-agent ne rapporte rien, un runner du harness (MEMORY_MODE=runner) non plus", async () => {
   const harness = await fakeHarness();
   try {
     const sub = host("sub");
     const fromSub = reporter(sub, harness.url);
     const runner = host();
     const fromRunner = reporter(runner, harness.url, {
-      env: { HARNESS_URL: harness.url, HARNESS_TOKEN: TOKEN, MEM0_MODE: "runner" },
+      env: { HARNESS_URL: harness.url, HARNESS_TOKEN: TOKEN, MEMORY_MODE: "runner" },
     });
     for (const [double, local] of [
       [sub, fromSub],
@@ -330,7 +331,7 @@ test("session-locale/AC-5 : à l'arrêt, un dernier battement ended part et il e
     const saved = {
       HARNESS_URL: process.env.HARNESS_URL,
       HARNESS_TOKEN: process.env.HARNESS_TOKEN,
-      MEM0_MODE: process.env.MEM0_MODE,
+      MEMORY_MODE: renamedEnv(process.env, "MEMORY_MODE", "MEM0_MODE"),
       OMP_HARNESS_LOCAL_SESSIONS: process.env.OMP_HARNESS_LOCAL_SESSIONS,
     };
     const wired = host();
@@ -339,7 +340,7 @@ test("session-locale/AC-5 : à l'arrêt, un dernier battement ended part et il e
     try {
       process.env.HARNESS_URL = harness.url;
       process.env.HARNESS_TOKEN = TOKEN;
-      delete process.env.MEM0_MODE;
+      delete process.env.MEMORY_MODE;
       delete process.env.OMP_HARNESS_LOCAL_SESSIONS;
       reqExtension({
         zod: { z: fakeSchema() },
@@ -434,7 +435,7 @@ test("session-locale/AC-7 : OMP_HARNESS_LOCAL_SESSIONS=0 coupe le rapporteur —
     await local.settled();
     assert.deepEqual(harness.seen, []);
     assert.deepEqual(double.timers, []);
-    const readme = fs.readFileSync(path.join(ROOT, "omp-mem0-req", "README.md"), "utf8");
+    const readme = fs.readFileSync(path.join(ROOT, "omp-memory-req", "README.md"), "utf8");
     assert.match(readme, /OMP_HARNESS_LOCAL_SESSIONS=0/);
     assert.match(readme, /POST \/v1\/local-sessions/);
   } finally {

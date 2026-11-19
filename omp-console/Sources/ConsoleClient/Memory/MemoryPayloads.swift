@@ -1,5 +1,5 @@
 // Ce que l'app iOS lit de la mémoire du serveur (`MemoryReader`) : les pages du
-// sommaire d'une portée, une recherche sélectionnée comme `mem0_search`, et le
+// sommaire d'une portée, une recherche sélectionnée comme `memory_search`, et le
 // graphe des souvenirs, dérivé par le noyau partagé (`MemoryGraph`).
 
 import Foundation

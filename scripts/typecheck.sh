@@ -16,7 +16,7 @@
 #      citant `bash scripts/typecheck.sh --prepare`, AVANT de chercher les types
 #      de l'hôte et sans lancer tsc (un clone neuf est rouge, jamais vert) ;
 #   2. la racine des types de l'hôte, dans cet ordre :
-#      a. MEM0_OMP_HOST_TYPES (posée par la CI) — déclarée, elle fait AUTORITÉ :
+#      a. MEMORY_OMP_HOST_TYPES (posée par la CI) — déclarée, elle fait AUTORITÉ :
 #         si elle n'apporte pas @oh-my-pi, on échoue en la nommant plutôt que de
 #         retomber en silence sur une autre racine (le succès silencieux d'AC-5) ;
 #      b. l'hôte épinglé de la CI, préparé dans le cache par
@@ -33,7 +33,7 @@
 #      telle quelle (chemins `fichier.ts(l,c): error TSxxxx`), et le script sort
 #      non nul dès qu'un seul a échoué.
 #
-# MEM0_OMP_TSC_ARGS (facultative) : options ajoutées telles quelles à CHAQUE
+# MEMORY_OMP_TSC_ARGS (facultative) : options ajoutées telles quelles à CHAQUE
 # programme tsc — c'est ainsi que scripts/types-ratchet.ts rejoue les mêmes trois
 # programmes avec une option stricte de plus. Vide ou absente : comportement inchangé.
 set -u
@@ -105,12 +105,12 @@ if [ "$FOUND" != "$TS_VERSION" ]; then
 fi
 
 ROOT=""
-if [ -n "${MEM0_OMP_HOST_TYPES:-}" ]; then
+if [ -n "${MEMORY_OMP_HOST_TYPES:-${MEM0_OMP_HOST_TYPES:-}}" ]; then
   # Une racine déclarée fait autorité, qu'elle existe ou non.
-  if [ -d "${MEM0_OMP_HOST_TYPES}/@oh-my-pi" ]; then
-    ROOT="${MEM0_OMP_HOST_TYPES}"
+  if [ -d "${MEMORY_OMP_HOST_TYPES:-${MEM0_OMP_HOST_TYPES}}/@oh-my-pi" ]; then
+    ROOT="${MEMORY_OMP_HOST_TYPES:-${MEM0_OMP_HOST_TYPES}}"
   else
-    echo "  ✗ MEM0_OMP_HOST_TYPES=${MEM0_OMP_HOST_TYPES} ne fournit pas les types de l'hôte (@oh-my-pi absent)"
+    echo "  ✗ MEMORY_OMP_HOST_TYPES=${MEMORY_OMP_HOST_TYPES:-${MEM0_OMP_HOST_TYPES}} ne fournit pas les types de l'hôte (@oh-my-pi absent)"
     exit 1
   fi
 elif PINNED="$(bash scripts/omp-host.sh --path 2>/dev/null)"; then
@@ -139,10 +139,10 @@ ln -sfn "$ROOT" .typecheck/node_modules
 
 echo "  · tsc : $TSC (TypeScript $TS_VERSION)"
 STATUS=0
-# shellcheck disable=SC2086 # le découpage en mots de MEM0_OMP_TSC_ARGS est voulu
-node "$TSC" -p tsconfig.json ${MEM0_OMP_TSC_ARGS:-} || STATUS=1
+# shellcheck disable=SC2086 # le découpage en mots de MEMORY_OMP_TSC_ARGS est voulu
+node "$TSC" -p tsconfig.json ${MEMORY_OMP_TSC_ARGS:-${MEM0_OMP_TSC_ARGS:-}} || STATUS=1
 # shellcheck disable=SC2086
-node "$TSC" -p tsconfig.test.json ${MEM0_OMP_TSC_ARGS:-} || STATUS=1
+node "$TSC" -p tsconfig.test.json ${MEMORY_OMP_TSC_ARGS:-${MEM0_OMP_TSC_ARGS:-}} || STATUS=1
 # shellcheck disable=SC2086
-node "$TSC" -p omp-chrome/tsconfig.json ${MEM0_OMP_TSC_ARGS:-} || STATUS=1
+node "$TSC" -p omp-chrome/tsconfig.json ${MEMORY_OMP_TSC_ARGS:-${MEM0_OMP_TSC_ARGS:-}} || STATUS=1
 exit "$STATUS"

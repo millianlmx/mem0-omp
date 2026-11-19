@@ -9,7 +9,7 @@
 //     n'emportent qu'un fichier de test (`KEPT_TEST`) et check.sh n'y lance que
 //     la section `smoke` (`--sections=smoke`), parce que ce qu'on prouve ici
 //     c'est le verdict de cette section, pas la suite entière ;
-//  2. les copies ne tournent qu'au premier niveau (`MEM0_CHECK_DEPTH`) : lancées
+//  2. les copies ne tournent qu'au premier niveau (`MEMORY_CHECK_DEPTH`) : lancées
 //     depuis la copie d'un autre test, elles se rappelleraient elles-mêmes.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -21,17 +21,18 @@ import * as path from "node:path";
 import { prerequisAbsent } from "../support/prerequis.ts";
 import { ROOT, copyRepo } from "../support/repo.ts";
 import { spawnAsync, type Run } from "../support/spawn.ts";
+import { renamedEnv } from "../../omp-harness/config/env.ts";
 
 /** Profondeur d'imbrication : 0 = `node --test test/outillage/smoke.test.ts` à la main. */
-const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
+const DEPTH = Number(renamedEnv(process.env, "MEMORY_CHECK_DEPTH", "MEM0_CHECK_DEPTH") ?? "0");
 /** Posée par la CI : un prérequis manquant est alors un ÉCHEC, jamais un skip. */
-const REQUIRE_SMOKE = process.env.MEM0_OMP_REQUIRE_SMOKE === "1";
+const REQUIRE_SMOKE = renamedEnv(process.env, "MEMORY_OMP_REQUIRE_SMOKE", "MEM0_OMP_REQUIRE_SMOKE") === "1";
 
 /** La MÊME cascade de résolution d'hôte que le harnais (et scripts/typecheck.sh). */
 function hostRoot(): string | null {
   const home = process.env.HOME ?? os.homedir();
   const candidates = [
-    process.env.MEM0_OMP_HOST_MODULES ?? "",
+    renamedEnv(process.env, "MEMORY_OMP_HOST_MODULES", "MEM0_OMP_HOST_MODULES") ?? "",
     path.join(ROOT, "node_modules"),
     path.join(process.env.BUN_INSTALL ?? path.join(home, ".bun"), "install", "global", "node_modules"),
   ].filter((dir) => dir !== "");
@@ -51,7 +52,7 @@ function prereq(t: { skip: (reason: string) => void }): boolean {
     t,
     missing,
     "harnais « plugins réels » non vérifié",
-    REQUIRE_SMOKE ? "MEM0_OMP_REQUIRE_SMOKE=1" : null,
+    REQUIRE_SMOKE ? "MEMORY_OMP_REQUIRE_SMOKE=1" : null,
   );
   return false;
 }
@@ -95,10 +96,10 @@ async function mutate(prefix: string, apply: (dir: string) => void): Promise<Out
     cwd: dir,
     env: {
       ...process.env,
-      MEM0_CHECK_DEPTH: String(DEPTH + 1),
-      MEM0_OMP_SKIP_SWIFT_APP: "1",
-      MEM0_OMP_SKIP_IOS: "1",
-      MEM0_OMP_SKIP_RUST: "1",
+      MEMORY_CHECK_DEPTH: String(DEPTH + 1),
+      MEMORY_OMP_SKIP_SWIFT_APP: "1",
+      MEMORY_OMP_SKIP_IOS: "1",
+      MEMORY_OMP_SKIP_RUST: "1",
     },
     timeout: 900_000,
   });
@@ -115,10 +116,10 @@ const OUTCOMES: Record<"commande" | "chargement" | "saine", Promise<Outcome>> | 
   DEPTH === 0
     ? {
         commande: mutate("smoke-commande-", (dir) =>
-          renameCommand(dir, "omp-mem0-memory", "mem0-status", "mem0-statut"),
+          renameCommand(dir, "omp-memory", "memory-status", "memory-statut"),
         ),
         chargement: mutate("smoke-chargement-", (dir) => {
-          const file = path.join(dir, "omp-mem0-memory/extension.ts");
+          const file = path.join(dir, "omp-memory/extension.ts");
           fs.writeFileSync(file, `throw new Error("panne de chargement simulée");\n${fs.readFileSync(file, "utf8")}`);
         }),
         saine: mutate("smoke-saine-", () => {
@@ -172,7 +173,7 @@ test("smoke/AC-1 : un plugin qui ne se charge pas ou ne répond pas fait échoue
   // (1) Une commande déclarée mais absente du runtime.
   const renamed = await OUTCOMES.commande;
   assert.notEqual(renamed.harness.code, 0, renamed.harness.out);
-  assert.match(renamed.harness.out, /✗ commandes absentes du runtime : mem0-status/, renamed.harness.out);
+  assert.match(renamed.harness.out, /✗ commandes absentes du runtime : memory-status/, renamed.harness.out);
   assert.notEqual(renamed.check.code, 0, renamed.check.out);
   assert.ok(renamed.check.out.includes("✗ plugins réels — relance : bun scripts/plugin-smoke.ts"), renamed.check.out);
 
@@ -216,11 +217,11 @@ test("smoke/AC-2 : les deux plugins sont chargés et invoqués dans un vrai OMP,
   }
 
   // Une commande ET un outil invoqués, avec le RÉSULTAT observé.
-  assert.match(out, /✓ \/mem0-status invoqué — « [^»]*ok=true[^»]* »/, out);
+  assert.match(out, /✓ \/memory-status invoqué — « [^»]*ok=true[^»]* »/, out);
   assert.match(out, /✓ \/pipelines invoqué — « [^»]*harness non configuré[^»]* »/, out);
-  assert.match(out, /✓ mem0_search invoqué — .*\[smoke-2\] souvenir de recherche \(fixture\)/, out);
-  // Le service mem0 est un STUB local : aucun conteneur, aucun credential.
-  assert.match(out, /✓ le stub mem0 a été appelé \(GET \/health\) sur http:\/\/127\.0\.0\.1:\d+/, out);
+  assert.match(out, /✓ memory_search invoqué — .*\[smoke-2\] souvenir de recherche \(fixture\)/, out);
+  // Le service memory est un STUB local : aucun conteneur, aucun credential.
+  assert.match(out, /✓ le stub memory a été appelé \(GET \/health\) sur http:\/\/127\.0\.0\.1:\d+/, out);
   assert.ok(out.trimEnd().endsWith("Tous les plugins répondent."), out);
 
   // La trace arrive TELLE QUELLE dans les logs du job : check.sh recopie la
@@ -230,8 +231,8 @@ test("smoke/AC-2 : les deux plugins sont chargés et invoqués dans un vrai OMP,
     const witness = await OUTCOMES?.saine;
     assert.ok(witness, "copie témoin attendue");
     assert.equal(witness.check.code, 0, witness.check.out);
-    assert.ok(witness.check.out.includes("── omp-mem0-memory"), witness.check.out);
-    assert.ok(witness.check.out.includes("✓ /mem0-status invoqué"), witness.check.out);
+    assert.ok(witness.check.out.includes("── omp-memory"), witness.check.out);
+    assert.ok(witness.check.out.includes("✓ /memory-status invoqué"), witness.check.out);
     assert.ok(witness.check.out.includes("Tous les plugins répondent."), witness.check.out);
     assert.ok(
       witness.check.out.includes("✓ les 2 plugins se chargent et répondent dans un vrai OMP"),

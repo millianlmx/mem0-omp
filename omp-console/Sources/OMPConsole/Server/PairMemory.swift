@@ -1,6 +1,6 @@
 // La mémoire du projet que la feuille « Appairer un iPhone » joint au ticket : celle d'un SERVEUR
-// (`~/.omp/mem0.json` ou `MEM0_HTTP_URL`), avec son jeton, que l'iPhone lira comme celle d'un code
-// `omp1:`. L'agent mem0 de ce Mac (localhost) n'est jamais joint : l'iPhone ne l'atteindrait pas.
+// (`~/.omp/memory.json` ou `MEMORY_HTTP_URL`), avec son jeton, que l'iPhone lira comme celle d'un code
+// `omp1:`. L'agent memory de ce Mac (localhost) n'est jamais joint : l'iPhone ne l'atteindrait pas.
 
 import ConsoleClient
 import Foundation

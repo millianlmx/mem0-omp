@@ -28,6 +28,7 @@ import { Scheduler } from "../../../omp-harness/runners/scheduler.ts";
 import { workstationTarget } from "../../../omp-harness/workstation/workstation-agent.ts";
 import { MemoryOracle, fakeWorld, git, harnessRepo, testConfig, waitFor } from "../../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../../support/repo.ts";
+import { renamedEnv } from "../../../omp-harness/config/env.ts";
 
 const DEPLOY = path.join(ROOT, "omp-harness", "deploy");
 const CORPO_TOKEN = "corpo-memoire-0123456789";
@@ -253,9 +254,9 @@ test("harness-politique/AC-3 : `local-only` prend le modèle local pour CE dép�
   const dir = tmpdir("harness-politique-entry-");
   fs.writeFileSync(
     path.join(dir, "runner.env"),
-    "ANTHROPIC_API_KEY=root-key-0001\nMEM0_HTTP_TOKEN=global-0123456789abcdef\n",
+    "ANTHROPIC_API_KEY=root-key-0001\nMEMORY_HTTP_TOKEN=global-0123456789abcdef\n",
   );
-  fs.writeFileSync(path.join(dir, "memory.env"), `MEM0_HTTP_TOKEN=${CORPO_TOKEN}\n`);
+  fs.writeFileSync(path.join(dir, "memory.env"), `MEMORY_HTTP_TOKEN=${CORPO_TOKEN}\n`);
   fs.writeFileSync(path.join(dir, "providers.env"), "OPENAI_API_KEY=sk-openai-01234567\n");
   const script = path.join(dir, "entry.sh");
   fs.writeFileSync(
@@ -264,7 +265,7 @@ test("harness-politique/AC-3 : `local-only` prend le modèle local pour CE dép�
       .readFileSync(path.join(DEPLOY, "container", "runner-entrypoint"), "utf8")
       .replaceAll("/run/secrets/", `${dir}/`)
       .replace("/etc/passwd", path.join(dir, "passwd"))
-      .replace('exec "$@"', 'env | grep -E "API_KEY|MEM0_HTTP_TOKEN" | sort'),
+      .replace('exec "$@"', 'env | grep -E "API_KEY|MEMORY_HTTP_TOKEN" | sort'),
   );
   const entry = (env: Record<string, string>) =>
     spawnSync("sh", [script], { encoding: "utf8", env: { PATH: "/usr/bin:/bin", HOME: dir, ...env } });
@@ -272,10 +273,10 @@ test("harness-politique/AC-3 : `local-only` prend le modèle local pour CE dép�
   assert.equal(remote.status, 0, remote.stderr);
   assert.equal(
     remote.stdout,
-    `ANTHROPIC_API_KEY=root-key-0001\nMEM0_HTTP_TOKEN=${CORPO_TOKEN}\nOPENAI_API_KEY=sk-openai-01234567\n`,
+    `ANTHROPIC_API_KEY=root-key-0001\nMEMORY_HTTP_TOKEN=${CORPO_TOKEN}\nOPENAI_API_KEY=sk-openai-01234567\n`,
   );
   const localOnly = entry({ OMP_HARNESS_LOCAL_ONLY: "1" });
-  assert.equal(localOnly.stdout, `MEM0_HTTP_TOKEN=${CORPO_TOKEN}\n`);
+  assert.equal(localOnly.stdout, `MEMORY_HTTP_TOKEN=${CORPO_TOKEN}\n`);
   if (process.getuid?.() !== 0) {
     fs.chmodSync(path.join(dir, "memory.env"), 0o000);
     assert.notEqual(entry({}).status, 0, "un jeton du dépôt illisible arrête le runner, jamais de repli");
@@ -362,9 +363,9 @@ test("harness-politique/AC-5 : `gh` parle sous le compte du dépôt — sa conne
 });
 
 test("harness-politique/AC-6 : le runner d'un dépôt reçoit SON jeton mémoire au lieu du jeton global — jamais le jeton d'un autre dépôt — et ne part pas sans lui", async () => {
-  await withEnv({ CORPO_MEM0_TOKEN: CORPO_TOKEN, PERSO_GH_TOKEN: "ghp_perso" }, async () => {
+  await withEnv({ CORPO_MEMORY_TOKEN: CORPO_TOKEN, PERSO_GH_TOKEN: "ghp_perso" }, async () => {
     const w = world((c) => {
-      Object.assign(c.repos[0] as RepoConfig, { memory: { tokenEnv: "CORPO_MEM0_TOKEN" } });
+      Object.assign(c.repos[0] as RepoConfig, { memory: { tokenEnv: "CORPO_MEMORY_TOKEN" } });
       c.repos.push({
         ...repoDefaults({ name: "perso", path: "/srv/perso", scope: "perso" }),
         gh: { tokenEnv: "PERSO_GH_TOKEN" },
@@ -372,23 +373,23 @@ test("harness-politique/AC-6 : le runner d'un dépôt reçoit SON jeton mémoire
     });
     await w.session.open("heavy", "u1", signal());
     const env = (w.runner.spawned[0] as Spawned).env;
-    assert.equal(env.MEM0_HTTP_TOKEN, CORPO_TOKEN);
-    assert.equal(env.CORPO_MEM0_TOKEN, undefined);
+    assert.equal(renamedEnv(env, "MEMORY_HTTP_TOKEN", "MEM0_HTTP_TOKEN"), CORPO_TOKEN);
+    assert.equal(env.CORPO_MEMORY_TOKEN, undefined);
     assert.equal(env.PERSO_GH_TOKEN, undefined, "le jeton d'un autre dépôt ne passe jamais");
     // Le fichier que lisent le lanceur root et le conteneur : 0600, le jeton du dépôt seul.
     const file = memoryTokenFile(w.config, "demo");
-    assert.equal(fs.readFileSync(file, "utf8"), `MEM0_HTTP_TOKEN=${CORPO_TOKEN}\n`);
+    assert.equal(fs.readFileSync(file, "utf8"), `MEMORY_HTTP_TOKEN=${CORPO_TOKEN}\n`);
     assert.equal(fs.statSync(file).mode & 0o777, 0o600);
     await w.session.stop();
 
     const plain = world(() => {});
     await plain.session.open("heavy", "u1", signal());
-    assert.equal(plain.runner.spawned[0]?.env.MEM0_HTTP_TOKEN, "jeton-global-0123456789");
+    assert.equal(plain.runner.spawned[0]?.env.MEMORY_HTTP_TOKEN, "jeton-global-0123456789");
     await plain.session.stop();
   });
 
   const missing = world((c) => {
-    Object.assign(c.repos[0] as RepoConfig, { memory: { tokenEnv: "ABSENT_MEM0_TOKEN" } });
+    Object.assign(c.repos[0] as RepoConfig, { memory: { tokenEnv: "ABSENT_MEMORY_TOKEN" } });
   });
   await assert.rejects(missing.session.open("heavy", "u1", signal()), PolicyRefusal);
   assert.equal(missing.runner.spawned.length, 0);
@@ -397,9 +398,9 @@ test("harness-politique/AC-6 : le runner d'un dépôt reçoit SON jeton mémoire
   const dir = tmpdir("harness-politique-launcher-");
   fs.chmodSync(dir, 0o755);
   const runnerEnvFile = path.join(dir, "runner.env");
-  fs.writeFileSync(runnerEnvFile, "ANTHROPIC_API_KEY=root-key-0001\nMEM0_HTTP_TOKEN=global-0123456789abcdef\n");
+  fs.writeFileSync(runnerEnvFile, "ANTHROPIC_API_KEY=root-key-0001\nMEMORY_HTTP_TOKEN=global-0123456789abcdef\n");
   fs.mkdirSync(path.join(dir, "tokens"));
-  fs.writeFileSync(path.join(dir, "tokens", "mon-produit.env"), `MEM0_HTTP_TOKEN=${CORPO_TOKEN}\n`, { mode: 0o600 });
+  fs.writeFileSync(path.join(dir, "tokens", "mon-produit.env"), `MEMORY_HTTP_TOKEN=${CORPO_TOKEN}\n`, { mode: 0o600 });
   const conf = path.join(dir, "launcher.conf");
   fs.writeFileSync(
     conf,
@@ -429,10 +430,10 @@ test("harness-politique/AC-6 : le runner d'un dépôt reçoit SON jeton mémoire
     .filter((entry) => entry.startsWith("envfile:"))
     .map((entry) => entry.slice("envfile:".length));
   assert.ok(!envFile.some((entry) => entry.startsWith("ANTHROPIC_API_KEY=")), "local-only : aucune clé distante");
-  const tokens = envFile.filter((entry) => entry.startsWith("MEM0_HTTP_TOKEN="));
+  const tokens = envFile.filter((entry) => entry.startsWith("MEMORY_HTTP_TOKEN="));
   assert.equal(
     tokens.at(-1),
-    `MEM0_HTTP_TOKEN='${CORPO_TOKEN}'`,
+    `MEMORY_HTTP_TOKEN='${CORPO_TOKEN}'`,
     "le jeton du dépôt l'emporte sur celui de runner.env",
   );
   assert.ok(!result.stdout.slice(result.stdout.indexOf("systemd-run")).includes(CORPO_TOKEN), "jamais sur la ligne");
@@ -473,7 +474,7 @@ test("harness-politique/AC-8 : --check donne ✗ par dépôt — local-only sans
     declareLocal(c);
     Object.assign(c.repos[0] as RepoConfig, {
       privacy: "local-only",
-      memory: { tokenEnv: "CORPO_MEM0_TOKEN" },
+      memory: { tokenEnv: "CORPO_MEMORY_TOKEN" },
       gh: { configDir: path.join(configDir, "absent"), tokenEnv: "CORPO_GH_TOKEN" },
     });
     c.repos.push(repoDefaults({ name: "vide", path: c.repos[0]?.path ?? "", scope: "vide", providers: [] }));
@@ -500,7 +501,7 @@ test("harness-politique/AC-8 : --check donne ✗ par dépôt — local-only sans
 
   (config.repos[0] as RepoConfig).gh = { configDir, tokenEnv: "CORPO_GH_TOKEN" };
   config.repos.pop();
-  const env = { CORPO_MEM0_TOKEN: CORPO_TOKEN, CORPO_GH_TOKEN: "ghp_corpo" };
+  const env = { CORPO_MEMORY_TOKEN: CORPO_TOKEN, CORPO_GH_TOKEN: "ghp_corpo" };
   const wrongModel = await runChecks(config, deps(["autre-modele"], env));
   assert.deepEqual(
     failed(wrongModel).filter((label) => !label.endsWith("— gh")),
@@ -508,7 +509,7 @@ test("harness-politique/AC-8 : --check donne ✗ par dépôt — local-only sans
   );
   const passing = await runChecks(config, deps(["qwen3-coder"], env));
   const report = renderChecks(passing);
-  assert.match(report, /✓ dépôt demo — jeton mémoire : CORPO_MEM0_TOKEN/);
+  assert.match(report, /✓ dépôt demo — jeton mémoire : CORPO_MEMORY_TOKEN/);
   assert.match(report, /✓ dépôt demo — modèles : omlx\/qwen3-coder/);
   assert.match(report, /✓ dépôt demo — modèle local : http:\/\/127\.0\.0\.1:8000\/v1 sert qwen3-coder/);
 });
@@ -572,7 +573,7 @@ test("harness-politique/AC-10 : une étape refusée par la politique du dépôt 
   }
 });
 
-test("harness-politique/AC-11 : la pile Portainer pose les jetons par dépôt — mem0-rs reçoit les jetons à portées en fichier, le service MEM0_TOKEN_<NOM> et GH_TOKEN_<NOM>", () => {
+test("harness-politique/AC-11 : la pile Portainer pose les jetons par dépôt — memory-rs reçoit les jetons à portées en fichier, le service MEMORY_TOKEN_<NOM> et GH_TOKEN_<NOM>", () => {
   const dir = tmpdir("harness-politique-stack-");
   const bin = path.join(dir, "bin");
   fs.mkdirSync(bin);
@@ -599,21 +600,21 @@ test("harness-politique/AC-11 : la pile Portainer pose les jetons par dépôt �
   });
   assert.equal(first.status, 0, first.stderr);
   const harnessEnv = fs.readFileSync(path.join(secrets, "harness", "harness.env"), "utf8");
-  assert.match(harnessEnv, new RegExp(`^MEM0_TOKEN_CLIENT_CORPO=${CORPO_TOKEN}$`, "m"));
-  assert.match(harnessEnv, /^MEM0_TOKEN_PERSO=perso-memoire-0123456789$/m);
+  assert.match(harnessEnv, new RegExp(`^MEMORY_TOKEN_CLIENT_CORPO=${CORPO_TOKEN}$`, "m"));
+  assert.match(harnessEnv, /^MEMORY_TOKEN_PERSO=perso-memoire-0123456789$/m);
   assert.match(harnessEnv, /^GH_TOKEN_CLIENT_CORPO=ghp_corpo123$/m);
   assert.match(
-    fs.readFileSync(path.join(secrets, "mem0", "mem0.env"), "utf8"),
-    /^MEM0_HTTP_TOKENS_FILE=\/run\/secrets\/mem0\/tokens$/m,
+    fs.readFileSync(path.join(secrets, "memory", "memory.env"), "utf8"),
+    /^MEMORY_HTTP_TOKENS_FILE=\/run\/secrets\/memory\/tokens$/m,
   );
   assert.equal(
-    fs.readFileSync(path.join(secrets, "mem0", "tokens"), "utf8"),
+    fs.readFileSync(path.join(secrets, "memory", "tokens"), "utf8"),
     `client-corpo:${CORPO_TOKEN}:client-corpo,client-corpo-web\nperso:perso-memoire-0123456789:perso\n`,
   );
   // Sans la variable au redéploiement, plus aucun jeton à portées.
   assert.equal(setup({}).status, 0);
-  assert.equal(fs.existsSync(path.join(secrets, "mem0", "tokens")), false);
-  assert.doesNotMatch(fs.readFileSync(path.join(secrets, "harness", "harness.env"), "utf8"), /MEM0_TOKEN_/);
+  assert.equal(fs.existsSync(path.join(secrets, "memory", "tokens")), false);
+  assert.doesNotMatch(fs.readFileSync(path.join(secrets, "harness", "harness.env"), "utf8"), /MEMORY_TOKEN_/);
   assert.notEqual(setup({ OMP_HARNESS_MEMORY_TOKENS: "a:b c:d" }).status, 0, "un blanc est refusé");
 });
 

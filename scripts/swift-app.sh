@@ -67,10 +67,10 @@ if ! command -v swift >/dev/null 2>&1; then
   exit 1
 fi
 
-# Le service mémoire de l'app est le binaire `mem0-rs` (crate du dépôt
-# mem0-stack/mem0-rs), compilé ici et embarqué dans le bundle (feature
+# Le service mémoire de l'app est le binaire `memory-rs` (crate du dépôt
+# memory-stack/memory-rs), compilé ici et embarqué dans le bundle (feature
 # omp-console-sans-podman, S-1). Sans cargo, aucun bundle : un bundle sans
-# mem0-rs n'aurait pas de mémoire.
+# memory-rs n'aurait pas de mémoire.
 if ! command -v cargo >/dev/null 2>&1; then
   echo "✗ cargo introuvable — installe Rust (https://rustup.rs)" >&2
   exit 1
@@ -382,30 +382,30 @@ if [ -z "$bin_dir" ] || [ ! -x "$bin_dir/OMPConsole" ]; then
   exit 1
 fi
 
-# 2 bis) le binaire mem0-rs, en release, depuis la racine du dépôt (avec ET sans
+# 2 bis) le binaire memory-rs, en release, depuis la racine du dépôt (avec ET sans
 #    `--no-tests`). `--locked` : le Cargo.lock versionné fait foi. Le binaire est
 #    lu là où cargo l'écrit : `CARGO_TARGET_DIR` s'il est posé (un chemin relatif
 #    part de la racine, cwd de cargo), sinon le `target/` du crate. L'app est
 #    arm64 seulement : un binaire d'une autre architecture est refusé.
-if ! cargo build --release --locked --manifest-path mem0-stack/mem0-rs/Cargo.toml; then
-  echo "✗ compilation de mem0-rs échouée (cargo build --release)" >&2
+if ! cargo build --release --locked --manifest-path memory-stack/memory-rs/Cargo.toml; then
+  echo "✗ compilation de memory-rs échouée (cargo build --release)" >&2
   exit 1
 fi
-MEM0_RS_TARGET="${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}"
-case "$MEM0_RS_TARGET" in
+MEMORY_RS_TARGET="${CARGO_TARGET_DIR:-memory-stack/memory-rs/target}"
+case "${MEMORY_RS_TARGET:-$MEM0_RS_TARGET}" in
   /*) ;;
-  *) MEM0_RS_TARGET="$ROOT/$MEM0_RS_TARGET" ;;
+  *) MEMORY_RS_TARGET="$ROOT/${MEMORY_RS_TARGET:-$MEM0_RS_TARGET}" ;;
 esac
-MEM0_RS_BIN="$MEM0_RS_TARGET/release/mem0-rs"
-if [ ! -x "$MEM0_RS_BIN" ]; then
-  echo "✗ binaire mem0-rs introuvable après compilation : $MEM0_RS_BIN" >&2
+MEMORY_RS_BIN="${MEMORY_RS_TARGET:-$MEM0_RS_TARGET}/release/memory-rs"
+if [ ! -x "${MEMORY_RS_BIN:-$MEM0_RS_BIN}" ]; then
+  echo "✗ binaire memory-rs introuvable après compilation : ${MEMORY_RS_BIN:-$MEM0_RS_BIN}" >&2
   exit 1
 fi
-mem0_rs_archs="$(lipo -archs "$MEM0_RS_BIN" 2>&1)"
-case " $mem0_rs_archs " in
+memory_rs_archs="$(lipo -archs "${MEMORY_RS_BIN:-$MEM0_RS_BIN}" 2>&1)"
+case " $memory_rs_archs " in
   *" arm64 "*) ;;
   *)
-    echo "✗ mem0-rs n'est pas arm64 (lipo : $mem0_rs_archs)" >&2
+    echo "✗ memory-rs n'est pas arm64 (lipo : $memory_rs_archs)" >&2
     exit 1
     ;;
 esac
@@ -491,8 +491,8 @@ fi
 cp -R "$PKG/Bundle/en.lproj" "$BUNDLE/Contents/Resources/en.lproj"
 echo "  ✓ textes anglais embarqués (Contents/Resources/$RESOURCE_BUNDLE, Contents/Resources/en.lproj)"
 
-# 3 ter) le service mémoire : le binaire mem0-rs compilé en 2 bis, en
-#    `Contents/Resources/mem0-rs` (0755). Il est signé LUI-MÊME, par la même
+# 3 ter) le service mémoire : le binaire memory-rs compilé en 2 bis, en
+#    `Contents/Resources/memory-rs` (0755). Il est signé LUI-MÊME, par la même
 #    identité que le bundle, avant lui : la signature du bundle scelle alors un code
 #    déjà signé, et `codesign --verify --strict` (étape 4) couvre les deux.
 if ! command -v codesign >/dev/null 2>&1; then
@@ -508,13 +508,13 @@ if [ -z "$IDENTITY" ]; then
     | sed -n '1p')"
   [ -n "$IDENTITY" ] || IDENTITY="-"
 fi
-cp "$MEM0_RS_BIN" "$BUNDLE/Contents/Resources/mem0-rs"
-chmod 0755 "$BUNDLE/Contents/Resources/mem0-rs"
-if ! codesign --force --sign "$IDENTITY" "$BUNDLE/Contents/Resources/mem0-rs" >/dev/null 2>&1; then
-  echo "✗ signature de mem0-rs échouée (identité « $IDENTITY » ; relance : codesign --force --sign \"$IDENTITY\" \"$BUNDLE/Contents/Resources/mem0-rs\")"
+cp "${MEMORY_RS_BIN:-$MEM0_RS_BIN}" "$BUNDLE/Contents/Resources/memory-rs"
+chmod 0755 "$BUNDLE/Contents/Resources/memory-rs"
+if ! codesign --force --sign "$IDENTITY" "$BUNDLE/Contents/Resources/memory-rs" >/dev/null 2>&1; then
+  echo "✗ signature de memory-rs échouée (identité « $IDENTITY » ; relance : codesign --force --sign \"$IDENTITY\" \"$BUNDLE/Contents/Resources/memory-rs\")"
   exit 1
 fi
-echo "  ✓ mem0-rs embarqué (Contents/Resources/mem0-rs, arm64)"
+echo "  ✓ memory-rs embarqué (Contents/Resources/memory-rs, arm64)"
 # Les bundles de ressources SwiftPM recopiés en 3 bis bis sont signés eux aussi,
 # par la même identité, comme Xcode signe ceux d'un paquet : la signature du
 # bundle les scelle alors comme du code imbriqué déjà signé.

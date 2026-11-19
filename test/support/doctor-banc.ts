@@ -1,5 +1,5 @@
-// Banc de mem0-stack/doctor.sh, partagé par test/stack/doctor.test.ts (doctor/AC-*) et
-// test/stack/mem0-stack-bascule-rust.test.ts (AC-8, AC-9) : un id de critère qualifié ne
+// Banc de memory-stack/doctor.sh, partagé par test/stack/doctor.test.ts (doctor/AC-*) et
+// test/stack/memory-stack-bascule-rust.test.ts (AC-8, AC-9) : un id de critère qualifié ne
 // vit que dans le fichier de son slug (test/outillage/criteria.test.ts), le banc est donc ici.
 //
 // Le script est lancé TEL QUEL (`bash doctor.sh`) : c'est son ENVIRONNEMENT qui est
@@ -12,8 +12,8 @@
 //     script, et reflètent le .env du dépôt quand il existe, puisque c'est lui que
 //     compose applique) ; les conteneurs de l'ancienne pile (mem0-qdrant,
 //     mem0-http) n'existent que sous `SHIM_ANCIENNE=1` ;
-//   - un serveur HTTP local (node:http) qui joue l'API mem0 vue de l'hôte, sur un
-//     port éphémère, avec ou sans exigence de token — `MEM0_HTTP_URL` pointe dessus.
+//   - un serveur HTTP local (node:http) qui joue l'API memory vue de l'hôte, sur un
+//     port éphémère, avec ou sans exigence de token — `MEMORY_HTTP_URL` pointe dessus.
 //
 // Aucun conteneur n'est démarré, aucun test n'approche la vraie stack.
 import assert from "node:assert/strict";
@@ -24,7 +24,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const stack = path.join(here, "..", "..", "mem0-stack");
+const stack = path.join(here, "..", "..", "memory-stack");
 const script = path.join(stack, "doctor.sh");
 const envFile = path.join(stack, ".env");
 
@@ -50,7 +50,7 @@ env_value() {
   if [ -n "\${SHIM_ENV:-}" ] && [ -f "$SHIM_ENV" ]; then
     val=$(sed -n "s/^$1=//p" "$SHIM_ENV" | head -1)
   fi
-  if [ -z "$val" ] && [ "$1" = "MEM0_HTTP_TOKEN" ]; then
+  if [ -z "$val" ] && [ "$1" = "MEMORY_HTTP_TOKEN" ]; then
     val="\${SHIM_TOKEN:-}"
   fi
   printf '%s' "$val"
@@ -109,7 +109,7 @@ export function writeShim(dir: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// API mem0 vue de l'hôte
+// API memory vue de l'hôte
 // ---------------------------------------------------------------------------
 
 export type Call = { url: string; token: string | null; body: string };
@@ -119,7 +119,7 @@ export type Stub = { url: string; calls: Call[]; close: () => Promise<void> };
  * `GET /health` répond sans token ; les routes `/memory/*` la rejettent par 401 dès
  * qu'un token est exigé. `search` renvoie le texte réellement écrit : l'aller-retour
  * est vérifié sur le contenu, pas sur un statut. `GET /memory/all` compte comme
- * mem0-rs : `options.total` souvenirs hors du scope `_doctor`, plus ceux que
+ * memory-rs : `options.total` souvenirs hors du scope `_doctor`, plus ceux que
  * l'aller-retour du script a écrits dans `_doctor` (seuls comptés sous
  * `?agent_id=_doctor`).
  */
@@ -134,7 +134,7 @@ export async function startApi(options: { token?: string; total?: number } = {})
     });
     req.on("end", () => {
       const url = req.url ?? "";
-      const header = req.headers["x-mem0-token"];
+      const header = req.headers["x-memory-token"];
       calls.push({ url, token: typeof header === "string" ? header : null, body });
       const json = (status: number, payload: unknown): void => {
         res.writeHead(status, { "Content-Type": "application/json" });
@@ -187,8 +187,8 @@ export function doctorEnv(shimDir: string, mode: "absent" | "healthy", extra: Re
   env.PATH = `${shimDir}${path.delimiter}${process.env.PATH ?? ""}`;
   env.SHIM_MODE = mode;
   env.SHIM_ENV = envFile;
-  // Un vrai mem0-stack/qdrant_storage éventuel ne doit pas influer sur le scénario.
-  env.MEM0_ANCIEN_STOCKAGE_QDRANT = path.join(path.dirname(shimDir), "absent");
+  // Un vrai memory-stack/qdrant_storage éventuel ne doit pas influer sur le scénario.
+  env.MEMORY_ANCIEN_STOCKAGE_QDRANT = path.join(path.dirname(shimDir), "absent");
   return { ...env, ...extra };
 }
 
@@ -221,7 +221,7 @@ export function containerToken(): string {
     return fallback;
   }
   for (const line of text.split("\n")) {
-    const found = /^MEM0_HTTP_TOKEN=(.*)$/.exec(line.trim());
+    const found = /^MEMORY_HTTP_TOKEN=(.*)$/.exec(line.trim());
     if (found && found[1] !== "") return found[1];
   }
   return fallback;

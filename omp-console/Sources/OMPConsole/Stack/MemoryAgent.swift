@@ -1,5 +1,5 @@
 // L'agent launchd du service mémoire (S-2 d'omp-console-sans-podman ; AC-2, AC-3,
-// AC-4, AC-5) : le `mem0-rs` embarqué dans le bundle, servi sur
+// AC-4, AC-5) : le `memory-rs` embarqué dans le bundle, servi sur
 // 127.0.0.1:<port> par un job `gui/<uid>/<label>` qui survit au Quitter de l'app
 // (`KeepAlive`), est relancé par launchd s'il meurt, et exécute toujours le
 // binaire de l'app installée.
@@ -13,7 +13,7 @@
 // échoue en EIO et ne laisse AUCUN job).
 //
 // Identité : `/health` doit rendre `ok == true` ET `installation ==` le jeton
-// d'installation (`isOurMem0`) ; un port tenu par un autre programme que le job est
+// d'installation (`isOurMemory`) ; un port tenu par un autre programme que le job est
 // un `portConflict` nommé, et le job chargé est alors DÉCHARGÉ plutôt que laissé
 // boucler sur un bind impossible.
 //
@@ -37,22 +37,22 @@ enum MemoryAgentError: Error, Equatable {
     case plistWriteFailed(path: String, detail: String)
     case launchctlFailed(command: String, detail: String)
     case portConflict(port: Int, owner: MemoryPortOwnership)
-    /// `log` = au plus les 20 dernières lignes de `mem0-rs.log`, bornées à 300
+    /// `log` = au plus les 20 dernières lignes de `memory-rs.log`, bornées à 300
     /// caractères ; vide si le journal est illisible.
     case healthTimeout(seconds: Int, log: String)
 }
 
 @MainActor
 final class MemoryAgent {
-    nonisolated static let defaultLabel = "com.omp.console.mem0-rs"
+    nonisolated static let defaultLabel = "com.omp.console.memory-rs"
     nonisolated static let defaultPort = 8321
     /// Réglage de recette (non documenté pour l'utilisateur final).
-    nonisolated static let portEnvironmentKey = "OMP_CONSOLE_MEM0_PORT"
+    nonisolated static let portEnvironmentKey = "OMP_CONSOLE_MEMORY_PORT"
     nonisolated static let launchctl = URL(fileURLWithPath: "/bin/launchctl")
     /// Budget d'UNE invocation `launchctl`.
     nonisolated static let commandTimeout: Double = 10
 
-    /// Le port servi : `OMP_CONSOLE_MEM0_PORT` si entier décimal 1–65535, sinon 8321.
+    /// Le port servi : `OMP_CONSOLE_MEMORY_PORT` si entier décimal 1–65535, sinon 8321.
     nonisolated static func port(environment: [String: String]) -> Int {
         guard let raw = environment[portEnvironmentKey],
               !raw.isEmpty,
@@ -72,23 +72,23 @@ final class MemoryAgent {
         return defaultLabel + "." + String(hex.prefix(12))
     }
 
-    /// `<bundle>/Contents/Resources/mem0-rs` (copié par scripts/swift-app.sh).
+    /// `<bundle>/Contents/Resources/memory-rs` (copié par scripts/swift-app.sh).
     nonisolated static func embeddedBinary(bundle: Bundle = .main) -> URL {
-        bundle.bundleURL.appendingPathComponent("Contents/Resources/mem0-rs")
+        bundle.bundleURL.appendingPathComponent("Contents/Resources/memory-rs")
     }
 
     /// Le prédicat d'ACCEPTATION de la sonde identitaire : 200, `ok == true` ET le
     /// champ `installation` égal au jeton de l'installation. Un `200` nu — autre
     /// service, pile manuelle sans variable — n'est JAMAIS accepté.
-    nonisolated static func isOurMem0(_ result: (status: Int, body: Data), token: String) -> Bool {
-        guard !token.isEmpty, result.status == 200, isMem0Healthy(result) else { return false }
+    nonisolated static func isOurMemory(_ result: (status: Int, body: Data), token: String) -> Bool {
+        guard !token.isEmpty, result.status == 200, isMemoryHealthy(result) else { return false }
         guard let raw = try? JSONSerialization.jsonObject(with: result.body, options: [.fragmentsAllowed]),
               let object = raw as? [String: Any]
         else { return false }
         return (object["installation"] as? String) == token
     }
 
-    nonisolated static func isMem0Healthy(_ result: (status: Int, body: Data)) -> Bool {
+    nonisolated static func isMemoryHealthy(_ result: (status: Int, body: Data)) -> Bool {
         guard result.status == 200,
               let raw = try? JSONSerialization.jsonObject(with: result.body, options: [.fragmentsAllowed]),
               let object = raw as? [String: Any]
@@ -242,25 +242,25 @@ final class MemoryAgent {
         }
         let config = StackEnvStore.load(at: paths.stackEnv) ?? .defaults
         let environmentVariables: [String: String] = [
-            "MEM0_DB_PATH": paths.mem0Database.path,
+            "MEMORY_DB_PATH": paths.memoryDatabase.path,
             "EMBEDDING_DIMS": String(config.embeddingDims),
             "OMLX_BASE_URL": StackConfig.nativeOMLXBaseURL(config.omlxBaseURL),
             "OMLX_API_TOKEN": config.omlxApiToken,
             "OMLX_LLM_MODEL": config.omlxLLMModel,
             "OMLX_EMBED_MODEL": config.omlxEmbedModel,
-            "MEM0_HTTP_TOKEN": config.mem0HttpToken,
+            "MEMORY_HTTP_TOKEN": config.memoryHttpToken,
             "OMP_INSTALLATION_TOKEN": installationToken,
-            "OMP_CONSOLE_MEM0_RS_SHA256": sha,
+            "OMP_CONSOLE_MEMORY_RS_SHA256": sha,
         ]
         return [
             "Label": label,
             "ProgramArguments": [executable.path, "--host", "127.0.0.1", "--port", String(port)],
-            "WorkingDirectory": paths.mem0Root.path,
+            "WorkingDirectory": paths.memoryRoot.path,
             "KeepAlive": true,
             "RunAtLoad": true,
             "ProcessType": "Interactive",
-            "StandardOutPath": paths.mem0Log.path,
-            "StandardErrorPath": paths.mem0Log.path,
+            "StandardOutPath": paths.memoryLog.path,
+            "StandardErrorPath": paths.memoryLog.path,
             "EnvironmentVariables": environmentVariables,
         ]
     }
@@ -275,12 +275,12 @@ final class MemoryAgent {
     }
 
     /// Écrit le plist (0600 : il porte des jetons), après avoir créé
-    /// `launchAgentsDir` et `mem0Root` (0700).
+    /// `launchAgentsDir` et `memoryRoot` (0700).
     private func writePlist(_ plist: [String: Any]) throws {
         do {
             try fileManager.createDirectory(at: paths.launchAgentsDir, withIntermediateDirectories: true)
-            try fileManager.createDirectory(at: paths.mem0Root, withIntermediateDirectories: true)
-            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.mem0Root.path)
+            try fileManager.createDirectory(at: paths.memoryRoot, withIntermediateDirectories: true)
+            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.memoryRoot.path)
             let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
             try data.write(to: plistURL, options: [.atomic])
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: plistURL.path)
@@ -357,7 +357,7 @@ final class MemoryAgent {
         await StackOwnership.holder(ofPort: port, ourExecutable: executable, environment: environment, run: run)
     }
 
-    /// Le port est-il utilisable par le job ? Libre, tenu par le mem0-rs embarqué,
+    /// Le port est-il utilisable par le job ? Libre, tenu par le memory-rs embarqué,
     /// indéterminé (aucune accusation), ou tenu par le job lui-même.
     private static func portAllows(_ owner: MemoryPortOwnership, jobPid: Int32?) -> Bool {
         switch owner {
@@ -389,7 +389,7 @@ final class MemoryAgent {
         progress(.health)
         let deadline = ContinuousClock.now + .seconds(healthBudget)
         while true {
-            if let result = await healthProbe(healthURL), Self.isOurMem0(result, token: token) { return }
+            if let result = await healthProbe(healthURL), Self.isOurMemory(result, token: token) { return }
             if ContinuousClock.now >= deadline { break }
             await pause()
         }
@@ -400,7 +400,7 @@ final class MemoryAgent {
         }
         throw MemoryAgentError.healthTimeout(
             seconds: Int(healthBudget.rounded(.up)),
-            log: Self.logTail(of: paths.mem0Log)
+            log: Self.logTail(of: paths.memoryLog)
         )
     }
 
@@ -412,7 +412,7 @@ final class MemoryAgent {
     // MARK: - Utilitaires
 
     /// Les 20 dernières lignes du journal, bornées à 300 caractères (la FIN est
-    /// gardée : l'erreur qui fait sortir mem0-rs est la dernière ligne). Seuls les
+    /// gardée : l'erreur qui fait sortir memory-rs est la dernière ligne). Seuls les
     /// 64 derniers Kio sont lus — le journal n'est jamais tourné.
     nonisolated static func logTail(of url: URL) -> String {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }

@@ -1,6 +1,6 @@
 // Le modèle de la préparation au premier lancement (omp-console-sans-podman S-5) :
 // il enchaîne les machines de l'app — composants (OMP), migration unique de
-// l'ancienne mémoire podman (`PodmanLegacy`), agent launchd mem0-rs
+// l'ancienne mémoire podman (`PodmanLegacy`), agent launchd memory-rs
 // (`MemoryAgent`), sonde oMLX — et publie UN état à la fois.
 //
 // La chaîne est INJECTÉE (clôtures, comme `OmpPresenceModel.Resolver`) : les tests
@@ -54,9 +54,9 @@ enum SetupState: Equatable, Sendable {
 
 /// La mémoire que la préparation doit servir (memoire-du-serveur).
 enum MemoryHosting: Equatable, Sendable {
-    /// L'agent mem0-rs de l'app, sur ce Mac.
+    /// L'agent memory-rs de l'app, sur ce Mac.
     case local
-    /// La mémoire d'un serveur (`~/.omp/mem0.json` ou `MEM0_HTTP_URL` hors de ce
+    /// La mémoire d'un serveur (`~/.omp/memory.json` ou `MEMORY_HTTP_URL` hors de ce
     /// Mac, posé par l'appairage) : le plugin, l'écran mémoire et les runners du
     /// serveur lisent tous celle-là, l'agent de l'app n'a rien à servir.
     case server(URL)
@@ -158,7 +158,7 @@ final class SetupModel: ObservableObject {
         }
     }
 
-    /// La chaîne réelle : OMP, migration unique, agent mem0-rs embarqué, sonde
+    /// La chaîne réelle : OMP, migration unique, agent memory-rs embarqué, sonde
     /// oMLX. `autoPrepare` vaut `home.canLaunch` : sans OMP au lancement, rien ne
     /// se télécharge avant « Installer ».
     static func standard(

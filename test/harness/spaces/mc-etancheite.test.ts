@@ -25,7 +25,8 @@ import type { IntakeRow, Space } from "../../../omp-harness/db/db.ts";
 import { HarnessError } from "../../../omp-harness/api/errors.ts";
 import { Git } from "../../../omp-harness/forge/git.ts";
 import { HeavyRunner } from "../../../omp-harness/heavy/heavy.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import { intakePolicy } from "../../../omp-harness/intake/intake.ts";
 import { ISOLATION_CODES, isolationOf, nextSteps } from "../../../omp-harness/spaces/isolation.ts";
 import type { Isolation, IsolationFacts, OnboardStep } from "../../../omp-harness/spaces/isolation.ts";
@@ -251,7 +252,7 @@ const codes = (isolation: Isolation): [string, string | null][] => isolation.gap
 const OWN = {
   remote: "origin",
   sshKey: "/var/lib/omp-harness/.ssh/repos/acme",
-  memory: { tokenEnv: "ACME_MEM0_TOKEN" },
+  memory: { tokenEnv: "ACME_MEMORY_TOKEN" },
   git: { name: "Agent Acme", email: "agent@acme.example" },
   gh: { tokenEnv: "ACME_GH_TOKEN" },
 };

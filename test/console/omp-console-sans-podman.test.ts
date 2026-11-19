@@ -14,7 +14,7 @@
 // (jamais ici). Ces tests verrouillent le VERDICT de cette recette, pour qu'une
 // bascule ratée ne puisse pas y paraître verte : racine jetable
 // (`OMP_CONSOLE_SUPPORT_ROOT`), relevé `recette-avant.json` écrit à la main,
-// faux service mémoire HTTP sur un port éphémère (`OMP_CONSOLE_MEM0_PORT`),
+// faux service mémoire HTTP sur un port éphémère (`OMP_CONSOLE_MEMORY_PORT`),
 // doublures `uname` (Darwin) et `launchctl` sur le PATH. Aucun ne touche
 // launchd, podman ni les ports 8321/6333 du poste — seul le mode `relance`
 // interroge 127.0.0.1:6333 en lecture, avec une clé jetable, et n'en attend
@@ -46,7 +46,7 @@ function arborescence(racine: string): string[] {
   return (fs.readdirSync(racine, { recursive: true }) as string[]).map((entree) => entree.toString());
 }
 
-test("omp-console-sans-podman/AC-1 : swift-app.sh compile mem0-rs, l'embarque signé en Contents/Resources/mem0-rs (arm64) et n'embarque plus rien de l'ancienne pile", () => {
+test("omp-console-sans-podman/AC-1 : swift-app.sh compile memory-rs, l'embarque signé en Contents/Resources/memory-rs (arm64) et n'embarque plus rien de l'ancienne pile", () => {
   // Copie jetable : ce que swift-app.sh lit (le script, la liste attendue des
   // intents Siri et son comparateur, le Bundle, les sources de la coque, listées
   // pour l'extraction App Intents), plus l'ancienne pile tant qu'elle existe — sa
@@ -113,10 +113,10 @@ esac`,
     bin,
     "cargo",
     `printf 'cargo %s @ %s\\n' "$*" "$PWD" >> '${journal}'
-target="\${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}"
+target="\${CARGO_TARGET_DIR:-memory-stack/memory-rs/target}"
 mkdir -p "$target/release"
-printf '#!/usr/bin/env bash\\n# cible=%s\\nexit 0\\n' "$target" > "$target/release/mem0-rs"
-chmod +x "$target/release/mem0-rs"`,
+printf '#!/usr/bin/env bash\\n# cible=%s\\nexit 0\\n' "$target" > "$target/release/memory-rs"
+chmod +x "$target/release/memory-rs"`,
   );
   doublure(bin, "lipo", `printf 'lipo %s\\n' "$*" >> '${journal}'\nprintf '%s\\n' "\${FAUSSE_ARCH:-arm64}"`);
   // Outillage Xcode doublé : processeur App Intents, version d'Xcode, SDK macOS.
@@ -141,33 +141,33 @@ chmod +x "$target/release/mem0-rs"`,
   };
 
   const bundle = path.join(copie, "omp-console", "build", "OMP Console.app");
-  const embarque = path.join(bundle, "Contents", "Resources", "mem0-rs");
-  const argvCargo = `cargo build --release --locked --manifest-path mem0-stack/mem0-rs/Cargo.toml @ ${copie}`;
+  const embarque = path.join(bundle, "Contents", "Resources", "memory-rs");
+  const argvCargo = `cargo build --release --locked --manifest-path memory-stack/memory-rs/Cargo.toml @ ${copie}`;
 
   // (1) Assemblage complet (suite comprise), cible cargo par défaut.
   const complet = lancer([]);
   assert.equal(complet.status, 0, complet.sortie);
   assert.ok(complet.lignes.includes(argvCargo), `argv/cwd de cargo : ${complet.lignes.join(" | ")}`);
   assert.ok(
-    complet.lignes.includes(`lipo -archs ${path.join(copie, "mem0-stack/mem0-rs/target/release/mem0-rs")}`),
+    complet.lignes.includes(`lipo -archs ${path.join(copie, "memory-stack/memory-rs/target/release/memory-rs")}`),
     complet.lignes.join(" | "),
   );
-  assert.ok(complet.sortie.includes("  ✓ mem0-rs embarqué (Contents/Resources/mem0-rs, arm64)"), complet.sortie);
+  assert.ok(complet.sortie.includes("  ✓ memory-rs embarqué (Contents/Resources/memory-rs, arm64)"), complet.sortie);
   assert.ok(fs.existsSync(embarque), `${embarque} absent :\n${complet.sortie}`);
-  assert.equal(fs.statSync(embarque).mode & 0o777, 0o755, "mem0-rs doit être en 0755");
+  assert.equal(fs.statSync(embarque).mode & 0o777, 0o755, "memory-rs doit être en 0755");
   assert.ok(
-    fs.readFileSync(embarque, "utf8").includes("# cible=mem0-stack/mem0-rs/target"),
-    "mem0-rs doit venir de la cible par défaut",
+    fs.readFileSync(embarque, "utf8").includes("# cible=memory-stack/memory-rs/target"),
+    "memory-rs doit venir de la cible par défaut",
   );
 
   // Le binaire est signé ad hoc LUI-MÊME, avant la signature du bundle.
   const signatureBinaire = complet.lignes.indexOf(`codesign --force --sign - ${embarque}`);
   const signatureBundle = complet.lignes.indexOf(`codesign --force --sign - ${bundle}`);
-  assert.notEqual(signatureBinaire, -1, `mem0-rs jamais signé : ${complet.lignes.join(" | ")}`);
+  assert.notEqual(signatureBinaire, -1, `memory-rs jamais signé : ${complet.lignes.join(" | ")}`);
   assert.notEqual(signatureBundle, -1, `bundle jamais signé : ${complet.lignes.join(" | ")}`);
   assert.ok(
     signatureBinaire < signatureBundle,
-    `mem0-rs doit être signé avant le bundle : ${complet.lignes.join(" | ")}`,
+    `memory-rs doit être signé avant le bundle : ${complet.lignes.join(" | ")}`,
   );
 
   // Plus rien de l'ancienne pile : ni dossier Stack, ni Dockerfile, ni empreinte, ni source Python.
@@ -187,15 +187,15 @@ chmod +x "$target/release/mem0-rs"`,
   assert.equal(rapide.status, 0, rapide.sortie);
   assert.ok(rapide.lignes.includes(argvCargo), `argv/cwd de cargo : ${rapide.lignes.join(" | ")}`);
   assert.ok(
-    fs.existsSync(path.join(copie, "cible-rs", "release", "mem0-rs")),
+    fs.existsSync(path.join(copie, "cible-rs", "release", "memory-rs")),
     "cargo doit écrire sous <racine>/cible-rs",
   );
-  assert.ok(fs.readFileSync(embarque, "utf8").includes("# cible=cible-rs"), "mem0-rs doit venir de CARGO_TARGET_DIR");
+  assert.ok(fs.readFileSync(embarque, "utf8").includes("# cible=cible-rs"), "memory-rs doit venir de CARGO_TARGET_DIR");
 
   // (3) Un binaire qui n'est pas arm64 est refusé.
   const intel = lancer(["--no-tests"], { FAUSSE_ARCH: "x86_64" });
   assert.equal(intel.status, 1, intel.sortie);
-  assert.ok(intel.stderr.includes("✗ mem0-rs n'est pas arm64 (lipo : x86_64)"), intel.sortie);
+  assert.ok(intel.stderr.includes("✗ memory-rs n'est pas arm64 (lipo : x86_64)"), intel.sortie);
 
   // (4) Sans cargo : échec franc, aucun bundle produit.
   fs.rmSync(bundle, { recursive: true, force: true });
@@ -222,7 +222,7 @@ function racineBasculee(): { racine: string; bin: string; journal: string } {
   const racine = tmpdir("sans-podman-recette-");
   const etat = path.join(racine, "stack", "podman-migration");
   fs.mkdirSync(etat, { recursive: true });
-  fs.writeFileSync(path.join(racine, "stack", "env"), `QDRANT_API_KEY=cle-jetable\nMEM0_HTTP_TOKEN="${JETON}"\n`);
+  fs.writeFileSync(path.join(racine, "stack", "env"), `QDRANT_API_KEY=cle-jetable\nMEMORY_HTTP_TOKEN="${JETON}"\n`);
   const groupes = new Map<string | null, [string, string][]>();
   for (const s of SOUVENIRS) {
     const cle = s.agent_id ?? null;
@@ -252,7 +252,7 @@ async function fauxService(
       res.writeHead(statut, { "Content-Type": "application/json" });
       res.end(JSON.stringify(corps));
     };
-    if (req.headers["x-mem0-token"] !== jetonAttendu) return repondre(401, { detail: "bad or missing X-Mem0-Token" });
+    if (req.headers["x-memory-token"] !== jetonAttendu) return repondre(401, { detail: "bad or missing X-Memory-Token" });
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     if (req.method === "GET" && url.pathname === "/memory/all") {
       const agent = url.searchParams.get("agent_id");
@@ -293,9 +293,9 @@ function recette(
     HOME: ctx.racine,
     PATH: `${ctx.bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
     OMP_CONSOLE_SUPPORT_ROOT: ctx.racine,
-    OMP_CONSOLE_MEM0_PORT: String(port),
+    OMP_CONSOLE_MEMORY_PORT: String(port),
   };
-  if (garde) env.MEM0_SANS_PODMAN_REEL = "1";
+  if (garde) env.MEMORY_SANS_PODMAN_REEL = "1";
   const fin = Promise.withResolvers<{ status: number; sortie: string }>();
   execFile("bash", [RECETTE, mode], { env, timeout: 60_000 }, (erreur, stdout, stderr) => {
     const code = erreur ? (typeof erreur.code === "number" ? erreur.code : -1) : 0;
@@ -312,7 +312,7 @@ test("omp-console-sans-podman/AC-6 : la recette apres n'est verte que si chaque 
     const sansGarde = await recette("apres", ctx, service.port, false);
     assert.equal(sansGarde.status, 2, sansGarde.sortie);
     assert.ok(
-      sansGarde.sortie.includes("non exécuté : MEM0_SANS_PODMAN_REEL=1 requis (bascule réelle du poste)"),
+      sansGarde.sortie.includes("non exécuté : MEMORY_SANS_PODMAN_REEL=1 requis (bascule réelle du poste)"),
       sansGarde.sortie,
     );
 
@@ -329,7 +329,7 @@ test("omp-console-sans-podman/AC-6 : la recette apres n'est verte que si chaque 
       assert.ok(vert.sortie.includes(attendu), `${attendu}\n${vert.sortie}`);
     }
     // Le label vérifié est celui de MemoryAgent.label(paths:) pour une racine surchargée.
-    const label = `com.omp.console.mem0-rs.${createHash("sha256").update(ctx.racine).digest("hex").slice(0, 12)}`;
+    const label = `com.omp.console.memory-rs.${createHash("sha256").update(ctx.racine).digest("hex").slice(0, 12)}`;
     assert.match(
       fs.readFileSync(ctx.journal, "utf8"),
       new RegExp(`^print gui/\\d+/${label.replaceAll(".", "\\.")}$`, "m"),
@@ -398,7 +398,7 @@ test("omp-console-sans-podman/AC-7 : la recette relance rougit si bascule.json o
   }
 });
 
-test("omp-console-sans-podman/AC-12 : la recette apres lit les souvenirs migrés avec le seul jeton X-Mem0-Token de stack/env, et rougit si le service exige un autre jeton", async () => {
+test("omp-console-sans-podman/AC-12 : la recette apres lit les souvenirs migrés avec le seul jeton X-Memory-Token de stack/env, et rougit si le service exige un autre jeton", async () => {
   const ctx = racineBasculee();
   const memeJeton = await fauxService(() => SOUVENIRS);
   try {
@@ -435,9 +435,9 @@ const RESTES_PODMAN = [
   "pkgutil",
   "machineInit",
   "imageBuild",
-  "MEM0_STACK_RECIPE",
-  "MEM0_UNION_RECIPE",
-  "MEM0_MIGRATION_RECIPE",
+  "MEMORY_STACK_RECIPE",
+  "MEMORY_UNION_RECIPE",
+  "MEMORY_MIGRATION_RECIPE",
 ];
 
 test("omp-console-sans-podman/AC-11 : aucun reste du podman embarqué hors migration et nettoyage", () => {

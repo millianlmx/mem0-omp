@@ -116,7 +116,7 @@ extension HarnessRun {
 }
 
 extension HarnessScheduleTarget {
-    /// Ce que lance une planification, et où : « Une feature · mem0-omp ».
+    /// Ce que lance une planification, et où : « Une feature · memory-omp ».
     public var osPlace: String {
         ControlText.scheduleKind(kind) + (repo.isEmpty ? "" : " · " + repo)
     }

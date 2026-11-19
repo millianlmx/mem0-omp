@@ -151,8 +151,8 @@ fi
 # Le filtre passe par python3, jamais par `grep -P` (rejeté par le grep BSD de
 # macOS, voir `── Extension` de check.sh). L'ordre est celui du tri ci-dessus,
 # reçu en arguments : python ne retrie rien.
-MEM0_TEST_SCOPE="$scope" MEM0_TEST_CHANGED="$changed" MEM0_TEST_CHANGED_STATUS="$changed_status" \
-MEM0_TEST_MACOS_ONLY="$macos_only" MEM0_TEST_WITH_OUTILLAGE="$with_outillage" \
+MEMORY_TEST_SCOPE="$scope" MEMORY_TEST_CHANGED="$changed" MEMORY_TEST_CHANGED_STATUS="$changed_status" \
+MEMORY_TEST_MACOS_ONLY="$macos_only" MEMORY_TEST_WITH_OUTILLAGE="$with_outillage" \
 python3 - "${files[@]}" <<'PY'
 import os, re, sys
 MACOS = re.compile(r"\b(swift|swiftc|xcodebuild|xcrun)\b|swift-app\.sh|ios-build\.sh")
@@ -170,9 +170,9 @@ WHOLE_SUITE = {
     "tsconfig.test.json",
 }
 
-scope = os.environ["MEM0_TEST_SCOPE"]
-macos_only = os.environ["MEM0_TEST_MACOS_ONLY"] == "1"
-with_outillage = os.environ["MEM0_TEST_WITH_OUTILLAGE"] == "1"
+scope = os.environ["MEMORY_TEST_SCOPE"]
+macos_only = os.environ["MEMORY_TEST_MACOS_ONLY"] == "1"
+with_outillage = os.environ["MEMORY_TEST_WITH_OUTILLAGE"] == "1"
 paths = sys.argv[1:]
 texts = {}
 for path in paths:
@@ -217,8 +217,8 @@ def retained(path):
 
 everything = [p for p in paths if retained(p)]
 complete = "liste complète" if with_outillage else "liste complète hors outillage"
-changed = [line for line in os.environ["MEM0_TEST_CHANGED"].split("\n") if line.strip() != ""]
-if os.environ["MEM0_TEST_CHANGED_STATUS"] != "0":
+changed = [line for line in os.environ["MEMORY_TEST_CHANGED"].split("\n") if line.strip() != ""]
+if os.environ["MEMORY_TEST_CHANGED_STATUS"] != "0":
     print(f"· repli : {complete}", file=sys.stderr)
     emit_everything(everything)
 if not changed:

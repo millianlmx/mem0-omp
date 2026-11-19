@@ -49,7 +49,7 @@ EMBED_MODEL="bge-m3"
 SELF="bash $HERE/harness.sh"
 # Le modèle oMLX des agents (`up --omlx`), gardé dans compose.env ; vide : Anthropic.
 OMLX_MODEL=""
-# Les embeddings de l'Ollama intégré, vus de mem0-rs.
+# Les embeddings de l'Ollama intégré, vus de memory-rs.
 BUILTIN_EMBEDDINGS=http://embeddings:11434/v1
 
 die() { echo "✗ $*" >&2; exit 1; }
@@ -183,7 +183,7 @@ write_compose_env() {
   if [ -n "$OMLX_MODEL" ]; then
     embeddings=external
   elif [ -z "$embeddings" ]; then
-    if [ -n "${OMLX_BASE_URL:-}" ] || [ -e "$SECRETS/mem0.env" ]; then embeddings=external; else embeddings=builtin; fi
+    if [ -n "${OMLX_BASE_URL:-}" ] || [ -e "$SECRETS/memory.env" ]; then embeddings=external; else embeddings=builtin; fi
   fi
   cat > "$ROOT/compose.env" <<EOT
 OMP_HARNESS_ROOT=$ROOT
@@ -192,31 +192,31 @@ OMP_HARNESS_SOCKET=$socket
 OMP_HARNESS_USER=$user
 OMP_HARNESS_ENGINE_GID=$gid
 OMP_HARNESS_PORT=${OMP_HARNESS_PORT:-8790}
-OMP_HARNESS_MEM0_PORT=${OMP_HARNESS_MEM0_PORT:-$([ "$(uname -s)" = Darwin ] && echo 8322 || echo 8321)}
+OMP_HARNESS_MEMORY_PORT=${OMP_HARNESS_MEMORY_PORT:-${OMP_HARNESS_MEM0_PORT:-$([ "$(uname -s)" = Darwin ] && echo 8322 || echo 8321)}}
 OMP_HARNESS_EMBEDDINGS=$embeddings
 OMP_HARNESS_OMLX_MODEL=$OMLX_MODEL
 EOT
 }
 
 # Les secrets, créés une fois : le jeton de la mémoire est partagé par le service,
-# mem0-rs et les runners ; les clés LLM ne vont que dans runner.env.
+# memory-rs et les runners ; les clés LLM ne vont que dans runner.env.
 write_secrets() {
-  if [ -e "$SECRETS/mem0.env" ]; then
+  if [ -e "$SECRETS/memory.env" ]; then
     # Passée sur oMLX, la mémoire y prend ses embeddings et son modèle.
     if [ -n "$OMLX_MODEL" ]; then
-      set_line OMLX_BASE_URL "$(omlx_url)" "$SECRETS/mem0.env"
-      set_line OMLX_CHAT_BASE_URL "$(chat_url "$(omlx_url)")" "$SECRETS/mem0.env"
-      set_line OMLX_LLM_MODEL "$OMLX_MODEL" "$SECRETS/mem0.env"
-    elif [ "$(setting OMLX_BASE_URL "$SECRETS/mem0.env")" = "$BUILTIN_EMBEDDINGS" ] &&
-      ! grep -q '^OMLX_CHAT_BASE_URL=' "$SECRETS/mem0.env"; then
+      set_line OMLX_BASE_URL "$(omlx_url)" "$SECRETS/memory.env"
+      set_line OMLX_CHAT_BASE_URL "$(chat_url "$(omlx_url)")" "$SECRETS/memory.env"
+      set_line OMLX_LLM_MODEL "$OMLX_MODEL" "$SECRETS/memory.env"
+    elif [ "$(setting OMLX_BASE_URL "$SECRETS/memory.env")" = "$BUILTIN_EMBEDDINGS" ] &&
+      ! grep -q '^OMLX_CHAT_BASE_URL=' "$SECRETS/memory.env"; then
       # Installation d'avant le chat séparé : l'Ollama intégré n'a pas de modèle de chat.
-      set_line OMLX_CHAT_BASE_URL "$(chat_url "$BUILTIN_EMBEDDINGS")" "$SECRETS/mem0.env"
+      set_line OMLX_CHAT_BASE_URL "$(chat_url "$BUILTIN_EMBEDDINGS")" "$SECRETS/memory.env"
     fi
   else
     write_new_secrets
   fi
   if [ -n "$OMLX_MODEL" ] && [ -n "${OMLX_API_TOKEN:-}" ]; then
-    set_line OMLX_API_TOKEN "$OMLX_API_TOKEN" "$SECRETS/mem0.env"
+    set_line OMLX_API_TOKEN "$OMLX_API_TOKEN" "$SECRETS/memory.env"
     set_line OMLX_API_TOKEN "$OMLX_API_TOKEN" "$SECRETS/runner.env"
   fi
 }
@@ -236,10 +236,10 @@ write_new_secrets() {
   embed_url="${OMLX_BASE_URL:-$BUILTIN_EMBEDDINGS}"
   [ -z "$OMLX_MODEL" ] || embed_url="$(omlx_url)"
   umask 077
-  printf 'MEM0_HTTP_TOKEN=%s\n' "$token" > "$SECRETS/harness.env"
-  printf 'MEM0_HTTP_TOKEN=%s\n' "$token" > "$SECRETS/runner.env"
-  cat > "$SECRETS/mem0.env" <<EOT
-MEM0_HTTP_TOKEN=$token
+  printf 'MEMORY_HTTP_TOKEN=%s\n' "$token" > "$SECRETS/harness.env"
+  printf 'MEMORY_HTTP_TOKEN=%s\n' "$token" > "$SECRETS/runner.env"
+  cat > "$SECRETS/memory.env" <<EOT
+MEMORY_HTTP_TOKEN=$token
 # Le serveur d'embeddings compatible OpenAI : l'Ollama intégré, ou le tien
 # (oMLX sur un Mac : http://host.containers.internal:8000/v1).
 OMLX_BASE_URL=$embed_url
@@ -302,25 +302,25 @@ pull_embeddings() {
 # Sur le tailnet en HTTPS : 443 → le harness, 8443 → la mémoire. Le Mac et l'iPhone
 # les joignent ; le VPS n'ouvre aucun port public.
 publish() {
-  local port mem0_port url="" mem0_url=""
+  local port memory_port url="" memory_url=""
   port="$(setting OMP_HARNESS_PORT "$ROOT/compose.env")"
-  mem0_port="$(setting OMP_HARNESS_MEM0_PORT "$ROOT/compose.env")"
+  memory_port="$(setting OMP_HARNESS_MEMORY_PORT "$ROOT/compose.env")"
   if [ "${OMP_HARNESS_TAILSCALE:-1}" != 0 ] && [ "$(uname -s)" != Darwin ] && command -v tailscale >/dev/null; then
     local sudo=""
     tailscale serve status >/dev/null 2>&1 || sudo=sudo
     if $sudo tailscale serve --bg --https=443 "http://127.0.0.1:$port" >/dev/null &&
-       $sudo tailscale serve --bg --https=8443 "http://127.0.0.1:$mem0_port" >/dev/null; then
+       $sudo tailscale serve --bg --https=8443 "http://127.0.0.1:$memory_port" >/dev/null; then
       local name
       name="$(tailscale status --json | sed -n 's/.*"DNSName": *"\([^"]*\)\.".*/\1/p' | head -1)"
-      [ -z "$name" ] || { url="https://$name"; mem0_url="https://$name:8443"; }
+      [ -z "$name" ] || { url="https://$name"; memory_url="https://$name:8443"; }
     fi
   fi
   if [ -z "$url" ]; then
     url="http://127.0.0.1:$port"
-    mem0_url="http://127.0.0.1:$mem0_port"
+    memory_url="http://127.0.0.1:$memory_port"
     [ "$(uname -s)" = Darwin ] || PRIVATE=1
   fi
-  printf 'URL=%s\nMEM0_URL=%s\n' "$url" "$mem0_url" > "$ROOT/published.env"
+  printf 'URL=%s\nMEMORY_URL=%s\n' "$url" "$memory_url" > "$ROOT/published.env"
 }
 
 # podman rootless ne relance rien au démarrage de la machine : une unité utilisateur
@@ -386,7 +386,7 @@ vigie_secrets() {
   umask 077
   {
     printf 'VIGIE_TOKEN=%s\n' "$token"
-    grep -E '^(MEM0_HTTP_TOKEN|[A-Z_]*API_KEY)=' "$SECRETS/runner.env" || true
+    grep -E '^(MEMORY_HTTP_TOKEN|[A-Z_]*API_KEY)=' "$SECRETS/runner.env" || true
   } > "$file"
   umask 022
 }
@@ -415,7 +415,7 @@ cmd_up() {
   [ -z "$OMLX_MODEL" ] || probe_omlx
   install -d -m 0700 "$ROOT" "$SECRETS"
   install -d "$ROOT/state" "$ROOT/state/logs" "$ROOT/repos" "$ROOT/worktrees" "$ROOT/home/.ssh" "$ROOT/runner-home" \
-    "$ROOT/mem0" "$ROOT/ollama" "$ROOT/cache/cargo" "$ROOT/vigie"
+    "$ROOT/memory" "$ROOT/ollama" "$ROOT/cache/cargo" "$ROOT/vigie"
   chmod 0700 "$ROOT/home/.ssh"
 
   write_compose_env
@@ -505,7 +505,7 @@ cmd_add() {
 pairing_lines() {
   printf '%s\n%s\n%s\n%s\n' \
     "$(setting URL "$ROOT/published.env")" "$(cat "$ROOT/state/token")" \
-    "$(setting MEM0_URL "$ROOT/published.env")" "$(setting MEM0_HTTP_TOKEN "$SECRETS/mem0.env")"
+    "$(setting MEMORY_URL "$ROOT/published.env")" "$(setting MEMORY_HTTP_TOKEN "$SECRETS/memory.env")"
 }
 
 # base64url sans remplissage, sur une seule ligne.
@@ -533,16 +533,16 @@ cmd_pair() {
 cmd_pair_qr() {
   [ -s "$ROOT/state/token" ] || die "le harness n'a pas encore démarré : $SELF up"
   command -v curl >/dev/null || die "curl est requis pour créer le ticket"
-  local label="${1:-iPhone}" url port mem0_url mem0_token body reply ticket enc link
+  local label="${1:-iPhone}" url port memory_url memory_token body reply ticket enc link
   case "$label" in *[!A-Za-z0-9\ ._-]*) die "étiquette : lettres, chiffres, espace, . _ - (40 caractères au plus)" ;; esac
   [ "${#label}" -le 40 ] || die "étiquette : 40 caractères au plus"
   url="$(setting URL "$ROOT/published.env")"
   [ -n "$url" ] || die "adresse publiée introuvable (published.env) : $SELF up"
   port="$(setting OMP_HARNESS_PORT "$ROOT/compose.env")"
-  mem0_url="$(setting MEM0_URL "$ROOT/published.env")"
-  mem0_token="$(setting MEM0_HTTP_TOKEN "$SECRETS/mem0.env")"
+  memory_url="$(setting MEMORY_URL "$ROOT/published.env")"
+  memory_token="$(setting MEMORY_HTTP_TOKEN "$SECRETS/memory.env")"
   body="{\"label\":\"$label\""
-  [ -z "$mem0_url" ] || body="$body,\"memory\":{\"url\":\"$mem0_url\",\"token\":\"$mem0_token\"}"
+  [ -z "$memory_url" ] || body="$body,\"memory\":{\"url\":\"$memory_url\",\"token\":\"$memory_token\"}"
   body="$body}"
   reply="$(printf 'header = "Authorization: Bearer %s"\n' "$(cat "$ROOT/state/token")" |
     curl -fsS -m 15 -K - -H 'Content-Type: application/json' -d "$body" "http://127.0.0.1:${port:-8790}/v1/pair/tickets")" ||
@@ -591,14 +591,14 @@ cmd_client() {
   case "$action" in
     add)
       [ -n "$name" ] || die "usage : client add <nom> [viewer|operator|admin] [dépôt,…]"
-      local token mem0_url="" mem0_token=""
+      local token memory_url="" memory_token=""
       token="$(harness_main --add-client "$name" --role "$role" --repos "$repos")" || exit 1
       if [ "$repos" = "*" ]; then
-        mem0_url="$(setting MEM0_URL "$ROOT/published.env")"
-        mem0_token="$(setting MEM0_HTTP_TOKEN "$SECRETS/mem0.env")"
+        memory_url="$(setting MEMORY_URL "$ROOT/published.env")"
+        memory_token="$(setting MEMORY_HTTP_TOKEN "$SECRETS/memory.env")"
       fi
       local code
-      code="$(printf '%s\n%s\n%s\n%s\n' "$(setting URL "$ROOT/published.env")" "$token" "$mem0_url" "$mem0_token" |
+      code="$(printf '%s\n%s\n%s\n%s\n' "$(setting URL "$ROOT/published.env")" "$token" "$memory_url" "$memory_token" |
         base64url)"
       echo "Code d'appairage de $name (secret ; il ne sera plus affiché) :"
       echo
@@ -635,31 +635,31 @@ cmd_login() {
     omp-harness-runner:local omp --profile pipeline
 }
 
-# ~/.omp/harness.json et ~/.omp/mem0.json visent cette pile ; les précédents restent en
+# ~/.omp/harness.json et ~/.omp/memory.json visent cette pile ; les précédents restent en
 # .prev. Le JSON est réécrit par le Node de l'image : l'hôte n'a besoin que du moteur.
 cmd_connect() {
-  local token mem0_token
+  local token memory_token
   token="$(cat "$ROOT/state/token")"
-  mem0_token="$(setting MEM0_HTTP_TOKEN "$SECRETS/mem0.env")"
+  memory_token="$(setting MEMORY_HTTP_TOKEN "$SECRETS/memory.env")"
   mkdir -p "$HOME/.omp"
-  for file in harness.json mem0.json; do
+  for file in harness.json memory.json; do
     [ ! -e "$HOME/.omp/$file" ] || [ -e "$HOME/.omp/$file.prev" ] || cp "$HOME/.omp/$file" "$HOME/.omp/$file.prev"
   done
   "$ENGINE" run --rm --user "$(engine_user)" -v "$HOME/.omp:/omp" \
     -e URL="http://127.0.0.1:$(setting OMP_HARNESS_PORT "$ROOT/compose.env")" -e TOKEN="$token" \
-    -e MEM0_URL="http://127.0.0.1:$(setting OMP_HARNESS_MEM0_PORT "$ROOT/compose.env")" -e MEM0_TOKEN="$mem0_token" \
+    -e MEMORY_URL="http://127.0.0.1:$(setting OMP_HARNESS_MEMORY_PORT "$ROOT/compose.env")" -e MEMORY_TOKEN="$memory_token" \
     omp-harness:local node -e '
       const fs = require("fs");
       const read = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return {}; } };
       const harness = read("/omp/harness.json");
       // Les correspondances dossier → dépôt du Mac restent : seul le serveur change.
       fs.writeFileSync("/omp/harness.json", JSON.stringify({ ...harness, url: process.env.URL, token: process.env.TOKEN }, null, 2) + "\n", { mode: 0o600 });
-      fs.writeFileSync("/omp/mem0.json", JSON.stringify({ url: process.env.MEM0_URL, token: process.env.MEM0_TOKEN }, null, 2) + "\n", { mode: 0o600 });'
+      fs.writeFileSync("/omp/memory.json", JSON.stringify({ url: process.env.MEMORY_URL, token: process.env.MEMORY_TOKEN }, null, 2) + "\n", { mode: 0o600 });'
   echo "Les plugins et l'app de cette machine visent maintenant cette pile (relance omp et l'app). Retour : $SELF disconnect"
 }
 
 cmd_disconnect() {
-  for file in harness.json mem0.json; do
+  for file in harness.json memory.json; do
     if [ -e "$HOME/.omp/$file.prev" ]; then mv "$HOME/.omp/$file.prev" "$HOME/.omp/$file"; else rm -f "$HOME/.omp/$file"; fi
   done
   echo "Réglages précédents rétablis (relance omp et l'app)."

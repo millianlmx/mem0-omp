@@ -1,5 +1,5 @@
 // Le code d'appairage du serveur de pipelines (`harness.sh pair`) et le réglage
-// partagé `~/.omp/harness.json` : les mêmes que lit le plugin `omp-mem0-req`
+// partagé `~/.omp/harness.json` : les mêmes que lit le plugin `omp-memory-req`
 // (`decodePairing`, `resolveTarget`), pour qu'une seule saisie relie tout.
 
 import Foundation
@@ -57,7 +57,7 @@ public struct HarnessPairing: Equatable, Sendable {
 
     /// Écrit l'appairage là où le lisent les plugins d'omp et l'app (comme `/pair`) :
     /// `~/.omp/harness.json`, dont les correspondances `repos` sont gardées, et
-    /// `~/.omp/mem0.json` quand le code porte une mémoire. En 0600. Le jeton écrit est
+    /// `~/.omp/memory.json` quand le code porte une mémoire. En 0600. Le jeton écrit est
     /// TOUJOURS l'ordinaire : toute session omp lit ce fichier, l'approbateur n'y entre pas.
     public func writeShared(home: URL) throws {
         let directory = home.appendingPathComponent(".omp", isDirectory: true)
@@ -69,7 +69,7 @@ public struct HarnessPairing: Equatable, Sendable {
         harness["token"] = token
         try Self.writePrivate(harness, to: harnessFile)
         if !memoryAddress.isEmpty {
-            try Self.writePrivate(["url": memoryAddress, "token": memoryToken], to: directory.appendingPathComponent("mem0.json"))
+            try Self.writePrivate(["url": memoryAddress, "token": memoryToken], to: directory.appendingPathComponent("memory.json"))
         }
     }
 

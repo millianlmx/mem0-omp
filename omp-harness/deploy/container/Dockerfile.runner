@@ -18,7 +18,7 @@ RUN set -eu; \
     curl -fsSL "https://github.com/can1357/oh-my-pi/releases/download/v${OMP_VERSION}/${asset}" -o /usr/local/bin/omp; \
     echo "${sha}  /usr/local/bin/omp" | sha256sum -c --quiet -; \
     chmod 0755 /usr/local/bin/omp
-COPY omp-mem0-memory /opt/omp-harness/omp-mem0-memory
+COPY omp-memory /opt/omp-harness/omp-memory
 COPY omp-harness/deploy/container/runner-entrypoint /usr/local/bin/omp-runner-entrypoint
 # Le HOME des runners : monté depuis l'hôte (connexion OMP, profil), inscriptible
 # par n'importe quel uid à défaut.

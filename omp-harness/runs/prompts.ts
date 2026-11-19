@@ -68,7 +68,7 @@ const POLICY = `## Politique de décision (non négociable)
 - Une décision tranchée par l'humain (section Oracle) s'impose : ne la rouvre pas.
 - \`save_checkpoint\` après chaque incrément cohérent (le service commite l'état courant) ; \`set_modules\` dès que tu connais les chemins que le travail touchera : les chemins du DÉPÔT que la feature touchera, jamais les fichiers de \`${ARTIFACTS_DIR}/\` (tes artefacts d'étape, hors git : le service refuse l'appel).
 - \`progress\` à chaque jalon franchi, une phrase.
-- En fin d'étape, \`mem0_add\` pour les SEULS pièges durables que tu as rencontrés (un fait autoportant par appel) ; rien de trivial ni de temporaire.`;
+- En fin d'étape, \`memory_add\` pour les SEULS pièges durables que tu as rencontrés (un fait autoportant par appel) ; rien de trivial ni de temporaire.`;
 
 function section(title: string, body: string | null): string {
   return body === null || body.trim() === "" ? "" : `\n## ${title}\n${body.trim()}\n`;
@@ -690,7 +690,7 @@ function fromPages(source: string, body: string | null): string | null {
  */
 function workstationSpace(space: string | null | undefined): string | null {
   if (!space) return null;
-  return `Tu travailles dans l'espace « ${space} », un client de l'utilisateur. Le navigateur où tu agis, le profil ci-dessous et ta mémoire (\`mem0_*\`) sont ceux de CET espace : n'y rapporte rien d'un autre client ou d'un autre contexte de l'utilisateur, et n'en sors rien.`;
+  return `Tu travailles dans l'espace « ${space} », un client de l'utilisateur. Le navigateur où tu agis, le profil ci-dessous et ta mémoire (\`memory_*\`) sont ceux de CET espace : n'y rapporte rien d'un autre client ou d'un autre contexte de l'utilisateur, et n'en sors rien.`;
 }
 
 /**
@@ -907,7 +907,7 @@ Nous sommes ${ctx.today}. Établis le PLAN DU JOUR de l'utilisateur : ce qu'il a
 /**
  * La passe de savoir de la boîte : lire Jira et Confluence autour du travail de l'utilisateur et
  * retenir les faits durables dans la mémoire de la connexion (`corpo`, ou `corpo:<espace>` : la portée
- * des `mem0_*` de la session), puis le compte rendu. `projects` : les projets Jira auxquels la connexion
+ * des `memory_*` de la session), puis le compte rendu. `projects` : les projets Jira auxquels la connexion
  * d'un espace est bornée.
  */
 export function workstationKnowledgePrompt(ctx: {
@@ -919,12 +919,12 @@ export function workstationKnowledgePrompt(ctx: {
   return [
     `# /poste-savoir — savoir de la boîte
 
-Tu enrichis la mémoire de la boîte de l'utilisateur (la portée de tes \`mem0_*\`) avec ce que Jira et Confluence apprennent sur son travail. Tu n'écris rien chez Atlassian.
+Tu enrichis la mémoire de la boîte de l'utilisateur (la portée de tes \`memory_*\`) avec ce que Jira et Confluence apprennent sur son travail. Tu n'écris rien chez Atlassian.
 
 ## Méthode
 1. Pars de son travail : les projets de ses tickets (\`jira_search\` \`assignee = currentUser()${bounded} ORDER BY updated DESC\`) et ses espaces Confluence (\`confluence_search\` \`contributor = currentUser()\`, puis \`space\` des projets trouvés) ; \`confluence_page\` pour lire une page, \`atlassian_search\` pour un sujet.${bounded === "" ? "" : " Ne sors pas de ces projets Jira."}
 2. Retiens ce qui sert durablement : conventions et processus d'équipe, glossaire, qui fait quoi, outils et environnements, règles de sécurité.
-3. \`mem0_search\` avant chaque \`mem0_add\` : ne double pas un fait déjà retenu, complète-le. Un fait AUTOPORTANT par appel, avec sa source (titre et URL de la page ou clé du ticket).
+3. \`memory_search\` avant chaque \`memory_add\` : ne double pas un fait déjà retenu, complète-le. Un fait AUTOPORTANT par appel, avec sa source (titre et URL de la page ou clé du ticket).
 4. Jamais de secret, de mot de passe, de jeton ni de donnée personnelle sensible.
 5. ${ctx.maxFacts} faits au plus dans cette passe ; puis \`atlassian_knowledge_report\`, une fois, et termine ton tour.
 

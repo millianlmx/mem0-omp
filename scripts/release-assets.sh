@@ -31,7 +31,7 @@
 #  · secrets MACOS_DEVELOPER_ID_P12_BASE64, MACOS_DEVELOPER_ID_P12_PASSWORD,
 #    NOTARY_API_KEY_ID, NOTARY_API_ISSUER_ID, NOTARY_API_KEY_P8_BASE64 : le
 #    certificat Developer ID Application est importé dans un trousseau temporaire,
-#    swift-app.sh signe avec lui (OMP_CODESIGN_IDENTITY), puis mem0-rs et le bundle
+#    swift-app.sh signe avec lui (OMP_CODESIGN_IDENTITY), puis memory-rs et le bundle
 #    sont re-signés avec le runtime renforcé (`--options runtime`) et un horodatage
 #    Apple (`--timestamp`), que la notarisation exige. Le bundle part chez Apple
 #    (`xcrun notarytool submit --wait`, clé d'API App Store Connect), le ticket est
@@ -40,9 +40,9 @@
 #    bundle AGRAFÉ, qui s'ouvre au premier double-clic, même hors ligne.
 #    Aucun entitlement : l'app n'est pas sandboxée (donc ni
 #    `com.apple.security.network.client` ni autre clé de bac à sable), le runtime
-#    renforcé ne limite pas le lancement de processus fils (mem0-rs via launchctl,
+#    renforcé ne limite pas le lancement de processus fils (memory-rs via launchctl,
 #    git, le shell du terminal), aucune bibliothèque d'une autre équipe n'est
-#    chargée (SwiftPM sans dépendance externe, mem0-rs lié statiquement : pas de
+#    chargée (SwiftPM sans dépendance externe, memory-rs lié statiquement : pas de
 #    `disable-library-validation`), aucun JIT, ni micro ni caméra, ni Apple Events.
 #  · sans ces secrets : signature ad hoc (ou d'une identité d'équipe du trousseau,
 #    voir l'en-tête de swift-app.sh) ; macOS met l'app en quarantaine au
@@ -350,12 +350,12 @@ identite() {
 
 BUNDLE="$ROOT/omp-console/build/OMP Console.app"
 
-# Re-signe mem0-rs puis le bundle avec le runtime renforcé et l'horodatage, puis
+# Re-signe memory-rs puis le bundle avec le runtime renforcé et l'horodatage, puis
 # prouve l'un et l'autre (la notarisation refuserait sans eux).
 signer_pour_notarisation() {
   local id="$1" code details
-  local mem0="$BUNDLE/Contents/Resources/mem0-rs"
-  for code in "$mem0" "$BUNDLE"; do
+  local memory="$BUNDLE/Contents/Resources/memory-rs"
+  for code in "$memory" "$BUNDLE"; do
     if ! codesign --force --timestamp --options runtime --sign "$id" "$code"; then
       echo "✗ signature Developer ID échouée : $code (codesign --options runtime --timestamp)" >&2
       return 1
@@ -367,14 +367,14 @@ signer_pour_notarisation() {
   fi
   # La sortie est lue en entier AVANT grep : `grep -q` fermerait le tube au premier
   # résultat, et sous pipefail le SIGPIPE de codesign ferait échouer le test.
-  for code in "$mem0" "$BUNDLE"; do
+  for code in "$memory" "$BUNDLE"; do
     details="$(codesign -dv "$code" 2>&1)"
     if ! printf '%s\n' "$details" | grep -qE 'flags=0x[0-9a-fA-F]+\([^)]*runtime'; then
       echo "✗ runtime renforcé absent de la signature de $code (codesign -dv : aucun drapeau runtime) — notarytool le refuserait" >&2
       return 1
     fi
   done
-  echo "  ✓ signé Developer ID, runtime renforcé et horodatage (mem0-rs, puis le bundle)"
+  echo "  ✓ signé Developer ID, runtime renforcé et horodatage (memory-rs, puis le bundle)"
 }
 
 # Soumet le bundle à Apple, attend le verdict, agrafe le ticket et le vérifie.

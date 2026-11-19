@@ -49,7 +49,7 @@ systemd-tmpfiles --create /etc/tmpfiles.d/omp-harness.conf
 # manifestes du plugin (même scope que le Mac), les runners chargent le plugin (-e).
 echo "· code du service et du plugin mémoire → $DEST"
 install -d -m 0755 "$DEST"
-for part in omp-harness omp-mem0-memory; do
+for part in omp-harness omp-memory; do
   rm -rf "$DEST/$part.new"
   cp -a "$REPO/$part" "$DEST/$part.new"
   rm -rf "$DEST/$part"
@@ -57,13 +57,13 @@ for part in omp-harness omp-mem0-memory; do
 done
 chown -R root:root "$DEST"
 
-echo "· oracle mem0-rs"
-if [ ! -x /usr/local/bin/mem0-rs ] || [ "${OMP_HARNESS_REBUILD_MEM0:-0}" = "1" ]; then
+echo "· oracle memory-rs"
+if [ ! -x /usr/local/bin/memory-rs ] || [ "${OMP_HARNESS_REBUILD_MEMORY:-0}" = "1" ]; then
   if command -v cargo >/dev/null; then
-    cargo build --release --locked --manifest-path "$REPO/mem0-stack/mem0-rs/Cargo.toml"
-    install -m 0755 "$REPO/mem0-stack/mem0-rs/target/release/mem0-rs" /usr/local/bin/mem0-rs
+    cargo build --release --locked --manifest-path "$REPO/memory-stack/memory-rs/Cargo.toml"
+    install -m 0755 "$REPO/memory-stack/memory-rs/target/release/memory-rs" /usr/local/bin/memory-rs
   else
-    echo "· cargo absent : installe /usr/local/bin/mem0-rs à la main (cargo build --release dans mem0-stack/mem0-rs)"
+    echo "· cargo absent : installe /usr/local/bin/memory-rs à la main (cargo build --release dans memory-stack/memory-rs)"
   fi
 fi
 
@@ -80,14 +80,14 @@ install -d -m 0755 /etc/omp-harness
 [ -e /etc/omp-harness/env ] || install -m 0640 -g omp-harness /dev/null /etc/omp-harness/env
 # Les clés des fournisseurs LLM des runners : root seul les lit, le lanceur les passe au runner.
 [ -e /etc/omp-harness/runner.env ] || install -m 0600 -o root -g root /dev/null /etc/omp-harness/runner.env
-# La mémoire du projet : un jeton partagé par mem0-rs, le service et les runners.
-if [ ! -e /etc/omp-harness/mem0.env ]; then
+# La mémoire du projet : un jeton partagé par memory-rs, le service et les runners.
+if [ ! -e /etc/omp-harness/memory.env ]; then
   token="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
-  sed "s/^MEM0_HTTP_TOKEN=.*/MEM0_HTTP_TOKEN=$token/" "$HERE/mem0.env.example" > /etc/omp-harness/mem0.env
-  chmod 0600 /etc/omp-harness/mem0.env
-  printf 'MEM0_HTTP_TOKEN=%s\n' "$token" >> /etc/omp-harness/env
-  printf 'MEM0_HTTP_URL=http://127.0.0.1:8321\nMEM0_HTTP_TOKEN=%s\n' "$token" >> /etc/omp-harness/runner.env
-  echo "· /etc/omp-harness/mem0.env créé : renseigne OMLX_BASE_URL (le homelab via Tailscale)"
+  sed "s/^MEMORY_HTTP_TOKEN=.*/MEMORY_HTTP_TOKEN=$token/" "$HERE/memory.env.example" > /etc/omp-harness/memory.env
+  chmod 0600 /etc/omp-harness/memory.env
+  printf 'MEMORY_HTTP_TOKEN=%s\n' "$token" >> /etc/omp-harness/env
+  printf 'MEMORY_HTTP_URL=http://127.0.0.1:8321\nMEMORY_HTTP_TOKEN=%s\n' "$token" >> /etc/omp-harness/runner.env
+  echo "· /etc/omp-harness/memory.env créé : renseigne OMLX_BASE_URL (le homelab via Tailscale)"
 fi
 
 echo "· git : les worktrees changent de propriétaire entre service, runners et heavy"
@@ -112,7 +112,7 @@ install -m 0755 "$HERE/omp-harness-client" /usr/local/bin/omp-harness-client
 
 echo "· tranches, service, zram, oomd"
 install -m 0644 "$HERE/omp-harness.slice" "$HERE/omp-harness-runners.slice" "$HERE/omp-harness-heavy.slice" \
-  "$HERE/omp-harness.service" "$HERE/omp-harness-mem0.service" /etc/systemd/system/
+  "$HERE/omp-harness.service" "$HERE/omp-harness-memory.service" /etc/systemd/system/
 if [ ! -e /etc/systemd/zram-generator.conf ]; then
   install -m 0644 "$HERE/zram-generator.conf" /etc/systemd/zram-generator.conf
   [ -e /usr/lib/systemd/system-generators/zram-generator ] || echo "· installe systemd-zram-generator pour activer le swap zram (8 Go)"
@@ -126,7 +126,7 @@ else
   echo "· systemd-oomd absent : installe-le (paquet systemd-oomd) pour la politique heavy avant runners"
 fi
 systemctl start dev-zram0.swap 2>/dev/null || true
-[ -x /usr/local/bin/mem0-rs ] && systemctl enable --now omp-harness-mem0.service || echo "· oracle non démarré : mem0-rs absent"
+[ -x /usr/local/bin/memory-rs ] && systemctl enable --now omp-harness-memory.service || echo "· oracle non démarré : memory-rs absent"
 
 if grep -q '"repos": \[\s*\]' /etc/omp-harness/config.json || grep -q '"mon-produit"' /etc/omp-harness/config.json; then
   echo
@@ -138,7 +138,7 @@ if grep -q '"repos": \[\s*\]' /etc/omp-harness/config.json || grep -q '"mon-prod
   echo "  2. sudo -u omp-harness -H env GIT_SSH_COMMAND=\"ssh -i /var/lib/omp-harness/.ssh/repos/<dépôt> -o IdentitiesOnly=yes\" git clone --bare git@github.com:<toi>/<dépôt>.git /var/lib/omp-harness/repos/<dépôt>"
   echo "  3. sudoedit /etc/omp-harness/config.json : repos (\"sshKey\": \"/var/lib/omp-harness/.ssh/repos/<dépôt>\"), models"
   echo "  4. Comptes LLM : ANTHROPIC_API_KEY=… dans /etc/omp-harness/runner.env, ou sudo -u omp-runner -H omp --profile pipeline (/login)"
-  echo "  5. OMLX_BASE_URL dans /etc/omp-harness/mem0.env, puis systemctl restart omp-harness-mem0"
+  echo "  5. OMLX_BASE_URL dans /etc/omp-harness/memory.env, puis systemctl restart omp-harness-memory"
   echo "  6. sudo omp-harness-check, puis systemctl enable --now omp-harness"
 else
   systemctl enable omp-harness.service

@@ -1,9 +1,9 @@
-// La migration UNIQUE de la pile podman d'omp-console vers mem0-rs (S-4
+// La migration UNIQUE de la pile podman d'omp-console vers memory-rs (S-4
 // d'omp-console-sans-podman ; AC-6, AC-7, AC-8, AC-9). C'est le SEUL code podman
 // restant, avec les `argv` réduits de `PodmanCommand`.
 //
 // Ordre figé : démarrer la machine et Qdrant s'il le faut, copier `history.db`
-// hors du conteneur mem0-http, `mem0-rs import --json`, et SEULEMENT après un
+// hors du conteneur mem0-http, `memory-rs import --json`, et SEULEMENT après un
 // import en code 0 (ou un choix explicite après des rejets) arrêter les
 // conteneurs, puis écrire `bascule.json` — le marqueur « une seule fois ». Toute
 // erreur avant ce marqueur laisse tout rejouable : l'import est tout ou rien et
@@ -59,7 +59,7 @@ struct ImportReject: Decodable, Equatable, Sendable {
     var detail: String
 }
 
-/// Le rapport `mem0-rs import --json` (DOC-4) : les rejets aplatis dans l'ordre du
+/// Le rapport `memory-rs import --json` (DOC-4) : les rejets aplatis dans l'ordre du
 /// rapport, leur total, et le stdout tel quel.
 struct ImportReport: Decodable, Equatable, Sendable {
     var rejects: [ImportReject]
@@ -152,7 +152,7 @@ final class PodmanLegacy {
     nonisolated static let podmanVersion = "6.1.3"
     nonisolated static let machineName = "omp-console"
     nonisolated static let qdrantContainer = "omp-console-qdrant"
-    nonisolated static let mem0Container = "omp-console-mem0-http"
+    nonisolated static let memoryContainer = "omp-console-mem0-http"
     /// `history.db` vit DANS le conteneur mem0-http (aucun volume, DOC-3).
     nonisolated static let historyPath = "/home/mem0/.mem0/history.db"
     nonisolated static let qdrantURL = URL(string: "http://127.0.0.1:6333")!
@@ -172,7 +172,7 @@ final class PodmanLegacy {
     }
 
     let paths: AppPaths
-    /// Le mem0-rs embarqué, qui exécute l'import.
+    /// Le memory-rs embarqué, qui exécute l'import.
     let executable: URL
 
     // MARK: - Réglages internes (les tests les raccourcissent)
@@ -181,7 +181,7 @@ final class PodmanLegacy {
     var readyBudget: Double = 90
     /// Intervalle entre deux sondes `/readyz`.
     var pollInterval: Double = 2
-    /// Délai maximal de `mem0-rs import`.
+    /// Délai maximal de `memory-rs import`.
     var importTimeout: Double = 600
     /// Délai maximal d'UNE commande podman.
     var commandTimeout: Double = 120
@@ -294,7 +294,7 @@ final class PodmanLegacy {
         progress(.stop)
         let stop: ProcessRun
         do {
-            stop = try await podman(PodmanCommand.containerStop([Self.mem0Container, Self.qdrantContainer]))
+            stop = try await podman(PodmanCommand.containerStop([Self.memoryContainer, Self.qdrantContainer]))
         } catch {
             throw PodmanMigrationError.stopFailed(detail: MemoryAgent.bounded(error.localizedDescription))
         }
@@ -321,7 +321,7 @@ final class PodmanLegacy {
     /// déjà effacé, la machine n'est plus demandée).
     ///
     /// Ne touche JAMAIS `stack/` (`qdrant_storage`, `env`, `installation-token`,
-    /// `podman-migration/`), `mem0-rs/`, `remote/`, `components/omp`, le plist
+    /// `podman-migration/`), `memory-rs/`, `remote/`, `components/omp`, le plist
     /// ni l'agent : aucun appel launchctl.
     func removeLeftovers() async throws {
         if fileManager.isExecutableFile(atPath: podmanBinary.path) {
@@ -446,7 +446,7 @@ final class PodmanLegacy {
         let copy: ProcessRun
         do {
             copy = try await podman(PodmanCommand.copyOut(
-                container: Self.mem0Container,
+                container: Self.memoryContainer,
                 path: Self.historyPath,
                 to: paths.podmanHistoryCopy
             ))
@@ -458,11 +458,11 @@ final class PodmanLegacy {
         }
     }
 
-    /// `mem0-rs import --json` sur la base de l'agent : n'appelle jamais oMLX, lit
+    /// `memory-rs import --json` sur la base de l'agent : n'appelle jamais oMLX, lit
     /// Qdrant avec sa clé, écrit tout ou rien (DOC-4).
     private func runImport(config: StackConfig) async throws -> ProcessRun {
         var importEnvironment = environment
-        importEnvironment["MEM0_DB_PATH"] = paths.mem0Database.path
+        importEnvironment["MEMORY_DB_PATH"] = paths.memoryDatabase.path
         importEnvironment["EMBEDDING_DIMS"] = String(config.embeddingDims)
         importEnvironment["QDRANT_API_KEY"] = config.qdrantApiKey
         let arguments = [

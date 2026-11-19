@@ -226,13 +226,13 @@ test("ios-memoire/AC-3 : vider la requête revient au sommaire déjà lu, sans r
 });
 
 // ---------------------------------------------------------------------------
-// AC-4 : la recherche est EXACTEMENT celle de l'outil `mem0_search`.
+// AC-4 : la recherche est EXACTEMENT celle de l'outil `memory_search`.
 
 /** Les manques de la parité de recherche (AC-4). */
 function searchParityFaults(root: string): string[] {
   const faults: string[] = [];
-  const config = fs.readFileSync(path.join(root, "omp-mem0-memory", "config.ts"), "utf8");
-  const tools = fs.readFileSync(path.join(root, "omp-mem0-memory", "tools.ts"), "utf8");
+  const config = fs.readFileSync(path.join(root, "omp-memory", "config.ts"), "utf8");
+  const tools = fs.readFileSync(path.join(root, "omp-memory", "tools.ts"), "utf8");
   const threshold = /SEARCH_THRESHOLD\s*=\s*([0-9.]+)/.exec(config)?.[1];
   const poolMax = /SEARCH_POOL_MAX\s*=\s*([0-9]+)/.exec(config)?.[1];
   const defaultLimit = /params\.limit\s*\?\?\s*([0-9]+)/.exec(tools)?.[1];
@@ -260,11 +260,11 @@ function searchParityFaults(root: string): string[] {
   return faults;
 }
 
-test("ios-memoire/AC-4 : la recherche est exactement celle de l'outil mem0_search", () => {
+test("ios-memoire/AC-4 : la recherche est exactement celle de l'outil memory_search", () => {
   assert.deepEqual(searchParityFaults(ROOT), []);
 
   const copy = shared.fresh();
-  const target = path.join(copy, "omp-mem0-memory", "config.ts");
+  const target = path.join(copy, "omp-memory", "config.ts");
   fs.writeFileSync(
     target,
     fs.readFileSync(target, "utf8").replace("SEARCH_THRESHOLD = 0.55", "SEARCH_THRESHOLD = 0.6"),

@@ -5,7 +5,7 @@
 //   node --experimental-strip-types scripts/types-ratchet.ts --write   réécrit scripts/types-ratchet-baseline.json
 //
 // L'option (OPTION, ci-dessous) est ajoutée aux TROIS programmes de scripts/typecheck.sh (tsconfig.json,
-// tsconfig.test.json, omp-chrome/tsconfig.json) par MEM0_OMP_TSC_ARGS : mêmes entrées, même tsc épinglé, mêmes types de
+// tsconfig.test.json, omp-chrome/tsconfig.json) par MEMORY_OMP_TSC_ARGS : mêmes entrées, même tsc épinglé, mêmes types de
 // l'hôte. Les erreurs sont dédoublonnées (un fichier de src/ est vu par deux programmes) puis comptées par fichier.
 //
 // Verdict :
@@ -157,7 +157,7 @@ function main(argv: string[]): number {
   const run = spawnSync("bash", ["scripts/typecheck.sh"], {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, MEM0_OMP_TSC_ARGS: `--${OPTION}` },
+    env: { ...process.env, MEMORY_OMP_TSC_ARGS: `--${OPTION}` },
     maxBuffer: 512 * 1024 * 1024,
   });
   const output = `${run.stdout ?? ""}${run.stderr ?? ""}`;

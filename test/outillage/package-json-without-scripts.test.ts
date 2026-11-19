@@ -124,7 +124,7 @@ test("package-json-without-scripts/AC-2 : npm run typecheck sort 0 sur une copie
   assert.equal(green.status, 0, output(green));
   assert.ok(!output(green).includes("error TS"), output(green));
 
-  const target = path.join(dir, "omp-mem0-memory/state.ts");
+  const target = path.join(dir, "omp-memory/state.ts");
   fs.writeFileSync(target, `const q: number = "boom";\n${fs.readFileSync(target, "utf8")}`);
   const red = npm(dir, ["--silent", "run", "typecheck"], 900_000);
   assert.notEqual(red.status, 0, output(red));

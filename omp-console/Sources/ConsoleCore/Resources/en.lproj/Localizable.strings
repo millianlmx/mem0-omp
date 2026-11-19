@@ -791,7 +791,7 @@
 "Ordonnancement" = "Scheduling";
 "Disque" = "Disk";
 "Mémoire du projet" = "Project memory";
-"Service mem0" = "mem0 service";
+"Service memory" = "memory service";
 "Sauvegardes" = "Backups";
 "Extension Chrome" = "Chrome extension";
 "En ordre" = "Fine";

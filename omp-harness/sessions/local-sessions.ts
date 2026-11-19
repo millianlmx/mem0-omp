@@ -1,13 +1,13 @@
 // Les sessions omp locales : ce que le développeur fait dans son terminal, rendu visible du serveur.
 //
-// Le rapporteur (plugin `omp-mem0-req`, local-session.ts) envoie un battement à chaque changement
+// Le rapporteur (plugin `omp-memory-req`, local-session.ts) envoie un battement à chaque changement
 // d'état de sa session et à chaque intention d'outil. Le serveur garde la dernière image de chaque
 // session, vieillit à la lecture celles qui se taisent (un terminal fermé sans prévenir), et peut
 // confier le travail d'une session à un run (`handoff`).
 //
 // - Un battement dit tout ce qu'il sait ; un champ facultatif ABSENT garde la valeur connue, `null`
 //   l'efface. Le dépôt n'est jamais fourni : il est déduit du distant, sinon du dossier.
-// - Battre, lire, confier et retirer sont au propriétaire (http.ts `ownerOf` : le rapporteur porte
+// - Battre, lire, confier et retirer sont au propriétaire (route-table.ts `ownerOf` : le rapporteur porte
 //   son jeton) : le titre et l'intention disent ce qui se fait sur le poste. Un battement ne touche
 //   que les sessions de SON client. Ses événements partent SANS dépôt — `local_session` ne porte
 //   que `{id, state}`, jamais le titre ni le dépôt (le journal en déduirait un dépôt, et un client
@@ -277,7 +277,7 @@ export class LocalSessionDesk {
 
   /**
    * Le dépôt DÉCLARÉ que la session travaille : celui que nomme son distant (`…/mem0-omp.git` →
-   * `mem0-omp`, comme `harness.sh add` nomme un dépôt), sinon le dernier segment de son dossier.
+   * `memory-omp`, comme `harness.sh add` nomme un dépôt), sinon le dernier segment de son dossier.
    */
   #repoOf(remote: string | null, cwd: string): string | null {
     const names = [remote === null ? "" : repoName(remote), lastSegment(cwd)];

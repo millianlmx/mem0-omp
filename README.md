@@ -1,11 +1,11 @@
-# mem0-omp
+# memory-omp
 
 Tu décris une feature à ton agent de code. Un serveur la mène jusqu'au merge :
 specs, code, tests, revue. Toi, tu valides les specs et les choix qui engagent,
 depuis ton Mac ou ton iPhone. Et d'une session à l'autre, l'agent se souvient de
 ton projet.
 
-mem0-omp s'installe par-dessus [OMP](https://omp.sh), l'agent de code.
+memory-omp s'installe par-dessus [OMP](https://omp.sh), l'agent de code.
 
 ## À quoi ça ressemble
 
@@ -125,15 +125,15 @@ serveur, démarre le service mémoire toi-même :
 
 ```bash
 git clone https://github.com/millianlmx/mem0-omp
-cd mem0-omp/mem0-stack
+cd mem0-omp/memory-stack
 cp .env.example .env        # ajuste OMLX_BASE_URL
-mkdir -p mem0-rs-data
+mkdir -p memory-rs-data
 podman compose up -d        # ou : docker compose up -d
 ./doctor.sh                 # teste toute la chaîne et dit quoi corriger
 ```
 
 Tu as une ancienne pile mem0-http ? Migre-la d'abord :
-[mem0-stack/README.md](mem0-stack/README.md#migrer-une-pile-mem0-http-existante).
+[memory-stack/README.md](memory-stack/README.md#migrer-une-pile-mem0-http-existante).
 
 ### 3. Les plugins dans omp
 
@@ -141,14 +141,14 @@ Dans une session omp :
 
 ```
 /marketplace add millianlmx/mem0-omp
-/marketplace install omp-mem0-memory@mem0-omp
-/marketplace install omp-mem0-req@mem0-omp
+/marketplace install omp-memory@mem0-omp
+/marketplace install omp-memory-req@mem0-omp
 ```
 
 Puis **relance `omp`** (`/reload-plugins` ne suffit pas). En ligne de commande,
 c'est `omp plugin marketplace add millianlmx/mem0-omp` puis
 `omp plugin install <plugin>@mem0-omp`, avec `--scope project` pour un seul
-projet. Sans marketplace, `omp-mem0-memory/install.sh` installe la mémoire seule.
+projet. Sans marketplace, `omp-memory/install.sh` installe la mémoire seule.
 
 Si tu n'as pas collé le code dans l'app, relie omp au serveur une fois, puis
 relance omp :
@@ -161,7 +161,7 @@ Il n'y a rien à faire par projet : au premier démarrage dans un dépôt, le pl
 y pose ses consignes de mémoire.
 
 - **Service mémoire déjà joignable** (serveur, app ou pile conteneur) :
-  `/mem0-status` le confirme.
+  `/memory-status` le confirme.
 - **Aucun service** : le plugin se dégrade proprement. Pas de souvenirs, un
   avertissement, et aucune session bloquée.
 
@@ -178,7 +178,7 @@ commande qui corrige.
 
 Puis sur le Mac, dans un de tes dépôts :
 
-1. Lance `omp`, puis `/mem0-status` : le service répond et le projet est le bon.
+1. Lance `omp`, puis `/memory-status` : le service répond et le projet est le bon.
 2. Dis « Note que le linter de ce projet est Ruff ». Dans une nouvelle session,
    demande « quel linter on utilise ? » : la réponse vient de la mémoire.
 3. `/pipelines` : la boîte du serveur s'affiche, vide.
@@ -350,43 +350,43 @@ passe. Le détail du serveur : [omp-harness/README.md](omp-harness/README.md)
 Chaque projet a sa propre mémoire. À chaque tour, l'agent reçoit les souvenirs
 utiles à ta demande, et il écrit lui-même ce qui restera vrai. Le sommaire de la
 mémoire est exhaustif tant qu'il n'est pas tronqué (60 entrées) ; au-delà, il dit
-ce qui manque et l'agent cherche avec `mem0_search`.
+ce qui manque et l'agent cherche avec `memory_search`.
 Le rappel d'un tour tient en 4 000 caractères : un souvenir plus long que
-1 200 caractères y est rogné, et `mem0_search` le rend entier.
+1 200 caractères y est rogné, et `memory_search` le rend entier.
 
-Les souvenirs sont **reliés**. L'agent relie avec `mem0_link` un bug à sa cause, une
+Les souvenirs sont **reliés**. L'agent relie avec `memory_link` un bug à sa cause, une
 convention à celle qu'elle remplace ; le rappel et la recherche montrent ces liens
 sous chaque souvenir. Et la mémoire **rêve** quand le projet est au repos : elle
 propose de fusionner les doublons, consolide les faits en observations et réécrit
 une synthèse du projet (architecture, conventions, décisions, pièges, préférences)
 que l'agent lit en tête de session. Rien n'est supprimé sans ton accord :
-`/mem0-dream` montre les propositions.
+`/memory-dream` montre les propositions.
 
 Le nom du projet vient du manifeste (`package.json`, `pyproject.toml`,
-`Cargo.toml`…), sinon du dossier. `/mem0-status` affiche celui qui est retenu.
+`Cargo.toml`…), sinon du dossier. `/memory-status` affiche celui qui est retenu.
 
 | Commande | Ce qu'elle fait |
 |---|---|
-| `/mem0-status` | Connexion, projet, état de la session. |
-| `/mem0-init` | Amorce la mémoire d'un dépôt existant. |
-| `/mem0-save` | Fait écrire maintenant ce que la session a appris. |
-| `/mem0-dedupe` | Repère les doublons (rien n'est supprimé sans `--apply`). |
-| `/mem0-dream` | Journal du rêve de la mémoire et propositions à accepter ou refuser. |
+| `/memory-status` | Connexion, projet, état de la session. |
+| `/memory-init` | Amorce la mémoire d'un dépôt existant. |
+| `/memory-save` | Fait écrire maintenant ce que la session a appris. |
+| `/memory-dedupe` | Repère les doublons (rien n'est supprimé sans `--apply`). |
+| `/memory-dream` | Journal du rêve de la mémoire et propositions à accepter ou refuser. |
 
 <details>
 <summary>Variables d'environnement</summary>
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `MEM0_HTTP_URL` | `~/.omp/mem0.json`, sinon `http://localhost:8321` | l'adresse du service mémoire |
-| `MEM0_HTTP_TOKEN` | celui de `~/.omp/mem0.json` | le jeton du service, s'il en exige un |
-| `MEM0_PROJECT_ID` | — | force le nom du projet |
-| `MEM0_AUTOSETUP` | `1` | `0` : le plugin n'écrit jamais dans un dépôt |
-| `MEM0_QUIET` | `0` | `1` : souvenirs injectés sans être affichés |
-| `MEM0_NUDGE` | `1` | `0` : pas de relance d'écriture en fin de session |
+| `MEMORY_HTTP_URL` | `~/.omp/memory.json`, sinon `http://localhost:8321` | l'adresse du service mémoire |
+| `MEMORY_HTTP_TOKEN` | celui de `~/.omp/memory.json` | le jeton du service, s'il en exige un |
+| `MEMORY_PROJECT_ID` | — | force le nom du projet |
+| `MEMORY_AUTOSETUP` | `1` | `0` : le plugin n'écrit jamais dans un dépôt |
+| `MEMORY_QUIET` | `0` | `1` : souvenirs injectés sans être affichés |
+| `MEMORY_NUDGE` | `1` | `0` : pas de relance d'écriture en fin de session |
 | `HARNESS_URL`, `HARNESS_TOKEN` | `~/.omp/harness.json` | le serveur et son jeton |
 | `HARNESS_REPO` | nom du dossier | le nom du dépôt sur le serveur |
-| `OMP_HARNESS_LOCAL_SESSIONS` | `1` | `0` : la session ne se signale pas au serveur ([omp-mem0-req/README.md](omp-mem0-req/README.md)) |
+| `OMP_HARNESS_LOCAL_SESSIONS` | `1` | `0` : la session ne se signale pas au serveur ([omp-memory-req/README.md](omp-memory-req/README.md)) |
 
 La configuration du serveur (dépôts, modèles, plafonds) :
 [omp-harness/README.md](omp-harness/README.md) § « Configuration ».
@@ -400,11 +400,11 @@ La configuration du serveur (dépôts, modèles, plafonds) :
   Colle le code d'appairage dans l'app, ou lance `/pair`.
 - **Un merge n'arrive pas sur GitHub** : le plus souvent, la clé de déploiement
   est en lecture seule.
-- **`/mem0-status` en rouge avec la pile conteneur** : lance
-  `cd mem0-stack && ./doctor.sh`, il dit quoi corriger.
+- **`/memory-status` en rouge avec la pile conteneur** : lance
+  `cd memory-stack && ./doctor.sh`, il dit quoi corriger.
 - **L'agent ignore un souvenir** : le sommaire est exhaustif tant qu'il n'est pas
-  tronqué (60 entrées) ; au-delà, l'agent doit chercher avec `mem0_search`.
-  Vérifie aussi le projet affiché par `/mem0-status`.
+  tronqué (60 entrées) ; au-delà, l'agent doit chercher avec `memory_search`.
+  Vérifie aussi le projet affiché par `/memory-status`.
 
 ## Contribuer
 

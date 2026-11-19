@@ -1,8 +1,8 @@
 // La directive mémoire reposée dans le prompt système à chaque tour
-// (omp-mem0-memory/brief.ts, SYSTEM_DIRECTIVE).
+// (omp-memory/brief.ts, SYSTEM_DIRECTIVE).
 //
 // Avant, elle affirmait « un sujet absent du sommaire n'est pas en mémoire » et
-// réservait mem0_search au dépliage d'une entrée — alors que le sommaire est
+// réservait memory_search au dépliage d'une entrée — alors que le sommaire est
 // tronqué aux INDEX_MAX_ENTRIES plus récents, et que le bloc AGENTS.md comme le
 // brief demandent de chercher dès que le sujet sort du rappel. Elle répétait en
 // outre une phrase entière. Ce que le modèle lit est ce texte : c'est lui qu'on juge.
@@ -11,13 +11,13 @@ import assert from "node:assert/strict";
 import { tmpdir } from "../support/repo.ts";
 import { fakeSchema } from "../support/fake-zod.ts";
 
-process.env.MEM0_AUTOSETUP = "0";
+process.env.MEMORY_AUTOSETUP = "0";
 const {
-  default: mem0MemoryExtension,
+  default: memoryPluginExtension,
   AGENTS_BLOCK,
   BRIEF_REFERENCE,
   INDEX_MAX_ENTRIES,
-} = await import("../../omp-mem0-memory/extension.ts");
+} = await import("../../omp-memory/extension.ts");
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async () => {
@@ -41,14 +41,14 @@ async function directive(): Promise<string> {
     registerTool: () => {},
     registerCommand: () => {},
   };
-  mem0MemoryExtension(pi as unknown as Parameters<typeof mem0MemoryExtension>[0]);
+  memoryPluginExtension(pi as unknown as Parameters<typeof memoryPluginExtension>[0]);
   const r = (await before!(
     { prompt: "Quelle est la convention de nommage ?", systemPrompt: ["base"] } as never,
     {
       cwd: tmpdir("directive-"),
     } as never,
   )) as { systemPrompt: string[] };
-  const d = r.systemPrompt.find((s) => s.startsWith("Mémoire mem0 :"));
+  const d = r.systemPrompt.find((s) => s.startsWith("Mémoire memory :"));
   assert.ok(d, "directive absente du prompt système");
   return d;
 }
@@ -64,14 +64,14 @@ test("directive-recherche/AC-1 : la directive ne répète aucune phrase", async 
 
 test("directive-recherche/AC-2 : chercher dès que le sujet sort du rappel, le sommaire pouvant être tronqué", async () => {
   const d = await directive();
-  assert.doesNotMatch(d, /uniquement pour déplier/, "mem0_search n'est plus réservé au dépliage");
+  assert.doesNotMatch(d, /uniquement pour déplier/, "memory_search n'est plus réservé au dépliage");
   assert.doesNotMatch(d, /Un sujet absent du sommaire n'est pas en mémoire/);
   assert.match(
     d,
-    /Dès que le sujet se déplace hors de ce que le rappel a injecté, appelle mem0_search AVANT d'explorer/,
+    /Dès que le sujet se déplace hors de ce que le rappel a injecté, appelle memory_search AVANT d'explorer/,
   );
   assert.ok(d.includes(`au-delà de ${INDEX_MAX_ENTRIES} souvenirs`), "la troncature du sommaire est dite");
   // Le même conseil que le bloc AGENTS.md et le brief : chercher quand le sujet bouge.
-  assert.match(AGENTS_BLOCK, /se déplace vers un sujet que ce rappel ne couvre pas, appelle\s+`mem0_search`/);
-  assert.match(BRIEF_REFERENCE, /`mem0_search` dès que le sujet bouge/);
+  assert.match(AGENTS_BLOCK, /se déplace vers un sujet que ce rappel ne couvre pas, appelle\s+`memory_search`/);
+  assert.match(BRIEF_REFERENCE, /`memory_search` dès que le sujet bouge/);
 });

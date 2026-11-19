@@ -829,11 +829,11 @@ private func logged(_ runner: CommandRunner, _ log: CommandLog, as name: String)
     }
 }
 
-/// Le `/health` de NOTRE mem0-rs : il rend le jeton d'installation du disque.
+/// Le `/health` de NOTRE memory-rs : il rend le jeton d'installation du disque.
 private func installedHealth(_ paths: AppPaths) -> () -> Data? {
     {
         guard let token = InstallationTokenStore.load(at: paths.installationToken) else { return nil }
-        return memoryJSON(["ok": true, "mem0": "mem0-rs 0.1.0", "user": "moi", "installation": token])
+        return memoryJSON(["ok": true, "memory": "memory-rs 0.1.0", "user": "moi", "installation": token])
     }
 }
 
@@ -1057,19 +1057,19 @@ func setupTextsAreFrozen() {
     #expect(SetupText.failureDiagnostic(.migration(.historyCopyFailed(detail: "absent")))
         == "podman cp omp-console-mem0-http:/home/mem0/.mem0/history.db a échoué : absent")
     #expect(SetupText.failureDiagnostic(.migration(.importFailed(code: 2, detail: "boom")))
-        == "mem0-rs import a échoué (code 2) : boom")
+        == "memory-rs import a échoué (code 2) : boom")
     #expect(SetupText.failureDiagnostic(.migration(.stopFailed(detail: "socket fermé")))
         == "podman stop omp-console-mem0-http omp-console-qdrant a échoué : socket fermé")
     #expect(SetupText.failureDiagnostic(.migration(.stateWriteFailed(path: "/s/bascule.json", detail: "disque plein")))
         == "État de bascule non inscriptible (/s/bascule.json) : disque plein")
-    #expect(SetupText.failureDiagnostic(.agent(.binaryMissing(path: "/a/mem0-rs")))
-        == "mem0-rs absent ou non exécutable : /a/mem0-rs")
+    #expect(SetupText.failureDiagnostic(.agent(.binaryMissing(path: "/a/memory-rs")))
+        == "memory-rs absent ou non exécutable : /a/memory-rs")
     #expect(SetupText.failureDiagnostic(.agent(.launchctlFailed(command: "bootstrap", detail: "EIO")))
         == "launchctl bootstrap a échoué : EIO")
     #expect(SetupText.failureDiagnostic(.agent(.plistWriteFailed(path: "/l/x.plist", detail: "lecture seule")))
         == "Plist de l’agent non inscriptible (/l/x.plist) : lecture seule")
-    #expect(SetupText.failureDiagnostic(.agent(.healthTimeout(seconds: 30, log: "panic")), logPath: "/j/mem0-rs.log")
-        == "Le service mémoire n’a pas répondu dans le délai imparti (30 s).\nJournal : /j/mem0-rs.log\npanic")
+    #expect(SetupText.failureDiagnostic(.agent(.healthTimeout(seconds: 30, log: "panic")), logPath: "/j/memory-rs.log")
+        == "Le service mémoire n’a pas répondu dans le délai imparti (30 s).\nJournal : /j/memory-rs.log\npanic")
     #expect(SetupText.failureDiagnostic(.agent(.portConflict(port: 8321, owner: .foreign(process: "nc", pid: 4711))))
         == "Le port 8321 est déjà tenu par un autre programme (nc, pid 4711) : la mémoire ne peut pas démarrer.\nGeste : arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)")
 
@@ -1079,7 +1079,7 @@ func setupTextsAreFrozen() {
     #expect(SetupText.failureRetryGesture == retry)
     #expect(SetupText.failureMessage(.migration(.stopFailed(detail: "socket fermé")))
         == "L’ancienne mémoire n’a pas pu être arrêtée : la nouvelle ne peut pas démarrer. \(retry)")
-    #expect(SetupText.failureMessage(.agent(.binaryMissing(path: "/a/mem0-rs")))
+    #expect(SetupText.failureMessage(.agent(.binaryMissing(path: "/a/memory-rs")))
         == "Le service mémoire manque dans l’app : les souvenirs sont indisponibles. Réinstallez OMP Console.")
     #expect(SetupText.failureMessage(.agent(.launchctlFailed(command: "bootstrap", detail: "EIO")))
         == "Le service mémoire n’a pas pu être lancé : les souvenirs sont indisponibles. \(retry)")
@@ -1107,7 +1107,7 @@ private let podmanFailures: [(failure: SetupFailure, raw: [String])] = [
     (.agent(.launchctlFailed(command: "préparation", detail: "")), ["launchctl préparation"]),
     (.agent(.launchctlFailed(command: "bootstrap", detail: "Input/output error")), ["bootstrap", "Input/output error"]),
     (.agent(.portConflict(port: 8321, owner: .foreign(process: "python3", pid: 4711))), ["8321", "4711", "lsof"]),
-    (.agent(.portConflict(port: 8321, owner: .ours(process: "mem0-rs", pid: 99))), ["8321", "le service mémoire d'OMP Console"]),
+    (.agent(.portConflict(port: 8321, owner: .ours(process: "memory-rs", pid: 99))), ["8321", "le service mémoire d'OMP Console"]),
     (.agent(.portConflict(port: 8321, owner: .free)), ["8321"]),
     (.agent(.portConflict(port: 8321, owner: .unknown(detail: "lsof absent"))), ["8321", "lsof absent"]),
 ]

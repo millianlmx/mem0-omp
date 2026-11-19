@@ -267,7 +267,7 @@ export function renderMetrics(orchestrator: Orchestrator, version: string, now =
   ]);
   const memory = observability.cachedMemory();
   if (memory?.configured)
-    out.gauge("omp_harness_memory_up", "La mémoire (mem0-rs) répondait au dernier contrôle (1) ou non (0).", [
+    out.gauge("omp_harness_memory_up", "La mémoire (memory-rs) répondait au dernier contrôle (1) ou non (0).", [
       { labels: {}, value: memory.ok ? 1 : 0 },
     ]);
   out.gauge("omp_harness_info", "La version du service (valeur 1).", [{ labels: { version }, value: 1 }]);

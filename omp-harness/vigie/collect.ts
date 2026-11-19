@@ -218,7 +218,7 @@ export function signalsOfStatus(
       ...base,
       source: "memory",
       location: "oracle",
-      message: "la mémoire du projet (mem0-rs) ne répond pas au harness",
+      message: "la mémoire du projet (memory-rs) ne répond pas au harness",
       context: "GET /v1/status : oracle.ok = false",
     });
   const memory = record(body.memory);

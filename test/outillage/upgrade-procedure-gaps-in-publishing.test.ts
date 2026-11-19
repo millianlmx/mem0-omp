@@ -40,12 +40,12 @@ const MARKETPLACE_UPDATE: Gesture = {
   label: "marketplace update",
   marker: "omp plugin marketplace update mem0-omp",
 };
-const UPGRADE: Gesture = { label: "omp plugin upgrade", marker: "omp plugin upgrade omp-mem0-req@mem0-omp" };
+const UPGRADE: Gesture = { label: "omp plugin upgrade", marker: "omp plugin upgrade omp-memory-req@mem0-omp" };
 const RELAUNCH: Gesture = { label: "relance de omp", marker: "Relance `omp`" };
 const PLUGIN_LIST: Gesture = { label: "vérification plugin (omp plugin list)", marker: "omp plugin list" };
 const PLUGIN_LINK_TARGET: Gesture = {
   label: "vérification plugin (lien node_modules)",
-  marker: "ls -la ~/.omp/plugins/node_modules/omp-mem0-req",
+  marker: "ls -la ~/.omp/plugins/node_modules/omp-memory-req",
 };
 const LINK: Gesture = { label: "omp plugin link", marker: "omp plugin link <worktree>" };
 

@@ -442,7 +442,7 @@ test("atlassian-agents/AC-9 : la passe de savoir part à la période ou sur dema
     assert.equal(desk.status().knowledge.lastSummary, summary);
     assert.notEqual(desk.lastKnowledgeAt(), null);
     const launched = w.log().find((entry) => entry.kind === "argv");
-    assert.equal((launched?.env as Record<string, unknown> | undefined)?.MEM0_PROJECT_ID, "corpo");
+    assert.equal((launched?.env as Record<string, unknown> | undefined)?.MEMORY_PROJECT_ID, "corpo");
     assert.ok(atlassian.calls.some((call) => call.tool === "searchConfluence"));
     const offered = toolsSet(w, "poste-savoir");
     assert.ok(!offered.includes("corpo_recall"), "sa mémoire est corpo");

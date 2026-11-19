@@ -81,7 +81,7 @@ struct DiagnosticCopyTests {
             (.historyCopyFailed(detail: detail),
              "podman cp omp-console-mem0-http:/home/mem0/.mem0/history.db a échoué\u{00A0}: \(detail)", detail),
             (.importFailed(code: 1, detail: detail),
-             "mem0-rs import a échoué (code 1)\u{00A0}: \(detail)", detail),
+             "memory-rs import a échoué (code 1)\u{00A0}: \(detail)", detail),
             (.stopFailed(detail: detail),
              "podman stop omp-console-mem0-http omp-console-qdrant a échoué\u{00A0}: \(detail)", detail),
             (.stateWriteFailed(path: "/tmp/x/stack/podman-migration/bascule.json", detail: detail),
