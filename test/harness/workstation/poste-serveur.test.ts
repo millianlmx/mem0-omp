@@ -10,24 +10,11 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-<<<<<<< HEAD:test/harness/poste-serveur.test.ts
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { Store } from "../../omp-harness/db/db.ts";
-import type { Meeting, Segment, StoredObservation, WorkstationAction } from "../../omp-harness/db/db.ts";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import { apiRoutes } from "../../omp-harness/api/route-table.ts";
-import { clientCommand } from "../../omp-harness/main.ts";
-import { Orchestrator } from "../../omp-harness/runs/orchestrator.ts";
-import { APPROVER_ONLY, profileStats } from "../../omp-harness/workstation/workstation.ts";
-import type { ProfileStats, WorkstationStatus } from "../../omp-harness/workstation/workstation.ts";
-import { fakeWorld } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
-=======
 import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
 import { Store } from "../../../omp-harness/db/db.ts";
 import type { Meeting, Segment, StoredObservation, WorkstationAction } from "../../../omp-harness/db/db.ts";
-import { apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import { clientCommand } from "../../../omp-harness/main.ts";
 import { Orchestrator } from "../../../omp-harness/runs/orchestrator.ts";
 import { APPROVER_ONLY } from "../../../omp-harness/workstation/workstation.ts";
@@ -37,7 +24,6 @@ import type { WorkstationStatus } from "../../../omp-harness/workstation/worksta
 import { fakeWorld } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import { tmpdir } from "../../support/repo.ts";
->>>>>>> 13e3f862210715d160eb270fe081643760df1902:test/harness/workstation/poste-serveur.test.ts
 
 const ADMIN = "a".repeat(64);
 const HOUR = 3_600_000;

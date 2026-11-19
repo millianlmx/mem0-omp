@@ -9,20 +9,12 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-<<<<<<< HEAD:test/harness/os-sessions-locales.test.ts
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { repoDefaults } from "../../omp-harness/config/config.ts";
-import type { EventRow, LocalSession, RunRow } from "../../omp-harness/db/db.ts";
-import { EPHEMERAL_EVENTS, EVENT_TYPES } from "../../omp-harness/api/events.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
-import { apiRoutes } from "../../omp-harness/api/route-table.ts";
-=======
 import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
 import { repoDefaults } from "../../../omp-harness/config/config.ts";
 import type { EventRow, LocalSession, RunRow } from "../../../omp-harness/db/db.ts";
 import { EPHEMERAL_EVENTS, EVENT_TYPES } from "../../../omp-harness/api/events.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
->>>>>>> 13e3f862210715d160eb270fe081643760df1902:test/harness/sessions/os-sessions-locales.test.ts
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import {
   ENDED_AFTER_MS,
   IDLE_AFTER_MS,

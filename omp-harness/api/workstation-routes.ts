@@ -6,17 +6,11 @@ import { ACTION_STATES } from "../db/db.ts";
 import type { ActionState } from "../db/db.ts";
 import { HarnessError } from "./errors.ts";
 import { text } from "./input.ts";
-import {
-  MAX_WAIT_SEC,
-  SESSION_JOBS,
-  approverFor,
-  parseActionInput,
-  NO_SPACE_BROWSER,
-  parseBrowserHello,
-  parseRequestStates,
-  workstationFor,
-} from "../workstation/workstation.ts";
-import type { BrowserHello, SessionJob, Workstation } from "../workstation/workstation.ts";
+import { MAX_WAIT_SEC, SESSION_JOBS, approverFor, workstationFor } from "../workstation/workstation.ts";
+import { parseActionInput, parseBrowserHello, parseRequestStates } from "../workstation/workstation-input.ts";
+import { NO_SPACE_BROWSER } from "../workstation/workstation-presence.ts";
+import type { BrowserHello } from "../workstation/workstation-input.ts";
+import type { SessionJob, Workstation } from "../workstation/workstation.ts";
 import { parseLoginInput } from "../browser/vps-login.ts";
 import { readBody, send } from "./http-io.ts";
 import type { Call, RouteKit } from "./route-table.ts";

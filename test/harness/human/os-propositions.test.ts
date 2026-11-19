@@ -10,29 +10,6 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-<<<<<<< HEAD:test/harness/os-propositions.test.ts
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { repoDefaults } from "../../omp-harness/config/config.ts";
-import type { HarnessConfig, RepoConfig } from "../../omp-harness/config/config.ts";
-import type { AtlassianPlan, RunRow } from "../../omp-harness/db/db.ts";
-import { EVENT_TYPES } from "../../omp-harness/api/events.ts";
-import { openForge } from "../../omp-harness/forge/forge.ts";
-import { Git } from "../../omp-harness/forge/git.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
-import { apiRoutes } from "../../omp-harness/api/route-table.ts";
-import { MCP_TOOLS } from "../../omp-harness/api/mcp.ts";
-import { Orchestrator } from "../../omp-harness/runs/orchestrator.ts";
-import type { Exec, ProcResult } from "../../omp-harness/runners/proc.ts";
-import { execProcess } from "../../omp-harness/runners/proc.ts";
-import { DETAIL_MAX, cleanTitle, proposalId } from "../../omp-harness/human/proposals.ts";
-import type { Proposal, RunTemplate } from "../../omp-harness/human/proposals.ts";
-import { ConfigAdmin } from "../../omp-harness/config/repos.ts";
-import { fingerprintMarker } from "../../omp-harness/vigie/desk.ts";
-import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../omp-harness/workstation/workstation-guards.ts";
-import { OK, fakeWorld, git, harnessRepo, testConfig, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { ROOT, tmpdir } from "../support/repo.ts";
-=======
 import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
 import { repoDefaults } from "../../../omp-harness/config/config.ts";
 import type { HarnessConfig, RepoConfig } from "../../../omp-harness/config/config.ts";
@@ -40,7 +17,8 @@ import type { AtlassianPlan, RunRow } from "../../../omp-harness/db/db.ts";
 import { EVENT_TYPES } from "../../../omp-harness/api/events.ts";
 import { openForge } from "../../../omp-harness/forge/forge.ts";
 import { Git } from "../../../omp-harness/forge/git.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import { MCP_TOOLS } from "../../../omp-harness/api/mcp.ts";
 import { Orchestrator } from "../../../omp-harness/runs/orchestrator.ts";
 import type { Exec, ProcResult } from "../../../omp-harness/runners/proc.ts";
@@ -53,7 +31,6 @@ import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../../omp-harness/workstation
 import { OK, fakeWorld, git, harnessRepo, testConfig, waitFor } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../../support/repo.ts";
->>>>>>> 13e3f862210715d160eb270fe081643760df1902:test/harness/human/os-propositions.test.ts
 
 const DAY_MS = 86_400_000;
 const ADMIN = "a".repeat(64);

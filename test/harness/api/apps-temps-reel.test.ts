@@ -13,21 +13,13 @@ import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as zlib from "node:zlib";
-<<<<<<< HEAD:test/harness/apps-temps-reel.test.ts
-import { PULSE_TEXT, createHandler, pulseFrame } from "../../omp-harness/api/http.ts";
-import { GZIP_MIN_BYTES } from "../../omp-harness/api/http-io.ts";
-import { StatsCache } from "../../omp-harness/api/run-routes.ts";
-import type { EventRow } from "../../omp-harness/db/db.ts";
-import { INBOX_DECISIONS } from "../../omp-harness/api/queries.ts";
-import { fakeWorld } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-=======
-import { GZIP_MIN_BYTES, PULSE_TEXT, StatsCache, createHandler, pulseFrame } from "../../../omp-harness/api/http.ts";
+import { PULSE_TEXT, createHandler, pulseFrame } from "../../../omp-harness/api/http.ts";
+import { GZIP_MIN_BYTES } from "../../../omp-harness/api/http-io.ts";
+import { StatsCache } from "../../../omp-harness/api/run-routes.ts";
 import type { EventRow } from "../../../omp-harness/db/db.ts";
 import { INBOX_DECISIONS } from "../../../omp-harness/api/queries.ts";
 import { fakeWorld } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
->>>>>>> 13e3f862210715d160eb270fe081643760df1902:test/harness/api/apps-temps-reel.test.ts
 
 const ADMIN = "t".repeat(64);
 

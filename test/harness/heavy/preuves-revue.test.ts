@@ -10,18 +10,6 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-<<<<<<< HEAD:test/harness/preuves-revue.test.ts
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import type { ApnsConfig } from "../../omp-harness/config/config.ts";
-import { repoDefaults } from "../../omp-harness/config/config.ts";
-import { Store } from "../../omp-harness/db/db.ts";
-import type { EventRow } from "../../omp-harness/db/db.ts";
-import { OUTPUT_TAIL } from "../../omp-harness/heavy/heavy.ts";
-import type { HeavyResult } from "../../omp-harness/heavy/heavy.ts";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import { apiRoutes } from "../../omp-harness/api/route-table.ts";
-import { notificationFor } from "../../omp-harness/notify/notify.ts";
-=======
 import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
 import type { ApnsConfig } from "../../../omp-harness/config/config.ts";
 import { repoDefaults } from "../../../omp-harness/config/config.ts";
@@ -29,9 +17,9 @@ import { Store } from "../../../omp-harness/db/db.ts";
 import type { EventRow } from "../../../omp-harness/db/db.ts";
 import { OUTPUT_TAIL } from "../../../omp-harness/heavy/heavy.ts";
 import type { HeavyResult } from "../../../omp-harness/heavy/heavy.ts";
-import { apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import { notificationFor } from "../../../omp-harness/notify/notify.ts";
->>>>>>> 13e3f862210715d160eb270fe081643760df1902:test/harness/heavy/preuves-revue.test.ts
 import {
   MAX_PROOFS,
   MAX_PROOF_BYTES,

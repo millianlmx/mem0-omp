@@ -8,28 +8,12 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-<<<<<<< HEAD:test/harness/demande.test.ts
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import type { Client } from "../../omp-harness/api/auth.ts";
-import { loadConfig, repoDefaults } from "../../omp-harness/config/config.ts";
-import type { HarnessConfig } from "../../omp-harness/config/config.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
-import { apiRoutes } from "../../omp-harness/api/route-table.ts";
-import type { IntakeView } from "../../omp-harness/intake/intake.ts";
-import { addLocalModel } from "../../omp-harness/config/local-model.ts";
-import { Orchestrator } from "../../omp-harness/runs/orchestrator.ts";
-import { hostToolsFor, runnerArgv } from "../../omp-harness/runners/runner.ts";
-import { APPROVER_ONLY } from "../../omp-harness/workstation/workstation.ts";
-import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../omp-harness/workstation/workstation-guards.ts";
-import { fakeWorld, harnessRepo, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { ROOT, tmpdir } from "../support/repo.ts";
-=======
 import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
 import type { Client } from "../../../omp-harness/api/auth.ts";
 import { loadConfig, repoDefaults } from "../../../omp-harness/config/config.ts";
 import type { HarnessConfig } from "../../../omp-harness/config/config.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import type { IntakeView } from "../../../omp-harness/intake/intake.ts";
 import { addLocalModel } from "../../../omp-harness/config/local-model.ts";
 import { Orchestrator } from "../../../omp-harness/runs/orchestrator.ts";
@@ -39,7 +23,6 @@ import { UNTRUSTED_BEGIN, UNTRUSTED_END } from "../../../omp-harness/workstation
 import { fakeWorld, harnessRepo, waitFor } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../../support/repo.ts";
->>>>>>> 13e3f862210715d160eb270fe081643760df1902:test/harness/intake/demande.test.ts
 
 type View = IntakeView;
 type Args = Record<string, unknown>;

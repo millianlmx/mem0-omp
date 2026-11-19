@@ -17,24 +17,10 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-<<<<<<< HEAD:test/harness/os-boucle.test.ts
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { EVENT_TYPES } from "../../omp-harness/api/events.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
-import { apiRoutes } from "../../omp-harness/api/route-table.ts";
-import { WAIT_REASON } from "../../omp-harness/runs/machine.ts";
-import { MCP_TOOLS } from "../../omp-harness/api/mcp.ts";
-import { Orchestrator } from "../../omp-harness/runs/orchestrator.ts";
-import type { RunPatch, RunRow } from "../../omp-harness/db/db.ts";
-import { autonomyDecisions, bugWorld, eventsOf, until } from "../support/autonomie-fixtures.ts";
-import { escalationArgs, readFrames } from "../support/card-fixtures.ts";
-import { OK, fakeWorld, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { tmpdir } from "../support/repo.ts";
-=======
 import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
 import { EVENT_TYPES } from "../../../omp-harness/api/events.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import { WAIT_REASON } from "../../../omp-harness/runs/machine.ts";
 import { MCP_TOOLS } from "../../../omp-harness/api/mcp.ts";
 import { Orchestrator } from "../../../omp-harness/runs/orchestrator.ts";
@@ -44,7 +30,6 @@ import { escalationArgs, readFrames } from "../../support/card-fixtures.ts";
 import { OK, fakeWorld, waitFor } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import { tmpdir } from "../../support/repo.ts";
->>>>>>> 13e3f862210715d160eb270fe081643760df1902:test/harness/runs/os-boucle.test.ts
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const ADMIN = "a".repeat(64);

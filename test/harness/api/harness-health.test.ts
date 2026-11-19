@@ -10,16 +10,10 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-<<<<<<< HEAD:test/harness/harness-health.test.ts
-import { API_FEATURES, createHandler, healthChecks } from "../../omp-harness/api/http.ts";
-import { HARNESS_VERSION } from "../../omp-harness/api/http-io.ts";
-import { fakeWorld } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-=======
-import { API_FEATURES, HARNESS_VERSION, createHandler, healthChecks } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler, healthChecks } from "../../../omp-harness/api/http.ts";
+import { HARNESS_VERSION } from "../../../omp-harness/api/http-io.ts";
 import { fakeWorld } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
->>>>>>> 13e3f862210715d160eb270fe081643760df1902:test/harness/api/harness-health.test.ts
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 

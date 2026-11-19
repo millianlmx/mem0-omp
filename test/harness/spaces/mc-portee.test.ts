@@ -8,35 +8,13 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-<<<<<<< HEAD:test/harness/mc-portee.test.ts
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { loadConfig, repoDefaults } from "../../omp-harness/config/config.ts";
-import type { HarnessConfig } from "../../omp-harness/config/config.ts";
-import type { EventRow, RunPatch, RunRow, Space, Store, UsageRow } from "../../omp-harness/db/db.ts";
-import { DigestSender } from "../../omp-harness/reports/digest.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
-import { apiRoutes } from "../../omp-harness/api/route-table.ts";
-import { interpretClassification } from "../../omp-harness/intake/intake.ts";
-import { clientCommand } from "../../omp-harness/main.ts";
-import { MCP_TOOLS } from "../../omp-harness/api/mcp.ts";
-import { Notifier } from "../../omp-harness/notify/notify.ts";
-import type { DreamDossier } from "../../omp-harness/memory/oracle.ts";
-import { Orchestrator } from "../../omp-harness/runs/orchestrator.ts";
-import { workstationOwner } from "../../omp-harness/sessions/session-feed.ts";
-import { USAGE_CSV_HEADER, spaceUsageOf, usageCsv, usageKind } from "../../omp-harness/reports/space-usage.ts";
-import { spaceInput } from "../../omp-harness/spaces/spaces.ts";
-import { autonomyDecisions, bugWorld, eventsOf, until } from "../support/autonomie-fixtures.ts";
-import { escalationArgs, readFrames } from "../support/card-fixtures.ts";
-import { OK, fakeWorld, harnessRepo, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { ROOT, tmpdir } from "../support/repo.ts";
-=======
 import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
 import { loadConfig, repoDefaults } from "../../../omp-harness/config/config.ts";
 import type { HarnessConfig } from "../../../omp-harness/config/config.ts";
 import type { EventRow, RunPatch, RunRow, Space, Store, UsageRow } from "../../../omp-harness/db/db.ts";
 import { DigestSender } from "../../../omp-harness/reports/digest.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import { interpretClassification } from "../../../omp-harness/intake/intake.ts";
 import { clientCommand } from "../../../omp-harness/main.ts";
 import { MCP_TOOLS } from "../../../omp-harness/api/mcp.ts";
@@ -51,7 +29,6 @@ import { escalationArgs, readFrames } from "../../support/card-fixtures.ts";
 import { OK, fakeWorld, harnessRepo, waitFor } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../../support/repo.ts";
->>>>>>> 13e3f862210715d160eb270fe081643760df1902:test/harness/spaces/mc-portee.test.ts
 
 const ADMIN = "a".repeat(64);
 const DAY = 24 * 60 * 60 * 1000;

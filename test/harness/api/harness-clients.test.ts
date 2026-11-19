@@ -8,22 +8,13 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-<<<<<<< HEAD:test/harness/harness-clients.test.ts
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { createHandler } from "../../omp-harness/api/http.ts";
-import { HARNESS_VERSION } from "../../omp-harness/api/http-io.ts";
-import { fakeWorld, harnessRepo } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { repoDefaults } from "../../omp-harness/config/config.ts";
-import { ROOT, tmpdir } from "../support/repo.ts";
-=======
 import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
-import { HARNESS_VERSION, createHandler } from "../../../omp-harness/api/http.ts";
+import { createHandler } from "../../../omp-harness/api/http.ts";
+import { HARNESS_VERSION } from "../../../omp-harness/api/http-io.ts";
 import { fakeWorld, harnessRepo } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import { repoDefaults } from "../../../omp-harness/config/config.ts";
 import { ROOT, tmpdir } from "../../support/repo.ts";
->>>>>>> 13e3f862210715d160eb270fe081643760df1902:test/harness/api/harness-clients.test.ts
 
 const ADMIN = "t".repeat(64);
 

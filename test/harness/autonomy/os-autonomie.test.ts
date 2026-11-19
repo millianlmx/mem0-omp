@@ -10,28 +10,6 @@ import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-<<<<<<< HEAD:test/harness/os-autonomie.test.ts
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import type { Client } from "../../omp-harness/api/auth.ts";
-import { DELIVER_DIFF_FACTOR } from "../../omp-harness/autonomy/autonomy-gates.ts";
-import { changesOf, ruleFor, rulesWith } from "../../omp-harness/autonomy/autonomy-learning.ts";
-import { firstRule } from "../../omp-harness/autonomy/autonomy-rules.ts";
-import type { AutonomyRule } from "../../omp-harness/autonomy/autonomy-rules.ts";
-import { repoDefaults } from "../../omp-harness/config/config.ts";
-import type { HarnessConfig } from "../../omp-harness/config/config.ts";
-import type { StandingRule } from "../../omp-harness/db/db.ts";
-import { HarnessError } from "../../omp-harness/api/errors.ts";
-import { EVENT_TYPES } from "../../omp-harness/api/events.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
-import { apiRoutes } from "../../omp-harness/api/route-table.ts";
-import { createFromPlan } from "../../omp-harness/intake/intake-create.ts";
-import { ASK_REASON, WAIT_REASON, humanWaitOf, nextAfter } from "../../omp-harness/runs/machine.ts";
-import { MCP_TOOLS } from "../../omp-harness/api/mcp.ts";
-import { FACTORY_PILOT, HUMAN_ONLY } from "../../omp-harness/human/pilot.ts";
-import { STANDING_MAX, standingSection, stepPrompt } from "../../omp-harness/runs/prompts.ts";
-import { ConfigAdmin } from "../../omp-harness/config/repos.ts";
-import { MAX_ACTIVE_RULES, MAX_RULE_TEXT } from "../../omp-harness/human/standing-rules.ts";
-=======
 import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
 import type { Client } from "../../../omp-harness/api/auth.ts";
 import { DELIVER_DIFF_FACTOR } from "../../../omp-harness/autonomy/autonomy-gates.ts";
@@ -43,7 +21,8 @@ import type { HarnessConfig } from "../../../omp-harness/config/config.ts";
 import type { StandingRule } from "../../../omp-harness/db/db.ts";
 import { HarnessError } from "../../../omp-harness/api/errors.ts";
 import { EVENT_TYPES } from "../../../omp-harness/api/events.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import { createFromPlan } from "../../../omp-harness/intake/intake-create.ts";
 import { ASK_REASON, WAIT_REASON, humanWaitOf, nextAfter } from "../../../omp-harness/runs/machine.ts";
 import { MCP_TOOLS } from "../../../omp-harness/api/mcp.ts";
@@ -51,7 +30,6 @@ import { FACTORY_PILOT, HUMAN_ONLY } from "../../../omp-harness/human/pilot.ts";
 import { STANDING_MAX, standingSection, stepPrompt } from "../../../omp-harness/runs/prompts.ts";
 import { ConfigAdmin } from "../../../omp-harness/config/repos.ts";
 import { MAX_ACTIVE_RULES, MAX_RULE_TEXT } from "../../../omp-harness/human/standing-rules.ts";
->>>>>>> 13e3f862210715d160eb270fe081643760df1902:test/harness/autonomy/os-autonomie.test.ts
 import {
   autonomyDecisions,
   bugWorld,

@@ -13,40 +13,6 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { PassThrough } from "node:stream";
-<<<<<<< HEAD:test/harness/mc-etancheite.test.ts
-import { CORPO_SCOPE } from "../../omp-harness/atlassian/desk.ts";
-import { spaceTokenFile } from "../../omp-harness/atlassian/oauth.ts";
-import { ClientRegistry } from "../../omp-harness/api/auth.ts";
-import { RESERVED_SCOPES, configWarnings, repoDefaults, validateConfig } from "../../omp-harness/config/config.ts";
-import type { HarnessConfig, ModelPolicy, RepoConfig } from "../../omp-harness/config/config.ts";
-import { HarnessContext } from "../../omp-harness/runs/context.ts";
-import type { SpawnRunner } from "../../omp-harness/runs/context.ts";
-import { Store } from "../../omp-harness/db/db.ts";
-import type { IntakeRow, Space } from "../../omp-harness/db/db.ts";
-import { HarnessError } from "../../omp-harness/api/errors.ts";
-import { Git } from "../../omp-harness/forge/git.ts";
-import { HeavyRunner } from "../../omp-harness/heavy/heavy.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
-import { apiRoutes } from "../../omp-harness/api/route-table.ts";
-import { intakePolicy } from "../../omp-harness/intake/intake.ts";
-import { ISOLATION_CODES, isolationOf, nextSteps } from "../../omp-harness/spaces/isolation.ts";
-import type { Isolation, IsolationFacts, OnboardStep } from "../../omp-harness/spaces/isolation.ts";
-import { addLocalModel } from "../../omp-harness/config/local-model.ts";
-import { MCP_TOOLS } from "../../omp-harness/api/mcp.ts";
-import type { DreamDossier } from "../../omp-harness/memory/oracle.ts";
-import { PolicyRefusal, repoIdentity, spaceRule, strictest } from "../../omp-harness/config/policy.ts";
-import { execProcess } from "../../omp-harness/runners/proc.ts";
-import type { RunnerProcess } from "../../omp-harness/runners/rpc.ts";
-import { RunnerSession } from "../../omp-harness/runners/runner-session.ts";
-import { runChecks } from "../../omp-harness/config/check.ts";
-import type { CheckLine } from "../../omp-harness/config/check.ts";
-import { Scheduler } from "../../omp-harness/runners/scheduler.ts";
-import type { SpaceInput, SpaceView } from "../../omp-harness/spaces/spaces.ts";
-import { WORKSTATION_SCOPE } from "../../omp-harness/workstation/workstation-agent.ts";
-import { MemoryOracle, fakeWorld, harnessRepo, testConfig, waitFor } from "../support/harness-fixtures.ts";
-import type { FakeWorld } from "../support/harness-fixtures.ts";
-import { ROOT, tmpdir } from "../support/repo.ts";
-=======
 import { CORPO_SCOPE } from "../../../omp-harness/atlassian/desk.ts";
 import { spaceTokenFile } from "../../../omp-harness/atlassian/oauth.ts";
 import { ClientRegistry } from "../../../omp-harness/api/auth.ts";
@@ -59,7 +25,8 @@ import type { IntakeRow, Space } from "../../../omp-harness/db/db.ts";
 import { HarnessError } from "../../../omp-harness/api/errors.ts";
 import { Git } from "../../../omp-harness/forge/git.ts";
 import { HeavyRunner } from "../../../omp-harness/heavy/heavy.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import { intakePolicy } from "../../../omp-harness/intake/intake.ts";
 import { ISOLATION_CODES, isolationOf, nextSteps } from "../../../omp-harness/spaces/isolation.ts";
 import type { Isolation, IsolationFacts, OnboardStep } from "../../../omp-harness/spaces/isolation.ts";
@@ -78,7 +45,6 @@ import { WORKSTATION_SCOPE } from "../../../omp-harness/workstation/workstation-
 import { MemoryOracle, fakeWorld, harnessRepo, testConfig, waitFor } from "../../support/harness-fixtures.ts";
 import type { FakeWorld } from "../../support/harness-fixtures.ts";
 import { ROOT, tmpdir } from "../../support/repo.ts";
->>>>>>> 13e3f862210715d160eb270fe081643760df1902:test/harness/spaces/mc-etancheite.test.ts
 
 const ADMIN = "a".repeat(64);
 const HUMAN = { by: "mac" };

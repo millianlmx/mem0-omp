@@ -18,29 +18,15 @@ import type {
   WorkstationAutomation,
   WorkstationProfile,
   WorkstationRequest,
-<<<<<<< HEAD:test/harness/mc-poste.test.ts
-} from "../../omp-harness/db/db.ts";
-import { API_FEATURES, createHandler } from "../../omp-harness/api/http.ts";
-import { apiRoutes } from "../../omp-harness/api/route-table.ts";
-import type { IntakeView } from "../../omp-harness/intake/intake.ts";
-import type { BrowserView, ProfileStats, WorkstationStatus } from "../../omp-harness/workstation/workstation.ts";
-import {
-  APPROVER_ONLY,
-  NO_SPACE_BROWSER,
-  REQUEST_OUT_OF_SPACE,
-  posteDir,
-  uploadDir,
-} from "../../omp-harness/workstation/workstation.ts";
-=======
 } from "../../../omp-harness/db/db.ts";
-import { API_FEATURES, apiRoutes, createHandler } from "../../../omp-harness/api/http.ts";
+import { API_FEATURES, createHandler } from "../../../omp-harness/api/http.ts";
+import { apiRoutes } from "../../../omp-harness/api/route-table.ts";
 import type { IntakeView } from "../../../omp-harness/intake/intake.ts";
 import type { BrowserView, WorkstationStatus } from "../../../omp-harness/workstation/workstation-input.ts";
 import type { ProfileStats } from "../../../omp-harness/workstation/workstation-profile.ts";
 import { APPROVER_ONLY, posteDir, uploadDir } from "../../../omp-harness/workstation/workstation.ts";
 import { NO_SPACE_BROWSER } from "../../../omp-harness/workstation/workstation-presence.ts";
 import { REQUEST_OUT_OF_SPACE } from "../../../omp-harness/workstation/workstation-input.ts";
->>>>>>> 13e3f862210715d160eb270fe081643760df1902:test/harness/spaces/mc-poste.test.ts
 import {
   WORKSTATION_SCOPE,
   workstationScope,
