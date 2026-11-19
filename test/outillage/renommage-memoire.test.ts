@@ -2802,11 +2802,15 @@ test("renommage-memoire/AC-310 : chaque installation existante se met à niveau 
   await t.test(
     "pile manuelle : `docker compose config` sans `.env` refuse, avec une `.env` d'avant monte ./mem0-rs-data et transmet le jeton",
     (st) => {
-      if (spawnSync("docker", ["compose", "version"], { encoding: "utf8" }).status !== 0) {
+      // La sonde tourne dans l'environnement du rendu (HOME jetable) : un plugin compose posé sous le HOME réel
+      // (~/.docker/cli-plugins, Docker Desktop ou OrbStack sur un Mac) y est introuvable, ce qui est un prérequis
+      // absent, pas un refus du fichier compose.
+      const dossier = tmpdir("renommage-memoire-compose-");
+      const envCompose = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dossier };
+      if (spawnSync("docker", ["compose", "version"], { encoding: "utf8", env: envCompose }).status !== 0) {
         prerequisAbsent(st, "docker compose", "pile manuelle non rendue par le moteur", null);
         return;
       }
-      const dossier = tmpdir("renommage-memoire-compose-");
       fs.mkdirSync(path.join(dossier, "memory-rs"));
       fs.copyFileSync(path.join(ROOT, "memory-stack", "docker-compose.yml"), path.join(dossier, "docker-compose.yml"));
       const rendre = (): { status: number | null; sortie: string } => {
@@ -2814,7 +2818,7 @@ test("renommage-memoire/AC-310 : chaque installation existante se met à niveau 
           cwd: dossier,
           encoding: "utf8",
           timeout: 60_000,
-          env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dossier },
+          env: envCompose,
         });
         return { status: r.status, sortie: `${r.stdout}${r.stderr}` };
       };

@@ -599,6 +599,30 @@ strict_skips() {
   done <<<"$tests_missing"
 }
 
+# Sous GitHub Actions, chaque test tombé devient aussi une annotation `::error`
+# « titre — premier message d'erreur » (10 au plus, plafond de GitHub par étape) :
+# le journal d'un job exige un jeton, ses annotations se lisent par l'API publique
+# (`check-runs/<id>/annotations`), comme celles d'`annoter_app_swift`. Un sous-test
+# précède son parent dans le TAP, donc l'annotation la plus précise vient d'abord.
+annoter_tests() {
+  [ "${GITHUB_ACTIONS:-}" = true ] || return 0
+  awk '
+    function flush() {
+      if (name != "") print name (msg != "" ? " — " substr(msg, 1, 200) : "")
+      name = ""; msg = ""; want = 0
+    }
+    /^[ \t]*not ok [0-9]+ - / { flush(); name = $0; sub(/^[ \t]*not ok [0-9]+ - /, "", name); next }
+    name != "" && want { msg = $0; sub(/^[ \t]+/, "", msg); want = 0; next }
+    name != "" && msg == "" && /^[ \t]*error: / {
+      value = $0; sub(/^[ \t]*error: /, "", value)
+      if (value ~ /^[|>]-?$/) want = 1; else msg = value
+      next
+    }
+    /^[ \t]*(ok [0-9]+ - |# )/ { flush() }
+    END { flush() }' "$1" | head -n 10 | sed -e 's/%/%25/g' -e 's/^/::error title=Tests::/'
+  return 0
+}
+
 # La sortie de `node --test` est CONSERVÉE, jamais jetée : un job rouge doit
 # pouvoir nommer le test tombé. Mesuré le 2026-09-24 (run 35994551671) : le job
 # ubuntu a rendu un simple « ✗ tests unitaires » pendant que macOS passait le
@@ -729,6 +753,7 @@ if command -v node >/dev/null 2>&1; then
       # donc un plafond unique finissait par couper des noms de tests (mesuré le
       # 2026-09-24 : six échecs, deux preuves visibles).
       grep -E '^not ok' "$tests_log" | head -n 40
+      annoter_tests "$tests_log"
       # Puis les blocs de diagnostic TAP — le message d'assertion porte la preuve
       # (sortie du moteur, code de check.sh, diff), bornés à 60 lignes. Le bloc
       # s'arrête à la première ligne qui repart en colonne 0 (enregistrement suivant).
