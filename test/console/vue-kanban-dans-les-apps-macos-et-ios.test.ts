@@ -72,7 +72,7 @@ test("vue-kanban-dans-les-apps-macos-et-ios/AC-12 : ouvrir le tableau ne lance a
 
   const inView = (from: string | RegExp, to: string) => boardFaults(plant(view, from, to), page);
   const inPage = (from: string | RegExp, to: string) => boardFaults(view, plant(page, from, to));
-  const viewAnchor = ".consoleID(\"os.board\")";
+  const viewAnchor = '.consoleID("os.board")';
   const pageAnchor = ".accessibilityElement(children: .contain)";
   const has = (faults: string[], needle: string) => faults.some((f) => f.includes(needle));
 
@@ -90,7 +90,10 @@ test("vue-kanban-dans-les-apps-macos-et-ios/AC-12 : ouvrir le tableau ne lance a
   assert.ok(has(inPage(pageAnchor, `${pageAnchor}\n.onAppear { Task { await server.refresh() } }`), ".onAppear"));
   assert.ok(has(inPage(pageAnchor, `${pageAnchor}\n.onChange(of: loaded) { Task { await reload() } }`), ".onChange("));
   assert.ok(
-    has(inPage(pageAnchor, `${pageAnchor}\n.onReceive(server.$failure) { _ in Task { await reload() } }`), ".onReceive("),
+    has(
+      inPage(pageAnchor, `${pageAnchor}\n.onReceive(server.$failure) { _ in Task { await reload() } }`),
+      ".onReceive(",
+    ),
   );
   assert.ok(has(boardFaults(view, ""), "absent"));
   // `.refreshable { await reload() }` et l'action ⌘R de la page restent permis.
@@ -109,7 +112,7 @@ function dragFaults(source: string): string[] {
 test("vue-kanban-dans-les-apps-macos-et-ios/AC-10 : le tableau ne porte aucun geste d'écriture", () => {
   const view = swift(VIEW_FILE);
   assert.deepEqual(dragFaults(view), []);
-  const anchor = ".consoleID(\"os.board\")";
+  const anchor = '.consoleID("os.board")';
   for (const token of DRAG) {
     const faults = dragFaults(plant(view, anchor, `${anchor}\n${token}`));
     assert.ok(
@@ -169,12 +172,19 @@ test("vue-kanban-dans-les-apps-macos-et-ios/AC-1 : « Tableau » ferme les entr�
   // L'entrée remontée avant Système.
   const moved = list
     .replace(/\s*Label\(OSText\.board[^\n]*\n\s*\.tag\(OSWorkspace\.board\)/, "")
-    .replace("Label(OSSystemText.title", "Label(OSText.board, systemImage: \"x\").tag(OSWorkspace.board)\nLabel(OSSystemText.title");
+    .replace(
+      "Label(OSSystemText.title",
+      'Label(OSText.board, systemImage: "x").tag(OSWorkspace.board)\nLabel(OSSystemText.title',
+    );
   assert.notEqual(moved, list);
   assert.ok(sidebarFaults(moved, root).some((f) => f.includes("avant Système")));
 
   // La branche retirée.
-  const unbranched = plant(root, "workspace.selection == OSWorkspace.board", "workspace.selection == OSWorkspace.knowledge");
+  const unbranched = plant(
+    root,
+    "workspace.selection == OSWorkspace.board",
+    "workspace.selection == OSWorkspace.knowledge",
+  );
   assert.ok(sidebarFaults(list, unbranched).some((f) => f.includes("OSBoardView(")));
   assert.ok(sidebarFaults("", root).length > 0);
 });
@@ -205,9 +215,17 @@ test("vue-kanban-dans-les-apps-macos-et-ios/AC-13 : le tableau reçoit les fils 
   const ios = swift(IOS_ROOT_FILE);
   assert.deepEqual(scopeFaults(mac, ios), []);
 
-  const macRaw = plant(mac, /OSBoardView\(\s*threads: OSThreadScope\.threads\(threads,/, "OSBoardView(threads: threads, x: OSThreadScope.threads(threads,");
+  const macRaw = plant(
+    mac,
+    /OSBoardView\(\s*threads: OSThreadScope\.threads\(threads,/,
+    "OSBoardView(threads: threads, x: OSThreadScope.threads(threads,",
+  );
   assert.ok(scopeFaults(macRaw, ios).some((f) => f.startsWith("OSRootView.swift")));
-  const iosRaw = plant(ios, /threads: OSThreadScope\.threads\(threads, spaceId: workspace\.spaceId, place: workspace\.place, spaces: spaces\.spaces\),\s*loaded: loaded/, "threads: threads, loaded: loaded");
+  const iosRaw = plant(
+    ios,
+    /threads: OSThreadScope\.threads\(threads, spaceId: workspace\.spaceId, place: workspace\.place, spaces: spaces\.spaces\),\s*loaded: loaded/,
+    "threads: threads, loaded: loaded",
+  );
   assert.ok(scopeFaults(mac, iosRaw).some((f) => f.startsWith("IOSOSRootView.swift")));
   assert.ok(scopeFaults(plant(mac, "OSBoardView(", "OSBoardViewX("), ios).length > 0);
   assert.ok(scopeFaults(mac, plant(ios, "IOSOSBoardPage(", "IOSOSBoardPageX(")).length > 0);
