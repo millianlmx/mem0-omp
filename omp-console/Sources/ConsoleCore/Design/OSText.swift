@@ -245,4 +245,24 @@ public enum OSText {
     public static let request = L10n.text("Demande")
     public static let specsFull = L10n.text("Specs complètes")
     public static let noRun = L10n.text("Rien à comprendre ici")
+
+    // MARK: - Tableau
+
+    public static let board = L10n.text("Tableau")
+    public static let boardEmpty = L10n.text("Vous n’avez aucun fil en cours ni récent")
+
+    /// « 3 fils »
+    public static func threadCount(_ count: Int) -> String {
+        ConsoleFormat.count(count, L10n.text("fil"), L10n.text("fils"))
+    }
+
+    /// « 2 choses vous attendent »
+    public static func boardWaiting(_ count: Int) -> String {
+        count == 1 ? L10n.text("1 chose vous attend") : L10n.format("%lld choses vous attendent", count)
+    }
+
+    /// « colonne à vous » : le nom de la colonne d'une carte, dit à VoiceOver.
+    public static func boardColumn(_ name: String) -> String {
+        L10n.format("colonne %@", name)
+    }
 }

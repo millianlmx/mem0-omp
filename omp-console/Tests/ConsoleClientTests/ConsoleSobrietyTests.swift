@@ -140,6 +140,28 @@ struct ConsoleSobrietyTests {
         #expect(counter.count == 2, "les fils et le compte, une fois chacun")
     }
 
+    @Test("vue-kanban-dans-les-apps-macos-et-ios/AC-25 : settled() rend la main une fois la lecture regroupée et publiée")
+    func threadStoreSettled() async {
+        let transport = osTransport(routes: [:])
+        let model = await osConnected(transport)
+        let store = OSThreadStore(server: model, debounce: .milliseconds(200))
+        #expect(store.threads.count == 1)
+
+        let inbox = #"{"cursor":43,"batches":[],"decisions":[],"runs":["# + osRunJSON("r1", extra: #","rev":4"#) + "],"
+            + #""awaiting":["# + osRunJSON("r2", state: "awaiting_human", step: "specs", title: "Export CSV") + "]}"
+        transport.respond { call in call.path == "/v1/inbox" ? osJSON(inbox) : osJSON(#"{"error":"route inconnue"}"#, status: 404) }
+        await model.refreshInbox()
+        #expect(store.threads.count == 1, "pas encore regroupé")
+
+        await store.settled()
+        #expect(store.threads.count == 2)
+        #expect(store.decisionCount == 1)
+
+        let clock = ContinuousClock()
+        let waited = await clock.measure { await store.settled() }
+        #expect(waited < .milliseconds(100), "aucune entrée changée : rend la main tout de suite")
+    }
+
     @Test("les fils gardent leur ordre d'une construction à l'autre, à égalité de date")
     func stableOrder() throws {
         let runs = try ["c", "a", "b", "d"].map { id in

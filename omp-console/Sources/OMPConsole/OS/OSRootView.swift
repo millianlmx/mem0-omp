@@ -1,11 +1,11 @@
 // L'« OS agentique » sur le Mac : la COQUE de l'app. Le Radar en haut ; les fils à gauche
 // (avec « Demander à l'OS… » en tête, l'espace et le lieu, les entrées fixes, et au pied
 // le badge des composants quand l'un manque) ; au centre « Maintenant », les Propositions,
-// les Automatismes, le Savoir, la Mémoire, le hub Système et ses écrans, la page d'un
+// les Automatismes, le Savoir, la Mémoire, le hub Système et ses écrans, le Tableau, la page d'un
 // espace ou le fil choisi ; « Comprendre » en inspecteur à droite ; le Tri des décisions
 // en feuille (⌘T). Les écrans eux-mêmes sont partagés avec l'iPhone/iPad (`ConsoleUI/OS/`) :
 // ce fichier ne porte que ce qui est propre au Mac — colonnes, inspecteur, barre d'outils,
-// raccourcis (⌘1…⌘6 destinations, ⌘L composeur, ⌘T tri, ⌘⇧P pause, ⌥⌘I inspecteur, ⌘R
+// raccourcis (⌘1…⌘7 destinations, ⌘L composeur, ⌘T tri, ⌘⇧P pause, ⌥⌘I inspecteur, ⌘R
 // actualiser), presse-papiers, direct d'une session, variables de recette.
 
 import AppKit
@@ -44,7 +44,7 @@ enum OSMacRoute: Equatable {
     }
 }
 
-/// Les entrées fixes du centre, dans l'ordre des raccourcis ⌘1…⌘6 (menu Présentation).
+/// Les entrées fixes du centre, dans l'ordre des raccourcis ⌘1…⌘7 (menu Présentation).
 enum OSMacDestinations {
     static let shortcuts: [(selection: String, title: String)] = [
         (OSWorkspace.now, OSText.now),
@@ -53,6 +53,7 @@ enum OSMacDestinations {
         (OSWorkspace.knowledge, OSWatchText.knowledge),
         (OSWorkspace.memory, OSWatchText.memory),
         (OSWorkspace.system, OSSystemText.title),
+        (OSWorkspace.board, OSText.board),
     ]
 }
 
@@ -65,6 +66,9 @@ struct OSRootView: View {
     /// changent : la racine ne les reconstruit pas à chaque rendu.
     @StateObject private var threadStore: OSThreadStore
     @StateObject private var workspace: OSWorkspace
+    /// La première lecture de l'ouverture a abouti et ses fils sont regroupés : le tableau ne dit
+    /// « aucun fil » qu'après.
+    @State private var loaded = false
     /// Portés sans être observés ici : leurs écrans les observent eux-mêmes.
     private let intakes: HarnessIntakes
     private let history: HarnessRunsHistory
@@ -85,6 +89,7 @@ struct OSRootView: View {
     private static let recipeViews = [
         "now": OSWorkspace.now, "proposals": OSWorkspace.proposals, "knowledge": OSWorkspace.knowledge,
         "automations": OSWorkspace.automations, "memory": OSWorkspace.memory, "system": OSWorkspace.system,
+        "board": OSWorkspace.board,
     ]
     private static let recipeSpacePrefix = "space:"
     private static let recipeSystemPrefix = "system:"
@@ -165,7 +170,7 @@ struct OSRootView: View {
                 .frame(width: 620)
                 .frame(minHeight: 360)
         }
-        // ⌘R (Présentation ▸ Actualiser) relit ce que l'OS montre ; ⌘1…⌘6 y choisissent l'écran.
+        // ⌘R (Présentation ▸ Actualiser) relit ce que l'OS montre ; ⌘1…⌘7 y choisissent l'écran.
         .focusedSceneValue(\.harnessRefresh, HarnessRefreshAction(isEnabled: server.isConfigured && !server.isLoading) { await reload() })
         .focusedSceneObject(workspace)
         .task(id: server.address) {
@@ -192,6 +197,8 @@ struct OSRootView: View {
             // Toutes les lectures de l'ouverture EN MÊME TEMPS, comme sur iOS : le temps d'ouverture
             // suit la plus longue, pas la somme de toutes.
             await server.readShell(.opening)
+            await threadStore.settled()
+            loaded = true
             // Recette : l'espace retenu dans la liste, et la page d'un espace (par identifiant ou par nom).
             if let chosen = recipeSpace(environment["OMP_CONSOLE_OS_SPACE"]) { workspace.choose(space: chosen) }
             if let view = environment["OMP_CONSOLE_OS_VIEW"], view.hasPrefix(Self.recipeSpacePrefix),
@@ -286,6 +293,7 @@ struct OSRootView: View {
         case OSWorkspace.knowledge: return OSWatchText.knowledge
         case OSWorkspace.memory: return OSWatchText.memory
         case OSWorkspace.system: return OSSystemText.title
+        case OSWorkspace.board: return OSText.board
         default: break
         }
         if let id = OSWorkspace.spaceId(of: workspace.selection), let space = spaces.spaces.first(where: { $0.id == id }) {
@@ -308,6 +316,12 @@ struct OSRootView: View {
                 OSMemoryScreen(models: memory, drafts: drafts)
             } else if workspace.selection == OSWorkspace.system {
                 OSSystemCenter(server: server, drafts: drafts, workspace: workspace)
+            } else if workspace.selection == OSWorkspace.board {
+                OSBoardView(
+                    threads: OSThreadScope.threads(threads, spaceId: workspace.spaceId, place: workspace.place, spaces: spaces.spaces),
+                    loaded: loaded, isConfigured: server.isConfigured, failure: server.failure,
+                    workspace: workspace, drafts: drafts
+                )
             } else if let spaceId = OSWorkspace.spaceId(of: workspace.selection) {
                 OSSpacePage(server: server, spaceId: spaceId) { text in
                     NSPasteboard.general.clearContents()

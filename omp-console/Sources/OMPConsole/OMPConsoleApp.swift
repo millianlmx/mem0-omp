@@ -6,7 +6,7 @@
 // serveur de pipelines du VPS (omp-harness) ; la Mémoire est locale. L'app reste
 // utilisable en plein écran : aucune fenêtre annexe.
 //
-// Barre des menus : Présentation ▸ les écrans de l'OS (⌘1…⌘6) et « Actualiser » (⌘R) ;
+// Barre des menus : Présentation ▸ les écrans de l'OS (⌘1…⌘7) et « Actualiser » (⌘R) ;
 // Fichier ▸ « Nouvelle feature… » (⌘N), « Commandes… » (⌘K) et « Rechercher… » (⌘F).
 //
 // Les modèles vivent sur la structure `App` (`@StateObject`), donc à l'échelle de
@@ -102,7 +102,7 @@ struct OMPConsoleApp: App {
     }
 }
 
-/// Menu Présentation ▸ les écrans de l'OS, dans l'ordre de la liste des fils : ⌘1…⌘6
+/// Menu Présentation ▸ les écrans de l'OS, dans l'ordre de la liste des fils : ⌘1…⌘7
 /// (`OSMacDestinations`). Ramène la fenêtre principale, puis y montre l'écran.
 struct DestinationCommands: Commands {
     @FocusedObject private var workspace: OSWorkspace?

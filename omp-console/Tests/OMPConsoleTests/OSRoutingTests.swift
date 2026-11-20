@@ -1,6 +1,6 @@
 // Le routage de l'OS du Mac : chaque destination nommée par un lien, une notification ou
 // la palette s'ouvre dans l'OS (tri, centre, écran du hub Système, feuille du serveur),
-// les pages du hub ont chacune leur écran, et ⌘1…⌘6 suivent les entrées fixes du centre.
+// les pages du hub ont chacune leur écran, et ⌘1…⌘7 suivent les entrées fixes du centre.
 
 import ConsoleClient
 import ConsoleCore
@@ -60,11 +60,12 @@ struct OSRoutingTests {
         #expect(workspace.systemPath.count == 1)
     }
 
-    @Test("⌘1…⌘6 suivent les entrées fixes du centre, Maintenant d'abord")
+    @Test("vue-kanban-dans-les-apps-macos-et-ios/AC-24 : ⌘1…⌘7 suivent les entrées fixes du centre, Maintenant d'abord, le Tableau en dernier")
     func shortcutsFollowTheFixedEntries() {
         #expect(OSMacDestinations.shortcuts.map(\.selection) == [
             OSWorkspace.now, OSWorkspace.proposals, OSWorkspace.automations,
-            OSWorkspace.knowledge, OSWorkspace.memory, OSWorkspace.system,
+            OSWorkspace.knowledge, OSWorkspace.memory, OSWorkspace.system, OSWorkspace.board,
         ])
+        #expect(OSMacDestinations.shortcuts.last?.title == OSText.board)
     }
 }
