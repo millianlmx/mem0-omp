@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Produit les captures de l'app Mac (l'« OS agentique ») :
 # « Maintenant » (le brief), un fil au travail, le tri des décisions, les Propositions, le
-# Savoir et la page d'un espace. Un serveur de démonstration (`os-demo-serveur.ts` : le
+# Savoir, la page d'un espace, le Système et ses écrans, le Tableau (les fils en colonnes par
+# phase). Un serveur de démonstration (`os-demo-serveur.ts` : le
 # vrai gestionnaire HTTP d'omp-harness et le vrai orchestrateur sur un monde de test)
 # sert une revue à valider, une question ouverte, une feature au travail, une feature
 # retenue en file, un échec, un arrêt motivé, un audit proposé, deux espaces, des
@@ -25,7 +26,7 @@
 # l'écran le temps de chaque capture.
 #
 # Vérifications DURES avant de rendre 0 : chaque PNG existe et ses dimensions (`sips`)
-# sont non nulles. Codes de sortie : 0 les sept captures produites, 1 échec, 2 « non
+# sont non nulles. Codes de sortie : 0 les douze captures produites, 1 échec, 2 « non
 # exécuté » (pas macOS, ou Node/Swift absents).
 set -uo pipefail
 
@@ -202,3 +203,4 @@ shot systeme "OMP_CONSOLE_OS_VIEW=system" || exit 1
 shot depots "OMP_CONSOLE_OS_VIEW=system:repos" || exit 1
 shot poste "OMP_CONSOLE_OS_VIEW=system:workstation" || exit 1
 shot statistiques "OMP_CONSOLE_OS_VIEW=system:stats" || exit 1
+shot tableau "OMP_CONSOLE_OS_VIEW=board" || exit 1

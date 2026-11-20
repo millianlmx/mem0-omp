@@ -4,7 +4,7 @@
 contrôle : **une seule fenêtre**, l'**OS agentique** (voir « OS agentique :
 l'interface ») — le Radar des agents en haut, la liste des fils à gauche, l'écran
 choisi au centre et l'inspecteur « Comprendre » à droite. La liste des fils porte
-six entrées fixes, aussi au menu Présentation :
+sept entrées fixes, aussi au menu Présentation :
 
 | Entrée | ⌘ | Ce qu'elle montre |
 |---|---|---|
@@ -14,6 +14,7 @@ six entrées fixes, aussi au menu Présentation :
 | **Savoir** | ⌘4 | Consignes permanentes, paliers d'autonomie, espaces. |
 | **Mémoire** | ⌘5 | La mémoire du projet, locale au Mac. |
 | **Système** | ⌘6 | Une grille de tuiles : Poste, Dépôts, Planifications, Autonomie, Vigie, Statistiques et santé, Issues, Administration, Serveur. |
+| **Tableau** | ⌘7 | Les fils en colonnes par phase, en lecture seule ; une carte ouvre son fil. |
 
 Sous ces entrées, les **fils** : une intention, de la demande au résultat (une
 feature, une demande au poste, une session omp locale). Les décisions — questions,
@@ -690,17 +691,18 @@ bouton mort.
 | Écran | Fichier | Ce qu'il montre |
 |---|---|---|
 | Radar (toujours en haut) | `OSRadar.swift` | une pastille par agent et ce qu'il fait (`OSPulse`) : features vivantes, Poste, Vigie, **Sessions locales** ; le coût du jour, et le reste du budget de l'espace retenu ; « Tout suspendre » = la pause du serveur (« Après l'étape en cours » ou « Tout de suite », confirmée) — en pause la barre devient orange, dit « En pause » et porte « Reprendre » ; sans la capacité `pause`, l'arrêt du poste et des fils |
-| Liste des fils | `OSThreadList.swift` | le composeur « Demander à l'OS… » (filtre, ⏎ = Demande) ; l'espace puis le lieu ; les entrées Maintenant, Décisions (n), Propositions (n), Automatismes, Savoir, Mémoire, Système ; les fils par état — une session omp locale en est un (ordinateur portable, « machine · branche · ↳ intention ») ; au pied, le badge des composants s'il en manque un |
+| Liste des fils | `OSThreadList.swift` | le composeur « Demander à l'OS… » (filtre, ⏎ = Demande) ; l'espace puis le lieu ; les entrées Maintenant, Décisions (n), Propositions (n), Automatismes, Savoir, Mémoire, Système, Tableau ; les fils par état — une session omp locale en est un (ordinateur portable, « machine · branche · ↳ intention ») ; au pied, le badge des composants s'il en manque un |
 | Maintenant | `OSHomeView.swift`, `OSBriefSections.swift`, `OSScoreTiles.swift` | le brief : sa phrase, « depuis … », « Vu » ; le composeur et, dessous, la réponse de l'OS à une question d'état ; les trois chiffres (sept jours, tendance des trois derniers jours) ; les agents au travail ; les sections repliables Vous attend, Livré (« seul »), Bloqué (sa cause), Échecs, Décidé seul (Garder / Revoir), Arrêtés (le motif). Sans la capacité `brief`, l'accueil d'avant |
 | Propositions | `OSProposalsView.swift` | le travail que les agents proposent, groupé par source ; le geste porte le nom de ce qu'il fait (Lancer, Corriger, Appliquer, Confirmer, Relancer) et ouvre le fil qu'il crée ; « Écarter ». Appliquer un palier revient à l'admin, confirmer un signalement et lancer un item Jira à l'approbateur |
 | Savoir | `OSKnowledgeView.swift`, `OSSpaceViews.swift` | les consignes permanentes (interrupteur, modifier, supprimer, ajouter, dépôt ou partout, origine) ; les paliers d'autonomie par dépôt (règles en phrases, confiance, « Appliquer » pour un admin) ; les espaces (créer, modifier, supprimer pour un admin non borné) |
 | Mémoire (Mac) | `OMPConsole/OS/OSMemoryScreen.swift` | la mémoire du projet (voir « Consulter et corriger la mémoire du projet ») ; ⌘F y cherche |
 | Système | `OSSystemHub.swift`, `OMPConsole/OS/OSSystemScreens.swift` | une grille de tuiles — symbole, mot, état en pastille ou en compteur : Poste, Dépôts (admin), Planifications, Autonomie (si servie), Vigie, Statistiques et santé, Issues, Administration (admin), Serveur ; une tuile pousse son écran dans une pile au centre (retour natif), Serveur ouvre sa feuille |
 | Page d'un espace | `OSSpaceViews.swift` | les chiffres de la semaine, le budget du jour, le rapport hebdomadaire (Markdown rendu), « Copier » et le partage natif |
+| Tableau | `OSBoard.swift`, `OSBoardView.swift` | les fils en colonnes par phase (à vous, au travail, en file, livré, en échec, arrêté), en lecture seule : colonnes vides masquées, livré, en échec et arrêté bornés aux fils mis à jour depuis 7 jours (minuit d'aujourd'hui moins 7 jours), carte = titre du fil, lieu, ce qui attend ; même portée (espace, lieu) que la liste ; une carte ouvre son fil (au centre sur Mac, poussé dans la pile des Fils sur iPhone et iPad) ; la vue ne lit rien : elle range les fils déjà construits (`OSThreadStore`), et la coque dit si la première lecture a abouti (`OSThreadStore.settled()`) — roue avant, état vide « aucun serveur relié » ou « aucun fil » après, message d'échec et « Actualiser » (⌘R, tirer pour actualiser) quand la lecture échoue ; colonnes à largeur lisible qui suit la taille de texte (260 pt par défaut, 428 pt au maximum), la suivante toujours amorcée |
 | Fil, décisions, tri, Comprendre, Automatismes | `OSThreadView.swift`, `OSDecisionCard.swift`, `OSTriageView.swift`, `OSUnderstandView.swift`, `OSAutomationsView.swift` | la page d'un fil et ses cartes, le tri des décisions en feuille, l'inspecteur « Comprendre », ce que l'OS lance seul |
 
-Raccourcis du Mac : ⌘1…⌘6 les entrées fixes (Maintenant, Propositions, Automatismes,
-Savoir, Mémoire, Système), ⌘L le composeur, ⌘T le tri, ⌘⇧P suspendre (après
+Raccourcis du Mac : ⌘1…⌘7 les entrées fixes (Maintenant, Propositions, Automatismes,
+Savoir, Mémoire, Système, Tableau), ⌘L le composeur, ⌘T le tri, ⌘⇧P suspendre (après
 confirmation) ou reprendre, ⌥⌘I l'inspecteur « Comprendre », ⌘N une nouvelle feature,
 ⌘K la palette, ⌘F la recherche, ⌘R actualiser. Liens et destinations (notification,
 palette) passent par `drafts.requestedSection` et `OSMacRoute` :
@@ -710,7 +712,7 @@ fil, `ompconsole://decisions` (comme `inbox`) le tri, `ompconsole://now`
 Mémoire, `ompconsole://system` le hub et `ompconsole://system/<page>` un de ses écrans.
 
 Variables de recette (captures, `scripts/recette/os-shots.sh`) : `OMP_CONSOLE_OS_VIEW`
-(`now`, `proposals`, `knowledge`, `automations`, `memory`, `system`, `system:<écran>`,
+(`now`, `proposals`, `knowledge`, `automations`, `memory`, `system`, `board`, `system:<écran>`,
 `space:<identifiant ou nom>`),
 `OMP_CONSOLE_OS_SPACE` (l'espace retenu dans la liste, par identifiant ou par nom),
 `OMP_CONSOLE_OS_THREAD` (un fil), `OMP_CONSOLE_OS_RUN` (le fil d'une feature),
@@ -1612,7 +1614,7 @@ identifiants d'accessibilité `ios.…` et les noms de commande (/req, /specs…
 omp-console/
 ├── Package.swift                  manifeste SwiftPM (cible macOS 26)
 ├── Sources/OMPConsole/            la coque macOS
-│   ├── OMPConsoleApp.swift        la scène, les modèles à l'échelle de l'app, les menus (écrans ⌘1…⌘6, Actualiser ⌘R, Appairage…, Quitter)
+│   ├── OMPConsoleApp.swift        la scène, les modèles à l'échelle de l'app, les menus (écrans ⌘1…⌘7, Actualiser ⌘R, Appairage…, Quitter)
 │   ├── ConsoleRootView.swift      la racine : l'OS, les feuilles Préparation et Serveur, les gestes, les liens et notifications
 │   ├── OmpBinary.swift            le binaire `omp` du composant de l'app, sa présence (`OmpPresenceModel`)
 │   ├── ProcessRunner.swift        l'exécuteur partagé (échéance, SIGTERM puis SIGKILL)
@@ -1704,7 +1706,10 @@ onglets.
 - **Fils** : le composeur « Demander à l'OS… », l'espace et le lieu, puis les fils par
   sections. Toucher un fil pousse sa page dans la pile ; l'appui long ouvre « Comprendre »
   et les gestes de sa feature, dont « Suivre sur l'écran verrouillé »
-  (`IOSLiveActivities.swift`, extension `OMPConsoleWidgets`).
+  (`IOSLiveActivities.swift`, extension `OMPConsoleWidgets`). Le bouton « Tableau »
+  (`ios.os.board`) de la barre pousse le **Tableau** dans la pile de l'onglet — les fils en
+  colonnes par phase (`IOSOSBoardPage.swift`, vue partagée `OSBoardView`) ; toucher une
+  carte pousse le fil par-dessus, le retour ramène au tableau. La barre garde cinq onglets.
 - **Décisions** (pastille : ce qui attend l'humain) : le tri, une décision à la fois,
   les décisions de même sorte en lot.
 - **Propositions** (pastille) : lancer ou écarter ce que les agents et les collègues
@@ -1728,9 +1733,9 @@ par « Relier le serveur » (`ios.server.configure`) sans serveur relié. Les li
 touchée ouvrent leur écran. Sur un serveur qui n'annonce aucune capacité de l'OS, fils,
 décisions et composeur passent par les routes d'avant, et ce que le serveur ne sert pas
 n'apparaît pas. La logique de la coque est pure (`IOSOSNavigation.swift`, testée par
-`IOSOSShellTests`) ; identifiants : `ios.os.tab.<onglet>`, `ios.os.screen.<onglet>`,
-`ios.os.screen.thread`, `ios.os.screen.system`, `ios.os.system.<page>`,
-`ios.os.understand`, `ios.os.ask`.
+`IOSOSShellTests` et `IOSOSBoardTests`) ; identifiants : `ios.os.tab.<onglet>`, `ios.os.screen.<onglet>`,
+`ios.os.screen.thread`, `ios.os.screen.board`, `ios.os.screen.system`, `ios.os.system.<page>`,
+`ios.os.board`, `ios.os.understand`, `ios.os.ask`.
 
 L'app est autonome : elle ne parle qu'au serveur du VPS, jamais à un Mac, et n'a
 aucun magasin local. Un seul geste la relie : coller le **code d'appairage**
@@ -1896,10 +1901,13 @@ Le script compile l'app, démarre `scripts/recette/os-demo-serveur.ts` (le serve
 démonstration des captures du Mac), puis relance l'app une fois par écran sur un iPhone
 et un iPad, reliée à ce serveur par ses arguments de lancement
 (`-os.server <adresse> -os.token <jeton>` : rien n'est enregistré dans le simulateur,
-l'invite de notification n'est pas posée). Seize images sous
+l'invite de notification n'est pas posée). Vingt-quatre images sous
 `omp-console/build/os-ios-shots/` (dossier ignoré par git), `iphone-` et `ipad-` :
 `maintenant`, `fils`, `decisions`, `propositions`, `savoir`, `fil-au-travail`,
-`fil-revue`, `espace`. Codes de sortie : 0 les seize images produites, 1 échec, 2 non
+`fil-revue`, `espace`, `depots`, `poste`, `tableau` (`-os.board 1`) et `tableau-ax` (le
+tableau à la plus grande taille de texte, `xcrun simctl ui <UDID> content_size
+accessibility-extra-extra-extra-large`, remise ensuite à `large`). Codes de sortie : 0 les
+vingt-quatre images produites, 1 échec, 2 non
 exécuté (pas macOS, Xcode ou Node inutilisable, aucun runtime iOS ≥ 26).
 
 ### Recette historique

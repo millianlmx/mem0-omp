@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Produit les captures de l'app iOS dans son interface (l'« OS agentique ») : les cinq
 # onglets — Maintenant (le Radar et le brief), Fils, Décisions (le tri), Propositions,
-# Savoir —, un fil au travail, le fil d'une revue à valider, la page d'un espace, et deux
-# écrans du hub Système (Dépôts, Poste), en portrait sur iPhone ET sur iPad : vingt images.
+# Savoir —, un fil au travail, le fil d'une revue à valider, la page d'un espace, deux
+# écrans du hub Système (Dépôts, Poste) et le tableau des fils, à la taille de texte par défaut
+# et au maximum de Dynamic Type, en portrait sur iPhone ET sur iPad : vingt-quatre images.
 #
 # Un serveur de démonstration (`os-demo-serveur.ts` : le vrai gestionnaire HTTP
 # d'omp-harness et le vrai orchestrateur sur un monde de test) sert une revue à valider,
@@ -12,15 +13,15 @@
 # lancement de recette (`-os.server <adresse> -os.token <jeton>`, `IOSRecipeServer`) :
 # rien n'est enregistré dans le simulateur — ni préférence, ni trousseau —, donc
 # `ios-shots.sh` y retrouve ensuite l'app non reliée. Chaque écran est ouvert d'office par
-# `-os.view`, `-os.thread`, `-os.space` ou `-os.system` (`IOSShellLaunch`).
+# `-os.view`, `-os.thread`, `-os.space`, `-os.system` ou `-os.board` (`IOSShellLaunch`).
 #
 # Les images sont des ARTEFACTS DE PR : elles vivent sous `omp-console/build/os-ios-shots/`
 # (ignoré par git) et ne sont jamais committées. Le dossier de sortie est vidé d'abord, les
 # simulateurs sont démarrés à la demande (`bootstatus -b`, idempotent), l'app est
 # réinstallée et relancée pour chaque écran (`--terminate-running-process`).
 #
-# Vérifications DURES avant de rendre 0 : vingt PNG, et les dimensions de CHAQUE PNG
-# (`sips`) — toutes PORTRAIT. Codes de sortie : 0 les vingt captures produites, 1 échec,
+# Vérifications DURES avant de rendre 0 : vingt-quatre PNG, et les dimensions de CHAQUE PNG
+# (`sips`) — toutes PORTRAIT. Codes de sortie : 0 les vingt-quatre captures produites, 1 échec,
 # 2 « non exécuté » (pas macOS, Xcode ou Node inutilisable, aucun runtime iOS ≥ 26).
 set -uo pipefail
 
@@ -174,6 +175,10 @@ token="$(field token)"
 working="$(field runs.working)"
 review="$(field runs.review)"
 
+# Les deux tailles de texte du tableau : celle par défaut, et la plus grande d'accessibilité.
+TEXT_DEFAULT=large
+TEXT_AX=accessibility-extra-extra-extra-large
+
 rm -rf "$SHOTS"
 mkdir -p "$SHOTS"
 
@@ -189,7 +194,7 @@ for pair in "iphone:$iphone" "ipad:$ipad"; do
     exit 1
   fi
   # L'apparence et la taille de texte par défaut, quoi qu'une autre recette ait laissé.
-  xcrun simctl ui "$udid" content_size large >/dev/null 2>&1 || true
+  xcrun simctl ui "$udid" content_size "$TEXT_DEFAULT" >/dev/null 2>&1 || true
   xcrun simctl ui "$udid" appearance light >/dev/null 2>&1 || true
 done
 
@@ -228,11 +233,19 @@ for pair in "iphone:$iphone" "ipad:$ipad"; do
   shot "$label" "$udid" espace -os.space "$SPACE" || exit 1
   shot "$label" "$udid" depots -os.system repos || exit 1
   shot "$label" "$udid" poste -os.system workstation || exit 1
+  shot "$label" "$udid" tableau -os.board 1 || exit 1
+  # Le tableau à la plus grande taille de texte d'accessibilité ; la taille par défaut revient
+  # même si la capture échoue.
+  xcrun simctl ui "$udid" content_size "$TEXT_AX" >/dev/null 2>&1 || true
+  shot "$label" "$udid" tableau-ax -os.board 1
+  status=$?
+  xcrun simctl ui "$udid" content_size "$TEXT_DEFAULT" >/dev/null 2>&1 || true
+  [ "$status" -eq 0 ] || exit 1
 done
 
 total="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$total" != "20" ]; then
-  echo "  ✗ $total captures produites (20 attendues : 10 écrans × iPhone et iPad)" >&2
+if [ "$total" != "24" ]; then
+  echo "  ✗ $total captures produites (24 attendues : 12 écrans × iPhone et iPad)" >&2
   exit 1
 fi
 

@@ -31,4 +31,6 @@ enum IOSOSText {
     static let threadGoneSymbol = "questionmark.circle"
     /// La roue de la barre de chaque onglet : le hub Système.
     static let systemSymbol = "gearshape"
+    /// Le bouton « Tableau » de la barre des Fils.
+    static let boardSymbol = "rectangle.split.3x1"
 }
