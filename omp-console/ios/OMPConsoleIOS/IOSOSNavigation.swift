@@ -57,6 +57,8 @@ enum IOSOSRoute: Hashable, Sendable {
     case system
     /// Une page du hub Système (Poste, dépôts, vigie…).
     case systemPage(OSSystemDestination)
+    /// Le tableau des fils, poussé dans l'onglet Fils.
+    case board
 
     /// La sélection de l'espace de travail quand la page est montrée ; `nil` : celle de la
     /// racine de l'onglet, que la page ne change pas.
@@ -69,6 +71,7 @@ enum IOSOSRoute: Hashable, Sendable {
         case .memory: OSWorkspace.knowledge
         // Le Système est un écran de l'app, poussé dans n'importe quel onglet.
         case .system, .systemPage: nil
+        case .board: OSWorkspace.board
         }
     }
 }
@@ -130,8 +133,9 @@ struct IOSOSNavigation: Equatable {
     /// Suit ce qu'un écran partagé demande par `OSWorkspace.selection` : « Maintenant »
     /// referme la page montrée (un fil oublié) ou, à la racine, ouvre l'onglet ; les
     /// Propositions et le Savoir ouvrent leur onglet ; les Automatismes se poussent dans le
-    /// Savoir ; un espace et un fil se poussent dans l'onglet courant. Sans effet quand
-    /// l'écran montre déjà la sélection.
+    /// Savoir ; le Tableau se montre dans les Fils ; un espace et un fil se poussent dans
+    /// l'onglet courant (un fil touché sur le Tableau passe donc par-dessus lui). Sans effet
+    /// quand l'écran montre déjà la sélection.
     @MainActor mutating func follow(selection: String?) {
         guard let selection, selection != self.selection else { return }
         switch selection {
@@ -143,6 +147,8 @@ struct IOSOSNavigation: Equatable {
             show(.knowledge)
         case OSWorkspace.automations:
             show(.automations, in: .knowledge)
+        case OSWorkspace.board:
+            show(.board, in: .threads)
         default:
             push(OSWorkspace.spaceId(of: selection).map(IOSOSRoute.space) ?? .thread(selection))
         }
@@ -214,6 +220,7 @@ enum IOSOSRouting {
 /// - `-os.view <now|threads|decisions|proposals|knowledge>` : cet onglet ;
 /// - `-os.thread <fil ou feature>`, `-os.space <identifiant ou nom>` : ce fil, cet espace ;
 /// - `-os.system <page>` : cette page du hub Système (`OSSystemDestination`), dans l'onglet ;
+/// - `-os.board <valeur>` : le Tableau, poussé dans l'onglet Fils (la valeur est ignorée) ;
 /// - `-ios.state` et `-memoire.recipe` (crochets de l'écran Mémoire) : la Mémoire, dans le
 ///   Savoir.
 ///
@@ -224,11 +231,13 @@ struct IOSShellLaunch: Equatable {
     var space: String?
     var system: OSSystemDestination?
     var memory = false
+    var board = false
 
     static let viewFlag = "-os.view"
     static let threadFlag = "-os.thread"
     static let spaceFlag = "-os.space"
     static let systemFlag = "-os.system"
+    static let boardFlag = "-os.board"
     /// Les crochets de recette de l'écran Mémoire.
     static let memoryFlags = ["-ios.state", "-memoire.recipe"]
 
@@ -246,6 +255,8 @@ struct IOSShellLaunch: Equatable {
                 launch.space = value
             case systemFlag:
                 if let system = OSSystemDestination(rawValue: value) { launch.system = system }
+            case boardFlag:
+                launch.board = true
             default:
                 break
             }
@@ -254,9 +265,11 @@ struct IOSShellLaunch: Equatable {
         return launch
     }
 
-    /// L'onglet ouvert au lancement : celui que nomme la recette ; un fil s'ouvre dans les
-    /// Fils, un espace et la Mémoire dans le Savoir ; sinon « Maintenant ».
+    /// L'onglet ouvert au lancement : le tableau ne vit que dans les Fils, même avec `-os.view` ;
+    /// sinon celui que nomme la recette ; un fil s'ouvre dans les Fils, un espace et la Mémoire
+    /// dans le Savoir ; sinon « Maintenant ».
     var initialTab: IOSOSTab {
+        if board { return .threads }
         if let tab { return tab }
         if thread != nil { return .threads }
         if space != nil || memory { return .knowledge }
@@ -270,6 +283,8 @@ struct IOSShellLaunch: Equatable {
         var navigation = IOSOSNavigation(tab: initialTab)
         if let system {
             navigation.showSystem(system)
+        } else if board {
+            navigation.show(.board, in: .threads)
         } else if memory {
             navigation.show(.memory, in: initialTab)
         }

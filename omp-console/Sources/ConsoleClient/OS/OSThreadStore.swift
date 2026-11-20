@@ -26,6 +26,13 @@ public final class OSThreadStore: ObservableObject {
     private var dirty = false
     /// Les entrées du dernier calcul : les mêmes ne recalculent rien.
     private var computed: Inputs
+    /// Le nombre d'entrées changées vues par `schedule()` depuis la création.
+    private var requested = 0
+    /// La valeur de `requested` relevée au début de la dernière itération terminée : tout ce qui
+    /// avait changé avant ce relevé est regroupé et publié.
+    private var settledUpTo = 0
+    /// Ceux qui attendent `settled()` : la valeur de `requested` à atteindre, et leur reprise.
+    private var waiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
     public convenience init(server: HarnessModel) {
         self.init(server: server, debounce: Self.debounce)
@@ -57,8 +64,29 @@ public final class OSThreadStore: ObservableObject {
             .store(in: &subscriptions)
     }
 
+    /// Rend la main quand les entrées présentes à l'appel sont regroupées et publiées : tout de suite
+    /// si aucun calcul n'est planifié ni en cours, sinon à la fin de l'itération qui les a lues.
+    /// Une entrée changée après l'appel ne prolonge pas l'attente.
+    public func settled() async {
+        guard task != nil else { return }
+        let target = requested
+        guard settledUpTo < target else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append((target, continuation))
+        }
+    }
+
+    /// Une itération a lu les entrées jusqu'à `seen` et publié le résultat : reprend ceux qu'elle satisfait.
+    private func settle(upTo seen: Int) {
+        settledUpTo = max(settledUpTo, seen)
+        let ready = waiters.filter { $0.target <= settledUpTo }
+        waiters.removeAll { $0.target <= settledUpTo }
+        for waiter in ready { waiter.continuation.resume() }
+    }
+
     /// Un `@Published` prévient AVANT de changer : le calcul lit les entrées après l'attente.
     private func schedule() {
+        requested += 1
         guard task == nil else {
             dirty = true
             return
@@ -69,6 +97,7 @@ public final class OSThreadStore: ObservableObject {
                 try? await Task.sleep(for: delay)
                 guard !Task.isCancelled, let self else { return }
                 self.dirty = false
+                let seen = self.requested
                 let inputs = Inputs(server: self.server)
                 if inputs != self.computed {
                     let result = await Task.detached(priority: .userInitiated) { inputs.result }.value
@@ -77,6 +106,7 @@ public final class OSThreadStore: ObservableObject {
                     self.update(\.threads, result.threads)
                     self.update(\.decisionCount, result.decisions)
                 }
+                self.settle(upTo: seen)
                 if !self.dirty {
                     self.task = nil
                     return

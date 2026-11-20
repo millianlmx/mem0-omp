@@ -46,8 +46,11 @@ function wiringFaults(all: Map<string, string>): string[] {
   const load = memberBody(shell, "private func load()");
   if (!load.includes("await server.readShell(.opening)"))
     faults.push(`${SHELL} : load() sans « await server.readShell(.opening) »`);
-  if (count(load, "await") !== 1)
-    faults.push(`${SHELL} : load() attend ${count(load, "await")} fois (attendu 1, readShell)`);
+  // `await threadStore.settled()` attend le regroupement LOCAL des fils (aucune lecture du serveur) :
+  // il ne compte pas parmi les lectures en série.
+  const reads = load.replace("await threadStore.settled()", "");
+  if (count(reads, "await") !== 1)
+    faults.push(`${SHELL} : load() attend ${count(reads, "await")} fois (attendu 1, readShell)`);
 
   // Tirer pour actualiser : readShell(.refreshing) en parallèle de la boîte.
   const reload = memberBody(shell, "private func reload()");

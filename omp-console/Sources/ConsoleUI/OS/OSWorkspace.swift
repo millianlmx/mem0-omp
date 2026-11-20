@@ -1,6 +1,6 @@
 // L'« OS agentique », partagé par le Mac et l'iPhone/iPad : l'état de l'espace de travail
-// (ce que montre le détail — Maintenant, Propositions, Savoir, Automatismes, Système, la
-// Mémoire, un espace ou un fil —, feature comprise, niveau de zoom, tri, espace et lieu retenus) et le tri pur
+// (ce que montre le détail — Maintenant, Propositions, Savoir, Automatismes, Système, la Mémoire,
+// le Tableau, un espace ou un fil —, feature comprise, niveau de zoom, tri, espace et lieu retenus) et le tri pur
 // des fils par espace et par lieu (`OSThreadScope`). La coque de chaque app tient UN
 // `OSWorkspace` et le passe aux écrans de ce dossier.
 
@@ -60,6 +60,8 @@ public final class OSWorkspace: ObservableObject {
     public nonisolated static let system = "system"
     /// La sélection de la « Mémoire » (le Mac la montre au centre).
     public nonisolated static let memory = "memory"
+    /// La sélection du « Tableau » : les fils en colonnes par phase.
+    public nonisolated static let board = "board"
     /// Le filtre de lieu « le Poste » (sinon un nom de dépôt).
     public nonisolated static let postePlace = "@poste"
     private static let spacePrefix = "space:"

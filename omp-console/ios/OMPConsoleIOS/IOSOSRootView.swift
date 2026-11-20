@@ -43,7 +43,8 @@ struct IOSOSRootView: View {
     /// qu'ils ne sont pas connus.
     @State private var pendingThread: String?
     @State private var pendingSpace: String?
-    /// L'historique a été lu une fois : un fil absent n'existe plus.
+    /// L'historique a été lu une fois et ses fils sont regroupés : un fil absent n'existe plus,
+    /// et le tableau ne dit « aucun fil » qu'après.
     @State private var loaded = false
 
     /// L'état de recette et le crochet du graphe de l'écran Mémoire, poussé depuis le Savoir.
@@ -218,6 +219,16 @@ struct IOSOSRootView: View {
                 )
                 // Le style à sections repliables : les fils arrêtés restent repliés.
                 .listStyle(.sidebar)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            navigation.push(.board)
+                        } label: {
+                            Label(OSText.board, systemImage: IOSOSText.boardSymbol)
+                        }
+                        .accessibilityIdentifier("ios.os.board")
+                    }
+                }
             }
         case .decisions:
             IOSOSScreen(server: server, drafts: drafts, tab: tab, reload: reload, openSystem: openSystem) {
@@ -271,6 +282,12 @@ struct IOSOSRootView: View {
             IOSSystemHubScreen(server: server, open: openSystemPage)
         case let .systemPage(destination):
             IOSSystemDestinationScreen(server: server, drafts: drafts, destination: destination)
+        case .board:
+            IOSOSBoardPage(
+                server: server, drafts: drafts, workspace: workspace,
+                threads: OSThreadScope.threads(threads, spaceId: workspace.spaceId, place: workspace.place, spaces: spaces.spaces),
+                loaded: loaded, reload: reload
+            )
         }
     }
 
@@ -329,6 +346,7 @@ struct IOSOSRootView: View {
         guard server.isConfigured else { return }
         workspace.pulse.start()
         await server.readShell(.opening)
+        await threadStore.settled()
         loaded = true
         openPending(threadStore.threads)
     }

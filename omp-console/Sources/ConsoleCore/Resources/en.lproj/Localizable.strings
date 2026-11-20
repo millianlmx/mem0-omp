@@ -1315,6 +1315,13 @@
 "au travail" = "working";
 "en file" = "queued";
 "livré" = "delivered";
+"Tableau" = "Board";
+"Vous n’avez aucun fil en cours ni récent" = "You have no current or recent threads";
+"fil" = "thread";
+"fils" = "threads";
+"1 chose vous attend" = "1 thing needs you";
+"%lld choses vous attendent" = "%lld things need you";
+"colonne %@" = "column %@";
 "question" = "question";
 "specs à valider" = "specs to approve";
 "revue à valider" = "review to approve";

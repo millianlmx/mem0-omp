@@ -2,7 +2,7 @@
 // la seule entrée (⌘L) : ce qu'on y tape filtre les fils, et ⏎ le demande à l'OS (la
 // Demande du serveur). Puis l'espace (un client) et, dedans, le lieu ; les entrées fixes
 // — « Maintenant », les décisions à trier (⌘T), les propositions des agents, les
-// automatismes, le savoir, la mémoire et le système (Mac) — et les fils, de ce qui vous attend à ce qui est fini ; les
+// automatismes, le savoir, la mémoire, le système et le tableau (Mac) — et les fils, de ce qui vous attend à ce qui est fini ; les
 // fils arrêtés restent repliés. Une session omp locale est un fil comme un autre. Le
 // style de la liste (barre latérale sur le Mac) est posé par la coque.
 
@@ -139,6 +139,8 @@ public struct OSThreadList: View {
                 .tag(OSWorkspace.memory)
             Label(OSSystemText.title, systemImage: ConsoleSection.system.systemImage)
                 .tag(OSWorkspace.system)
+            Label(OSText.board, systemImage: "rectangle.split.3x1")
+                .tag(OSWorkspace.board)
             askRow
         }
         #endif
