@@ -217,7 +217,7 @@ function ac2Env(url: string): Record<string, string> {
 
 const NESTED = "copie imbriquée — harnais non relancé";
 
-test("plugin-smoke-sessions/AC-1 : le harnais ne parle pas au harness configuré par HARNESS_URL/HARNESS_TOKEN", async (t) => {
+test("plugin-smoke-sessions/AC-1 : aucune requête vers le harness configuré par variables", async (t) => {
   if (!prereq(t)) return;
   if (LAUNCHES === null) return t.skip(NESTED);
 
@@ -272,7 +272,7 @@ test("plugin-smoke-sessions/AC-3 : les copies mutées du harnais rougissent sans
   assert.deepEqual(seen, [], `requêtes reçues par le faux harness : ${listed(seen)}\n${out}`);
 });
 
-/** Les `*.ts` du dépôt, chemins relatifs avec `/` ; la marche ÉLAGUE `node_modules`, `target` et les dossiers cachés. */
+/** Les `*.ts` du dépôt, chemins relatifs avec `/` ; la marche élague `node_modules`, `target` et les `.dossiers`. */
 function tsFiles(dir: string = ROOT): string[] {
   const found: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -286,9 +286,10 @@ function tsFiles(dir: string = ROOT): string[] {
   return found;
 }
 
-test("plugin-smoke-sessions/AC-4 : seul le harnais charge le vrai plugin dans un vrai OMP, et le double d'hôte actif ne fuit pas", async (t) => {
+test("plugin-smoke-sessions/AC-4 : seul le harnais charge le vrai plugin, le double d'hôte ne fuit pas", async (t) => {
   // (a) Inventaire : tout nouveau chargeur doit poser la garde et entrer ici.
-  const self = path.relative(ROOT, fileURLToPath(import.meta.url)).split(path.sep).join("/");
+  const here = fileURLToPath(import.meta.url);
+  const self = path.relative(ROOT, here).split(path.sep).join("/");
   const loaders = tsFiles()
     .filter((rel) => rel !== self)
     .filter((rel) =>
