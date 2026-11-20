@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-console 1.6.0 — 2026-11-20
+
+- feat(console): tableau kanban des fils par phase sur Mac et iOS (70ecc7a)
+
 ## omp-memory 4.5.0 — 2026-11-19
 
 - feat(memory): la mémoire ne porte plus le nom mem0, anciens noms lus (2a30fed)
