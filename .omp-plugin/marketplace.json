@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Mémoire persistante par projet pour oh-my-pi",
-    "version": "4.4.0"
+    "version": "4.5.0"
   },
   "plugins": [
     {
       "name": "omp-memory",
       "source": "./omp-memory",
       "description": "Mémoire persistante par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire du projet en prompt système, exhaustif tant qu'il n'est pas tronqué (60 entrées), au-delà de quoi il dit lui-même ce qui manque, agrafage aux résultats d'outils, checkpoint exploration, souvenirs reliés (memory_link, liens montrés au rappel et à la recherche), rêve de la mémoire (/memory-dream : propositions à trancher, mental models posés en tête de session), phases de fin de session (instructions déléguées à l'agent), /memory-init pour amorcer un dépôt existant, revue (phase). Le scope est celui du dépôt, worktrees git compris. Nécessite le service mémoire (memory-stack) en local.",
-      "version": "4.4.0",
+      "version": "4.5.0",
       "author": {
         "name": "MillianLMX"
       },
@@ -50,7 +50,7 @@
       "name": "omp-memory-req",
       "source": "./omp-memory-req",
       "description": "Client du harness (omp-harness, le Pipeline Service du VPS), seul moteur des pipelines. /req cerne les besoins avec toi dans la session (un ask groupé, deux tours au plus, critères AC-n co-signés), puis crée la feature sur le serveur, qui conduit /specs, /impl, /review et le merge. /project découpe un projet en features lancées en parallèle quand leurs modules sont disjoints. /audit lance un audit du dépôt sur le serveur et y lance les propositions retenues. /pipelines résume la boîte de l'humain ; /harness-follow pousse specs prêtes, verdicts et questions dans la session. Outils harness_inbox, harness_run, harness_events et les gestes (validate, answer, reverse, retry, cancel, accept_decisions) quand tu les demandes en clair. Configuration : HARNESS_URL et HARNESS_TOKEN, ou ~/.omp/harness.json.",
-      "version": "2.7.0",
+      "version": "2.8.0",
       "author": {
         "name": "MillianLMX"
       },
@@ -79,7 +79,7 @@
       "name": "omp-mem0-memory",
       "source": "./omp-memory",
       "description": "Ancien nom de omp-memory, gardé pendant la transition : installez omp-memory@mem0-omp.",
-      "version": "4.4.0",
+      "version": "4.5.0",
       "author": {
         "name": "MillianLMX"
       },
@@ -116,7 +116,7 @@
       "name": "omp-mem0-req",
       "source": "./omp-memory-req",
       "description": "Ancien nom de omp-memory-req, gardé pendant la transition : installez omp-memory-req@mem0-omp.",
-      "version": "2.7.0",
+      "version": "2.8.0",
       "author": {
         "name": "MillianLMX"
       },

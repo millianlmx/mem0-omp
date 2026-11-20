@@ -1,5 +1,37 @@
 # Journal des versions
 
+## omp-memory 4.5.0 — 2026-11-19
+
+- feat(memory): la mémoire ne porte plus le nom mem0, anciens noms lus (2a30fed)
+- refactor(stack): ranger le service mémoire en dossiers de domaine (13e3f86)
+
+## omp-memory-req 2.8.0 — 2026-11-19
+
+- feat(memory): la mémoire ne porte plus le nom mem0, anciens noms lus (2a30fed)
+- refactor(harness): le serveur rangé en 17 dossiers de domaine (5b763ea)
+
+## omp-harness 1.44.0 — 2026-11-19
+
+- feat(memory): la mémoire ne porte plus le nom mem0, anciens noms lus (2a30fed)
+- refactor(harness): découper le serveur HTTP par responsabilité (ed9b8bd)
+- refactor(stack): ranger le service mémoire en dossiers de domaine (13e3f86)
+- refactor(console): ranger l'app Swift en dossiers de domaine (a38e5d7)
+- refactor(harness): le poste de travail découpé en cinq modules (9be15a6)
+- refactor(harness): l'orchestrateur découpé en cinq modules (ddead24)
+- refactor(harness): le serveur rangé en 17 dossiers de domaine (5b763ea)
+
+## omp-chrome 0.10.0 — 2026-11-19
+
+- feat(memory): la mémoire ne porte plus le nom mem0, anciens noms lus (2a30fed)
+- refactor(harness): le serveur rangé en 17 dossiers de domaine (5b763ea)
+
+## omp-console 1.5.0 — 2026-11-19
+
+- feat(memory): la mémoire ne porte plus le nom mem0, anciens noms lus (2a30fed)
+- refactor(stack): ranger le service mémoire en dossiers de domaine (13e3f86)
+- refactor(console): ranger l'app Swift en dossiers de domaine (a38e5d7)
+- refactor(harness): le serveur rangé en 17 dossiers de domaine (5b763ea)
+
 ## omp-console 1.4.1 — 2026-11-18
 
 - fix(ci): les jobs macOS tournent sur le Mac auto-hébergé (#487) (4edcf63)
