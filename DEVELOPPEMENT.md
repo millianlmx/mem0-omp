@@ -380,6 +380,19 @@ service mémoire étant remplacé par un stub local, donc sans conteneur ni cred
 Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux statuts
 ainsi que `release-simulation` : le merge est bloqué.
 
+Ce harnais ouvre une vraie session OMP dans `$TMPDIR/plugin-smoke-projet-XXXXXX`.
+Le rapporteur de session locale du plugin chargé (`omp-memory-req/local-session.ts`)
+la signalait au harness de la machine (`POST /v1/local-sessions`) : d'où les entrées
+« Plugin-smoke-projet-* » de la barre latérale de la console, nommées d'après le
+dossier. Ce harness était trouvé par `~/.omp/harness.json` du HOME de démarrage (le
+faux HOME du harnais ne le masque pas : sous Bun, `os.homedir()` garde le HOME du
+démarrage, bug oven-sh/bun#29244) ou par `HARNESS_URL`/`HARNESS_TOKEN`. La règle :
+tout script ou test qui charge le vrai `omp-memory-req` dans un vrai OMP pose
+`OMP_HARNESS_LOCAL_SESSIONS=0` et des `HARNESS_URL`/`HARNESS_TOKEN` vides (vides, pas
+absentes) AVANT le chargement des extensions ; remplacer `HOME` ne protège pas. Un
+test d'isolation lance un sous-process dont l'env de départ porte le HOME voulu
+(`test/outillage/plugin-smoke-sessions.test.ts`).
+
 Sur Ubuntu, le job `check` lance `./scripts/check.sh --strict` : ses 14
 sections à chaque run ; en pull_request il ajoute `--tests-base=<sha de la base>` et la
 section tests se réduit aux fichiers que le diff de la PR concerne. `check.yml` ne tourne
