@@ -686,6 +686,7 @@ const MOTIFS_PAR_FICHIER: Record<string, NomMotif[]> = {
   "test/outillage/docs.test.ts": ["CATALOG", "REPO"],
   "test/outillage/no-ts-lint-formatter.test.ts": ["ENV_V"],
   "test/outillage/omp-host-epingle.test.ts": ["ENV_V"],
+  "test/outillage/plugin-smoke-sessions.test.ts": ["ENV_V"],
   "test/outillage/readme-installation-podman-contradiction.test.ts": ["CATALOG", "REPO", "PY"],
   "test/outillage/release-simulation.test.ts": ["ENV_V"],
   "test/outillage/release.test.ts": ["ENV_V", "CATALOG", "REPO"],

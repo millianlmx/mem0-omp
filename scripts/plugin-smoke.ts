@@ -27,7 +27,11 @@
 //    être posée AVANT de charger les extensions ;
 //  * l'extension interne de l'hôte (`path === "<inline-0>"`) appelle
 //    `ctx.ui.setWidget` : un stub UI qui ne le définit pas remonte un
-//    `runtimeError` inoffensif mais bruyant.
+//    runtimeError inoffensif mais bruyant ;
+//  * sous Bun, `os.homedir()` garde le HOME du DÉMARRAGE du process (bug #29244) :
+//    le `HOME` remplacé en section 2 ne masque PAS les fichiers de `~` que les
+//    plugins lisent par `os.homedir()`, dont `~/.omp/harness.json` d'un poste
+//    appairé — d'où la garde de la section 2 (rapporteur de session locale).
 //
 // `MEMORY_OMP_REQUIRE_SMOKE` n'est PAS lue ici : c'est `scripts/check.sh` qui
 // durcit l'absence de prérequis en échec (S-2). Le harnais, lui, sort toujours
@@ -102,6 +106,17 @@ process.env.PI_CODING_AGENT_DIR = path.join(home, ".omp", "agent");
 // Sans ça, le brief mémoire s'installerait tout seul dans le dépôt de session et
 // le harnais écrirait hors de ses temporaires.
 process.env.MEMORY_AUTOSETUP = "0";
+// Le rapporteur de session locale d'`omp-memory-req` se signalerait au harness de
+// la machine dès `session_start` (pendant `initializeExtensions`), sous le nom du
+// dossier `plugin-smoke-projet-XXXXXX` : d'où les entrées « Plugin-smoke-projet-* »
+// de la barre latérale de la console. Il trouve ce harness par `HARNESS_URL` /
+// `HARNESS_TOKEN`, sinon par `~/.omp/harness.json` du HOME de DÉMARRAGE, que le
+// faux HOME ci-dessus ne masque pas sous Bun (#29244). On coupe donc le rapporteur
+// ET on vide les variables AVANT le chargement des extensions : vides, pas
+// absentes, car une valeur vide masque aussi le fichier dans `resolveTarget`.
+process.env.OMP_HARNESS_LOCAL_SESSIONS = "0";
+process.env.HARNESS_URL = "";
+process.env.HARNESS_TOKEN = "";
 Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd: project });
 
 // ---------------------------------------------------------------------------
@@ -264,9 +279,8 @@ const INVOCATIONS: Record<string, Invocation> = {
 
   "omp-memory-req": async ({ session, notes, ok, bad }) => {
     // Sans harness configuré, la commande refuse en nommant ce qui manque, sans rien envoyer.
-    // Vides, pas absentes : elles masquent aussi un ~/.omp/harness.json de la machine.
-    process.env.HARNESS_URL = "";
-    process.env.HARNESS_TOKEN = "";
+    // HARNESS_URL/HARNESS_TOKEN sont déjà vides : l'isolation (section 2) les a masquées,
+    // `~/.omp/harness.json` de la machine compris.
     notes.length = 0;
     try {
       const handled = await within("/pipelines", () => session.prompt("/pipelines"));
