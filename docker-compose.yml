@@ -204,7 +204,7 @@ services:
 
   # Les embeddings de la mémoire : un Ollama sur le CPU, et son modèle tiré une fois.
   embeddings:
-    image: docker.io/ollama/ollama:0.40.14
+    image: docker.io/ollama/ollama:0.40.16
     restart: unless-stopped
     environment:
       # Le modèle reste chargé : un rechargement à froid ferait expirer les écritures de memory.
@@ -213,7 +213,7 @@ services:
       - ${OMP_HARNESS_ROOT:-/var/lib/omp-harness}/ollama:/root/.ollama
 
   embeddings-model:
-    image: docker.io/ollama/ollama:0.40.14
+    image: docker.io/ollama/ollama:0.40.16
     command: ["pull", "${OMLX_EMBED_MODEL:-bge-m3}"]
     restart: on-failure
     depends_on: [embeddings]
@@ -290,7 +290,7 @@ services:
   # Les jetons de scrape sont des fichiers de OMP_HARNESS_SECRETS/monitoring (README du
   # harness § Observabilité) ; Prometheus tourne en root pour lire ces fichiers 0600.
   prometheus:
-    image: docker.io/prom/prometheus:v3.1.0
+    image: docker.io/prom/prometheus:v3.16.0
     profiles: ["monitoring"]
     restart: unless-stopped
     user: "0"
