@@ -14,6 +14,7 @@ import type { RepoConfig } from "../../../omp-harness/config/config.ts";
 import { loadConfig, validateConfig } from "../../../omp-harness/config/config.ts";
 import type { RunRow } from "../../../omp-harness/db/db.ts";
 import { forgeKindOf, githubSlug, openForge, remoteLocation } from "../../../omp-harness/forge/forge.ts";
+import { GitHubForge } from "../../../omp-harness/forge/forge-github.ts";
 import { Git } from "../../../omp-harness/forge/git.ts";
 import { createHandler } from "../../../omp-harness/api/http.ts";
 import { Orchestrator } from "../../../omp-harness/runs/orchestrator.ts";
@@ -696,4 +697,52 @@ test("harness-forges/AC-9 : la configuration d'exemple déclare un dépôt GitLa
   assert.ok(policySecretVars(config).includes(gitlab?.gitlab?.tokenEnv ?? ""), "le jeton du dépôt est caché");
   for (const name of ["GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN"])
     assert.ok((SERVICE_SECRETS as readonly string[]).includes(name), name);
+});
+
+test("harness-forges/AC-10 : GitHub, `gh pr merge --auto --delete-branch` vise `--repo owner/name` (la branche locale du worktree reste) ; un échec après la fusion n'est pas un refus, un vrai refus si", async () => {
+  const calls: string[][] = [];
+  let merged = false;
+  let refuse = false;
+  const exec: Exec = async (command, args, options) => {
+    if (command !== "gh") return execProcess(command, args, options);
+    calls.push(args);
+    if (args[1] === "merge") {
+      if (refuse) return done("", 1, "GraphQL: Pull request is not mergeable");
+      merged = true;
+      // L'ancien symptôme : la fusion faite, puis la branche locale indélébile (ouverte dans le worktree).
+      return done(
+        "",
+        1,
+        "failed to delete local branch harness/x: failed to run git: error: Cannot delete branch 'harness/x' checked out at '/w/x'",
+      );
+    }
+    return done(JSON.stringify({ state: merged ? "MERGED" : "OPEN", mergedAt: null }));
+  };
+  const repo = testConfig(harnessRepo("harness-forges-merge-")).repos[0] as RepoConfig;
+  const forge = new GitHubForge(
+    repo,
+    { remote: "origin", url: "git@github.com:moi/demo.git", explicit: false },
+    exec,
+    {},
+  );
+
+  await forge.autoMerge("harness/x", null);
+  assert.deepEqual(calls[0], [
+    "pr",
+    "merge",
+    "harness/x",
+    "--repo",
+    "moi/demo",
+    "--squash",
+    "--auto",
+    "--delete-branch",
+  ]);
+  assert.deepEqual(calls[1]?.slice(0, 3), ["pr", "view", "harness/x"], "l'échec relit l'état de la PR");
+
+  merged = false;
+  refuse = true;
+  await assert.rejects(
+    forge.autoMerge("harness/x", null),
+    /gh pr merge --auto refusé : GraphQL: Pull request is not mergeable/,
+  );
 });
