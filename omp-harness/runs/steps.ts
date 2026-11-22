@@ -28,7 +28,7 @@ import {
   toAnswer,
   unanswered,
 } from "./challenge.ts";
-import type { ChallengeStep } from "../config/config.ts";
+import type { ChallengeStep, RepoConfig } from "../config/config.ts";
 import { fixCapFor } from "../config/config.ts";
 import type { HarnessContext } from "./context.ts";
 import type { RunRow, StepRow, Store } from "../db/db.ts";
@@ -54,9 +54,11 @@ import {
 import { briefOfReq, renderMemories } from "../memory/oracle.ts";
 import { PolicyRefusal } from "../config/policy.ts";
 import { MissingTools, missingTools } from "../runners/tools.ts";
+import { loadEnvSpec } from "../executors/env-spec.ts";
 import type { PromptError, PromptResult } from "../runners/rpc.ts";
 import { RunnerExited } from "../runners/rpc.ts";
 import { hostToolsFor, runnerUnit } from "../runners/runner.ts";
+import type { TargetView } from "../runners/runner.ts";
 import { QaPreview } from "../browser/qa.ts";
 import { reportSlugs, testReport } from "../heavy/test-report.ts";
 import { RunnerSession, STEP_TIMEOUT_PREFIX, providerOfLabel } from "../runners/runner-session.ts";
@@ -534,11 +536,12 @@ export class StepExecutor {
         // La revue relit chez un autre fournisseur que l'implémenteur : pas les mêmes angles morts.
         step === "review" && config.review.crossProvider ? { avoidProvider: this.#implementerProvider(run.id) } : {},
       );
+      const repo = this.#ctx.repo(run.repo);
+      const targets = await this.#targets(run, repo);
       await session.setHostTools(
-        hostToolsFor(step, { qa: live.qa?.offersTools === true, atlassian: this.#atlassianFor(run) }),
+        hostToolsFor(step, { qa: live.qa?.offersTools === true, atlassian: this.#atlassianFor(run), targets }),
       );
 
-      const repo = this.#ctx.repo(run.repo);
       const prompt = stepPrompt({
         step,
         title: run.title,
@@ -564,6 +567,7 @@ export class StepExecutor {
         // Voie directe ou express née d'une session qui a enquêté (`/ship`) : specs.md porte son relevé du dépôt.
         survey: surveyOf(store.getArtifact(run.id, "specs.md") ?? "") !== null,
         qa: step === "review" && live.qa?.offersTools === true,
+        targets,
       });
       store.setInstructions(run.id, null);
       live.conflicts = [];
@@ -896,6 +900,18 @@ export class StepExecutor {
     return { kind: "failed", cause, reason, retryable };
   }
 
+  /** Les cibles que le dépôt déclare au commit de base du run (`.harness-env.json`) ; invalides ou absentes : aucune. */
+  async #targets(run: RunRow, repo: RepoConfig): Promise<TargetView[]> {
+    const spec = await loadEnvSpec(this.#ctx.git, run.worktree as string, run.baseSha ?? repo.mainBranch).catch(
+      () => null,
+    );
+    return (spec?.targets ?? []).map((target) => ({
+      name: target.name,
+      os: target.requires.os ?? "linux",
+      commands: Object.keys(target.commands),
+    }));
+  }
+
   /** La suite complète lancée sans attendre : le runner la rejoint par `run_tests`, la clôture la lit. */
   #launchFullSuite(live: LiveRun, run: RunRow, stepRow: StepRow): void {
     const repo = this.#ctx.repo(run.repo);
@@ -908,6 +924,7 @@ export class StepExecutor {
           worktree: run.worktree as string,
           scope: "full",
           files: [],
+          base: run.baseSha ?? repo.mainBranch,
           priority: run.priority,
         },
         live.abort.signal,
@@ -932,7 +949,13 @@ export class StepExecutor {
     const { heavy, store } = this.#ctx;
     if (live.fullSuite) await live.fullSuite;
     const repo = this.#ctx.repo(run.repo);
-    const key = await heavy.keyFor({ repo, worktree: run.worktree as string, scope: "full", files: [] });
+    const key = await heavy.keyFor({
+      repo,
+      worktree: run.worktree as string,
+      scope: "full",
+      files: [],
+      base: run.baseSha ?? repo.mainBranch,
+    });
     if (key === null) return "not_run";
     if (live.lastFull !== null && live.lastFull.tree === key.tree) return fullOutcome(live.lastFull);
     const cached = store.cacheGet(key.key);

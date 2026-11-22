@@ -392,6 +392,25 @@ export type RepoConfig = {
   atlassian?: boolean;
 } & ModelPolicy;
 
+/**
+ * Un exécuteur des jobs de tests d'une cible (`.harness-env.json`) : `local` (le heavy du service), `ssh` (une
+ * machine jointe en ssh, un Mac par exemple), `tart` (une VM macOS jetable clonée de `tart.image`, jointe en ssh
+ * puis détruite). `labels` dit ce qu'il offre (`os` toujours) ; une cible le prend s'il porte toutes ses exigences.
+ */
+export type ExecutorConfig = {
+  name: string;
+  kind: "local" | "ssh" | "tart";
+  labels: Record<string, string>;
+  /** Les jobs simultanés au plus (une VM par job en `tart` : la licence Apple en permet 2 par Mac). */
+  slots: number;
+  /** `ssh` : l'hôte ; `tart` : l'utilisateur et la clé des VM. `workdir` : où les jobs déposent l'arbre (`/tmp`). */
+  ssh?: { host?: string; user?: string; port?: number; key?: string; workdir?: string };
+  tart?: { image: string };
+};
+
+/** Les types d'exécuteurs. */
+export const EXECUTOR_KINDS: readonly ExecutorConfig["kind"][] = ["local", "ssh", "tart"];
+
 export type HarnessConfig = {
   listen: { host: string; port: number };
   /** Le fichier du jeton d'API (créé en 0600 au premier démarrage s'il manque) : le client `admin` historique. */
@@ -643,6 +662,8 @@ export type HarnessConfig = {
     callTimeoutSec: number;
   };
   atlassian: AtlassianConfig;
+  /** Les exécuteurs des cibles déclarées par les dépôts (`.harness-env.json`) ; vide : le heavy local seul. */
+  executors: ExecutorConfig[];
   repos: RepoConfig[];
 };
 
@@ -820,6 +841,7 @@ export function defaultConfig(base = path.join(os.homedir(), ".omp-harness")): H
       planWeekdaysOnly: true,
       knowledgeEveryHours: 24,
     },
+    executors: [],
     repos: [],
   };
 }
@@ -997,6 +1019,38 @@ function checkRepoAccounts(repo: RepoConfig): void {
 }
 
 /** Valide une configuration complète ; lève une erreur NOMMÉE au premier défaut. */
+function validateExecutors(executors: unknown): void {
+  if (!Array.isArray(executors)) fail("executors : liste");
+  const names = new Set<string>();
+  for (const raw of executors as unknown[]) {
+    if (!isRecord(raw)) fail("executors : chaque exécuteur est un objet");
+    const name = raw.name;
+    if (typeof name !== "string" || !/^[a-z0-9][a-z0-9._-]{0,39}$/.test(name))
+      fail(`executors : nom invalide (${String(name)})`);
+    if (names.has(name)) fail(`executors : ${name} en double`);
+    names.add(name);
+    const where = `executors.${name}`;
+    if (!EXECUTOR_KINDS.includes(raw.kind as ExecutorConfig["kind"])) fail(`${where}.kind : local | ssh | tart`);
+    if (
+      !isRecord(raw.labels) ||
+      !Object.values(raw.labels).every((value) => typeof value === "string") ||
+      (raw.labels.os !== "linux" && raw.labels.os !== "macos")
+    )
+      fail(`${where}.labels : étiquettes texte, \`os\` (linux | macos) compris`);
+    if (!Number.isInteger(raw.slots) || (raw.slots as number) < 1) fail(`${where}.slots : entier ≥ 1`);
+    const ssh = raw.ssh;
+    if (ssh !== undefined && !isRecord(ssh)) fail(`${where}.ssh : objet`);
+    const safe = (value: unknown) => value === undefined || (typeof value === "string" && /^[\w.@:/~+-]+$/.test(value));
+    if (ssh !== undefined && !(safe(ssh.host) && safe(ssh.user) && safe(ssh.key) && safe(ssh.workdir)))
+      fail(`${where}.ssh : host, user, key et workdir sans espace ni caractère de shell`);
+    if (ssh !== undefined && ssh.port !== undefined && !(Number.isInteger(ssh.port) && (ssh.port as number) > 0))
+      fail(`${where}.ssh.port : entier > 0`);
+    if (raw.kind === "ssh" && typeof ssh?.host !== "string") fail(`${where}.ssh.host : requis pour un exécuteur ssh`);
+    if (raw.kind === "tart" && !(isRecord(raw.tart) && typeof raw.tart.image === "string" && raw.tart.image !== ""))
+      fail(`${where}.tart.image : l'image Tart des VM (ghcr.io/cirruslabs/macos-sequoia-xcode:16, …)`);
+  }
+}
+
 export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!Number.isInteger(config.listen.port) || config.listen.port < 0 || config.listen.port > 65535)
     fail("listen.port invalide");
@@ -1006,6 +1060,7 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
   if (!Number.isInteger(config.runner.lendMax) || config.runner.lendMax < 0)
     fail("runner.lendMax doit être un entier ≥ 0");
   if (!(config.events.retentionDays > 0)) fail("events.retentionDays doit être > 0");
+  validateExecutors(config.executors);
   const { backups, health } = config;
   if (backups.dir !== null && (typeof backups.dir !== "string" || !path.isAbsolute(backups.dir)))
     fail("backups.dir : chemin absolu, ou null");

@@ -17,6 +17,9 @@ import { PolicyRefusal, policyChain, spaceRule, strictest } from "./policy.ts";
 import type { Exec } from "../runners/proc.ts";
 import { engine, memoryExtension } from "../runners/runner.ts";
 import { missingTools, toolsFix } from "../runners/tools.ts";
+import { ENV_FILE, EnvSpecError, loadEnvSpec } from "../executors/env-spec.ts";
+import type { EnvSpec } from "../executors/env-spec.ts";
+import { localLabels, requirementText, satisfies, sshTarget } from "../executors/executors.ts";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 
@@ -301,6 +304,81 @@ async function checkEngine(config: HarnessConfig, exec: Exec): Promise<CheckLine
   return lines;
 }
 
+/** Les exécuteurs déclarés : un ssh joignable sans mot de passe, `tart` présent (les VM naissent au premier job). */
+async function checkExecutors(config: HarnessConfig, exec: Exec): Promise<CheckLine[]> {
+  const lines: CheckLine[] = [];
+  for (const executor of config.executors) {
+    const label = `exécuteur ${executor.name} (${requirementText(executor.labels)})`;
+    if (executor.kind === "local") {
+      lines.push({ status: "ok", label, detail: "le heavy du service" });
+      continue;
+    }
+    if (executor.kind === "tart") {
+      const tart = await exec("tart", ["--version"], { timeoutMs: 30_000 }).catch(() => null);
+      lines.push(
+        tart?.code === 0
+          ? { status: "ok", label, detail: `tart ${firstLine(tart.stdout)}, image ${executor.tart?.image}` }
+          : {
+              status: "fail",
+              label,
+              detail: "`tart` absent",
+              fix: "Installe Tart sur le Mac du service (`brew install cirruslabs/cli/tart`), puis `tart pull` de l'image déclarée.",
+            },
+      );
+      continue;
+    }
+    const target = sshTarget(executor, executor.ssh?.host as string, false);
+    const reached = await exec("ssh", [...target.options, target.destination, "true"], { timeoutMs: 30_000 }).catch(
+      () => null,
+    );
+    lines.push(
+      reached?.code === 0
+        ? { status: "ok", label, detail: `ssh ${target.destination} joignable` }
+        : {
+            status: "fail",
+            label,
+            detail: `ssh ${target.destination} injoignable${reached ? ` : ${firstLine(reached.stderr)}` : ""}`,
+            fix: "La clé du service doit ouvrir une session sans mot de passe (`ssh.key`, `authorized_keys` de l'hôte).",
+          },
+    );
+  }
+  return lines;
+}
+
+/** Les cibles que le dépôt déclare sur sa branche principale : un fichier valide, un exécuteur pour chacune. */
+async function checkRepoTargets(config: HarnessConfig, repo: RepoConfig, git: Git): Promise<CheckLine[]> {
+  const label = `dépôt ${repo.name} — cibles`;
+  let spec: EnvSpec | null;
+  try {
+    spec = await loadEnvSpec(git, repo.path, repo.mainBranch);
+  } catch (err) {
+    if (!(err instanceof EnvSpecError)) return [];
+    return [{ status: "fail", label, detail: err.message, fix: `Corrige \`${ENV_FILE}\` sur ${repo.mainBranch}.` }];
+  }
+  if (spec === null) return [];
+  const offered = [
+    ...(config.executors.some((executor) => executor.kind === "local") ? [] : [localLabels(config)]),
+    ...config.executors.map((executor) => executor.labels),
+  ];
+  const orphans = spec.targets.filter((target) => !offered.some((labels) => satisfies(labels, target.requires)));
+  if (orphans.length === 0)
+    return [
+      {
+        status: "ok",
+        label,
+        detail: spec.targets.map((target) => `${target.name} (${requirementText(target.requires)})`).join(", "),
+      },
+    ];
+  return [
+    {
+      status: orphans.some((target) => target.required) ? "fail" : "warn",
+      label,
+      detail: `sans exécuteur : ${orphans.map((target) => `${target.name} (${requirementText(target.requires)})`).join(", ")}`,
+      fix: "Déclare dans `executors` un exécuteur qui porte ces étiquettes (un Mac en `ssh` ou `tart` pour une cible macos) : ses tests ne tournent nulle part, et ses runs n'auto-mergent pas.",
+    },
+  ];
+}
+
 /** Les outils que le dépôt attend des runners (`repos[].tools`), cherchés là où ils tournent. */
 async function checkRepoTools(config: HarnessConfig, repo: RepoConfig, exec: Exec): Promise<CheckLine[]> {
   const tools = repo.tools ?? [];
@@ -492,9 +570,11 @@ export async function runChecks(config: HarnessConfig, deps: CheckDeps): Promise
       ...(await checkRepo(repo, deps, contained)),
       ...checkRepoAccounts(repo, deps.env ?? process.env),
       ...(await checkRepoTools(config, repo, deps.exec)),
+      ...(await checkRepoTargets(config, repo, deps.git)),
       ...(await checkModelPolicy(config, strictest(repo, rule?.policy ?? null), owner, deps, contained)),
     );
   }
+  lines.push(...(await checkExecutors(config, deps.exec)));
   if (config.workstation.enabled && config.workstation.policy)
     lines.push(...(await checkModelPolicy(config, config.workstation.policy, "poste de travail", deps, contained)));
   // GitHub refuse une même clé de déploiement sur deux dépôts : la clé du service n'en sert qu'un.

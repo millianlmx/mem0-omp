@@ -148,6 +148,7 @@ export class Baseline {
         worktree: at.worktree,
         scope: "full",
         files: [],
+        base: at.main,
         retry: false,
         ...(run.priority !== undefined ? { priority: run.priority } : {}),
       });

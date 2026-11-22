@@ -591,6 +591,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `repos[].mainBranch` | `main` | la branche principale |
 | `repos[].scope` | lue dans les manifestes | le nom du projet dans la mémoire, le même que sur le Mac |
 | `repos[].testImage` | `container.testImage` | l'image des tests de ce dépôt, en conteneurs |
+| `executors` | `[]` (le heavy local seul) | les exécuteurs des cibles déclarées par les dépôts (`.harness-env.json`) : `local`, `ssh`, `tart` — § « Les environnements d'exécution » |
 | `repos[].tools` | aucun | les commandes que les agents du dépôt lancent dans leur shell (`["xcodegen", "python3"]`) : cherchées là où tournent les runners (l'image `container.runnerImage` en conteneurs, le PATH du service sinon) avant chaque étape, et par `--check`. Une absente arrête l'étape et met le run en attente de l'humain (cause `tools`) au lieu de laisser l'agent la contourner ; installe-la puis relance le run |
 | `runner.isolation`, `heavy.isolation` | `systemd` | `systemd`, `container` (Docker ou podman) ou `none` (développement) |
 | `container.command` | `["docker"]` | le CLI du moteur ; il parle aussi à l'API de podman |
@@ -1397,6 +1398,85 @@ partout où le harness lancerait `full` (la preuve de la revue, `run_tests scope
   et AUCUN `heavy_started` de scope `full` sans `unit` ; le verdict de la revue est rendu
   sans suite locale ; un check rouge ajouté à dessein revient en correction avec son
   extrait.
+
+### Les environnements d'exécution : cibles et exécuteurs
+
+Un dépôt peut déclarer **ses** environnements d'exécution dans `.harness-env.json`, à sa
+racine : ses **cibles** (Linux, macOS…), ce que chacune exige d'un exécuteur, ses commandes
+de tests, les chemins qui la concernent, ses configurations et ses rapports. Le service, lui,
+déclare ses **exécuteurs** (`executors`). `run_tests` lance alors chaque cible concernée sur
+un exécuteur qui en porte les exigences, chaque configuration comprise, et fond les issues en
+un seul résultat : la revue, le cache et l'auto-merge le lisent comme avant. L'OS des tests
+n'est plus celui du runner.
+
+```json
+{
+  "targets": {
+    "server": {
+      "os": "linux",
+      "dockerfile": ".harness/server.Dockerfile",
+      "tests": { "touched": "pytest {files}", "full": "pytest", "pattern": "tests/**/*.py" },
+      "paths": ["server/**"]
+    },
+    "ios": {
+      "os": "macos",
+      "labels": { "xcode": "16" },
+      "setup": ["brew bundle --no-upgrade"],
+      "tests": { "touched": "scripts/test-ios.sh {configuration} {files}", "full": "scripts/test-ios.sh {configuration}", "pattern": "**/*Tests.swift" },
+      "configurations": ["Debug", "Release"],
+      "reports": ["build/reports/*.xml"],
+      "paths": ["App/**", "project.yml"],
+      "commands": { "xcodegen": "xcodegen generate" }
+    }
+  }
+}
+```
+
+- **Lu au commit de base du run**, jamais dans le worktree : un agent ne change pas les
+  commandes qui le jugent. Un changement du fichier vaut après son merge. Un fichier invalide
+  rend un échec structuré qui nomme le champ fautif ; `--check` le valide sur la branche principale.
+- **`full`** lance chaque cible, une fois par configuration (`{configuration}` dans la
+  commande) ; **`touched`** seulement les cibles dont un chemin (`paths`) est touché et qui ont
+  un fichier de test touché (`pattern`). Un diff hors de toute cible ne lance rien.
+- Une cible **`required: false`** tourne, mais n'en décide pas l'issue (informative).
+- **`image`** ou **`dockerfile`** (Linux) : l'image des passages sur le heavy local en
+  conteneurs. Le Dockerfile est construit depuis l'archive du commit de base, en cache par
+  empreinte de son contenu (`omp-env-<dépôt>-<cible>:<empreinte>`). Une cible macOS tourne sur
+  l'image de son exécuteur.
+- **`setup`** : lancé avant chaque passage, sur l'exécuteur.
+- **`commands`** : les commandes nommées que l'agent lance sur la cible par l'outil
+  **`run_on`** (/impl et /impl --fix) — les générateurs. La commande tourne sur l'arbre courant
+  du worktree, sur un exécuteur de la cible, et les fichiers qu'elle modifie reviennent dans le
+  worktree (patch binaire appliqué). Le prompt interdit d'écrire à la main un fichier généré.
+- **`reports`** : les rapports JUnit des passages. Avec la sortie TAP, ils donnent les tests
+  **réellement exécutés** (hors `<skipped>` et `# SKIP`) : un verdict qui marque `pass` un
+  critère dont le test n'y figure pas est **refusé** (un test compilé hors de la configuration
+  jouée, par exemple). Sans rapport ni TAP, rien n'est vérifié.
+
+Les exécuteurs (`executors`, configuration du service) :
+
+| Type | Ce qu'il fait |
+|------|---------------|
+| `local` | le heavy du service (slot heavy, isolation du service). Implicite : ses étiquettes sont `os` (Linux en conteneurs ou systemd, l'OS de la machine en `none`) et `arch`. Le déclarer remplace ses étiquettes. |
+| `ssh` | une machine jointe en ssh (`ssh.host`, `user`, `port`, `key`, `workdir`) : l'arbre courant y est déposé (index temporaire : modifications non commitées comprises), le passage y tourne (`bash -l`), ses rapports et son patch reviennent, son dossier est retiré. |
+| `tart` | une VM macOS jetable par passage : `tart clone <tart.image>`, démarrée sans écran, jointe en ssh (`admin` par défaut), puis arrêtée et supprimée. La licence Apple permet 2 VM par Mac : `slots` ≤ 2. |
+
+```json
+"executors": [
+  { "name": "mac-mini", "kind": "tart", "labels": { "os": "macos", "arch": "arm64", "xcode": "16" }, "slots": 2,
+    "tart": { "image": "ghcr.io/cirruslabs/macos-sequoia-xcode:16" }, "ssh": { "key": "/var/lib/omp-harness/.ssh/tart" } }
+]
+```
+
+Une cible prend un exécuteur qui porte **toutes** ses exigences (`os` et `labels`) — un
+distant libre d'abord, le heavy local en dernier ; elle attend si tous sont occupés. **Aucun
+exécuteur ne la porte** : ses passages ne tournent pas, le résultat le dit (`aucun exécuteur
+ne porte os=macos…`, événement `heavy_unplaced`) et la suite n'est pas verte, donc pas
+d'auto-merge. Rien n'est sauté en silence. `--check` éprouve chaque exécuteur (`ssh … true`,
+`tart --version`) et signale une cible qu'aucun ne porte.
+
+Une suite jugée par la forge (`tests.judge: "ci"`) garde la priorité sur `full` ; les cibles
+jugent alors `touched`.
 
 ### L'autonomie par paliers
 

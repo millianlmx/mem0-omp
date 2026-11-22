@@ -566,6 +566,32 @@ const PROGRESS_TOOL: HostToolDefinition = {
   loadMode: "essential",
 };
 
+/** Une cible du dépôt telle que l'agent la voit : son nom, son OS, ses commandes `run_on`. */
+export type TargetView = { name: string; os: string; commands: string[] };
+
+/** `run_on` : une commande nommée d'une cible du dépôt, lancée sur un exécuteur de son OS ; ses modifications reviennent au worktree. */
+function runOnTool(targets: readonly TargetView[]): HostToolDefinition {
+  const offered = targets.filter((target) => target.commands.length > 0);
+  return {
+    name: "run_on",
+    label: "Harness — commande sur une cible",
+    description:
+      "Lance une commande NOMMÉE d'une cible du dépôt (`.harness-env.json`) sur un exécuteur de son OS (un Mac pour une cible macos), sur l'arbre courant de ton worktree ; les fichiers qu'elle modifie reviennent dans ton worktree. Pour les générateurs (`xcodegen generate`, code généré) : n'écris JAMAIS à la main un fichier qu'une commande de cible génère. Commandes : " +
+      offered.map((target) => `${target.name} (${target.os}) : ${target.commands.join(", ")}`).join(" ; ") +
+      ". Tu attends le résultat.",
+    parameters: {
+      type: "object",
+      properties: {
+        target: { type: "string", enum: offered.map((target) => target.name) },
+        command: { type: "string", description: "Le nom de la commande dans `commands` de la cible." },
+      },
+      required: ["target", "command"],
+      additionalProperties: false,
+    },
+    loadMode: "essential",
+  };
+}
+
 function runTestsTool(step: StepKind): HostToolDefinition {
   const scopes = step === "review" ? ["touched", "full", "check"] : ["touched", "check"];
   return {
@@ -1271,7 +1297,7 @@ const ATLASSIAN_KNOWLEDGE_TOOL: HostToolDefinition = {
  */
 export function hostToolsFor(
   step: StepKind | "audit" | "intake" | "intake-answer" | "pilot" | "challenge" | "dream" | "carte" | WorkstationJob,
-  options: { qa?: boolean; atlassian?: boolean } = {},
+  options: { qa?: boolean; atlassian?: boolean; targets?: readonly TargetView[] } = {},
 ): HostToolDefinition[] {
   const atlassian = options.atlassian === true;
   const readWrite = atlassian ? [...ATLASSIAN_READ_TOOLS, ...ATLASSIAN_WRITE_TOOLS] : [];
@@ -1325,6 +1351,8 @@ export function hostToolsFor(
   const tools = [DECISION_TOOL, PROGRESS_TOOL, RECALL_TOOL, CHECKPOINT_TOOL, SET_MODULES_TOOL];
   if (step === "specs" || step === "impl") tools.push(SPLIT_TOOL);
   if (step === "impl" || step === "fix" || step === "review") tools.push(runTestsTool(step));
+  if ((step === "impl" || step === "fix") && options.targets?.some((target) => target.commands.length > 0))
+    tools.push(runOnTool(options.targets));
   if (step === "review") tools.push(VERDICT_TOOL, RECORD_PROOF_TOOL, ...(options.qa ? QA_TOOLS : []));
   if (atlassian) tools.push(...ATLASSIAN_READ_TOOLS);
   return tools;

@@ -58,6 +58,8 @@ export type PromptContext = {
   standing?: readonly string[];
   /** La branche du run (`harness/<slug>`), imposée par le service : dite à /impl. */
   branch?: string;
+  /** Les cibles que le dépôt déclare (`.harness-env.json`) : dites à /impl, /impl --fix et /review. */
+  targets?: readonly { name: string; os: string; commands: string[] }[];
 };
 
 /** Ce que /impl fait du relevé du dépôt apporté par la demande (voies directe et express). */
@@ -260,6 +262,20 @@ const MEMORY_RULED_STEPS: readonly StepKind[] = ["impl", "fix", "review"];
 /** La consigne de relance d'une étape dont le runner a été tué faute de mémoire. */
 export const OOM_RETRY_NOTE = `La tentative précédente a été tuée faute de mémoire (runner arrêté : code 137, OOM). ${RUNNER_MEMORY_RULES}`;
 
+/** Ce que l'agent sait des cibles du dépôt : où ses tests tournent, ce que `run_on` lance ailleurs. */
+function targetsSection(targets: readonly { name: string; os: string; commands: string[] }[]): string {
+  const lines = targets.map(
+    (target) =>
+      `- \`${target.name}\` (${target.os})${target.commands.length > 0 ? ` — \`run_on\` : ${target.commands.map((command) => `\`${command}\``).join(", ")}` : ""}`,
+  );
+  return [
+    "Le dépôt déclare ses environnements d'exécution. `run_tests` lance chaque cible concernée par le diff sur un exécuteur de son OS (un Mac pour une cible macos), chaque configuration déclarée comprise : ton shell n'a pas besoin de leurs outils.",
+    ...lines,
+    "- Un fichier qu'une commande de cible génère (projet Xcode, code généré) ne s'écrit JAMAIS à la main : lance la commande par `run_on`.",
+    "- Une cible sans exécuteur disponible le dit dans le résultat de `run_tests` : son verdict reste non jugé, ne le contourne pas.",
+  ].join("\n");
+}
+
 /** Le prompt complet d'une étape. */
 export function stepPrompt(ctx: PromptContext): string {
   const parts = [BODY[ctx.step](ctx)];
@@ -277,6 +293,8 @@ export function stepPrompt(ctx: PromptContext): string {
     );
   }
   parts.push(section("Reprise", ctx.resume));
+  if (MEMORY_RULED_STEPS.includes(ctx.step) && (ctx.targets?.length ?? 0) > 0)
+    parts.push(section("Cibles du dépôt", targetsSection(ctx.targets ?? [])));
   if (MEMORY_RULED_STEPS.includes(ctx.step)) parts.push(section("Mémoire du runner", RUNNER_MEMORY_RULES));
   parts.push(`\n${POLICY}\n`);
   return parts.filter((part) => part !== "").join("\n");

@@ -17,6 +17,7 @@ import type { DecisionInput, IrreversibleCategory } from "./decisions.ts";
 import { checkpointMessage, planDecision } from "./decisions.ts";
 import type { HeavyResult, TestScope } from "../heavy/heavy.ts";
 import { heavyReport } from "../heavy/heavy.ts";
+import { wasExecuted } from "../executors/reports.ts";
 import type { Memory } from "../memory/oracle.ts";
 import { renderMemories } from "../memory/oracle.ts";
 import { broadModules } from "./planner.ts";
@@ -120,10 +121,18 @@ export async function runHostTool(
       return splitFeatureTool(run, step, args);
     case "run_tests":
       return runTestsTool(ctx, state, run, step, args, signal);
+    case "run_on":
+      return runOnTool(ctx, run, step, args, signal);
     case "review_verdict": {
       if (step.kind !== "review") return { text: "review_verdict n'existe qu'en /review", isError: true };
       const parsed = parseVerdict(args);
       if (!parsed.ok) return { text: `verdict refusé : ${parsed.errors.join(" ; ")}`, isError: true };
+      const unproven = unexecutedCriteria(parsed.verdict, state.lastFull);
+      if (unproven.length > 0)
+        return {
+          text: `verdict refusé : ${unproven.map((c) => `${c.id} (« ${c.test} »)`).join(", ")} marqué(s) \`pass\`, mais ce test n'apparaît dans aucun rapport d'exécution de la suite complète (rapports JUnit et sortie TAP de chaque cible et configuration) : il n'a pas tourné. Cite le nom du test tel qu'il a été exécuté, ou marque le critère \`untested\` et nomme le test dans \`risks\`.`,
+          isError: true,
+        };
       state.verdict = parsed.verdict;
       return { text: "verdict enregistré. Termine ton tour." };
     }
@@ -132,6 +141,58 @@ export async function runHostTool(
     default:
       return { text: `outil inconnu : ${name}`, isError: true };
   }
+}
+
+/**
+ * Les critères `pass` dont le test n'a pas tourné : la suite complète a relevé ses tests exécutés (dépôt à cibles)
+ * et le test cité n'y est pas. Sans relevé (dépôt sans cibles, aucun rapport), rien n'est refusé.
+ */
+export function unexecutedCriteria(
+  verdict: Pick<Verdict, "criteria">,
+  full: HeavyResult | null,
+): { id: string; test: string }[] {
+  const executed = full?.executed;
+  if (!executed || executed.length === 0) return [];
+  return verdict.criteria
+    .filter(
+      (criterion) =>
+        criterion.status === "pass" && criterion.test.trim() !== "" && !wasExecuted(criterion.test, executed),
+    )
+    .map((criterion) => ({ id: criterion.id, test: criterion.test }));
+}
+
+/** `run_on` : une commande nommée d'une cible, sur un exécuteur de son OS ; ses modifications reviennent au worktree. */
+async function runOnTool(
+  ctx: HarnessContext,
+  run: RunRow,
+  step: StepRow,
+  args: Record<string, unknown>,
+  signal: AbortSignal,
+): Promise<HostToolResult> {
+  if (step.kind !== "impl" && step.kind !== "fix")
+    return { text: "run_on n'existe qu'en /impl et /impl --fix", isError: true };
+  const target = typeof args.target === "string" ? args.target.trim() : "";
+  const command = typeof args.command === "string" ? args.command.trim() : "";
+  if (target === "" || command === "") return { text: "run_on : `target` et `command` sont requis", isError: true };
+  const repo = ctx.repo(run.repo);
+  // L'agent attend l'exécuteur : son slot runner est prêté pendant l'attente, comme pour `run_tests`.
+  const outcome = await ctx.scheduler.lendDuring(
+    "runner",
+    run.id,
+    ctx.heavy.runOn(
+      {
+        runId: run.id,
+        repo,
+        worktree: run.worktree as string,
+        base: run.baseSha ?? repo.mainBranch,
+        priority: run.priority,
+      },
+      target,
+      command,
+      signal,
+    ),
+  );
+  return { text: outcome.text, isError: !outcome.ok, details: { files: outcome.files } };
 }
 
 /** Une liste de chemins non vides, dédoublonnée, ou `null` si l'argument n'en est pas une. */
@@ -454,7 +515,7 @@ async function runTestsTool(
       };
   }
   if (scope === "full") {
-    const key = await heavy.keyFor({ repo, worktree, scope, files: [] });
+    const key = await heavy.keyFor({ repo, worktree, scope, files: [], base: run.baseSha ?? repo.mainBranch });
     const hit = key ? store.cacheGet(key.key) : null;
     if (!hit && state.fullRunsThisStep >= 1)
       return {
@@ -478,6 +539,7 @@ async function runTestsTool(
           worktree,
           scope,
           files,
+          base: run.baseSha ?? repo.mainBranch,
           priority: run.priority,
           ...(scope === "check" ? { check } : {}),
         },
