@@ -1,7 +1,7 @@
 // Les outils du harness exposés au MODÈLE : lire la boîte, un run et son journal ;
-// lancer une feature ou un projet ; et les GESTES de la boucle humaine (valider,
-// répondre, renverser, relancer, annuler, accepter les décisions, parler à un run en
-// cours).
+// lancer une feature ou un projet, ou confier un travail déjà cadré (/ship) ; et les
+// GESTES de la boucle humaine (valider, répondre, renverser, relancer, annuler,
+// accepter les décisions, parler à un run en cours).
 //
 // Les gestes ne demandent aucune approbation à OMP : la conversation vaut autorisation.
 // Le modèle n'appelle un geste que si l'utilisateur l'a demandé en clair ; la
@@ -42,6 +42,7 @@ export type ToolDeps = {
 
 type FeatureParams = { title: string; request: string; modules: string[] };
 type LaunchParams = FeatureParams & { req: string; budgetUsd?: number };
+type ShipParams = FeatureParams & { lane: "express" | "direct"; budgetUsd?: number };
 type ProjectParams = { title: string; features: FeatureParams[] };
 type IdParams = { id: string };
 type ValidateParams = IdParams & { approve: boolean; reason?: string };
@@ -182,6 +183,32 @@ export function renderEvents(events: HarnessEvent[]): string {
     .join("\n");
 }
 
+/** Le corps d'une section `## <titre>` d'un Markdown, rogné ; `null` si elle manque. */
+function section(markdown: string, title: RegExp): string | null {
+  const lines = markdown.split("\n");
+  const start = lines.findIndex((line) => title.test(/^##\s+(.+?)\s*$/.exec(line)?.[1] ?? ""));
+  if (start < 0) return null;
+  const next = lines.findIndex((line, index) => index > start && /^##\s/.test(line));
+  return lines
+    .slice(start + 1, next < 0 ? undefined : next)
+    .join("\n")
+    .trim();
+}
+
+/**
+ * Pourquoi la demande d'un `harness_ship` ne peut pas partir, ou `null`. Sans relevé, /impl relirait le dépôt ;
+ * sans critère `AC-n` en tête de ligne (le parseur de la revue du serveur), la voie directe retomberait sur /req
+ * et l'express jugerait sur un critère synthétisé.
+ */
+export function shipRefusal(request: string): string | null {
+  if (!section(request, /^relev[ée] du d[ée]p[ôo]t/i))
+    return "harness_ship : la demande doit porter une section `## Relevé du dépôt` non vide (chemins, symboles, `fichier:ligne`).";
+  const criteria = section(request, /^crit[eè]res d'acceptation/i) ?? "";
+  if (!criteria.split("\n").some((line) => /^\s*(?:[-*]\s*)?\*{0,2}AC-\d+/.test(line)))
+    return "harness_ship : la demande doit porter une section `## Critères d'acceptation` avec au moins une ligne `AC-1 : Given … When … Then …`.";
+  return null;
+}
+
 function targetOf(ctx: ExtensionContext | undefined): HarnessTarget | { refusal: string } {
   return resolveTarget(ctx?.cwd ?? process.cwd());
 }
@@ -298,6 +325,64 @@ export function registerHarnessTools(pi: ExtensionAPI, deps: ToolDeps = {}): voi
         return text(
           `Feature créée sur le harness : run ${run.id}, branche ${run.branch}. Les specs arriveront à valider (harness_run ${run.id}, puis harness_validate si l'utilisateur le demande ; ou OMP Console). Termine ta réponse.`,
         );
+      } catch (err) {
+        return text(message(err), true);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "harness_ship",
+    label: "Harness — confier le travail cadré",
+    loadMode: "essential",
+    approval: LAUNCH_APPROVAL,
+    description:
+      "Confie au harness un travail déjà cadré dans cette session (/ship), VALIDÉ par l'utilisateur : la demande porte `## Contexte`, `## Relevé du dépôt` et `## Critères d'acceptation` (AC-n), et le run part directement à /impl, sans /req ni /specs. " +
+      "`lane` : `express` (cause et endroit établis, changement petit, revue courte) ou `direct`. `budgetUsd` seulement si l'utilisateur en a donné un.",
+    parameters: z.object({
+      ...fields,
+      request: z
+        .string()
+        .describe("La demande autoportante : ## Contexte, ## Relevé du dépôt, ## Critères d'acceptation, ## Hors périmètre"),
+      lane: z.enum(["express", "direct"]).describe("`express` : petit et localisé ; `direct` : sinon"),
+      budgetUsd: z
+        .number()
+        .positive()
+        .max(10_000)
+        .optional()
+        .describe("Le budget du run en dollars, prioritaire sur celui du serveur ; absent : celui du serveur"),
+    }),
+    async execute(
+      _id: string,
+      params: ShipParams,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ) {
+      const target = targetOf(ctx);
+      if ("refusal" in target) return text(target.refusal, true);
+      const refusal = modulesRefusal(params.modules, "harness_ship") ?? shipRefusal(params.request);
+      if (refusal) return text(refusal, true);
+      const { lane, ...rest } = params;
+      try {
+        // La voie directe n'a pas de `lane` : le serveur la reconnaît aux critères de la demande.
+        const { run } = await harnessCall<{ run: { id: string; branch: string; step: string; lane?: string } }>(
+          target,
+          "POST",
+          "/v1/runs",
+          { repo: target.repo, ...rest, ...(lane === "express" ? { lane } : {}) },
+          { fetcher },
+        );
+        if (ctx?.hasUI) deps.onLaunched?.(target, [{ id: run.id, title: params.title }]);
+        const why =
+          "la demande touche à l'irréversible, la porte des specs est toujours posée, ou l'autonomie demande tout ; dis-le à l'utilisateur";
+        const route =
+          run.step !== "impl"
+            ? `le serveur a gardé la voie complète (étape /${run.step}) : ${why}`
+            : lane === "express" && run.lane !== "express"
+              ? `part à /impl en voie ${run.lane ?? "directe"}, l'express refusé : ${why}`
+              : `part directement à /impl (voie ${run.lane ?? lane})`;
+        return text(`Run ${run.id} créé sur le harness, branche ${run.branch} : il ${route}. Termine ta réponse.`);
       } catch (err) {
         return text(message(err), true);
       }

@@ -50,11 +50,17 @@ export type PromptContext = {
   direct: boolean;
   /** Voie express : specs.md synthétisé (un critère peut venir de la demande seule), revue qui ne bloque que sur ce qui casse. */
   express?: boolean;
+  /** specs.md porte un `## Relevé du dépôt` (voie complète : celui de /specs ; directe ou express : apporté par la demande). */
+  survey?: boolean;
   /** La revue dispose d'une prévisualisation et des outils `qa_*` (browser/qa.ts). */
   qa?: boolean;
   /** Les consignes permanentes actives de l'humain pour ce dépôt, les plus récentes d'abord (standing-rules.ts). */
   standing?: readonly string[];
 };
+
+/** Ce que /impl fait du relevé du dépôt apporté par la demande (voies directe et express). */
+const SURVEY_READ =
+  "pars de sa section `## Relevé du dépôt` : la session qui a enquêté y a noté les chemins, les symboles et la cause ; ne relis pas le dépôt, ouvre seulement les fichiers que tu modifies, et si une ligne du relevé est fausse, fie-toi au code";
 
 const POLICY = `## Politique de décision (non négociable)
 - Personne ne répondra à une question pendant l'étape : n'utilise JAMAIS \`ask\`.
@@ -203,9 +209,9 @@ Ne modifie AUCUN autre fichier.`,
 
 ${
   ctx.express === true
-    ? `Voie express : ni /req ni /specs n'ont tourné, livre vite et juste. Lis \`${ART}/specs.md\` (la demande et ses critères AC-n, synthétisés de la demande s'il n'y en avait pas) et lis le dépôt juste assez pour situer le changement. Implémente ce que la demande décrit, avec un test par critère, NOMMÉ avec son id (\`AC-n\` dans le nom du test). Vérifie avec \`run_tests\` (\`scope: touched\`) avant de finir : la revue ne bloquera que sur ce qui casse.`
+    ? `Voie express : ni /req ni /specs n'ont tourné, livre vite et juste. Lis \`${ART}/specs.md\` (la demande et ses critères AC-n, synthétisés de la demande s'il n'y en avait pas) et ${ctx.survey === true ? SURVEY_READ : "lis le dépôt juste assez pour situer le changement"}. Implémente ce que la demande décrit, avec un test par critère, NOMMÉ avec son id (\`AC-n\` dans le nom du test). Vérifie avec \`run_tests\` (\`scope: touched\`) avant de finir : la revue ne bloquera que sur ce qui casse.`
     : ctx.direct
-      ? `Voie directe : la demande portait ses critères d'acceptation, ni /req ni /specs n'ont tourné. Lis \`${ART}/specs.md\` (la demande et ses critères AC-n ; pas de req.md, ni relevé du dépôt ni spécifications S-n) et lis le dépôt juste assez pour situer le changement. Implémente ce que chaque critère demande, avec un test par critère, NOMMÉ avec son id (\`AC-n\` dans le nom du test).`
+      ? `Voie directe : la demande portait ses critères d'acceptation, ni /req ni /specs n'ont tourné. Lis \`${ART}/specs.md\` (la demande et ses critères AC-n ; pas de req.md ni de spécifications S-n${ctx.survey === true ? "" : ", ni relevé du dépôt"}) et ${ctx.survey === true ? SURVEY_READ : "lis le dépôt juste assez pour situer le changement"}. Implémente ce que chaque critère demande, avec un test par critère, NOMMÉ avec son id (\`AC-n\` dans le nom du test).`
       : `Lis \`${ART}/req.md\` et \`${ART}/specs.md\` (le relevé du dépôt t'évite de le relire). Implémente les spécifications S-n, avec un test par critère d'acceptation, NOMMÉ avec son id (\`AC-n\` dans le nom du test).`
 }
 - Aucun stub, aucun TODO, aucun « à faire plus tard » : ce qui est livré est complet.

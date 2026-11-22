@@ -209,6 +209,7 @@ Puis sur le Mac, dans un de tes dépôts :
 | Commande | Ce qu'elle fait |
 |---|---|
 | `/req [demande]` | Cerne le besoin avec toi, puis envoie la feature au serveur. |
+| `/ship [précision]` | Confie au serveur ce que tu viens de cadrer dans la session (enquête, cause, fichiers) : le run part directement au code, sans refaire le cadrage. |
 | `/project [description]` | Découpe un projet en features qui avancent en parallèle. |
 | `/audit [focus]` | Relit la branche principale et propose des corrections et des features. |
 | `/pipelines` | Ce qui attend ta réponse : questions, specs, verdicts, décisions. |

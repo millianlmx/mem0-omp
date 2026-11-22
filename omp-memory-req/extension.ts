@@ -2,7 +2,8 @@
 //
 // /req et /project se tiennent ICI, dans la session, avec l'utilisateur : le
 // dialogue cerne les besoins (ou découpe le projet), puis un outil crée le run
-// (ou le projet) sur le serveur, qui conduit specs → impl → review → merge. /audit
+// (ou le projet) sur le serveur, qui conduit specs → impl → review → merge. /ship
+// confie un travail déjà cadré dans la session : le run part à /impl avec son relevé. /audit
 // lance l'audit sur le serveur et y choisit les propositions ; /pipelines résume la
 // boîte de l'humain. Les gestes de la boucle humaine se font depuis la session
 // (outils harness_*, tools.ts) quand l'utilisateur les demande en clair, ou dans
@@ -67,6 +68,25 @@ Le compte rendu a exactement ces sections :
 
 Montre-le à l'utilisateur. Quand il le valide : repère avec grep/glob les chemins du dépôt que la feature touchera (dossiers ou fichiers existants), puis appelle \`harness_launch\` (titre court, demande d'origine, \`modules\` = ces chemins, obligatoire et jamais vide, compte rendu) : le harness conduira /specs, /impl, /review et le merge sur le serveur. Ne modifie AUCUN fichier.`;
 
+export const SHIP_SEED = (note: string, repo: string) => `# /ship — confier au harness ce que cette session a établi, dépôt « ${repo} »
+
+${note ? `Précision de l'utilisateur : ${note}\n\n` : ""}Cette conversation a déjà fait le travail de cadrage (enquête, cause, lecture du code) : ne le refais pas sur le serveur. Ne pose AUCUNE question et ne relis que ce qui te manque pour citer juste (\`fichier:ligne\`).
+
+Rédige la demande du run, autoportante (le runner n'a pas cette conversation), avec exactement ces sections :
+## Contexte
+(le symptôme ou le besoin, la cause racine si elle est trouvée, le correctif visé ; ce qui est déjà écarté)
+## Relevé du dépôt
+(les chemins, symboles et lignes en jeu — \`fichier:ligne\` — et les conventions à suivre : tout ce que /impl aurait relu ; il ne relira pas le dépôt)
+## Critères d'acceptation
+(AC-1, AC-2… en Given / When / Then, chacun prouvable par un test automatisé nommé avec son id)
+## Hors périmètre
+
+Choisis la voie :
+- \`express\` : la cause et l'endroit sont établis, le changement est petit et évident, sans décision produit ni migration ;
+- \`direct\` : sinon. Si le besoin lui-même n'est pas clair, n'utilise pas /ship : propose /req.
+
+Montre la demande, la voie et les \`modules\` (les chemins du dépôt touchés, jamais vides) à l'utilisateur. Quand il les valide, appelle \`harness_ship\`. Ne modifie AUCUN fichier.`;
+
 export const PROJECT_SEED = (description: string, repo: string) => `# /project — un projet du dépôt « ${repo} »
 
 Projet : ${description || "(à recueillir auprès de l'utilisateur)"}
@@ -120,6 +140,15 @@ export default function reqExtension(pi: ExtensionAPI) {
     handler: async (args: unknown, ctx: Ctx) => {
       const resolved = target(ctx, "req");
       if (resolved) pi.sendUserMessage(REQ_SEED(String(args ?? "").trim(), resolved.repo));
+    },
+  });
+
+  pi.registerCommand("ship", {
+    description:
+      "Confie au harness le travail cadré dans cette session (enquête, cause, relevé du dépôt) : le run part directement à /impl, sans /req ni /specs",
+    handler: async (args: unknown, ctx: Ctx) => {
+      const resolved = target(ctx, "ship");
+      if (resolved) pi.sendUserMessage(SHIP_SEED(String(args ?? "").trim(), resolved.repo));
     },
   });
 

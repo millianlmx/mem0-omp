@@ -67,6 +67,7 @@
       ],
       "commands": [
         "req",
+        "ship",
         "project",
         "audit",
         "pipelines",
@@ -133,6 +134,7 @@
       ],
       "commands": [
         "req",
+        "ship",
         "project",
         "audit",
         "pipelines",
