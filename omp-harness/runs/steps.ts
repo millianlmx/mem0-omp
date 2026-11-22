@@ -323,8 +323,22 @@ function surveySection(request: string): string {
  * relevé du dépôt s'il y en a un (`/ship` : la session qui a enquêté l'apporte), puis ses
  * critères —, ou `null` si la demande n'en porte pas.
  */
+/**
+ * Les critères d'une demande à la forme que lisent la revue et le verdict (`AC-n` en tête de ligne) : un brief
+ * écrit `AC1`, `AC 1`, `AC_1`, ou en liste numérotée (`1. AC1 : …`), garde ainsi ses critères tels quels au lieu
+ * d'être réduit à un critère synthétisé.
+ */
+export function canonicalCriteria(criteria: string): string {
+  return criteria.replace(
+    /^(\s*)(?:([-*])\s*|\d+[.)]\s*)?(\*{0,2})AC[\s_-]?(\d+)\b/gim,
+    (_line, indent: string, bullet: string | undefined, bold: string, n: string) =>
+      `${indent}${bullet ? `${bullet} ` : ""}${bold}AC-${n}`,
+  );
+}
+
 export function directSpecs(title: string, request: string): string | null {
-  const criteria = sectionBody(request, /^crit[eè]res d'acceptation/i);
+  const found = sectionBody(request, /^crit[eè]res d'acceptation/i);
+  const criteria = found === null ? null : canonicalCriteria(found);
   if (criteria === null || parseAcIds(criteria).length === 0) return null;
   return `# ${title.trim()}\n\nVoie directe : la demande portait ses critères d'acceptation, ni /req ni /specs n'ont tourné.\n\n## Demande\n\n${quotedRequest(request)}\n\n${surveySection(request)}## Critères d'acceptation\n\n${criteria}\n`;
 }

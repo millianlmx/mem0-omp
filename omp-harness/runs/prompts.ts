@@ -148,6 +148,7 @@ Cette feature est partie en voie express : livrer vite, sans relâcher ce qui ca
 
 ${scope}
 - Une suite complète que rien n'a jugée (\`ÉCHEC STRUCTURÉ\` : le job n'a pas pu démarrer, push refusé, job arrêté, CI de la forge qui n'a pas fini à temps) ne dit rien du code : ce n'est PAS un bloquant. Relance \`run_tests\` \`scope: full\` une fois ; si elle reste non jugée, dis-le dans \`unverified\`, le service le montre à l'humain.
+- Un test qui ne tourne pas dans la suite jugée ne prouve rien : compilé ou lancé sous une condition que la CI ne prend pas (\`#if !DEBUG\` / \`#else\` de Release alors que la CI compile en Debug, \`cfg(...)\`, \`skip\`, plateforme ou variable d'environnement absentes de la CI). Son critère est \`untested\`, et le test est nommé dans \`risks\`.
 - Ne modifie PAS le code pendant la revue : un bloquant part en correction.${qa}
 - Termine par \`review_verdict\`, une fois : la table \`criteria\` AC par AC (chaque AC-n de specs.md, le nom du test qui le prouve, \`pass\` | \`fail\` | \`untested\`), le risque, les bloquants, les risques résiduels, les fichiers touchés (tous ceux du diff), ce que tu n'as PAS vérifié (\`unverified\`), et une \`confidence\` honnête : \`weak\` dès que tu doutes de ta propre revue — un \`strong\` mensonger coûte plus qu'un \`weak\` sincère.
 - Le verdict porte aussi \`commit\`, le message du commit squash sur main : \`subject\` au format Conventional Commits \`type(scope): résumé\` (feat | fix | refactor | perf | test | docs | build | ci | chore | style | revert, scope facultatif, une ligne, 72 caractères au plus), et \`body\`, ce que le changement fait et pourquoi en quelques lignes — pas le récit de ta relecture, qui reste dans \`summary\`. Suis la langue et les scopes de l'historique : \`git log --format=%s -20 ${ctx.baseSha}\`.`;
@@ -225,6 +226,7 @@ ${
 - \`set_modules\` dès que les chemins touchés sont connus, s'ils diffèrent de specs.md.
 - \`save_checkpoint\` après chaque incrément cohérent (tests verts sur ce qui est écrit).
 - Livre la demande ENTIÈRE dans ce run, quelle que soit la taille du diff : le découpage s'est décidé avant (\`split_feature\` est refusé ici).
+- Un test de critère tourne dans la suite que la revue lance : jamais sous une condition qu'elle ne prend pas (configuration Release, \`cfg(...)\`, \`skip\`, plateforme absente) — la revue le compterait \`untested\`.
 - Tests : \`run_tests\` avec \`scope: touched\` (tests des fichiers touchés, slot heavy isolé) ; \`scope: check\` avec \`check\` pour une commande nommée du dépôt. La suite complète est réservée à /review.
 - Ne commite pas toi-même : \`save_checkpoint\` et la fin d'étape commitent.
 ${
