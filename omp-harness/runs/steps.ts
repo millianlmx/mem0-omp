@@ -53,6 +53,7 @@ import {
 } from "./prompts.ts";
 import { briefOfReq, renderMemories } from "../memory/oracle.ts";
 import { PolicyRefusal } from "../config/policy.ts";
+import { MissingTools, missingTools } from "../runners/tools.ts";
 import type { PromptError, PromptResult } from "../runners/rpc.ts";
 import { RunnerExited } from "../runners/rpc.ts";
 import { hostToolsFor, runnerUnit } from "../runners/runner.ts";
@@ -458,6 +459,16 @@ export class StepExecutor {
     const deadlineAt = Date.now() + config.runner.stepTimeoutSec * 1000;
     this.#ctx.event("step_started", run.id, { step, stepId: stepRow.id, attempt: run.attempts });
     try {
+      // Les outils que le dépôt attend des runners : un absent arrête l'étape avant qu'un agent ne le contourne.
+      const repoConfig = this.#ctx.repo(run.repo);
+      const absent = await missingTools(config, this.#ctx.exec, repoConfig);
+      if (absent === null)
+        this.#ctx.log(`run ${run.id} : outils des runners non vérifiés (recherche en échec)`, {
+          level: "warn",
+          runId: run.id,
+          repo: run.repo,
+        });
+      else if (absent.length > 0) throw new MissingTools(config, repoConfig, absent);
       this.#materialize(run);
       // Une fusion de main en cours (rebase en conflit) : ses fichiers encore en conflit partent dans le prompt.
       if (step === "review" && (await git.mergeInProgress(worktree)))
@@ -587,7 +598,7 @@ export class StepExecutor {
       return await this.#interrupted(
         run,
         stepRow,
-        err instanceof RunnerExited ? "runner" : "other",
+        err instanceof MissingTools ? "tools" : err instanceof RunnerExited ? "runner" : "other",
         reason,
         !(err instanceof PolicyRefusal),
       );

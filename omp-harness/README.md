@@ -591,6 +591,7 @@ vrai git et la vraie base ; les agents y sont un faux `omp` RPC
 | `repos[].mainBranch` | `main` | la branche principale |
 | `repos[].scope` | lue dans les manifestes | le nom du projet dans la mémoire, le même que sur le Mac |
 | `repos[].testImage` | `container.testImage` | l'image des tests de ce dépôt, en conteneurs |
+| `repos[].tools` | aucun | les commandes que les agents du dépôt lancent dans leur shell (`["xcodegen", "python3"]`) : cherchées là où tournent les runners (l'image `container.runnerImage` en conteneurs, le PATH du service sinon) avant chaque étape, et par `--check`. Une absente arrête l'étape et met le run en attente de l'humain (cause `tools`) au lieu de laisser l'agent la contourner ; installe-la puis relance le run |
 | `runner.isolation`, `heavy.isolation` | `systemd` | `systemd`, `container` (Docker ou podman) ou `none` (développement) |
 | `container.command` | `["docker"]` | le CLI du moteur ; il parle aussi à l'API de podman |
 | `container.runnerImage` | `omp-harness-runner:local` | l'image des agents : omp épinglé, git, le plugin mémoire |

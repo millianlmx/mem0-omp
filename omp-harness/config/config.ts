@@ -94,6 +94,9 @@ export type ForgeKind = "github" | "gitlab" | "none";
 
 export const FORGES: readonly ForgeKind[] = ["github", "gitlab", "none"];
 
+/** Un nom de commande de `repos[].tools` : jamais un chemin, une option ni du shell. */
+export const TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
+
 /** Qui juge la suite complète d'un dépôt : le slot heavy (`local`) ou la CI de sa forge (`ci`). */
 export type TestJudge = "local" | "ci";
 
@@ -323,6 +326,12 @@ export type RepoConfig = {
   remote: string | null;
   /** L'image des tests de ce dépôt en isolation `container` ; `null` : `container.testImage`. */
   testImage: string | null;
+  /**
+   * Les commandes que les agents de ce dépôt lancent dans leur shell (`xcodegen`, `python3`…) :
+   * cherchées dans l'environnement des runners avant chaque étape (runners/tools.ts). Une absente
+   * met le run en attente de l'humain au lieu de le laisser la contourner. Absent : aucune.
+   */
+  tools?: string[];
   /**
    * Les runs de ce dépôt vivants en même temps, au plus (`null` : seuls les slots et
    * les modules bornent). Un gros dépôt ne prend pas tous les runners aux autres.
@@ -1068,6 +1077,11 @@ export function validateConfig(config: HarnessConfig): HarnessConfig {
       fail(`repos.${repo.name}.mergeQueue : la file de merge de la forge demande \`merge: "gh"\``);
     if (repo.maxParallel !== null && !(Number.isInteger(repo.maxParallel) && repo.maxParallel >= 1))
       fail(`repos.${repo.name}.maxParallel : entier ≥ 1, ou null`);
+    if (
+      repo.tools !== undefined &&
+      !(Array.isArray(repo.tools) && repo.tools.every((tool) => typeof tool === "string" && TOOL_NAME.test(tool)))
+    )
+      fail(`repos.${repo.name}.tools : liste de noms de commandes (\`xcodegen\`, \`python3\`)`);
     if (
       repo.sshKey !== null &&
       (typeof repo.sshKey !== "string" || !path.isAbsolute(repo.sshKey) || repo.sshKey.includes("'"))

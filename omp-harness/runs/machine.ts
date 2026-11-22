@@ -52,6 +52,7 @@ export type FailCause =
   | "context"
   | "runner"
   | "missing_output"
+  | "tools"
   | "aborted"
   | "other";
 
@@ -445,6 +446,12 @@ function afterFailure(
       reason: `le correcteur conteste les bloquants (${outcome.reason}) — nouvelle revue`,
     });
   }
+  // Un outil absent des runners (`repos[].tools`) : une relance referait le même constat, l'humain l'installe.
+  if (outcome.cause === "tools")
+    return to("awaiting_human", step, cursor, {
+      attempts: cursor.attempts,
+      reason: `${failedHead(step)} : ${outcome.reason}`,
+    });
   if (!outcome.retryable) {
     return to("failed", step, cursor, { attempts: cursor.attempts, reason: `${failedHead(step)} : ${outcome.reason}` });
   }
