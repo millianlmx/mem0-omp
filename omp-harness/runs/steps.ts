@@ -279,37 +279,64 @@ export function gateNeeded(run: Pick<RunRow, "projectId" | "projectOrder">, spec
   return gateReasons(run, specsMd).length > 0;
 }
 
+/** Le titre du relevé du dépôt : écrit par /specs, ou apporté par la demande d'une session qui a déjà enquêté. */
+const SURVEY_TITLE = /^relev[ée] du d[ée]p[ôo]t/i;
+
+/** Le relevé du dépôt d'un specs.md (ou d'une demande), ou `null` s'il n'en porte pas ou qu'il est vide. */
+export function surveyOf(markdown: string): string | null {
+  const body = sectionBody(markdown, SURVEY_TITLE);
+  return body ? body : null;
+}
+
+/**
+ * La demande citée (ses titres et ses ids n'y comptent pas), sans son relevé du dépôt : celui-ci
+ * devient une section du specs.md, il n'est pas répété en citation.
+ */
+function quotedRequest(request: string): string {
+  const lines = request.trim().split("\n");
+  const start = lines.findIndex((line) => SURVEY_TITLE.test(/^##\s+(.+?)\s*$/.exec(line)?.[1] ?? ""));
+  let kept = lines;
+  if (start >= 0) {
+    const next = lines.findIndex((line, index) => index > start && /^##\s/.test(line));
+    kept = [...lines.slice(0, start), ...(next < 0 ? [] : lines.slice(next))];
+  }
+  return kept
+    .join("\n")
+    .trim()
+    .split("\n")
+    .map((line) => `> ${line}`.trimEnd())
+    .join("\n");
+}
+
+/** La section `## Relevé du dépôt` d'un specs.md synthétisé, reprise de la demande ; vide si elle n'en porte pas. */
+function surveySection(request: string): string {
+  const survey = surveyOf(request);
+  return survey === null ? "" : `## Relevé du dépôt\n\n${survey}\n\n`;
+}
+
 /**
  * La voie directe, triée à la création sans LLM : une demande qui porte déjà sa section
  * `## Critères d'acceptation`, avec au moins un `AC-n` en tête de ligne (le parseur de la
  * revue), part à /impl sans /req ni /specs. Rend le specs.md synthétisé — le titre, la
- * demande citée telle quelle (en citation : ses titres et ses ids n'y comptent pas), puis
- * ses critères —, ou `null` si la demande n'en porte pas.
+ * demande citée telle quelle (en citation : ses titres et ses ids n'y comptent pas), son
+ * relevé du dépôt s'il y en a un (`/ship` : la session qui a enquêté l'apporte), puis ses
+ * critères —, ou `null` si la demande n'en porte pas.
  */
 export function directSpecs(title: string, request: string): string | null {
   const criteria = sectionBody(request, /^crit[eè]res d'acceptation/i);
   if (criteria === null || parseAcIds(criteria).length === 0) return null;
-  const quoted = request
-    .trim()
-    .split("\n")
-    .map((line) => `> ${line}`.trimEnd())
-    .join("\n");
-  return `# ${title.trim()}\n\nVoie directe : la demande portait ses critères d'acceptation, ni /req ni /specs n'ont tourné.\n\n## Demande\n\n${quoted}\n\n## Critères d'acceptation\n\n${criteria}\n`;
+  return `# ${title.trim()}\n\nVoie directe : la demande portait ses critères d'acceptation, ni /req ni /specs n'ont tourné.\n\n## Demande\n\n${quotedRequest(request)}\n\n${surveySection(request)}## Critères d'acceptation\n\n${criteria}\n`;
 }
 
 /**
  * Le specs.md de la voie express : celui de la voie directe si la demande porte ses critères, sinon la demande
- * citée et UN critère synthétisé — la demande livrée telle qu'écrite, prouvée par un test qui la nomme.
+ * citée (avec son relevé du dépôt s'il y en a un) et UN critère synthétisé — la demande livrée telle qu'écrite,
+ * prouvée par un test qui la nomme.
  */
 export function expressSpecs(title: string, request: string): string {
   const direct = directSpecs(title, request);
   if (direct !== null) return direct.replace(/^Voie directe : .*$/m, EXPRESS_NOTE);
-  const quoted = request
-    .trim()
-    .split("\n")
-    .map((line) => `> ${line}`.trimEnd())
-    .join("\n");
-  return `# ${title.trim()}\n\n${EXPRESS_NOTE}\n\n## Demande\n\n${quoted}\n\n## Critères d'acceptation\n\nAC-1 : Given le dépôt actuel, When le changement est livré, Then ce que décrit la demande ci-dessus fonctionne, prouvé par un test nommé avec AC-1\n`;
+  return `# ${title.trim()}\n\n${EXPRESS_NOTE}\n\n## Demande\n\n${quotedRequest(request)}\n\n${surveySection(request)}## Critères d'acceptation\n\nAC-1 : Given le dépôt actuel, When le changement est livré, Then ce que décrit la demande ci-dessus fonctionne, prouvé par un test nommé avec AC-1\n`;
 }
 
 const EXPRESS_NOTE =
@@ -509,6 +536,8 @@ export class StepExecutor {
         // Pas de req.md : le run est né en voie directe, specs.md ne porte que la demande et ses critères.
         direct: store.getArtifact(run.id, "req.md") === null,
         express: run.lane === "express",
+        // Voie directe ou express née d'une session qui a enquêté (`/ship`) : specs.md porte son relevé du dépôt.
+        survey: surveyOf(store.getArtifact(run.id, "specs.md") ?? "") !== null,
         qa: step === "review" && live.qa?.offersTools === true,
       });
       store.setInstructions(run.id, null);

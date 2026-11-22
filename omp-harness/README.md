@@ -760,6 +760,13 @@ serveur. C'est l'écran Système ▸ Dépôts d'omp-console.
   — quand `lanes.express` est coupé, sous l'autonomie « tout me demander », quand la porte
   des specs est toujours posée (`review.specsGate: true`), et quand le titre ou la
   demande touche à l'irréversible.
+- **Le relevé apporté par la demande.** Une demande des voies directe et express peut
+  porter une section `## Relevé du dépôt` (chemins, symboles, `fichier:ligne`) : c'est
+  ce qu'écrit `/ship` (omp-memory-req), qui confie au serveur un travail déjà cadré dans
+  une session locale. Le specs.md synthétisé la reprend comme section à part entière,
+  hors de la citation de la demande, et /impl reçoit la consigne d'en partir au lieu de
+  relire le dépôt (il ouvre seulement les fichiers qu'il modifie, et le code l'emporte sur
+  une ligne fausse du relevé). Sans cette section, rien ne change.
 - **Artefacts tracés.** /req écrit des besoins `B-n : verbe objet contraintes` et
   des critères `AC-n (B-m) : Given/When/Then` co-signés par leur besoin. /specs
   ajoute un relevé du dépôt (chemins, symboles, conventions avec leurs lignes, pour

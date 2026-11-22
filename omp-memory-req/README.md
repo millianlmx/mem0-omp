@@ -1,7 +1,7 @@
 # omp-memory-req
 
 Le plugin des pipelines. Il ne conduit rien en local : c'est un client du serveur
-`omp-harness`. Les commandes (`/req`, `/project`, `/audit`, `/pipelines`,
+`omp-harness`. Les commandes (`/req`, `/ship`, `/project`, `/audit`, `/pipelines`,
 `/harness-follow`, `/demande`) et l'installation sont décrites dans le
 [README du dépôt](../README.md) ; l'API du serveur dans
 [omp-harness/README.md](../omp-harness/README.md).
