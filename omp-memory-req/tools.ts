@@ -343,7 +343,9 @@ export function registerHarnessTools(pi: ExtensionAPI, deps: ToolDeps = {}): voi
       ...fields,
       request: z
         .string()
-        .describe("La demande autoportante : ## Contexte, ## Relevé du dépôt, ## Critères d'acceptation, ## Hors périmètre"),
+        .describe(
+          "La demande autoportante : ## Contexte, ## Relevé du dépôt, ## Critères d'acceptation, ## Hors périmètre",
+        ),
       lane: z.enum(["express", "direct"]).describe("`express` : petit et localisé ; `direct` : sinon"),
       budgetUsd: z
         .number()

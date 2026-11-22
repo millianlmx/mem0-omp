@@ -68,7 +68,10 @@ Le compte rendu a exactement ces sections :
 
 Montre-le à l'utilisateur. Quand il le valide : repère avec grep/glob les chemins du dépôt que la feature touchera (dossiers ou fichiers existants), puis appelle \`harness_launch\` (titre court, demande d'origine, \`modules\` = ces chemins, obligatoire et jamais vide, compte rendu) : le harness conduira /specs, /impl, /review et le merge sur le serveur. Ne modifie AUCUN fichier.`;
 
-export const SHIP_SEED = (note: string, repo: string) => `# /ship — confier au harness ce que cette session a établi, dépôt « ${repo} »
+export const SHIP_SEED = (
+  note: string,
+  repo: string,
+) => `# /ship — confier au harness ce que cette session a établi, dépôt « ${repo} »
 
 ${note ? `Précision de l'utilisateur : ${note}\n\n` : ""}Cette conversation a déjà fait le travail de cadrage (enquête, cause, lecture du code) : ne le refais pas sur le serveur. Ne pose AUCUNE question et ne relis que ce qui te manque pour citer juste (\`fichier:ligne\`).
 

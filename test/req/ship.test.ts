@@ -215,9 +215,8 @@ test("ship/AC-5 : /impl d'un run dont la demande porte un relevé reçoit la con
   try {
     await waitFor(
       () =>
-        world
-          .log()
-          .filter((entry) => entry.kind === "prompt" && entry.step === "impl" && entry.nudge !== true).length >= 2,
+        world.log().filter((entry) => entry.kind === "prompt" && entry.step === "impl" && entry.nudge !== true)
+          .length >= 2,
       () => "deux /impl attendus",
       30_000,
     );
