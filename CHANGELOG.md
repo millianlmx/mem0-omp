@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.47.0 — 2026-11-22
+
+- feat(harness): un dépôt déclare les outils de ses runners, vérifiés avant chaque étape (#504) (fb86667)
+
 ## omp-memory-req 2.9.0 — 2026-11-22
 
 - feat(req): /ship confie au harness un travail déjà cadré dans la session (#505) (8e5f0b6)
