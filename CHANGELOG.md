@@ -1,5 +1,13 @@
 # Journal des versions
 
+## omp-memory-req 2.9.0 — 2026-11-22
+
+- feat(req): /ship confie au harness un travail déjà cadré dans la session (#505) (8e5f0b6)
+
+## omp-harness 1.46.0 — 2026-11-22
+
+- feat(req): /ship confie au harness un travail déjà cadré dans la session (#505) (8e5f0b6)
+
 ## omp-harness 1.45.0 — 2026-11-22
 
 - feat(harness): la branche imposée d'un run est dite à l'appelant et à /impl (#506) (aa532c5)
