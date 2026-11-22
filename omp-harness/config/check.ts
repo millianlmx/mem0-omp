@@ -16,6 +16,7 @@ import { STEP_KINDS } from "../runs/machine.ts";
 import { PolicyRefusal, policyChain, spaceRule, strictest } from "./policy.ts";
 import type { Exec } from "../runners/proc.ts";
 import { engine, memoryExtension } from "../runners/runner.ts";
+import { missingTools, toolsFix } from "../runners/tools.ts";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 
@@ -300,6 +301,28 @@ async function checkEngine(config: HarnessConfig, exec: Exec): Promise<CheckLine
   return lines;
 }
 
+/** Les outils que le dépôt attend des runners (`repos[].tools`), cherchés là où ils tournent. */
+async function checkRepoTools(config: HarnessConfig, repo: RepoConfig, exec: Exec): Promise<CheckLine[]> {
+  const tools = repo.tools ?? [];
+  if (tools.length === 0) return [];
+  const label = `dépôt ${repo.name} — outils des runners`;
+  const absent = await missingTools(config, exec, repo);
+  if (absent === null)
+    return [
+      {
+        status: "fail",
+        label,
+        detail: "recherche impossible",
+        fix:
+          config.runner.isolation === "container"
+            ? `L'image des runners doit être présente et lancer \`sh\` : \`${config.container.command.join(" ")} run --rm --entrypoint=sh ${config.container.runnerImage} -c true\`.`
+            : "`sh` doit être dans le PATH du service.",
+      },
+    ];
+  if (absent.length === 0) return [{ status: "ok", label, detail: tools.join(", ") }];
+  return [{ status: "fail", label, detail: `absents : ${absent.join(", ")}`, fix: toolsFix(config, repo) }];
+}
+
 function checkLauncher(config: HarnessConfig): CheckLine | null {
   if (config.runner.isolation !== "systemd" && config.heavy.isolation !== "systemd") return null;
   const missing = [config.launcher[0], config.launcher.at(-1)].filter(
@@ -468,6 +491,7 @@ export async function runChecks(config: HarnessConfig, deps: CheckDeps): Promise
     lines.push(
       ...(await checkRepo(repo, deps, contained)),
       ...checkRepoAccounts(repo, deps.env ?? process.env),
+      ...(await checkRepoTools(config, repo, deps.exec)),
       ...(await checkModelPolicy(config, strictest(repo, rule?.policy ?? null), owner, deps, contained)),
     );
   }

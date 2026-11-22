@@ -131,6 +131,7 @@ const FAIL_CAUSES: readonly FailCause[] = [
   "context",
   "runner",
   "missing_output",
+  "tools",
   "aborted",
   "other",
 ];
