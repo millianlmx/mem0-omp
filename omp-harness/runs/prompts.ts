@@ -54,6 +54,8 @@ export type PromptContext = {
   qa?: boolean;
   /** Les consignes permanentes actives de l'humain pour ce dépôt, les plus récentes d'abord (standing-rules.ts). */
   standing?: readonly string[];
+  /** La branche du run (`harness/<slug>`), imposée par le service : dite à /impl. */
+  branch?: string;
 };
 
 const POLICY = `## Politique de décision (non négociable)
@@ -219,7 +221,11 @@ ${
 - Livre la demande ENTIÈRE dans ce run, quelle que soit la taille du diff : le découpage s'est décidé avant (\`split_feature\` est refusé ici).
 - Tests : \`run_tests\` avec \`scope: touched\` (tests des fichiers touchés, slot heavy isolé) ; \`scope: check\` avec \`check\` pour une commande nommée du dépôt. La suite complète est réservée à /review.
 - Ne commite pas toi-même : \`save_checkpoint\` et la fin d'étape commitent.
-- Le code demandé est DÉJÀ dans le dépôt (livré avant) ? N'invente pas de diff : \`## Fait\` dit, critère par critère, le fichier et le test qui le livrent déjà ; la revue le vérifie.
+${
+  ctx.branch
+    ? `- Ta branche est \`${ctx.branch}\`, posée par le service : ne crée ni ne change de branche. Si la demande en nomme une autre, livre sur celle-ci et signale l'écart en tête de \`## Fait\`.\n`
+    : ""
+}- Le code demandé est DÉJÀ dans le dépôt (livré avant) ? N'invente pas de diff : \`## Fait\` dit, critère par critère, le fichier et le test qui le livrent déjà ; la revue le vérifie.
 
 Termine par \`${ART}/impl.md\` avec exactement ces sections :
 ## Fait
