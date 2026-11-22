@@ -263,14 +263,18 @@ export const MCP_TOOLS: readonly Tool[] = [
     name: "run_start",
     title: "Lancer un run",
     description:
-      "Lance un pipeline du harness sur un dépôt déclaré à partir d'un titre et d'une demande libres, sans passer par sa forge. Le run part en file (`queued`) : suis-le avec run_get.",
+      "Lance un pipeline du harness sur un dépôt déclaré à partir d'un titre et d'une demande libres, sans passer par sa forge. Le run part en file (`queued`) : suis-le avec run_get. Sa branche est toujours `harness/<slug>` (rendue dans `run.branch`) : un nom de branche écrit dans la demande n'est pas suivi.",
     role: "operator",
     readOnly: false,
     properties: {
       repo: { type: "string", description: "Le nom du dépôt dans la liste du harness (repos_list)." },
       title: { type: "string", description: "Le titre du run." },
       request: { type: "string", description: "La demande, en texte libre." },
-      slug: { type: "string", description: "Facultatif : le slug du run." },
+      slug: {
+        type: "string",
+        description:
+          "Facultatif : le slug du run (défaut : tiré du titre). Il nomme sa branche, `harness/<slug>` : il en choisit la fin, jamais le préfixe.",
+      },
       req: {
         type: "string",
         description: "Facultatif : un compte rendu de besoins déjà établi, avec `## Besoins` : le run part de /specs.",

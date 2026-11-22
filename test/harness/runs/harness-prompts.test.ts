@@ -148,3 +148,14 @@ test("harness-prompts/AC-7 : l'audit exige une preuve fichier:ligne par faibless
   assert.match(prompt, /## Oracle \(rappel du service\)\n- souvenir/);
   assert.doesNotMatch(prompt, /oracle_recall/);
 });
+
+test("harness-prompts/AC-8 : /impl nomme la branche que le service impose au run, interdit d'en créer une autre et fait signaler l'écart avec une branche demandée", () => {
+  const prompt = stepPrompt(ctx({ step: "impl", branch: "harness/photos-access-on-timeline" }));
+  assert.match(
+    prompt,
+    /Ta branche est `harness\/photos-access-on-timeline`, posée par le service : ne crée ni ne change de branche/,
+  );
+  assert.match(prompt, /Si la demande en nomme une autre, livre sur celle-ci et signale l'écart en tête de `## Fait`/);
+  // Les autres étapes ne la portent pas : seule /impl pourrait céder à un nom de branche de la demande.
+  assert.doesNotMatch(stepPrompt(ctx({ step: "review", branch: "harness/x" })), /Ta branche est/);
+});

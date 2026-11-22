@@ -490,6 +490,7 @@ export class StepExecutor {
       const prompt = stepPrompt({
         step,
         title: run.title,
+        branch: run.branch,
         request: run.request,
         baseSha: run.baseSha ?? "main",
         maxDiffLines: config.review.maxDiffLines,
