@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.45.0 — 2026-11-22
+
+- feat(harness): la branche imposée d'un run est dite à l'appelant et à /impl (#506) (aa532c5)
+
 ## omp-harness 1.44.1 — 2026-11-22
 
 - fix(harness): une PR fusionnée n'est plus prise pour un refus de merge (#503) (c631959)
