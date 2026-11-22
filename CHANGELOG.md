@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.44.1 — 2026-11-22
+
+- fix(harness): une PR fusionnée n'est plus prise pour un refus de merge (#503) (c631959)
+
 ## omp-console 1.6.0 — 2026-11-20
 
 - feat(console): tableau kanban des fils par phase sur Mac et iOS (70ecc7a)

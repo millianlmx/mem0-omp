@@ -248,6 +248,9 @@ export class GitHubForge implements Forge {
         "pr",
         "merge",
         head,
+        // `--repo` : gh ne supprime que la branche distante. La locale est encore ouverte dans le worktree
+        // du run : sa suppression échouerait APRÈS la fusion, et gh sortirait en erreur sur une PR fusionnée.
+        ...(this.project !== null ? ["--repo", this.project] : []),
         "--squash",
         "--auto",
         "--delete-branch",
@@ -255,7 +258,8 @@ export class GitHubForge implements Forge {
       ],
       PR_TIMEOUT_MS,
     );
-    if (merge.code !== 0)
+    // Un échec après la fusion (nettoyage de branche) n'est pas un refus : la PR fusionnée fait foi.
+    if (merge.code !== 0 && (await this.changeState(head)) !== "MERGED")
       throw new HarnessError(502, `gh pr merge --auto refusé : ${merge.stderr.trim().slice(0, 300)}`);
   }
 
