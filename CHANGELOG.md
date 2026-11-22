@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.47.1 — 2026-11-22
+
+- fix(harness): les critères `AC1` d'un brief sont repris en voie express, un test hors CI ne prouve rien (#507) (e28cf8c)
+
 ## omp-harness 1.47.0 — 2026-11-22
 
 - feat(harness): un dépôt déclare les outils de ses runners, vérifiés avant chaque étape (#504) (fb86667)
