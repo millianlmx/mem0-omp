@@ -237,3 +237,24 @@ test('voie-express/AC-6 : `lanes.default: "express"` rend la voie express à un 
     await world.orchestrator.stop();
   }
 });
+
+test("voie-express/AC-7 : les critères d'un brief écrits `AC1`, `AC 1`, `AC_1` ou en liste numérotée sont repris tels quels (en `AC-n`) au lieu d'un critère synthétisé ; un `AC1` en milieu de phrase n'est pas touché", () => {
+  const brief = [
+    "Demander l'accès Photos dès l'arrivée sur la timeline.",
+    "",
+    "## Critères d'acceptation",
+    "- **AC1** : la demande d'accès part à l'apparition de la timeline",
+    "- AC 2 : un refus n'est pas redemandé",
+    "1. AC_3 — le réglage ouvre les Réglages système",
+    "AC4 (comme AC1) : aucun appel réseau",
+    "",
+    "## Hors périmètre",
+    "- l'import",
+  ].join("\n");
+  const specs = expressSpecs("Accès Photos", brief);
+  assert.deepEqual(parseAcIds(specs), ["AC-1", "AC-2", "AC-3", "AC-4"]);
+  assert.match(specs, /^Voie express : /m);
+  assert.match(specs, /^- \*\*AC-1\*\* : la demande d'accès part à l'apparition de la timeline$/m);
+  assert.match(specs, /^AC-4 \(comme AC1\) : aucun appel réseau$/m, "seul l'id de tête est réécrit");
+  assert.doesNotMatch(specs, /Then ce que décrit la demande ci-dessus fonctionne/, "pas de critère synthétisé");
+});

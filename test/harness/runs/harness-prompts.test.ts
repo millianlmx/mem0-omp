@@ -159,3 +159,14 @@ test("harness-prompts/AC-8 : /impl nomme la branche que le service impose au run
   // Les autres étapes ne la portent pas : seule /impl pourrait céder à un nom de branche de la demande.
   assert.doesNotMatch(stepPrompt(ctx({ step: "review", branch: "harness/x" })), /Ta branche est/);
 });
+
+test("harness-prompts/AC-9 : un test sous une condition que la suite ne prend pas (Release, cfg, skip) ne prouve rien — /review compte son critère `untested` et le nomme dans `risks`, /impl n'en écrit pas", () => {
+  const review = stepPrompt(ctx({ step: "review" }));
+  assert.match(review, /Un test qui ne tourne pas dans la suite jugée ne prouve rien/);
+  assert.match(review, /`#if !DEBUG` \/ `#else` de Release alors que la CI compile en Debug/);
+  assert.match(review, /Son critère est `untested`, et le test est nommé dans `risks`/);
+  assert.match(
+    stepPrompt(ctx({ step: "impl" })),
+    /Un test de critère tourne dans la suite que la revue lance : jamais sous une condition qu'elle ne prend pas/,
+  );
+});
