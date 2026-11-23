@@ -583,13 +583,17 @@ test("executeurs/AC-12 : l'agent voit les cibles du dépôt dans son prompt ; `r
   assert.doesNotMatch(stepPrompt({ ...ctx, targets: [] }), /Cibles du dépôt/);
 });
 
-test("executeurs/AC-15 : un passage distant tourne sans entrée standard — un process qui la lit ne reste pas bloqué sur celle de `tart exec`", async () => {
+test("executeurs/AC-15 : un passage distant tourne sans entrée standard — un process qui la lit ne reste pas bloqué sur celle de `tart exec` — et dans le chemin physique de son dossier", async () => {
   const w = world((): ExecutorConfig[] => [{ name: "mac", kind: "tart", labels: { os: "macos" }, slots: 1 }], {
     targets: {
       ios: {
         os: "macos",
         vm: { base: "ghcr.io/cirruslabs/macos-tahoe-xcode:27.2", provision: ["cat > /dev/null"] },
-        tests: { touched: "true", full: "cat > /dev/null && echo 'ok 1 - lu jusqu au bout'" },
+        tests: {
+          touched: "true",
+          // Le dossier du passage est son chemin physique (`/tmp` → `/private/tmp` sur macOS).
+          full: `cat > /dev/null && [ "$PWD" = "$(pwd -P)" ] && echo 'ok 1 - lu jusqu au bout'`,
+        },
       },
     },
   });
