@@ -238,8 +238,7 @@ export function remoteScript(dir: string, job: Pick<ExecutorJob, "script" | "env
         "exit $code",
       ]
     : [body];
-  // Le chemin physique : `/tmp` est un lien vers `/private/tmp` sur macOS, et un outil qui compare un chemin
-  // résolu (un énumérateur de fichiers) à un chemin logique (le `#filePath` du compilateur) les découpe mal.
+  // Le chemin physique, sans lien : un outil qui compare un chemin résolu à un chemin logique les découpe mal.
   return [`cd ${shellQuote(dir)}`, 'cd "$(pwd -P)"', ...exports, ...run].join("\n");
 }
 
@@ -520,7 +519,22 @@ export class TartExecutor implements Executor {
       const booted = await this.#boot(vm, job.signal);
       if ("error" in booted) return { proc: failedProc(booted.error), reports: [], patch: null };
       try {
-        return await runThrough(this.#exec, this.shell(vm), `/tmp/${job.unit}`, `${this.config.name} (VM ${vm})`, job);
+        const shell = this.shell(vm);
+        // Sous le dossier de l'utilisateur de la VM, jamais `/tmp` : sur macOS, Foundation rend `/private/tmp/…`
+        // en `/tmp/…` et le compilateur l'inverse, et un test qui découpe ses chemins de sources s'y perd.
+        const home = await this.#exec(shell.command, shell.argv('printf %s "$HOME"', false), {
+          env: clientEnv(),
+          timeoutMs: 60_000,
+          signal: job.signal,
+        });
+        const root = home.code === 0 && /^\/[\w./-]+$/.test(home.stdout.trim()) ? home.stdout.trim() : "/tmp";
+        return await runThrough(
+          this.#exec,
+          shell,
+          `${root}/omp-jobs/${job.unit}`,
+          `${this.config.name} (VM ${vm})`,
+          job,
+        );
       } finally {
         await booted.stop();
       }
