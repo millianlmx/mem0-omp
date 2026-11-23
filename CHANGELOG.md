@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.49.0 — 2026-11-23
+
+- feat(harness): une recette de VM Tart fixe la taille de ses VM (cpu, memory) (#512) (87551ee)
+
 ## omp-harness 1.48.3 — 2026-11-23
 
 - fix(harness): dans une VM Tart, le passage est déposé sous le $HOME de son utilisateur (#511) (8545af9)
