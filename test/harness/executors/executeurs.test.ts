@@ -82,11 +82,12 @@ function fakeTart(dir: string): { command: string; log: string } {
       "#!/bin/bash",
       `echo "$*" >> ${log}`,
       `vms=${vms}`,
+      `home=${path.join(dir, "home")}`,
       'case "$1" in',
       "  run) exec sleep 600;;",
       '  exec) shift; stdin=0; [ "$1" = -i ] && { shift; stdin=1; }; [ -f "$vms/$1" ] || { echo "VM $1 inconnue" >&2; exit 1; }',
       // Sans `-i`, le vrai `tart exec` laisse au process une entrée standard ouverte : le double aussi.
-      '    export TART_VM_FILE="$vms/$1"; shift; if [ "$stdin" = 1 ]; then exec "$@"; else exec "$@" < <(sleep 30 2>/dev/null); fi;;',
+      '    export TART_VM_FILE="$vms/$1" HOME="$home"; mkdir -p "$HOME"; shift; if [ "$stdin" = 1 ]; then exec "$@"; else exec "$@" < <(sleep 30 2>/dev/null); fi;;',
       '  clone) [ -f "$vms/$3" ] && exit 1; if [ -f "$vms/$2" ]; then cp "$vms/$2" "$vms/$3"; else touch "$vms/$3"; fi;;',
       '  get) [ -f "$vms/$2" ] || exit 1;;',
       '  rename) mv "$vms/$2" "$vms/$3";;',
@@ -583,7 +584,7 @@ test("executeurs/AC-12 : l'agent voit les cibles du dépôt dans son prompt ; `r
   assert.doesNotMatch(stepPrompt({ ...ctx, targets: [] }), /Cibles du dépôt/);
 });
 
-test("executeurs/AC-15 : un passage distant tourne sans entrée standard — un process qui la lit ne reste pas bloqué sur celle de `tart exec` — et dans le chemin physique de son dossier", async () => {
+test("executeurs/AC-15 : un passage distant tourne sans entrée standard — un process qui la lit ne reste pas bloqué sur celle de `tart exec` — et dans un dossier physique sous le `$HOME` de la VM, jamais `/tmp`", async () => {
   const w = world((): ExecutorConfig[] => [{ name: "mac", kind: "tart", labels: { os: "macos" }, slots: 1 }], {
     targets: {
       ios: {
@@ -592,7 +593,7 @@ test("executeurs/AC-15 : un passage distant tourne sans entrée standard — un 
         tests: {
           touched: "true",
           // Le dossier du passage est son chemin physique (`/tmp` → `/private/tmp` sur macOS).
-          full: `cat > /dev/null && [ "$PWD" = "$(pwd -P)" ] && echo 'ok 1 - lu jusqu au bout'`,
+          full: `cat > /dev/null && [ "$PWD" = "$(pwd -P)" ] && case "$PWD" in "$HOME"/omp-jobs/*) echo 'ok 1 - lu jusqu au bout';; esac`,
         },
       },
     },
