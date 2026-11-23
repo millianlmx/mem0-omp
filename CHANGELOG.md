@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.48.0 — 2026-11-23
+
+- feat(harness): environnements d'exécution par dépôt — exécuteurs Linux, macOS et VM Tart sur mesure (#508) (f0df150)
+
 ## omp-harness 1.47.1 — 2026-11-22
 
 - fix(harness): les critères `AC1` d'un brief sont repris en voie express, un test hors CI ne prouve rien (#507) (e28cf8c)
