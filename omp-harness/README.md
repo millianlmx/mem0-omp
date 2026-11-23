@@ -1422,7 +1422,9 @@ n'est plus celui du runner.
       "os": "macos",
       "vm": {
         "base": "ghcr.io/cirruslabs/macos-tahoe-xcode:26",
-        "provision": ["brew install xcodegen swiftlint", "xcodebuild -downloadPlatform iOS"]
+        "provision": ["brew install xcodegen swiftlint", "xcodebuild -downloadPlatform iOS"],
+        "cpu": 8,
+        "memory": 16384
       },
       "setup": ["brew bundle --no-upgrade"],
       "tests": { "touched": "scripts/test-ios.sh {configuration} {files}", "full": "scripts/test-ios.sh {configuration}", "pattern": "**/*Tests.swift" },
@@ -1454,6 +1456,13 @@ n'est plus celui du runner.
   l'ancienne. Une étape qui échoue rend le passage en erreur en la nommant. Seul un exécuteur
   `tart` prend une cible à recette, et l'`os` de la cible est celui de la VM. Sans `vm`, une
   cible macOS tourne sur l'image (`tart.image`) ou la machine (`ssh`) de son exécuteur.
+  **`cpu`** et **`memory`** (Mo, toujours ensemble) : la taille de la VM, posée par `tart set`
+  sur l'image construite, et dont chaque passage hérite ; ils entrent dans l'empreinte. Sans
+  eux, la taille de la base : 4 cœurs et 8 Go pour les images Cirrus, trop peu pour compiler
+  pendant que des simulateurs démarrent (la porte iOS de swimmich : 530 s, contre 323 s en
+  8 cœurs et 16 Go). Deux VM par Mac : leur somme doit tenir dans sa mémoire.
+  Une étape de `provision` peut **préchauffer** : passer une fois la suite du dépôt laisse dans
+  l'image ses caches (DerivedData, paquets) et ses simulateurs déjà créés et démarrés une fois.
 - **`setup`** : lancé avant chaque passage, sur l'exécuteur.
 - **`commands`** : les commandes nommées que l'agent lance sur la cible par l'outil
   **`run_on`** (/impl et /impl --fix) — les générateurs. La commande tourne sur l'arbre courant
