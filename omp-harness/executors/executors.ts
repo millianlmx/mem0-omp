@@ -238,7 +238,9 @@ export function remoteScript(dir: string, job: Pick<ExecutorJob, "script" | "env
         "exit $code",
       ]
     : [body];
-  return [`cd ${shellQuote(dir)}`, ...exports, ...run].join("\n");
+  // Le chemin physique : `/tmp` est un lien vers `/private/tmp` sur macOS, et un outil qui compare un chemin
+  // résolu (un énumérateur de fichiers) à un chemin logique (le `#filePath` du compilateur) les découpe mal.
+  return [`cd ${shellQuote(dir)}`, 'cd "$(pwd -P)"', ...exports, ...run].join("\n");
 }
 
 /** Les rapports d'un dossier distant, en globs bash (`**` compris), marqués un par un sur la sortie. */
