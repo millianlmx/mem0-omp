@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.48.2 — 2026-11-23
+
+- fix(harness): un passage distant travaille dans le chemin physique de son dossier (#510) (9cb9728)
+
 ## omp-harness 1.48.1 — 2026-11-23
 
 - fix(harness): un passage distant tourne sans entrée standard (#509) (70d6df8)
