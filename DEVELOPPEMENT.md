@@ -62,6 +62,7 @@ La racine de `omp-harness/` ne garde que `main.ts` et `cli.ts`, les deux points 
 | `corporate/` | Le pont corpo ↔ usine : signalements de collègues devenus propositions. |
 | `db/` | La base SQLite, unique source de vérité : une couche par domaine et la façade `Store` (`db.ts`). |
 | `forge/` | Git et les forges : worktrees, checkpoints et merges git, PR et issues GitHub et GitLab. |
+| `executors/` | Les environnements d'exécution : cibles déclarées par les dépôts (`.harness-env.json`), exécuteurs local, ssh et Tart, matrice des passages, `run_on`, preuve d'exécution. |
 | `heavy/` | Les tests heavy et leurs preuves : jobs et cache, rouge de base, juge CI, décompte TAP, sortie en direct, rapport, preuves. |
 | `human/` | La boucle humaine : gestes, pilote, carte d'escalade et son relecteur, carte des specs, consignes permanentes, propositions. |
 | `intake/` | Les Demandes : classement et confirmation. |
@@ -140,6 +141,7 @@ une feature (son slug), et un id `<slug>/AC-<n>` ne vit que dans un test
 | `test/harness/corporate/` | le pont corpo ↔ usine |
 | `test/harness/db/` | la base SQLite : découpe en couches, store |
 | `test/harness/forge/` | git et les forges : worktrees, PR, issues par label |
+| `test/harness/executors/` | les environnements d'exécution : cibles, exécuteurs ssh et Tart, matrice, `run_on`, preuve d'exécution |
 | `test/harness/heavy/` | les tests heavy : jobs, juge CI, rouge de base, preuves de revue |
 | `test/harness/human/` | la boucle humaine : gestes, pilote, propositions |
 | `test/harness/intake/` | les Demandes et leurs voies |

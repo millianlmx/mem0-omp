@@ -70,8 +70,8 @@ const LAYOUT: Record<string, string[]> = {
 
 /** Les points d'entrée lancés par leur chemin : ils restent à la racine du serveur. */
 const ENTRY_POINTS = ["cli.ts", "main.ts"];
-/** Les dossiers qui existaient avant la réorganisation, gardés tels quels. */
-const EXISTING = ["atlassian", "browser", "corporate", "db", "vigie"];
+/** Les dossiers hors de la réorganisation (existants avant elle, ou créés après par une feature), gardés tels quels. */
+const EXISTING = ["atlassian", "browser", "corporate", "db", "executors", "vigie"];
 /** Les trois fichiers que des sous-features découpent ensuite : ils dépassent encore 2000 lignes. */
 const TO_SPLIT = ["api/http.ts", "runs/orchestrator.ts", "workstation/workstation.ts"];
 

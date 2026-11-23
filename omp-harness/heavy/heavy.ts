@@ -27,6 +27,11 @@ import type { Exec, ProcResult } from "../runners/proc.ts";
 import type { Scheduler } from "../runners/scheduler.ts";
 import type { Git } from "../forge/git.ts";
 import type { TestOutputSink } from "./test-feed.ts";
+import { EnvSpecError, legsOf, loadEnvSpec, legName } from "../executors/env-spec.ts";
+import type { EnvSpec, Leg } from "../executors/env-spec.ts";
+import { ExecutorPool } from "../executors/executors.ts";
+import { Matrix } from "../executors/matrix.ts";
+import type { LegSummary } from "../executors/matrix.ts";
 
 export type TestScope = "touched" | "full" | "check";
 
@@ -46,6 +51,8 @@ export type HeavyJob = {
   priority?: number;
   /** `false` : un rouge frais n'est pas relancé (le rouge de base de main, un seul lancement par arbre). */
   retry?: boolean;
+  /** Le commit où lire `.harness-env.json` (la base du run) ; absent : la branche principale du dépôt. */
+  base?: string;
 };
 
 export type HeavyResult = {
@@ -66,6 +73,10 @@ export type HeavyResult = {
   tap: TapTally | null;
   /** `ci` : le verdict vient des checks de la forge (`tests.judge: "ci"`), non d'un job local ; `output` nomme les jobs rouges. */
   judge?: "ci";
+  /** Un dépôt à cibles (`.harness-env.json`) : le détail de chaque passage (cible, configuration, exécuteur). */
+  legs?: LegSummary[];
+  /** Les tests réellement exécutés (rapports JUnit, sortie TAP) ; absent : non relevés (dépôt sans cibles, cache d'avant un redémarrage). */
+  executed?: string[];
 };
 
 /** Les octets de sortie gardés d'un job : la fin, là où est l'échec. */
@@ -166,6 +177,7 @@ function containerHeavyArgv(
   unit: string,
   command: string,
   env: Record<string, string>,
+  image: string | null,
 ): { command: string; args: string[] } {
   const heavy = config.heavy;
   const writable = [worktree, ...(heavy.cargoTargetRoot ? [heavy.cargoTargetRoot] : []), ...heavy.readWritePaths];
@@ -188,7 +200,7 @@ function containerHeavyArgv(
     ...[...new Set(writable)].flatMap((dir) => ["--volume", `${dir}:${dir}`]),
     ...(writable.includes(repo.path) ? [] : ["--volume", `${repo.path}:${repo.path}:ro`]),
     ...Object.entries({ HOME: "/tmp", ...env }).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
-    repo.testImage ?? config.container.testImage,
+    image ?? repo.testImage ?? config.container.testImage,
     "bash",
     "-c",
     command,
@@ -203,11 +215,13 @@ export function heavyArgv(
   command: string,
   env: Record<string, string>,
   repo?: RepoConfig,
+  /** L'image d'une cible du dépôt (`.harness-env.json`) en isolation `container` ; absente : celle des tests du dépôt. */
+  image: string | null = null,
 ): { command: string; args: string[] } {
   if (config.heavy.isolation === "none") return { command: "bash", args: ["-c", command] };
   if (config.heavy.isolation === "container") {
     if (!repo) throw new Error("isolation container : le dépôt du job est requis (image de tests, clone)");
-    return containerHeavyArgv(config, repo, worktree, unit, command, env);
+    return containerHeavyArgv(config, repo, worktree, unit, command, env, image);
   }
   const heavy = config.heavy;
   const writable = [worktree, ...(heavy.cargoTargetRoot ? [heavy.cargoTargetRoot] : []), ...heavy.readWritePaths];
@@ -285,6 +299,8 @@ export type HeavyDeps = {
   git: Git;
   exec: Exec;
   now?: () => number;
+  /** Les commandes `ssh` et `tart` des exécuteurs (des doubles en test). */
+  commands?: { ssh?: string; tart?: string };
 };
 
 /** Un job en vol : sa promesse, ses appelants qui attendent encore, et de quoi l'arrêter. */
@@ -312,6 +328,13 @@ const NOTHING_RAN: HeavyResult = {
 
 type JobId = { key: string; tree: string; command: string; env: Record<string, string> };
 
+/** Ce qu'une scope lance : la commande du dépôt, ou les passages de ses cibles ; `null` : rien à lancer ; `error` : spec invalide. */
+type Plan =
+  | { kind: "command"; command: string }
+  | { kind: "matrix"; command: string; legs: Leg[]; spec: EnvSpec }
+  | { kind: "nothing"; note: string | null }
+  | { kind: "error"; message: string };
+
 export class HeavyRunner {
   readonly #deps: HeavyDeps;
   readonly #flights = new Map<string, Flight>();
@@ -320,9 +343,48 @@ export class HeavyRunner {
   #output: TestOutputSink | null = null;
   /** Le juge des suites complètes d'un dépôt en `tests.judge: "ci"`. */
   readonly #ci: CiJudge;
+  /** Les exécuteurs des cibles des dépôts, et la matrice qui y répartit leurs passages. */
+  readonly pool: ExecutorPool;
+  readonly #matrix: Matrix;
   constructor(deps: HeavyDeps) {
     this.#deps = deps;
     this.#ci = new CiJudge(deps);
+    this.pool = new ExecutorPool({ ...deps, ...(deps.commands ? { commands: deps.commands } : {}) });
+    this.#matrix = new Matrix({ ...deps, pool: this.pool });
+  }
+
+  /**
+   * Ce que lance la scope. Un dépôt qui déclare ses cibles (`.harness-env.json` au commit de base) les lance
+   * toutes en `full`, celles que le diff concerne en `touched` ; `check` et la suite jugée par la CI de la forge
+   * restent la commande du dépôt.
+   */
+  async #plan(job: Omit<HeavyJob, "runId" | "stepId">): Promise<Plan> {
+    const byCi = job.scope === "full" && testsJudge(job.repo) === "ci";
+    if (job.scope !== "check" && !byCi) {
+      let spec: EnvSpec | null;
+      try {
+        spec = await loadEnvSpec(this.#deps.git, job.worktree, job.base ?? job.repo.mainBranch);
+      } catch (err) {
+        if (!(err instanceof EnvSpecError)) throw err;
+        return { kind: "error", message: err.message };
+      }
+      if (spec !== null) {
+        const legs = legsOf(spec, job.scope, job.files);
+        if (legs.length === 0)
+          return {
+            kind: "nothing",
+            note:
+              job.files.length === 0
+                ? "aucun fichier touché : rien à tester"
+                : "aucune cible concernée par un test touché",
+          };
+        const command = legs.map((leg) => `[${legName(leg)}] ${leg.command}`).join("\n");
+        return { kind: "matrix", command: `${spec.hash}\n${command}`, legs, spec };
+      }
+    }
+    const command = testCommand(job.repo, job.scope, job.files, job.check);
+    if (command !== null) return { kind: "command", command };
+    return { kind: "nothing", note: null };
   }
 
   /** Branche la sortie en direct des jobs. */
@@ -334,8 +396,9 @@ export class HeavyRunner {
   async keyFor(
     job: Omit<HeavyJob, "runId" | "stepId">,
   ): Promise<{ key: string; tree: string; command: string } | null> {
-    const command = testCommand(job.repo, job.scope, job.files, job.check);
-    if (command === null) return null;
+    const plan = await this.#plan(job);
+    if (plan.kind !== "command" && plan.kind !== "matrix") return null;
+    const command = plan.command;
     const tree = await this.#deps.git.workingTreeHash(job.worktree);
     return { key: cacheKey(tree, command, heavyEnv(this.#deps.config, job.worktree)), tree, command };
   }
@@ -355,17 +418,20 @@ export class HeavyRunner {
     const { config, store } = this.#deps;
     if (signal?.aborted) throw new Error("job heavy annulé : appel arrêté");
     const env = heavyEnv(config, job.worktree);
-    const command = testCommand(job.repo, job.scope, job.files, job.check);
-    if (command === null) {
+    const plan = await this.#plan(job);
+    if (plan.kind === "error") return { ...NOTHING_RAN, outcome: "error", output: plan.message };
+    if (plan.kind === "nothing") {
       if (job.scope === "check") {
         const known = Object.keys(job.repo.checks);
         const list = known.length > 0 ? `connus : ${known.join(", ")}` : "aucun check déclaré";
         return { ...NOTHING_RAN, outcome: "error", output: `check inconnu : ${job.check ?? "(aucun nom)"} (${list})` };
       }
-      const note = job.files.length === 0 ? "aucun fichier touché : rien à tester" : "aucun test touché";
+      const note = plan.note ?? (job.files.length === 0 ? "aucun fichier touché : rien à tester" : "aucun test touché");
       store.appendEvent("heavy_skipped", job.runId, { scope: job.scope, files: job.files.length, note });
       return { ...NOTHING_RAN, skipped: true, note, output: note };
     }
+    const command = plan.command;
+    const legs = plan.kind === "matrix" ? plan.legs : null;
     // La CI de la forge juge un commit poussé : la branche est rendue poussable AVANT de lire l'arbre jugé
     // (fusion résolue commitée, commits poussés ailleurs repris), pour que la clé du cache soit la sienne.
     if (job.scope === "full" && testsJudge(job.repo) === "ci") {
@@ -401,6 +467,9 @@ export class HeavyRunner {
         key,
         command,
         tap: null,
+        ...(legs !== null && this.#matrix.executedFor(key)
+          ? { executed: this.#matrix.executedFor(key) as string[] }
+          : {}),
       };
     }
 
@@ -412,7 +481,7 @@ export class HeavyRunner {
     } else {
       const controller = new AbortController();
       const created: Flight = { promise: Promise.resolve(NOTHING_RAN), waiters: 0, controller };
-      created.promise = this.#execute(job, { key, tree, command, env }, controller.signal).finally(() => {
+      created.promise = this.#execute(job, { key, tree, command, env }, controller.signal, legs).finally(() => {
         if (this.#flights.get(key) === created) this.#flights.delete(key);
       });
       // Un job abandonné par tous (slot refusé, process tué) rejette sans personne pour l'entendre.
@@ -469,8 +538,25 @@ export class HeavyRunner {
    * Le job lui-même : un slot heavy par tentative, relances sur OOM, et UNE relance
    * d'un rouge frais (un échec instable ne vaut pas verdict). Seul un vert entre au cache.
    */
-  async #execute(job: HeavyJob, id: JobId, signal: AbortSignal): Promise<HeavyResult> {
+  async #execute(job: HeavyJob, id: JobId, signal: AbortSignal, legs: Leg[] | null): Promise<HeavyResult> {
     const { config, store } = this.#deps;
+    if (legs !== null) {
+      const last = await this.#runMatrix(job, id, signal, legs);
+      if (last.outcome === "pass") {
+        this.#matrix.remember(id.key, last.executed ?? []);
+        store.cachePut({
+          key: id.key,
+          repo: job.repo.name,
+          tree: id.tree,
+          command: id.command,
+          outcome: last.outcome,
+          exitCode: last.exitCode ?? -1,
+          output: last.output,
+          durationMs: last.durationMs,
+        });
+      }
+      return last;
+    }
     let attempts = 0;
     let oomRetries = 0;
     let failRetried = false;
@@ -517,6 +603,71 @@ export class HeavyRunner {
       });
     }
     return last;
+  }
+
+  /** Les passages des cibles du dépôt, chacun sur un exécuteur qui le porte (matrix.ts), fondus en un résultat. */
+  async #runMatrix(job: HeavyJob, id: JobId, signal: AbortSignal, legs: Leg[]): Promise<HeavyResult> {
+    const now = this.#deps.now ?? Date.now;
+    const started = now();
+    const liveJob = this.#output?.start(job.runId, job.scope, 1) ?? null;
+    const merged = await this.#matrix.run(
+      {
+        runId: job.runId,
+        repo: job.repo,
+        worktree: job.worktree,
+        base: job.base ?? job.repo.mainBranch,
+        ...(job.priority !== undefined ? { priority: job.priority } : {}),
+        ...(job.retry !== undefined ? { retry: job.retry } : {}),
+      },
+      legs,
+      signal,
+      liveJob !== null ? (chunk: string) => this.#output?.append(liveJob, chunk) : undefined,
+    );
+    if (liveJob !== null) this.#output?.finish(liveJob, merged.outcome);
+    return {
+      outcome: merged.outcome,
+      exitCode: merged.exitCode,
+      output: merged.output,
+      durationMs: now() - started,
+      attempts: merged.attempts,
+      cached: false,
+      skipped: false,
+      note: null,
+      tree: id.tree,
+      key: id.key,
+      command: id.command,
+      tap: tapTally(merged.output),
+      legs: merged.legs,
+      executed: merged.executed,
+    };
+  }
+
+  /**
+   * `run_on` : la commande nommée d'une cible du dépôt, sur un exécuteur qui la porte ; ses modifications
+   * reviennent au worktree. Un dépôt sans `.harness-env.json` n'a rien à lancer ailleurs.
+   */
+  async runOn(
+    job: { runId: string; repo: RepoConfig; worktree: string; base?: string; priority?: number },
+    target: string,
+    command: string,
+    signal: AbortSignal,
+  ): Promise<{ ok: boolean; text: string; files: string[] }> {
+    const base = job.base ?? job.repo.mainBranch;
+    let spec: EnvSpec | null;
+    try {
+      spec = await loadEnvSpec(this.#deps.git, job.worktree, base);
+    } catch (err) {
+      if (!(err instanceof EnvSpecError)) throw err;
+      return { ok: false, text: err.message, files: [] };
+    }
+    if (spec === null)
+      return {
+        ok: false,
+        text: "le dépôt ne déclare aucune cible (`.harness-env.json` absent du commit de base)",
+        files: [],
+      };
+    this.#deps.store.appendEvent("run_on", job.runId, { target, command });
+    return this.#matrix.runOn({ ...job, base }, spec, target, command, signal);
   }
 
   /** Une tentative : un slot, un process (tué par `signal`), son issue. */
