@@ -84,8 +84,9 @@ function fakeTart(dir: string): { command: string; log: string } {
       `vms=${vms}`,
       'case "$1" in',
       "  run) exec sleep 600;;",
-      '  exec) shift; [ "$1" = -i ] && shift; [ -f "$vms/$1" ] || { echo "VM $1 inconnue" >&2; exit 1; }',
-      '    export TART_VM_FILE="$vms/$1"; shift; exec "$@";;',
+      '  exec) shift; stdin=0; [ "$1" = -i ] && { shift; stdin=1; }; [ -f "$vms/$1" ] || { echo "VM $1 inconnue" >&2; exit 1; }',
+      // Sans `-i`, le vrai `tart exec` laisse au process une entrée standard ouverte : le double aussi.
+      '    export TART_VM_FILE="$vms/$1"; shift; if [ "$stdin" = 1 ]; then exec "$@"; else exec "$@" < <(sleep 30 2>/dev/null); fi;;',
       '  clone) [ -f "$vms/$3" ] && exit 1; if [ -f "$vms/$2" ]; then cp "$vms/$2" "$vms/$3"; else touch "$vms/$3"; fi;;',
       '  get) [ -f "$vms/$2" ] || exit 1;;',
       '  rename) mv "$vms/$2" "$vms/$3";;',
@@ -580,4 +581,21 @@ test("executeurs/AC-12 : l'agent voit les cibles du dépôt dans son prompt ; `r
   assert.match(prompt, /- `ios` \(macos\) — `run_on` : `gen`/);
   assert.match(prompt, /ne s'écrit JAMAIS à la main : lance la commande par `run_on`/);
   assert.doesNotMatch(stepPrompt({ ...ctx, targets: [] }), /Cibles du dépôt/);
+});
+
+test("executeurs/AC-15 : un passage distant tourne sans entrée standard — un process qui la lit ne reste pas bloqué sur celle de `tart exec`", async () => {
+  const w = world((): ExecutorConfig[] => [{ name: "mac", kind: "tart", labels: { os: "macos" }, slots: 1 }], {
+    targets: {
+      ios: {
+        os: "macos",
+        vm: { base: "ghcr.io/cirruslabs/macos-tahoe-xcode:27.2", provision: ["cat > /dev/null"] },
+        tests: { touched: "true", full: "cat > /dev/null && echo 'ok 1 - lu jusqu au bout'" },
+      },
+    },
+  });
+  const started = Date.now();
+  const result = await full(w);
+  assert.equal(result.outcome, "pass", result.output);
+  assert.ok(Date.now() - started < 20_000, "ni la recette ni le passage n'ont attendu l'entrée standard");
+  assert.deepEqual(result.executed, ["lu jusqu au bout"]);
 });

@@ -227,7 +227,9 @@ export function remoteScript(dir: string, job: Pick<ExecutorJob, "script" | "env
   const exports = Object.entries(job.env)
     .filter(([key]) => !LOCAL_ONLY_ENV.has(key))
     .map(([key, value]) => `export ${key}=${shellQuote(value)}`);
-  const body = `bash -lc ${shellQuote(job.script)}`;
+  // Sans entrée standard, comme un passage local : celle de `ssh` ou de `tart exec` reste ouverte, et un process
+  // qui l'hérite peut s'y bloquer (un serveur de test lancé par la suite ne démarrait jamais dans une VM).
+  const body = `bash -lc ${shellQuote(job.script)} </dev/null`;
   const run = job.patch
     ? [
         "git init -q . && git add -A && git -c user.name=omp -c user.email=omp@harness commit -qm base --no-verify",
@@ -460,7 +462,7 @@ export class TartExecutor implements Executor {
       try {
         const shell = this.shell(scratch);
         for (const step of recipe.provision) {
-          const done = await this.#exec(shell.command, shell.argv(`bash -lc ${shellQuote(step)}`, false), {
+          const done = await this.#exec(shell.command, shell.argv(`bash -lc ${shellQuote(step)} </dev/null`, false), {
             env: clientEnv(),
             timeoutMs: 2 * 3_600_000,
             maxBytes: OUTPUT_TAIL,
