@@ -43,7 +43,13 @@ export type EnvTarget = {
  * étape de `provision` (`brew install xcodegen`). Construite une fois, gardée sous un nom qui porte l'empreinte
  * de la recette : la changer en construit une nouvelle, et l'ancienne est retirée.
  */
-export type VmRecipe = { base: string; provision: string[]; hash: string };
+export type VmRecipe = { base: string; provision: string[]; size: VmSize | null; hash: string };
+
+/**
+ * La taille de la VM (`cpu` cœurs, `memory` Mo), posée sur l'image construite : ses clones en héritent. Sans elle,
+ * celle de la base (4 cœurs, 8 Go pour les images Cirrus), trop juste pour une compilation et des simulateurs à la fois.
+ */
+export type VmSize = { cpu: number; memory: number };
 
 export type EnvSpec = { targets: EnvTarget[]; hash: string };
 
@@ -87,17 +93,29 @@ function repoPath(value: unknown, where: string): string {
   return file;
 }
 
+function count(value: unknown, where: string, min: number, max: number): number | null {
+  if (value === undefined) return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max)
+    fail(`${where} : entier entre ${min} et ${max}`);
+  return value;
+}
+
 function vmOf(raw: unknown, where: string): VmRecipe {
-  if (!isRecord(raw)) fail(`${where} : { base, provision? }`);
+  if (!isRecord(raw)) fail(`${where} : { base, provision?, cpu?, memory? }`);
   const base = text(raw.base, `${where}.base`);
   // L'image de base part telle quelle sur la ligne de commande de `tart clone`.
   if (!/^[\w./:@-]+$/.test(base)) fail(`${where}.base : une image Tart (ghcr.io/cirruslabs/macos-tahoe-xcode:26)`);
   const provision = strings(raw.provision, `${where}.provision`);
+  const cpu = count(raw.cpu, `${where}.cpu`, 1, 64);
+  const memory = count(raw.memory, `${where}.memory`, 1024, 262_144);
+  if ((cpu === null) !== (memory === null)) fail(`${where} : cpu ET memory, ou aucun des deux`);
+  const size = cpu !== null && memory !== null ? { cpu, memory } : null;
+  // Sans taille, l'empreinte reste celle d'avant : les images déjà construites restent valables.
   const hash = createHash("sha256")
-    .update(JSON.stringify([base, provision]))
+    .update(JSON.stringify(size ? [base, provision, size.cpu, size.memory] : [base, provision]))
     .digest("hex")
     .slice(0, 12);
-  return { base, provision, hash };
+  return { base, provision, size, hash };
 }
 
 function targetOf(name: string, raw: unknown): EnvTarget {

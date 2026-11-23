@@ -91,7 +91,13 @@ export function legScript(target: EnvTarget, command: string): string {
 export function vmJob(repo: RepoConfig, target: EnvTarget): VmJob | null {
   if (target.vm === null) return null;
   const prefix = vmImagePrefix(repo.name, target.name);
-  return { image: `${prefix}${target.vm.hash}`, prefix, base: target.vm.base, provision: target.vm.provision };
+  return {
+    image: `${prefix}${target.vm.hash}`,
+    prefix,
+    base: target.vm.base,
+    provision: target.vm.provision,
+    size: target.vm.size,
+  };
 }
 
 /** Ce qu'un passage exige : `requires` en VM Tart si la cible a une recette. */

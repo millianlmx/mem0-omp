@@ -21,6 +21,7 @@ import type { Exec, ProcResult } from "../runners/proc.ts";
 import type { Scheduler, Slot } from "../runners/scheduler.ts";
 import { clientEnv, heavyArgv, matchesGlob, OUTPUT_TAIL, shellQuote } from "../heavy/heavy.ts";
 import { forceStop } from "../runners/runner.ts";
+import type { VmSize } from "./env-spec.ts";
 
 /** Un passage confié à un exécuteur. */
 export type ExecutorJob = {
@@ -45,7 +46,7 @@ export type ExecutorJob = {
 };
 
 /** Une recette de VM résolue pour un dépôt et une cible : `image` porte l'empreinte, `prefix` ses devancières. */
-export type VmJob = { image: string; prefix: string; base: string; provision: string[] };
+export type VmJob = { image: string; prefix: string; base: string; provision: string[]; size: VmSize | null };
 
 export type ExecutorRun = {
   proc: ProcResult;
@@ -458,6 +459,13 @@ export class TartExecutor implements Executor {
       return { error: `tart clone ${recipe.base} impossible : ${cloned.stderr.trim().slice(-500)}` };
     let ok = false;
     try {
+      if (recipe.size) {
+        const sized = await this.#call(
+          ["set", scratch, "--cpu", String(recipe.size.cpu), "--memory", String(recipe.size.memory)],
+          120_000,
+        );
+        if (sized.code !== 0) return { error: `tart set ${scratch} impossible : ${sized.stderr.trim().slice(-500)}` };
+      }
       const booted = await this.#boot(scratch);
       if ("error" in booted) return booted;
       try {

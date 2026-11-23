@@ -90,6 +90,8 @@ function fakeTart(dir: string): { command: string; log: string } {
       '    export TART_VM_FILE="$vms/$1" HOME="$home"; mkdir -p "$HOME"; shift; if [ "$stdin" = 1 ]; then exec "$@"; else exec "$@" < <(sleep 30 2>/dev/null); fi;;',
       '  clone) [ -f "$vms/$3" ] && exit 1; if [ -f "$vms/$2" ]; then cp "$vms/$2" "$vms/$3"; else touch "$vms/$3"; fi;;',
       '  get) [ -f "$vms/$2" ] || exit 1;;',
+      // `tart set <vm> --cpu N --memory M` : la taille est écrite dans la VM, et ses clones en héritent.
+      '  set) [ -f "$vms/$2" ] || exit 1; echo "taille $4 $6" >> "$vms/$2";;',
       '  rename) mv "$vms/$2" "$vms/$3";;',
       '  delete) rm -f "$vms/$2";;',
       '  list) printf \'[\'; sep=; for f in "$vms"/*; do [ -e "$f" ] || continue; printf \'%s{"Name":"%s","Source":"local"}\' "$sep" "$(basename "$f")"; sep=,; done; echo \']\';;',
@@ -414,13 +416,20 @@ test("executeurs/AC-9 : une VM Tart est clonée, démarrée, pilotée par `tart 
   assert.deepEqual(fs.readdirSync(path.join(path.dirname(w.tart), "vms")), [], "aucune VM ne survit au passage");
 });
 
-test("executeurs/AC-13 : la recette `vm` d'une cible est construite une fois sur le Mac de l'exécuteur (joint en ssh depuis le VPS), puis chaque passage clone l'image prête ; une recette changée en construit une nouvelle et retire l'ancienne", async () => {
-  const recipe = (tool: string) => ({
+test("executeurs/AC-13 : la recette `vm` d'une cible est construite une fois sur le Mac de l'exécuteur (joint en ssh depuis le VPS), puis chaque passage clone l'image prête ; une recette changée en construit une nouvelle et retire l'ancienne ; sa taille (`cpu`, `memory`) est posée sur l'image", async () => {
+  const recipe = (tool: string, size: { cpu: number; memory: number } | null = null) => ({
     targets: {
       ios: {
         os: "macos",
-        vm: { base: "ghcr.io/cirruslabs/macos-tahoe-xcode:26", provision: [`echo ${tool} >> "$TART_VM_FILE"`] },
-        tests: { touched: "true", full: `grep -q ${tool} "$TART_VM_FILE"` },
+        vm: {
+          base: "ghcr.io/cirruslabs/macos-tahoe-xcode:26",
+          provision: [`echo ${tool} >> "$TART_VM_FILE"`],
+          ...(size ?? {}),
+        },
+        tests: {
+          touched: "true",
+          full: `grep -q ${tool} "$TART_VM_FILE"${size ? ` && grep -qx 'taille ${size.cpu} ${size.memory}' "$TART_VM_FILE"` : ""}`,
+        },
       },
     },
   });
@@ -453,6 +462,18 @@ test("executeurs/AC-13 : la recette `vm` d'une cible est construite une fois sur
   assert.equal(changed.outcome, "pass", changed.output);
   assert.equal(builds(), 2);
   assert.deepEqual(fs.readdirSync(vms), [image("swiftlint")], "l'image de l'ancienne recette est retirée");
+
+  // La taille entre dans l'empreinte : la poser reconstruit l'image, que chaque passage clone à cette taille.
+  const sized = recipe("swiftlint", { cpu: 8, memory: 16384 });
+  assert.notEqual(
+    parseEnvSpec(JSON.stringify(sized)).targets[0]?.vm?.hash,
+    parseEnvSpec(JSON.stringify(recipe("swiftlint"))).targets[0]?.vm?.hash,
+  );
+  commitOnMain(w.repo, ".harness-env.json", JSON.stringify(sized, null, 2));
+  const big = await full(w);
+  assert.equal(big.outcome, "pass", big.output);
+  assert.equal(builds(), 3);
+  assert.match(fs.readFileSync(w.tart, "utf8"), /^set omp-vm-demo-ios-\w+-build --cpu 8 --memory 16384$/m);
 });
 
 test("executeurs/AC-14 : une étape de recette qui échoue rend le passage en erreur en la nommant, sans laisser de VM ; seule une VM Tart prend une cible à recette, quel que soit son `os`", async () => {
@@ -483,6 +504,11 @@ test("executeurs/AC-14 : une étape de recette qui échoue rend le passage en er
       parseEnvSpec(JSON.stringify({ targets: { t: { vm: { base: "u; rm" }, tests: { touched: "t", full: "f" } } } })),
     /vm\.base/,
   );
+  const sizing = (vm: Record<string, unknown>) =>
+    parseEnvSpec(JSON.stringify({ targets: { t: { vm: { base: "u", ...vm }, tests: { touched: "t", full: "f" } } } }));
+  assert.throws(() => sizing({ cpu: 8 }), /cpu ET memory/);
+  assert.throws(() => sizing({ cpu: 0, memory: 8192 }), /vm\.cpu : entier/);
+  assert.throws(() => sizing({ cpu: 8, memory: "16G" }), /vm\.memory : entier/);
   const pool = w.heavy.pool;
   assert.deepEqual(
     pool.matching({ os: "linux" }, true).map((e) => e.config.name),
