@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-harness 1.48.3 — 2026-11-23
+
+- fix(harness): dans une VM Tart, le passage est déposé sous le $HOME de son utilisateur (#511) (8545af9)
+
 ## omp-harness 1.48.2 — 2026-11-23
 
 - fix(harness): un passage distant travaille dans le chemin physique de son dossier (#510) (9cb9728)
