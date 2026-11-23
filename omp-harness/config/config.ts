@@ -394,8 +394,9 @@ export type RepoConfig = {
 
 /**
  * Un exécuteur des jobs de tests d'une cible (`.harness-env.json`) : `local` (le heavy du service), `ssh` (une
- * machine jointe en ssh, un Mac par exemple), `tart` (une VM macOS jetable clonée de `tart.image`, jointe en ssh
- * puis détruite). `labels` dit ce qu'il offre (`os` toujours) ; une cible le prend s'il porte toutes ses exigences.
+ * machine jointe en ssh, un Mac par exemple), `tart` (un Mac qui fait tourner des VM jetables : celles des
+ * recettes `vm` des cibles, ou `tart.image`). `labels` dit ce qu'il offre (`os` toujours) ; une cible le prend
+ * s'il porte toutes ses exigences.
  */
 export type ExecutorConfig = {
   name: string;
@@ -403,9 +404,13 @@ export type ExecutorConfig = {
   labels: Record<string, string>;
   /** Les jobs simultanés au plus (une VM par job en `tart` : la licence Apple en permet 2 par Mac). */
   slots: number;
-  /** `ssh` : l'hôte ; `tart` : l'utilisateur et la clé des VM. `workdir` : où les jobs déposent l'arbre (`/tmp`). */
+  /**
+   * `ssh` : l'hôte des jobs, `workdir` où ils déposent l'arbre (`/tmp`). `tart` : le Mac qui porte Tart quand
+   * ce n'est pas la machine du service (un service sur VPS) ; absent, `tart` est lancé ici.
+   */
   ssh?: { host?: string; user?: string; port?: number; key?: string; workdir?: string };
-  tart?: { image: string };
+  /** L'image des VM des cibles sans recette `vm` ; absente, l'exécuteur ne prend que des cibles à recette. */
+  tart?: { image?: string };
 };
 
 /** Les types d'exécuteurs. */
@@ -1046,8 +1051,15 @@ function validateExecutors(executors: unknown): void {
     if (ssh !== undefined && ssh.port !== undefined && !(Number.isInteger(ssh.port) && (ssh.port as number) > 0))
       fail(`${where}.ssh.port : entier > 0`);
     if (raw.kind === "ssh" && typeof ssh?.host !== "string") fail(`${where}.ssh.host : requis pour un exécuteur ssh`);
-    if (raw.kind === "tart" && !(isRecord(raw.tart) && typeof raw.tart.image === "string" && raw.tart.image !== ""))
-      fail(`${where}.tart.image : l'image Tart des VM (ghcr.io/cirruslabs/macos-sequoia-xcode:16, …)`);
+    if (
+      raw.kind === "tart" &&
+      raw.tart !== undefined &&
+      !(
+        isRecord(raw.tart) &&
+        (raw.tart.image === undefined || (typeof raw.tart.image === "string" && safe(raw.tart.image)))
+      )
+    )
+      fail(`${where}.tart.image : une image Tart (ghcr.io/cirruslabs/macos-tahoe-xcode:26, …)`);
   }
 }
 

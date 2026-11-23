@@ -20,6 +20,8 @@ export type EnvTarget = {
   /** Linux : l'image des jobs, ou le Dockerfile (chemin du dépôt) qui la construit. Absents : l'image de tests du dépôt. */
   image: string | null;
   dockerfile: string | null;
+  /** La recette de la VM Tart des jobs (macOS ou Linux arm64) : sans elle, l'image fixe de l'exécuteur. */
+  vm: VmRecipe | null;
   /** Les commandes lancées avant chaque job sur l'exécuteur (`brew bundle`, `xcodegen generate`). */
   setup: string[];
   /** `{files}` reçoit les fichiers de test touchés, `{configuration}` la configuration du passage. */
@@ -35,6 +37,13 @@ export type EnvTarget = {
   /** `false` : la suite complète de la cible n'est pas exigée pour l'auto-merge (informative). */
   required: boolean;
 };
+
+/**
+ * Une image de VM construite par le harness : la VM `base` (une image OCI, `ghcr.io/cirruslabs/…`), puis chaque
+ * étape de `provision` (`brew install xcodegen`). Construite une fois, gardée sous un nom qui porte l'empreinte
+ * de la recette : la changer en construit une nouvelle, et l'ancienne est retirée.
+ */
+export type VmRecipe = { base: string; provision: string[]; hash: string };
 
 export type EnvSpec = { targets: EnvTarget[]; hash: string };
 
@@ -78,6 +87,19 @@ function repoPath(value: unknown, where: string): string {
   return file;
 }
 
+function vmOf(raw: unknown, where: string): VmRecipe {
+  if (!isRecord(raw)) fail(`${where} : { base, provision? }`);
+  const base = text(raw.base, `${where}.base`);
+  // L'image de base part telle quelle sur la ligne de commande de `tart clone`.
+  if (!/^[\w./:@-]+$/.test(base)) fail(`${where}.base : une image Tart (ghcr.io/cirruslabs/macos-tahoe-xcode:26)`);
+  const provision = strings(raw.provision, `${where}.provision`);
+  const hash = createHash("sha256")
+    .update(JSON.stringify([base, provision]))
+    .digest("hex")
+    .slice(0, 12);
+  return { base, provision, hash };
+}
+
 function targetOf(name: string, raw: unknown): EnvTarget {
   const where = `targets.${name}`;
   if (!NAME.test(name)) fail(`${where} : nom invalide (minuscules, chiffres, . _ -)`);
@@ -92,7 +114,9 @@ function targetOf(name: string, raw: unknown): EnvTarget {
   const dockerfile = raw.dockerfile === undefined ? null : repoPath(raw.dockerfile, `${where}.dockerfile`);
   if (image !== null && dockerfile !== null) fail(`${where} : image OU dockerfile, pas les deux`);
   if (os === "macos" && (image !== null || dockerfile !== null))
-    fail(`${where} : une cible macos tourne sur l'image de son exécuteur (ni image ni dockerfile)`);
+    fail(`${where} : une cible macos tourne dans une VM (\`vm\`) ou sur son exécuteur (ni image ni dockerfile)`);
+  const vm = raw.vm === undefined ? null : vmOf(raw.vm, `${where}.vm`);
+  if (vm !== null && (image !== null || dockerfile !== null)) fail(`${where} : vm OU image/dockerfile, pas les deux`);
   const configurations = strings(raw.configurations, `${where}.configurations`);
   for (const configuration of configurations)
     if (!NAME.test(configuration.toLowerCase())) fail(`${where}.configurations : « ${configuration} » invalide`);
@@ -102,6 +126,7 @@ function targetOf(name: string, raw: unknown): EnvTarget {
     requires,
     image,
     dockerfile,
+    vm,
     setup: strings(raw.setup, `${where}.setup`),
     tests: {
       touched: text(raw.tests.touched, `${where}.tests.touched`),

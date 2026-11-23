@@ -1420,7 +1420,10 @@ n'est plus celui du runner.
     },
     "ios": {
       "os": "macos",
-      "labels": { "xcode": "16" },
+      "vm": {
+        "base": "ghcr.io/cirruslabs/macos-tahoe-xcode:26",
+        "provision": ["brew install xcodegen swiftlint", "xcodebuild -downloadPlatform iOS"]
+      },
       "setup": ["brew bundle --no-upgrade"],
       "tests": { "touched": "scripts/test-ios.sh {configuration} {files}", "full": "scripts/test-ios.sh {configuration}", "pattern": "**/*Tests.swift" },
       "configurations": ["Debug", "Release"],
@@ -1441,8 +1444,16 @@ n'est plus celui du runner.
 - Une cible **`required: false`** tourne, mais n'en décide pas l'issue (informative).
 - **`image`** ou **`dockerfile`** (Linux) : l'image des passages sur le heavy local en
   conteneurs. Le Dockerfile est construit depuis l'archive du commit de base, en cache par
-  empreinte de son contenu (`omp-env-<dépôt>-<cible>:<empreinte>`). Une cible macOS tourne sur
-  l'image de son exécuteur.
+  empreinte de son contenu (`omp-env-<dépôt>-<cible>:<empreinte>`).
+- **`vm`** (macOS, ou Linux arm64) : la recette de la VM Tart des passages — une image de base
+  (`ghcr.io/cirruslabs/macos-tahoe-xcode:26`, `ghcr.io/cirruslabs/ubuntu:latest`) puis les étapes
+  `provision`, lancées une à une (`bash -l`). L'exécuteur `tart` la construit au premier passage
+  (base clonée, démarrée, chaque étape, arrêtée) et la garde sous
+  `omp-vm-<dépôt>-<cible>-<empreinte de la recette>` ; chaque passage en clone une VM jetable
+  (copie à l'écriture : instantané). Changer la recette en construit une nouvelle et retire
+  l'ancienne. Une étape qui échoue rend le passage en erreur en la nommant. Seul un exécuteur
+  `tart` prend une cible à recette, et l'`os` de la cible est celui de la VM. Sans `vm`, une
+  cible macOS tourne sur l'image (`tart.image`) ou la machine (`ssh`) de son exécuteur.
 - **`setup`** : lancé avant chaque passage, sur l'exécuteur.
 - **`commands`** : les commandes nommées que l'agent lance sur la cible par l'outil
   **`run_on`** (/impl et /impl --fix) — les générateurs. La commande tourne sur l'arbre courant
@@ -1459,21 +1470,26 @@ Les exécuteurs (`executors`, configuration du service) :
 |------|---------------|
 | `local` | le heavy du service (slot heavy, isolation du service). Implicite : ses étiquettes sont `os` (Linux en conteneurs ou systemd, l'OS de la machine en `none`) et `arch`. Le déclarer remplace ses étiquettes. |
 | `ssh` | une machine jointe en ssh (`ssh.host`, `user`, `port`, `key`, `workdir`) : l'arbre courant y est déposé (index temporaire : modifications non commitées comprises), le passage y tourne (`bash -l`), ses rapports et son patch reviennent, son dossier est retiré. |
-| `tart` | une VM macOS jetable par passage : `tart clone <tart.image>`, démarrée sans écran, jointe en ssh (`admin` par défaut), puis arrêtée et supprimée. La licence Apple permet 2 VM par Mac : `slots` ≤ 2. |
+| `tart` | un Mac qui fait tourner une VM jetable par passage : clonée de la recette `vm` de la cible (construite et gardée par l'exécuteur) ou de `tart.image`, démarrée sans écran, pilotée par `tart exec` (l'agent invité des images Cirrus : ni clé, ni mot de passe, ni adresse de VM), puis arrêtée et supprimée. Sans `ssh.host`, `tart` tourne sur la machine du service ; avec, chaque commande `tart` part en ssh vers ce Mac (`ssh.user`, `key`, `port`) — le cas d'un service sur un VPS Linux. Sans `tart.image`, il ne prend que les cibles à recette. La licence Apple permet 2 VM macOS par Mac : `slots` ≤ 2. |
 
 ```json
 "executors": [
-  { "name": "mac-mini", "kind": "tart", "labels": { "os": "macos", "arch": "arm64", "xcode": "16" }, "slots": 2,
-    "tart": { "image": "ghcr.io/cirruslabs/macos-sequoia-xcode:16" }, "ssh": { "key": "/var/lib/omp-harness/.ssh/tart" } }
+  { "name": "mac-mini", "kind": "tart", "labels": { "os": "macos", "arch": "arm64" }, "slots": 2,
+    "ssh": { "host": "mac-mini.tailnet", "user": "ci", "key": "/var/lib/omp-harness/.ssh/tart" } }
 ]
 ```
+
+Le Mac de Tart, joint depuis le VPS : la clé du service ouvre une session sans mot de passe
+(`authorized_keys` de `ssh.user`), Tart y est installé (`brew install cirruslabs/cli/tart`,
+trouvé dans `/opt/homebrew/bin`). Une image Xcode pèse 60 à 90 Go : prévois le disque
+pour une image par recette vivante, plus une VM par slot.
 
 Une cible prend un exécuteur qui porte **toutes** ses exigences (`os` et `labels`) — un
 distant libre d'abord, le heavy local en dernier ; elle attend si tous sont occupés. **Aucun
 exécuteur ne la porte** : ses passages ne tournent pas, le résultat le dit (`aucun exécuteur
 ne porte os=macos…`, événement `heavy_unplaced`) et la suite n'est pas verte, donc pas
 d'auto-merge. Rien n'est sauté en silence. `--check` éprouve chaque exécuteur (`ssh … true`,
-`tart --version`) et signale une cible qu'aucun ne porte.
+`tart --version`, sur son Mac s'il est distant) et signale une cible qu'aucun ne porte.
 
 Une suite jugée par la forge (`tests.judge: "ci"`) garde la priorité sur `full` ; les cibles
 jugent alors `touched`.

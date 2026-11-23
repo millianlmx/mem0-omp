@@ -66,13 +66,35 @@ function fakeSsh(dir: string): { command: string; log: string } {
   return { command, log };
 }
 
-/** Un faux `tart` : chaque appel noté ; `run` dure jusqu'à son arrêt, `ip` rend la boucle locale. */
+/**
+ * Un faux `tart` : chaque appel noté, ses VM des fichiers d'un dossier. `clone` copie le fichier (l'image construite
+ * transmet ce qu'on y a installé), `exec` lance la commande ici avec `TART_VM_FILE` (le « disque » de la VM),
+ * `run` dure jusqu'à son arrêt.
+ */
 function fakeTart(dir: string): { command: string; log: string } {
   const log = path.join(dir, "tart.log");
+  const vms = path.join(dir, "vms");
   const command = path.join(dir, "tart");
+  fs.mkdirSync(vms);
   fs.writeFileSync(
     command,
-    `#!/bin/bash\necho "$*" >> ${log}\ncase "$1" in run) exec sleep 600;; ip) echo 127.0.0.1;; esac\nexit 0\n`,
+    [
+      "#!/bin/bash",
+      `echo "$*" >> ${log}`,
+      `vms=${vms}`,
+      'case "$1" in',
+      "  run) exec sleep 600;;",
+      '  exec) shift; [ "$1" = -i ] && shift; [ -f "$vms/$1" ] || { echo "VM $1 inconnue" >&2; exit 1; }',
+      '    export TART_VM_FILE="$vms/$1"; shift; exec "$@";;',
+      '  clone) [ -f "$vms/$3" ] && exit 1; if [ -f "$vms/$2" ]; then cp "$vms/$2" "$vms/$3"; else touch "$vms/$3"; fi;;',
+      '  get) [ -f "$vms/$2" ] || exit 1;;',
+      '  rename) mv "$vms/$2" "$vms/$3";;',
+      '  delete) rm -f "$vms/$2";;',
+      '  list) printf \'[\'; sep=; for f in "$vms"/*; do [ -e "$f" ] || continue; printf \'%s{"Name":"%s","Source":"local"}\' "$sep" "$(basename "$f")"; sep=,; done; echo \']\';;',
+      "esac",
+      "exit 0",
+      "",
+    ].join("\n"),
     { mode: 0o755 },
   );
   return { command, log };
@@ -181,12 +203,12 @@ test("executeurs/AC-1 : `.harness-env.json` est validé champ par champ ; `full`
     );
 });
 
-test("executeurs/AC-2 : la configuration refuse un exécuteur sans `os`, un ssh sans hôte, une VM Tart sans image, un caractère de shell", () => {
+test("executeurs/AC-2 : la configuration refuse un exécuteur sans `os`, un ssh sans hôte, une image Tart invalide, un caractère de shell", () => {
   const config = testConfig(harnessRepo("executeurs-config-"));
   const cases: [ExecutorConfig, RegExp][] = [
     [{ name: "m", kind: "ssh", labels: { arch: "arm64" }, slots: 1, ssh: { host: "m" } }, /labels/],
     [{ name: "m", kind: "ssh", labels: { os: "macos" }, slots: 1 }, /ssh\.host/],
-    [{ name: "m", kind: "tart", labels: { os: "macos" }, slots: 2 }, /tart\.image/],
+    [{ name: "m", kind: "tart", labels: { os: "macos" }, slots: 2, tart: { image: "a b" } }, /tart\.image/],
     [{ name: "m", kind: "ssh", labels: { os: "macos" }, slots: 1, ssh: { host: "m; rm -rf /" } }, /caractère de shell/],
     [{ name: "m", kind: "ssh", labels: { os: "macos" }, slots: 0, ssh: { host: "m" } }, /slots/],
   ];
@@ -202,6 +224,8 @@ test("executeurs/AC-2 : la configuration refuse un exécuteur sans `os`, un ssh 
       slots: 2,
       tart: { image: "ghcr.io/cirruslabs/macos-sequoia-xcode:16" },
     },
+    // Sans image : il ne prend que les cibles à recette `vm`. Avec `ssh.host` : Tart tourne sur ce Mac-là.
+    { name: "m2", kind: "tart", labels: { os: "macos" }, slots: 2, ssh: { host: "mac.tailnet", user: "ci" } },
   ];
   assert.doesNotThrow(() => validateConfig(config));
 });
@@ -358,16 +382,9 @@ test("executeurs/AC-8 : `run_on` lance une commande nommée d'une cible sur son 
   assert.match(unknown.text, /commande inconnue sur « ios » : « build » \(connues : gen\)/);
 });
 
-test("executeurs/AC-9 : une VM Tart est clonée, démarrée, jointe en ssh, puis arrêtée et supprimée après le passage", async () => {
+test("executeurs/AC-9 : une VM Tart est clonée, démarrée, pilotée par `tart exec` (ni ssh ni adresse), puis arrêtée et supprimée après le passage", async () => {
   const w = world(() => [
-    {
-      name: "vm",
-      kind: "tart",
-      labels: { os: "macos", xcode: "16" },
-      slots: 1,
-      tart: { image: "macos-xcode:16" },
-      ssh: { workdir: tmpdir("executeurs-vm-") },
-    },
+    { name: "vm", kind: "tart", labels: { os: "macos", xcode: "16" }, slots: 1, tart: { image: "macos-xcode:16" } },
   ]);
   const result = await w.heavy.run({
     runId: "r1",
@@ -380,18 +397,105 @@ test("executeurs/AC-9 : une VM Tart est clonée, démarrée, jointe en ssh, puis
   });
   assert.equal(result.outcome, "pass", result.output);
   const calls = fs.readFileSync(w.tart, "utf8").trim().split("\n");
+  const clones = calls.filter((call) => call.startsWith("clone "));
   // Deux passages (Debug, Release), une VM chacun, l'un après l'autre (un slot).
-  for (const vm of new Set(calls.map((call) => call.split(" ").at(-1)))) {
-    const verbs = calls.filter((call) => call.endsWith(` ${vm}`)).map((call) => call.split(" ")[0]);
-    // `run` part en tâche de fond et `ip --wait` attend la VM : leur ordre dans le journal n'est pas fixé.
-    assert.deepEqual(
-      [verbs[0], ...[...verbs.slice(1, 3)].sort(), ...verbs.slice(3)],
-      ["clone", "ip", "run", "stop", "delete"],
-      String(vm),
-    );
+  assert.equal(clones.length, 2);
+  for (const clone of clones) {
+    assert.match(clone, /^clone macos-xcode:16 omp-heavy-r1-ios-/);
+    const vm = clone.split(" ")[2] as string;
+    const verbs = calls.filter((call) => call.split(" ").includes(vm)).map((call) => call.split(" ")[0]);
+    assert.equal(verbs[0], "clone", vm);
+    assert.ok(verbs.includes("run") && verbs.includes("exec"), vm);
+    assert.deepEqual(verbs.slice(-2), ["stop", "delete"], vm);
   }
-  assert.match(calls[0] ?? "", /^clone macos-xcode:16 omp-heavy-r1-ios-/);
-  assert.match(fs.readFileSync(w.ssh, "utf8"), /^admin@127\.0\.0\.1$/m);
+  assert.ok(!fs.existsSync(w.ssh), "aucune connexion ssh : tout passe par l'agent invité");
+  assert.deepEqual(fs.readdirSync(path.join(path.dirname(w.tart), "vms")), [], "aucune VM ne survit au passage");
+});
+
+test("executeurs/AC-13 : la recette `vm` d'une cible est construite une fois sur le Mac de l'exécuteur (joint en ssh depuis le VPS), puis chaque passage clone l'image prête ; une recette changée en construit une nouvelle et retire l'ancienne", async () => {
+  const recipe = (tool: string) => ({
+    targets: {
+      ios: {
+        os: "macos",
+        vm: { base: "ghcr.io/cirruslabs/macos-tahoe-xcode:26", provision: [`echo ${tool} >> "$TART_VM_FILE"`] },
+        tests: { touched: "true", full: `grep -q ${tool} "$TART_VM_FILE"` },
+      },
+    },
+  });
+  const w = world(
+    () => [{ name: "mac", kind: "tart", labels: { os: "macos" }, slots: 2, ssh: { host: "mac.tailnet", user: "ci" } }],
+    recipe("xcodegen"),
+  );
+  const vms = path.join(path.dirname(w.tart), "vms");
+  const image = (tool: string) =>
+    `omp-vm-demo-ios-${parseEnvSpec(JSON.stringify(recipe(tool), null, 2)).targets[0]?.vm?.hash}`;
+  const first = await full(w);
+  assert.equal(first.outcome, "pass", first.output);
+  assert.deepEqual(fs.readdirSync(vms), [image("xcodegen")], "l'image construite reste, la VM du passage non");
+  // Chaque appel `tart` est parti en ssh vers le Mac.
+  assert.match(fs.readFileSync(w.ssh, "utf8"), /^ci@mac\.tailnet$/m);
+  assert.doesNotMatch(fs.readFileSync(w.ssh, "utf8"), /^(?!ci@mac\.tailnet$).+$/m);
+  const builds = () =>
+    fs
+      .readFileSync(w.tart, "utf8")
+      .split("\n")
+      .filter((call) => call.startsWith("clone ghcr.io/")).length;
+  assert.equal(builds(), 1);
+  // Un passage du même arbre ou d'un autre : l'image est déjà là, rien n'est reconstruit.
+  fs.writeFileSync(path.join(w.worktree, "App", "Other.swift"), "// autre\n");
+  assert.equal((await full(w)).outcome, "pass");
+  assert.equal(builds(), 1);
+
+  commitOnMain(w.repo, ".harness-env.json", JSON.stringify(recipe("swiftlint"), null, 2));
+  const changed = await full(w);
+  assert.equal(changed.outcome, "pass", changed.output);
+  assert.equal(builds(), 2);
+  assert.deepEqual(fs.readdirSync(vms), [image("swiftlint")], "l'image de l'ancienne recette est retirée");
+});
+
+test("executeurs/AC-14 : une étape de recette qui échoue rend le passage en erreur en la nommant, sans laisser de VM ; seule une VM Tart prend une cible à recette, quel que soit son `os`", async () => {
+  const w = world(
+    (): ExecutorConfig[] => [
+      { name: "mac", kind: "tart", labels: { os: "macos", arch: "arm64" }, slots: 1 },
+      { name: "linux-ssh", kind: "ssh", labels: { os: "linux" }, slots: 1, ssh: { host: "l" } },
+    ],
+    {
+      targets: {
+        arm: {
+          os: "linux",
+          vm: { base: "ghcr.io/cirruslabs/ubuntu:latest", provision: ["echo ok", "exit 3"] },
+          tests: { touched: "true", full: "true" },
+        },
+      },
+    },
+  );
+  assert.throws(
+    () =>
+      parseEnvSpec(
+        JSON.stringify({ targets: { t: { vm: { base: "u" }, image: "x", tests: { touched: "t", full: "f" } } } }),
+      ),
+    /vm OU image\/dockerfile/,
+  );
+  assert.throws(
+    () =>
+      parseEnvSpec(JSON.stringify({ targets: { t: { vm: { base: "u; rm" }, tests: { touched: "t", full: "f" } } } })),
+    /vm\.base/,
+  );
+  const pool = w.heavy.pool;
+  assert.deepEqual(
+    pool.matching({ os: "linux" }, true).map((e) => e.config.name),
+    ["mac"],
+  );
+  assert.deepEqual(pool.matching({ os: "linux", arch: "amd64" }, true), []);
+  assert.deepEqual(
+    pool.matching({ os: "macos" }).map((e) => e.config.name),
+    [],
+    "un Tart sans `tart.image` ne prend pas une cible sans recette",
+  );
+  const result = await full(w);
+  assert.notEqual(result.outcome, "pass");
+  assert.match(result.output, /« exit 3 » a échoué \(code 3\)/);
+  assert.deepEqual(fs.readdirSync(path.join(path.dirname(w.tart), "vms")), []);
 });
 
 test("executeurs/AC-10 : la preuve d'exécution — JUnit hors `<skipped>`, TAP hors SKIP ; un verdict qui cite un test `pass` absent des tests exécutés est refusé", () => {

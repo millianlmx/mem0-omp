@@ -16,8 +16,8 @@ import { classify, clientEnv, heavyEnv, OUTPUT_TAIL } from "../heavy/heavy.ts";
 import type { HeavyOutcome } from "../heavy/heavy.ts";
 import type { EnvSpec, EnvTarget, Leg } from "./env-spec.ts";
 import { legName } from "./env-spec.ts";
-import type { ExecutorPool, ExecutorRun } from "./executors.ts";
-import { failedProc, requirementText } from "./executors.ts";
+import type { ExecutorPool, ExecutorRun, VmJob } from "./executors.ts";
+import { failedProc, requirementText, vmImagePrefix } from "./executors.ts";
 import { junitExecuted, tapExecuted } from "./reports.ts";
 
 /** Le détail d'un passage, rendu avec le résultat agrégé. */
@@ -85,6 +85,18 @@ class TapNames {
 /** Le script d'un passage : setup de la cible, puis la commande ; le premier échec arrête tout. */
 export function legScript(target: EnvTarget, command: string): string {
   return ["set -e", ...target.setup, command].join("\n");
+}
+
+/** La VM d'une cible à recette : son image nommée `omp-vm-<dépôt>-<cible>-<empreinte>`. */
+export function vmJob(repo: RepoConfig, target: EnvTarget): VmJob | null {
+  if (target.vm === null) return null;
+  const prefix = vmImagePrefix(repo.name, target.name);
+  return { image: `${prefix}${target.vm.hash}`, prefix, base: target.vm.base, provision: target.vm.provision };
+}
+
+/** Ce qu'un passage exige : `requires` en VM Tart si la cible a une recette. */
+function placement(target: EnvTarget): string {
+  return `${requirementText(target.requires)}${target.vm ? " en VM Tart" : ""}`;
 }
 
 export class Matrix {
@@ -208,9 +220,15 @@ export class Matrix {
     let failRetried = false;
     for (;;) {
       if (signal.aborted) throw new Error("job heavy annulé : appel arrêté");
-      const lease = await pool.acquire(leg.target.requires, `${job.runId}:${name}`, signal, job.priority ?? 0);
+      const lease = await pool.acquire(
+        leg.target.requires,
+        `${job.runId}:${name}`,
+        signal,
+        job.priority ?? 0,
+        leg.target.vm !== null,
+      );
       if (lease === null) {
-        const missing = `aucun exécuteur ne porte ${requirementText(leg.target.requires)} : la cible « ${leg.target.name} » ne peut tourner nulle part — déclare-en un dans \`executors\` de la configuration du harness`;
+        const missing = `aucun exécuteur ne porte ${placement(leg.target)} : la cible « ${leg.target.name} » ne peut tourner nulle part — déclare-en un dans \`executors\` de la configuration du harness`;
         store.appendEvent("heavy_unplaced", job.runId, { leg: name, requires: leg.target.requires });
         return {
           summary: { ...base, executor: null, outcome: "error", exitCode: null, attempts },
@@ -232,6 +250,7 @@ export class Matrix {
           script: legScript(leg.target, leg.command),
           env: heavyEnv(config, job.worktree),
           image: image.tag,
+          vm: vmJob(job.repo, leg.target),
           reports: leg.target.reports,
           patch: false,
           timeoutMs: config.heavy.timeoutSec * 1000,
@@ -303,11 +322,17 @@ export class Matrix {
     }
     const image = await this.image(job, target);
     if ("error" in image) return { ok: false, text: image.error, files: [] };
-    const lease = await pool.acquire(target.requires, `${job.runId}:run_on`, signal, job.priority ?? 0);
+    const lease = await pool.acquire(
+      target.requires,
+      `${job.runId}:run_on`,
+      signal,
+      job.priority ?? 0,
+      target.vm !== null,
+    );
     if (lease === null)
       return {
         ok: false,
-        text: `aucun exécuteur ne porte ${requirementText(target.requires)} : « ${target.name} » ne peut tourner nulle part`,
+        text: `aucun exécuteur ne porte ${placement(target)} : « ${target.name} » ne peut tourner nulle part`,
         files: [],
       };
     const before = new Set(await git.touchedFiles(job.worktree, "HEAD").catch(() => []));
@@ -320,6 +345,7 @@ export class Matrix {
         script: legScript(target, command),
         env: heavyEnv(config, job.worktree),
         image: image.tag,
+        vm: vmJob(job.repo, target),
         reports: [],
         patch: true,
         timeoutMs: config.heavy.timeoutSec * 1000,

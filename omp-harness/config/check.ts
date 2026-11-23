@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { HarnessConfig, ModelPolicy, RepoConfig } from "./config.ts";
+import type { ExecutorConfig, HarnessConfig, ModelPolicy, RepoConfig } from "./config.ts";
 import { modelChain, policyDefect } from "./config.ts";
 import { openForge } from "../forge/forge.ts";
 import { remoteEnv, type Git } from "../forge/git.ts";
@@ -19,7 +19,7 @@ import { engine, memoryExtension } from "../runners/runner.ts";
 import { missingTools, toolsFix } from "../runners/tools.ts";
 import { ENV_FILE, EnvSpecError, loadEnvSpec } from "../executors/env-spec.ts";
 import type { EnvSpec } from "../executors/env-spec.ts";
-import { localLabels, requirementText, satisfies, sshTarget } from "../executors/executors.ts";
+import { canHost, localLabels, requirementText, sshTarget, TartExecutor } from "../executors/executors.ts";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 
@@ -304,7 +304,7 @@ async function checkEngine(config: HarnessConfig, exec: Exec): Promise<CheckLine
   return lines;
 }
 
-/** Les exécuteurs déclarés : un ssh joignable sans mot de passe, `tart` présent (les VM naissent au premier job). */
+/** Les exécuteurs déclarés : un ssh joignable sans mot de passe, `tart` présent ici ou sur son Mac (les VM naissent au premier job). */
 async function checkExecutors(config: HarnessConfig, exec: Exec): Promise<CheckLine[]> {
   const lines: CheckLine[] = [];
   for (const executor of config.executors) {
@@ -314,20 +314,25 @@ async function checkExecutors(config: HarnessConfig, exec: Exec): Promise<CheckL
       continue;
     }
     if (executor.kind === "tart") {
-      const tart = await exec("tart", ["--version"], { timeoutMs: 30_000 }).catch(() => null);
+      const argv = new TartExecutor(executor, exec).tartArgv(["--version"]);
+      const tart = await exec(argv.command, argv.args, { timeoutMs: 30_000 }).catch(() => null);
+      const mac = executor.ssh?.host ? `sur ${sshTarget(executor, executor.ssh.host).destination}` : "ici";
+      const image = executor.tart?.image ? `, image ${executor.tart.image}` : ", recettes `vm` des cibles";
       lines.push(
         tart?.code === 0
-          ? { status: "ok", label, detail: `tart ${firstLine(tart.stdout)}, image ${executor.tart?.image}` }
+          ? { status: "ok", label, detail: `tart ${firstLine(tart.stdout)} ${mac}${image}` }
           : {
               status: "fail",
               label,
-              detail: "`tart` absent",
-              fix: "Installe Tart sur le Mac du service (`brew install cirruslabs/cli/tart`), puis `tart pull` de l'image déclarée.",
+              detail: `\`tart\` injoignable ${mac}${tart ? ` : ${firstLine(tart.stderr)}` : ""}`,
+              fix: executor.ssh?.host
+                ? "La clé du service doit ouvrir une session sans mot de passe sur le Mac (`ssh.key`, `authorized_keys`), et Tart y être installé (`brew install cirruslabs/cli/tart`)."
+                : "Installe Tart sur ce Mac (`brew install cirruslabs/cli/tart`).",
             },
       );
       continue;
     }
-    const target = sshTarget(executor, executor.ssh?.host as string, false);
+    const target = sshTarget(executor, executor.ssh?.host as string);
     const reached = await exec("ssh", [...target.options, target.destination, "true"], { timeoutMs: 30_000 }).catch(
       () => null,
     );
@@ -356,11 +361,15 @@ async function checkRepoTargets(config: HarnessConfig, repo: RepoConfig, git: Gi
     return [{ status: "fail", label, detail: err.message, fix: `Corrige \`${ENV_FILE}\` sur ${repo.mainBranch}.` }];
   }
   if (spec === null) return [];
-  const offered = [
-    ...(config.executors.some((executor) => executor.kind === "local") ? [] : [localLabels(config)]),
-    ...config.executors.map((executor) => executor.labels),
+  const offered: ExecutorConfig[] = [
+    ...(config.executors.some((executor) => executor.kind === "local")
+      ? []
+      : [{ name: "local", kind: "local" as const, labels: localLabels(config), slots: 1 }]),
+    ...config.executors,
   ];
-  const orphans = spec.targets.filter((target) => !offered.some((labels) => satisfies(labels, target.requires)));
+  const orphans = spec.targets.filter(
+    (target) => !offered.some((executor) => canHost(executor, target.requires, target.vm !== null)),
+  );
   if (orphans.length === 0)
     return [
       {
@@ -374,7 +383,7 @@ async function checkRepoTargets(config: HarnessConfig, repo: RepoConfig, git: Gi
       status: orphans.some((target) => target.required) ? "fail" : "warn",
       label,
       detail: `sans exécuteur : ${orphans.map((target) => `${target.name} (${requirementText(target.requires)})`).join(", ")}`,
-      fix: "Déclare dans `executors` un exécuteur qui porte ces étiquettes (un Mac en `ssh` ou `tart` pour une cible macos) : ses tests ne tournent nulle part, et ses runs n'auto-mergent pas.",
+      fix: "Déclare dans `executors` un exécuteur qui porte ces étiquettes (un Mac en `ssh` ou `tart` pour une cible macos, un `tart` pour une cible à recette `vm`) : ses tests ne tournent nulle part, et ses runs n'auto-mergent pas.",
     },
   ];
 }
